@@ -1,12 +1,15 @@
-from fastapi import FastAPI, Request
+# ✅ main.py
+from fastapi import FastAPI, Request, UploadFile, Form
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 import os
 import json
 
 from enviar_msg_wp import enviar_mensaje_texto_simple
 from buscador import inicializar_busqueda, responder_pregunta
-from DataBase import guardar_mensaje
+from DataBase import *
 
 # 🔄 Cargar variables de entorno
 load_dotenv()
@@ -19,8 +22,20 @@ CHROMA_DIR = "./chroma_faq_openai"
 # ⚙️ Inicializar FastAPI
 app = FastAPI()
 
+# Configurar CORS para permitir peticiones del frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # 🧠 Inicializar búsqueda semántica
 client, collection = inicializar_busqueda(API_KEY, persist_dir=CHROMA_DIR)
+
+# 📁 Servir archivos de audio
+app.mount("/audios", StaticFiles(directory="audios"), name="audios")
 
 # ✅ VERIFICACIÓN DEL WEBHOOK (Facebook Developers)
 @app.get("/webhook")
@@ -90,3 +105,51 @@ async def recibir_mensaje(request: Request):
     except Exception as e:
         print("❌ Error procesando mensaje:", e)
         return JSONResponse({"error": str(e)}, status_code=500)
+
+# 📡 API para frontend React
+@app.get("/contactos")
+def listar_contactos():
+    return obtener_contactos()
+
+@app.get("/mensajes/{telefono}")
+def listar_mensajes(telefono: str):
+    return obtener_mensajes(telefono)
+
+@app.post("/mensajes")
+async def api_enviar_mensaje(data: dict):
+    telefono = data.get("telefono")
+    mensaje = data.get("mensaje")
+    guardar_mensaje(telefono, mensaje, tipo="enviado")
+    return {"status": "ok", "mensaje": "Mensaje guardado"}
+
+@app.post("/mensajes/audio")
+async def api_enviar_audio(telefono: str = Form(...), audio: UploadFile = Form(...)):
+    audio_bytes = await audio.read()
+    filename = f"{telefono}_{int(datetime.now().timestamp())}.webm"
+    ruta = f"audios/{filename}"
+    os.makedirs("audios", exist_ok=True)
+    with open(ruta, "wb") as f:
+        f.write(audio_bytes)
+    guardar_mensaje(telefono, f"[Audio guardado: {filename}]", tipo="enviado", es_audio=True)
+    return {"status": "ok", "mensaje": "Audio recibido", "archivo": filename}
+
+@app.post("/contactos/nombre")
+async def actualizar_nombre(data: dict):
+    telefono = data.get("telefono")
+    nombre = data.get("nombre")
+    if not telefono or not nombre:
+        return JSONResponse({"error": "Faltan parámetros"}, status_code=400)
+
+    actualizado = actualizar_nombre_contacto(telefono, nombre)
+    if actualizado:
+        return {"status": "ok", "mensaje": "Nombre actualizado"}
+    else:
+        return JSONResponse({"error": "No se pudo actualizar"}, status_code=500)
+
+@app.delete("/mensajes/{telefono}")
+async def borrar_mensajes(telefono: str):
+    eliminado = eliminar_mensajes(telefono)
+    if eliminado:
+        return {"status": "ok", "mensaje": f"Mensajes de {telefono} eliminados"}
+    else:
+        return JSONResponse({"error": "No se pudieron eliminar los mensajes"}, status_code=500)
