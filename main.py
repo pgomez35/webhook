@@ -160,8 +160,8 @@ async def api_enviar_audio(telefono: str = Form(...), audio: UploadFile = Form(.
 
     # 3. Guardar mensaje en base de datos
     guardar_mensaje(
-        telefono=telefono,
-        contenido=f"[Audio guardado: {filename}]",
+        telefono,
+        f"[Audio guardado: {filename}]",
         tipo="enviado",
         es_audio=True
     )
