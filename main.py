@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 import os
 import json
 
-from enviar_msg_wp import enviar_mensaje_texto_simple
+from enviar_msg_wp import *
 from buscador import inicializar_busqueda, responder_pregunta
 from DataBase import *
 
@@ -144,10 +144,32 @@ async def api_enviar_audio(telefono: str = Form(...), audio: UploadFile = Form(.
     filename = f"{telefono}_{int(datetime.now().timestamp())}.webm"
     ruta = f"audios/{filename}"
     os.makedirs("audios", exist_ok=True)
+
     with open(ruta, "wb") as f:
         f.write(audio_bytes)
+
+    # Guardar en base de datos
     guardar_mensaje(telefono, f"[Audio guardado: {filename}]", tipo="enviado", es_audio=True)
-    return {"status": "ok", "mensaje": "Audio recibido", "archivo": filename}
+
+    # Enviar por WhatsApp
+    try:
+        codigo, respuesta_api = enviar_audio_base64(
+            token=TOKEN,
+            numero_id=PHONE_NUMBER_ID,
+            telefono_destino=telefono,
+            ruta_audio=ruta,
+            mimetype="audio/webm"
+        )
+    except Exception as e:
+        return {"status": "error", "mensaje": "Audio guardado, pero no enviado", "error": str(e)}
+
+    return {
+        "status": "ok",
+        "mensaje": "Audio recibido y enviado",
+        "archivo": filename,
+        "codigo_api": codigo,
+        "respuesta_api": respuesta_api
+    }
 
 @app.post("/contactos/nombre")
 async def actualizar_nombre(data: dict):
