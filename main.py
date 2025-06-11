@@ -138,20 +138,35 @@ async def api_enviar_mensaje(data: dict):
         "respuesta_api": respuesta_api
     }
 
+from fastapi import UploadFile, Form
+from datetime import datetime
+import os
+
 @app.post("/mensajes/audio")
 async def api_enviar_audio(telefono: str = Form(...), audio: UploadFile = Form(...)):
-    audio_bytes = await audio.read()
+    # 1. Generar nombre y ruta del archivo
     filename = f"{telefono}_{int(datetime.now().timestamp())}.webm"
     ruta = f"audios/{filename}"
     os.makedirs("audios", exist_ok=True)
 
-    with open(ruta, "wb") as f:
-        f.write(audio_bytes)
+    # 2. Guardar el archivo localmente
+    try:
+        audio_bytes = await audio.read()
+        with open(ruta, "wb") as f:
+            f.write(audio_bytes)
+        print(f"✅ Audio guardado correctamente en: {ruta}")
+    except Exception as e:
+        return {"status": "error", "mensaje": "No se pudo guardar el audio", "error": str(e)}
 
-    # Guardar en base de datos
-    guardar_mensaje(telefono, f"[Audio guardado: {filename}]", tipo="enviado", es_audio=True)
+    # 3. Guardar mensaje en base de datos
+    guardar_mensaje(
+        telefono=telefono,
+        contenido=f"[Audio guardado: {filename}]",
+        tipo="enviado",
+        es_audio=True
+    )
 
-    # Enviar por WhatsApp
+    # 4. Enviar audio por WhatsApp
     try:
         codigo, respuesta_api = enviar_audio_base64(
             token=TOKEN,
@@ -160,16 +175,24 @@ async def api_enviar_audio(telefono: str = Form(...), audio: UploadFile = Form(.
             ruta_audio=ruta,
             mimetype="audio/webm"
         )
+        print(f"📤 Audio enviado a WhatsApp. Código: {codigo}")
     except Exception as e:
-        return {"status": "error", "mensaje": "Audio guardado, pero no enviado", "error": str(e)}
+        return {
+            "status": "error",
+            "mensaje": "Audio guardado, pero no enviado por WhatsApp",
+            "archivo": filename,
+            "error": str(e)
+        }
 
+    # 5. Retornar resultado exitoso
     return {
         "status": "ok",
-        "mensaje": "Audio recibido y enviado",
+        "mensaje": "Audio recibido y enviado por WhatsApp",
         "archivo": filename,
         "codigo_api": codigo,
         "respuesta_api": respuesta_api
     }
+
 
 @app.post("/contactos/nombre")
 async def actualizar_nombre(data: dict):
