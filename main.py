@@ -119,8 +119,24 @@ def listar_mensajes(telefono: str):
 async def api_enviar_mensaje(data: dict):
     telefono = data.get("telefono")
     mensaje = data.get("mensaje")
+
+    # Enviar mensaje por WhatsApp
+    codigo, respuesta_api = enviar_mensaje_texto_simple(
+        token=TOKEN,
+        numero_id=PHONE_NUMBER_ID,
+        telefono_destino=telefono,
+        texto=mensaje
+    )
+
+    # Guardar en base de datos
     guardar_mensaje(telefono, mensaje, tipo="enviado")
-    return {"status": "ok", "mensaje": "Mensaje guardado"}
+
+    return {
+        "status": "ok",
+        "mensaje": "Mensaje guardado y enviado",
+        "codigo_api": codigo,
+        "respuesta_api": respuesta_api
+    }
 
 @app.post("/mensajes/audio")
 async def api_enviar_audio(telefono: str = Form(...), audio: UploadFile = Form(...)):
