@@ -77,17 +77,37 @@ async def recibir_mensaje(request: Request):
 
         mensaje = mensajes[0]
         telefono = mensaje.get("from")
-        mensaje_usuario = mensaje.get("text", {}).get("body")
+
+        mensaje_usuario = None
+        es_audio = False
+        contenido_audio = None
+
+        tipo = mensaje.get("type")
+
+        if tipo == "text":
+            mensaje_usuario = mensaje.get("text", {}).get("body")
+        elif tipo == "audio":
+            es_audio = True
+            contenido_audio = mensaje.get("audio", {}).get("id")
+            mensaje_usuario = f"[Audio recibido: {contenido_audio}]"
 
         if not telefono or not mensaje_usuario:
             print("⚠️ Mensaje incompleto.")
             return JSONResponse({"status": "ok", "detalle": "Mensaje incompleto"}, status_code=200)
 
         print(f"📥 Mensaje recibido de {telefono}: {mensaje_usuario}")
-        guardar_mensaje(telefono, mensaje_usuario, tipo="recibido")
+        guardar_mensaje(telefono, mensaje_usuario, tipo="recibido", es_audio=es_audio)
 
-        # 🧠 Buscar respuesta en ChromaDB
-        respuesta = responder_pregunta(mensaje_usuario, client, collection)
+        if es_audio:
+            print(f"🎙️ Audio recibido con ID: {contenido_audio}")
+            return JSONResponse({"status": "ok", "detalle": "Audio recibido"})
+
+        # 🧠 Buscar respuesta en ChromaDB (solo si es texto)
+        # respuesta = responder_pregunta(mensaje_usuario, client, collection)
+
+        # ✉️ Enviar respuesta fija
+        respuesta = "Gracias por tu mensaje, te escribiremos una respuesta tan pronto podamos"
+
         print(f"🤖 Respuesta generada: {respuesta}")
 
         # ✉️ Enviar respuesta por WhatsApp
@@ -112,6 +132,62 @@ async def recibir_mensaje(request: Request):
     except Exception as e:
         print("❌ Error procesando mensaje:", e)
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# 📩 PROCESAMIENTO DE MENSAJES ENVIADOS AL WEBHOOK
+# @app.post("/webhook")
+# async def recibir_mensaje(request: Request):
+#     try:
+#         datos = await request.json()
+#         print("📨 Payload recibido:")
+#         print(json.dumps(datos, indent=2))
+#
+#         entrada = datos.get("entry", [{}])[0]
+#         cambio = entrada.get("changes", [{}])[0]
+#         valor = cambio.get("value", {})
+#
+#         mensajes = valor.get("messages")
+#         if not mensajes:
+#             print("⚠️ No se encontraron mensajes en el payload.")
+#             return JSONResponse({"status": "ok", "detalle": "Sin mensajes"}, status_code=200)
+#
+#         mensaje = mensajes[0]
+#         telefono = mensaje.get("from")
+#         mensaje_usuario = mensaje.get("text", {}).get("body")
+#
+#         if not telefono or not mensaje_usuario:
+#             print("⚠️ Mensaje incompleto.")
+#             return JSONResponse({"status": "ok", "detalle": "Mensaje incompleto"}, status_code=200)
+#
+#         print(f"📥 Mensaje recibido de {telefono}: {mensaje_usuario}")
+#         guardar_mensaje(telefono, mensaje_usuario, tipo="recibido")
+#
+#         # 🧠 Buscar respuesta en ChromaDB
+#         respuesta = responder_pregunta(mensaje_usuario, client, collection)
+#         print(f"🤖 Respuesta generada: {respuesta}")
+#
+#         # ✉️ Enviar respuesta por WhatsApp
+#         codigo, respuesta_api = enviar_mensaje_texto_simple(
+#             token=TOKEN,
+#             numero_id=PHONE_NUMBER_ID,
+#             telefono_destino=telefono,
+#             texto=respuesta
+#         )
+#         guardar_mensaje(telefono, respuesta, tipo="enviado")
+#
+#         print(f"✅ Código de envío: {codigo}")
+#         print(f"🛰️ Respuesta API:", respuesta_api)
+#
+#         return JSONResponse({
+#             "status": "ok",
+#             "respuesta": respuesta,
+#             "codigo_envio": codigo,
+#             "respuesta_api": respuesta_api
+#         })
+#
+#     except Exception as e:
+#         print("❌ Error procesando mensaje:", e)
+#         return JSONResponse({"error": str(e)}, status_code=500)
 
 # 📡 API para frontend React
 @app.get("/contactos")
