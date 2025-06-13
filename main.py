@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 import os
 import json
+import re
 
 from enviar_msg_wp import *
 from buscador import inicializar_busqueda, responder_pregunta

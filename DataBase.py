@@ -2,6 +2,7 @@ import os
 import psycopg2
 from dotenv import load_dotenv
 from datetime import datetime
+import re
 
 # Cargar variables de entorno (incluye DATABASE_URL)
 load_dotenv()
