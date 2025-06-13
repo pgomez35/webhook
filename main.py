@@ -325,56 +325,115 @@ from fastapi import UploadFile, Form
 from datetime import datetime
 import os
 
+import subprocess
+
 @app.post("/mensajes/audio")
 async def api_enviar_audio(telefono: str = Form(...), audio: UploadFile = Form(...)):
-    # 1. Generar nombre y ruta del archivo
-    filename = f"{telefono}_{int(datetime.now().timestamp())}.webm"
-    ruta = f"audios/{filename}"
+    filename_webm = f"{telefono}_{int(datetime.now().timestamp())}.webm"
+    ruta_webm = f"audios/{filename_webm}"
+    filename_ogg = filename_webm.replace(".webm", ".ogg")
+    ruta_ogg = f"audios/{filename_ogg}"
     os.makedirs("audios", exist_ok=True)
 
-    # 2. Guardar el archivo localmente
-    try:
-        audio_bytes = await audio.read()
-        with open(ruta, "wb") as f:
-            f.write(audio_bytes)
-        print(f"✅ Audio guardado correctamente en: {ruta}")
-    except Exception as e:
-        return {"status": "error", "mensaje": "No se pudo guardar el audio", "error": str(e)}
+    # 1. Guardar .webm
+    audio_bytes = await audio.read()
+    with open(ruta_webm, "wb") as f:
+        f.write(audio_bytes)
 
-    # 3. Guardar mensaje en base de datos
+    print(f"✅ Audio guardado correctamente en: {ruta_webm}")
+
+    # 2. Convertir a .ogg usando ffmpeg
+    try:
+        subprocess.run(["ffmpeg", "-y", "-i", ruta_webm, "-acodec", "libopus", ruta_ogg], check=True)
+        print(f"✅ Audio convertido a .ogg: {ruta_ogg}")
+    except subprocess.CalledProcessError as e:
+        return {"status": "error", "mensaje": "Error al convertir el audio a .ogg", "error": str(e)}
+
+    # 3. Guardar mensaje
     guardar_mensaje(
         telefono,
-        f"[Audio guardado: {filename}]",
+        f"[Audio guardado: {filename_ogg}]",
         tipo="enviado",
         es_audio=True
     )
 
-    # 4. Enviar audio por WhatsApp
+    # 4. Enviar audio a WhatsApp (usar ruta_ogg y mimetype correcto)
     try:
         codigo, respuesta_api = enviar_audio_base64(
             token=TOKEN,
             numero_id=PHONE_NUMBER_ID,
             telefono_destino=telefono,
-            ruta_audio=ruta,
-            mimetype="audio/webm"
+            ruta_audio=ruta_ogg,
+            mimetype="audio/ogg; codecs=opus"
         )
         print(f"📤 Audio enviado a WhatsApp. Código: {codigo}")
     except Exception as e:
         return {
             "status": "error",
             "mensaje": "Audio guardado, pero no enviado por WhatsApp",
-            "archivo": filename,
+            "archivo": filename_ogg,
             "error": str(e)
         }
 
-    # 5. Retornar resultado exitoso
     return {
         "status": "ok",
         "mensaje": "Audio recibido y enviado por WhatsApp",
-        "archivo": filename,
+        "archivo": filename_ogg,
         "codigo_api": codigo,
         "respuesta_api": respuesta_api
     }
+
+
+# @app.post("/mensajes/audio")
+# async def api_enviar_audio(telefono: str = Form(...), audio: UploadFile = Form(...)):
+#     # 1. Generar nombre y ruta del archivo
+#     filename = f"{telefono}_{int(datetime.now().timestamp())}.webm"
+#     ruta = f"audios/{filename}"
+#     os.makedirs("audios", exist_ok=True)
+#
+#     # 2. Guardar el archivo localmente
+#     try:
+#         audio_bytes = await audio.read()
+#         with open(ruta, "wb") as f:
+#             f.write(audio_bytes)
+#         print(f"✅ Audio guardado correctamente en: {ruta}")
+#     except Exception as e:
+#         return {"status": "error", "mensaje": "No se pudo guardar el audio", "error": str(e)}
+#
+#     # 3. Guardar mensaje en base de datos
+#     guardar_mensaje(
+#         telefono,
+#         f"[Audio guardado: {filename}]",
+#         tipo="enviado",
+#         es_audio=True
+#     )
+#
+#     # 4. Enviar audio por WhatsApp
+#     try:
+#         codigo, respuesta_api = enviar_audio_base64(
+#             token=TOKEN,
+#             numero_id=PHONE_NUMBER_ID,
+#             telefono_destino=telefono,
+#             ruta_audio=ruta,
+#             mimetype="audio/webm"
+#         )
+#         print(f"📤 Audio enviado a WhatsApp. Código: {codigo}")
+#     except Exception as e:
+#         return {
+#             "status": "error",
+#             "mensaje": "Audio guardado, pero no enviado por WhatsApp",
+#             "archivo": filename,
+#             "error": str(e)
+#         }
+#
+#     # 5. Retornar resultado exitoso
+#     return {
+#         "status": "ok",
+#         "mensaje": "Audio recibido y enviado por WhatsApp",
+#         "archivo": filename,
+#         "codigo_api": codigo,
+#         "respuesta_api": respuesta_api
+#     }
 
 
 @app.post("/contactos/nombre")
