@@ -44,6 +44,37 @@ client, collection = inicializar_busqueda(API_KEY, persist_dir=CHROMA_DIR)
 # 📁 Servir archivos de audio
 app.mount("/audios", StaticFiles(directory="audios"), name="audios")
 
+# 🔊 Función para descargar audio desde WhatsApp Cloud API
+def descargar_audio(audio_id, token, carpeta_destino="audios"):
+    try:
+        url_info = f"https://graph.facebook.com/v19.0/{audio_id}"
+        headers = {"Authorization": f"Bearer {token}"}
+        response_info = requests.get(url_info, headers=headers)
+        response_info.raise_for_status()
+
+        media_url = response_info.json().get("url")
+        if not media_url:
+            print("❌ No se pudo obtener la URL del audio.")
+            return None
+
+        response_audio = requests.get(media_url, headers=headers)
+        response_audio.raise_for_status()
+
+        os.makedirs(carpeta_destino, exist_ok=True)
+        nombre_archivo = f"{audio_id}.ogg"
+        ruta_archivo = os.path.join(carpeta_destino, nombre_archivo)
+
+        with open(ruta_archivo, "wb") as f:
+            f.write(response_audio.content)
+
+        print(f"✅ Audio guardado en: {ruta_archivo}")
+        return ruta_archivo
+
+    except Exception as e:
+        print("❌ Error al descargar audio:", e)
+        return None
+
+
 # ✅ VERIFICACIÓN DEL WEBHOOK (Facebook Developers)
 @app.get("/webhook")
 async def verify_webhook(request: Request):
@@ -59,6 +90,7 @@ async def verify_webhook(request: Request):
     return PlainTextResponse("Verificación fallida", status_code=403)
 
 # 📩 PROCESAMIENTO DE MENSAJES ENVIADOS AL WEBHOOK
+# 📩 Webhook de recepción de mensajes
 @app.post("/webhook")
 async def recibir_mensaje(request: Request):
     try:
@@ -77,19 +109,19 @@ async def recibir_mensaje(request: Request):
 
         mensaje = mensajes[0]
         telefono = mensaje.get("from")
+        tipo = mensaje.get("type")
 
         mensaje_usuario = None
         es_audio = False
-        contenido_audio = None
-
-        tipo = mensaje.get("type")
+        audio_id = None
 
         if tipo == "text":
             mensaje_usuario = mensaje.get("text", {}).get("body")
         elif tipo == "audio":
             es_audio = True
-            contenido_audio = mensaje.get("audio", {}).get("id")
-            mensaje_usuario = f"[Audio recibido: {contenido_audio}]"
+            audio_info = mensaje.get("audio", {})
+            audio_id = audio_info.get("id")
+            mensaje_usuario = f"[Audio recibido: {audio_id}]"
 
         if not telefono or not mensaje_usuario:
             print("⚠️ Mensaje incompleto.")
@@ -99,39 +131,106 @@ async def recibir_mensaje(request: Request):
         guardar_mensaje(telefono, mensaje_usuario, tipo="recibido", es_audio=es_audio)
 
         if es_audio:
-            print(f"🎙️ Audio recibido con ID: {contenido_audio}")
-            return JSONResponse({"status": "ok", "detalle": "Audio recibido"})
+            ruta = descargar_audio(audio_id, TOKEN)
+            return JSONResponse({"status": "ok", "detalle": f"Audio guardado en {ruta}"})
 
-        # 🧠 Buscar respuesta en ChromaDB (solo si es texto)
-        # respuesta = responder_pregunta(mensaje_usuario, client, collection)
-
-        # ✉️ Enviar respuesta fija
+        # ✉️ Enviar respuesta automática
         respuesta = "Gracias por tu mensaje, te escribiremos una respuesta tan pronto podamos"
-
-        print(f"🤖 Respuesta generada: {respuesta}")
-
-        # ✉️ Enviar respuesta por WhatsApp
         codigo, respuesta_api = enviar_mensaje_texto_simple(
             token=TOKEN,
             numero_id=PHONE_NUMBER_ID,
             telefono_destino=telefono,
-            texto=respuesta
+            texto=respuesta,
         )
         guardar_mensaje(telefono, respuesta, tipo="enviado")
 
         print(f"✅ Código de envío: {codigo}")
-        print(f"🛰️ Respuesta API:", respuesta_api)
+        print("🛰️ Respuesta API:", respuesta_api)
 
         return JSONResponse({
             "status": "ok",
             "respuesta": respuesta,
             "codigo_envio": codigo,
-            "respuesta_api": respuesta_api
+            "respuesta_api": respuesta_api,
         })
 
     except Exception as e:
         print("❌ Error procesando mensaje:", e)
         return JSONResponse({"error": str(e)}, status_code=500)
+
+# @app.post("/webhook")
+# async def recibir_mensaje(request: Request):
+#     try:
+#         datos = await request.json()
+#         print("📨 Payload recibido:")
+#         print(json.dumps(datos, indent=2))
+#
+#         entrada = datos.get("entry", [{}])[0]
+#         cambio = entrada.get("changes", [{}])[0]
+#         valor = cambio.get("value", {})
+#
+#         mensajes = valor.get("messages")
+#         if not mensajes:
+#             print("⚠️ No se encontraron mensajes en el payload.")
+#             return JSONResponse({"status": "ok", "detalle": "Sin mensajes"}, status_code=200)
+#
+#         mensaje = mensajes[0]
+#         telefono = mensaje.get("from")
+#
+#         mensaje_usuario = None
+#         es_audio = False
+#         contenido_audio = None
+#
+#         tipo = mensaje.get("type")
+#
+#         if tipo == "text":
+#             mensaje_usuario = mensaje.get("text", {}).get("body")
+#         elif tipo == "audio":
+#             es_audio = True
+#             contenido_audio = mensaje.get("audio", {}).get("id")
+#             mensaje_usuario = f"[Audio recibido: {contenido_audio}]"
+#
+#         if not telefono or not mensaje_usuario:
+#             print("⚠️ Mensaje incompleto.")
+#             return JSONResponse({"status": "ok", "detalle": "Mensaje incompleto"}, status_code=200)
+#
+#         print(f"📥 Mensaje recibido de {telefono}: {mensaje_usuario}")
+#         guardar_mensaje(telefono, mensaje_usuario, tipo="recibido", es_audio=es_audio)
+#
+#         if es_audio:
+#             print(f"🎙️ Audio recibido con ID: {contenido_audio}")
+#             return JSONResponse({"status": "ok", "detalle": "Audio recibido"})
+#
+#         # 🧠 Buscar respuesta en ChromaDB (solo si es texto)
+#         # respuesta = responder_pregunta(mensaje_usuario, client, collection)
+#
+#         # ✉️ Enviar respuesta fija
+#         respuesta = "Gracias por tu mensaje, te escribiremos una respuesta tan pronto podamos"
+#
+#         print(f"🤖 Respuesta generada: {respuesta}")
+#
+#         # ✉️ Enviar respuesta por WhatsApp
+#         codigo, respuesta_api = enviar_mensaje_texto_simple(
+#             token=TOKEN,
+#             numero_id=PHONE_NUMBER_ID,
+#             telefono_destino=telefono,
+#             texto=respuesta
+#         )
+#         guardar_mensaje(telefono, respuesta, tipo="enviado")
+#
+#         print(f"✅ Código de envío: {codigo}")
+#         print(f"🛰️ Respuesta API:", respuesta_api)
+#
+#         return JSONResponse({
+#             "status": "ok",
+#             "respuesta": respuesta,
+#             "codigo_envio": codigo,
+#             "respuesta_api": respuesta_api
+#         })
+#
+#     except Exception as e:
+#         print("❌ Error procesando mensaje:", e)
+#         return JSONResponse({"error": str(e)}, status_code=500)
 
 
 # 📩 PROCESAMIENTO DE MENSAJES ENVIADOS AL WEBHOOK
