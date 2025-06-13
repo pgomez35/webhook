@@ -6,37 +6,72 @@ from datetime import datetime
 # Cargar variables de entorno (incluye DATABASE_URL)
 load_dotenv()
 
-INTERNAL_DATABASE_URL = os.getenv("INTERNAL_DATABASE_URL")
+INTERNAL_DATABASE_URL = os.getenv("EXTERNAL_DATABASE_URL")
 
 EXTERNAL_DATABASE_URL = os.getenv("EXTERNAL_DATABASE_URL")
 
 def guardar_mensaje(telefono, texto, tipo="recibido", es_audio=False):
     try:
+        # Si es un mensaje de audio, extrae solo el nombre del archivo
+        if es_audio and texto.startswith("[Audio guardado:"):
+            match = re.search(r"\[Audio guardado: (.+)\]", texto)
+            if match:
+                texto = match.group(1)  # Ej: "9998555913574750.ogg"
+
         conn = psycopg2.connect(INTERNAL_DATABASE_URL)
         cur = conn.cursor()
 
+        # Buscar si ya existe el usuario
         cur.execute("SELECT id FROM usuarios WHERE telefono = %s", (telefono,))
         usuario = cur.fetchone()
 
+        # Insertar usuario si no existe
         if not usuario:
             cur.execute("INSERT INTO usuarios (telefono) VALUES (%s) RETURNING id", (telefono,))
             usuario_id = cur.fetchone()[0]
         else:
             usuario_id = usuario[0]
 
-        cur.execute(
-            "INSERT INTO mensajes (usuario_id, contenido, tipo, es_audio, fecha) VALUES (%s, %s, %s, %s, %s)",
-            (usuario_id, texto, tipo, es_audio, datetime.now())
-        )
+        # Insertar mensaje
+        cur.execute("""
+            INSERT INTO mensajes (usuario_id, contenido, tipo, es_audio, fecha)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (usuario_id, texto, tipo, es_audio, datetime.now()))
 
         conn.commit()
         cur.close()
         conn.close()
 
         print("✅ Mensaje y usuario guardados correctamente.")
-
     except Exception as e:
         print("❌ Error al guardar mensaje:", e)
+# def guardar_mensaje(telefono, texto, tipo="recibido", es_audio=False):
+#     try:
+#         conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+#         cur = conn.cursor()
+#
+#         cur.execute("SELECT id FROM usuarios WHERE telefono = %s", (telefono,))
+#         usuario = cur.fetchone()
+#
+#         if not usuario:
+#             cur.execute("INSERT INTO usuarios (telefono) VALUES (%s) RETURNING id", (telefono,))
+#             usuario_id = cur.fetchone()[0]
+#         else:
+#             usuario_id = usuario[0]
+#
+#         cur.execute(
+#             "INSERT INTO mensajes (usuario_id, contenido, tipo, es_audio, fecha) VALUES (%s, %s, %s, %s, %s)",
+#             (usuario_id, texto, tipo, es_audio, datetime.now())
+#         )
+#
+#         conn.commit()
+#         cur.close()
+#         conn.close()
+#
+#         print("✅ Mensaje y usuario guardados correctamente.")
+#
+#     except Exception as e:
+#         print("❌ Error al guardar mensaje:", e)
 
 def actualizar_nombre_contacto(telefono, nuevo_nombre):
     try:
@@ -137,3 +172,23 @@ def obtener_mensajes(telefono):
     except Exception as e:
         print("❌ Error al obtener mensajes:", e)
         return []
+
+
+def obtener_ultimos_mensajes(limit=10):
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT m.contenido, m.tipo, m.fecha, m.es_audio
+            FROM mensajes m
+            JOIN usuarios u ON m.usuario_id = u.id
+            ORDER BY m.fecha ASC
+            LIMIT %s;
+            """, (limit,))
+        resultados = cur.fetchall()
+        for fila in resultados:
+            print(f"🟢 {fila}")
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print("❌ Error al consultar mensajes:", e)
