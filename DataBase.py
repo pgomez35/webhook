@@ -3,6 +3,8 @@ import psycopg2
 from dotenv import load_dotenv
 from datetime import datetime
 import re
+import gspread
+from google.oauth2.service_account import Credentials
 
 # Cargar variables de entorno (incluye DATABASE_URL)
 load_dotenv()
@@ -10,6 +12,57 @@ load_dotenv()
 INTERNAL_DATABASE_URL = os.getenv("EXTERNAL_DATABASE_URL")
 
 EXTERNAL_DATABASE_URL = os.getenv("EXTERNAL_DATABASE_URL")
+
+def guardar_contactos(contactos):
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+
+        for c in contactos:
+            # Insertar en tabla usuarios
+            cur.execute("SELECT id FROM usuarios WHERE telefono = %s", (c["telefono"],))
+            usuario = cur.fetchone()
+            if not usuario:
+                cur.execute("INSERT INTO usuarios (telefono, nombre) VALUES (%s, %s) RETURNING id", (c["telefono"], c["usuario"]))
+                usuario_id = cur.fetchone()[0]
+            else:
+                usuario_id = usuario[0]
+
+            # Insertar o actualizar contacto_info
+            cur.execute("SELECT 1 FROM contacto_info WHERE usuario_id = %s", (usuario_id,))
+            existe = cur.fetchone()
+
+            if existe:
+                cur.execute("""
+                    UPDATE contacto_info SET
+                        disponibilidad = %s,
+                        contacto = %s,
+                        respuesta_creador = %s,
+                        perfil = %s,
+                        entrevista = %s,
+                        nickname = %s
+                    WHERE usuario_id = %s
+                """, (
+                    c["disponibilidad"], c["contacto"], c["respuesta_creador"],
+                    c["perfil"], c["entrevista"], c["nickname"], usuario_id
+                ))
+            else:
+                cur.execute("""
+                    INSERT INTO contacto_info (
+                        usuario_id, disponibilidad, contacto, respuesta_creador,
+                        perfil, entrevista, nickname
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    usuario_id, c["disponibilidad"], c["contacto"], c["respuesta_creador"],
+                    c["perfil"], c["entrevista"], c["nickname"]
+                ))
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("✅ Contactos guardados exitosamente.")
+    except Exception as e:
+        print(f"❌ Error guardando contactos en base de datos: {e}")
 
 def guardar_mensaje(telefono, texto, tipo="recibido", es_audio=False):
     try:
