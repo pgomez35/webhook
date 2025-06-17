@@ -2,6 +2,7 @@
 import gspread
 from google.oauth2.service_account import Credentials
 import os
+import json
 from dotenv import load_dotenv
 
 def obtener_contactos_desde_hoja():
@@ -10,7 +11,14 @@ def obtener_contactos_desde_hoja():
         NOMBRE_HOJA = os.getenv("NOMBRE_HOJA")
 
         scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        creds = Credentials.from_service_account_file('credentials.json', scopes=scope)
+
+        # creds = Credentials.from_service_account_file('credentials.json', scopes=scope)
+
+        cred_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+        cred_dict = json.loads(cred_json)
+        creds = Credentials.from_service_account_info(cred_dict, scopes=scope)
+
+
         gc = gspread.authorize(creds)
 
         spreadsheet = gc.open_by_key(STR_KEY)
