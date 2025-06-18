@@ -17,8 +17,6 @@ def obtener_contactos_desde_hoja():
             print("✅ Variable cargada correctamente")
             print("📧 client_email:", cred_dict.get("client_email", "NO EMAIL"))
             print("🔑 project_id:", cred_dict.get("project_id", "NO PROJECT"))
-            print("🆔 private_key_id (primeros 6):", cred_dict.get("private_key_id", "")[:6])
-            print("🔐 private_key starts with:", cred_dict.get("private_key", "")[:30])
         except Exception as e:
             print("❌ Error al cargar GOOGLE_CREDENTIALS_JSON:", e)
             return []
