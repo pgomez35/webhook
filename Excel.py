@@ -48,7 +48,8 @@ def obtener_contactos_desde_hoja():
             disponibilidad = fila[3].strip().upper()
             contacto_estado = fila[8].strip().upper()
 
-            if disponibilidad != "APTO" or contacto_estado != "CONTACTO":
+            # if disponibilidad != "APTO" or contacto_estado != "CONTACTO":
+            if disponibilidad != "APTO":
                 print(f"⚠️ Contacto {fila[1].strip()} no cumple condiciones (APTO y CONTACTO) - omitido")
                 continue
 
