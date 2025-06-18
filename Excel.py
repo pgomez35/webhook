@@ -14,9 +14,9 @@ def obtener_contactos_desde_hoja():
         cred_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
         try:
             cred_dict = json.loads(cred_json)
-            print("✅ Variable cargada correctamente")
-            print("📧 client_email:", cred_dict.get("client_email", "NO EMAIL"))
-            print("🔑 project_id:", cred_dict.get("project_id", "NO PROJECT"))
+            if os.getenv("DEBUG_CREDENTIALS") == "true":
+                print("✅ Variable cargada correctamente")
+                print("📧 client_email:", cred_dict.get("client_email", "NO EMAIL"))
         except Exception as e:
             print("❌ Error al cargar GOOGLE_CREDENTIALS_JSON:", e)
             return []
@@ -38,18 +38,31 @@ def obtener_contactos_desde_hoja():
 
         contactos = []
         for i, fila in enumerate(filas):
-            fila += [''] * (18 - len(fila))  # R = columna 18
+            fila += [''] * (18 - len(fila))  # Asegura longitud
+            telefono = fila[2].strip().replace(" ", "").replace("+", "")
+
+            if not telefono or not telefono.isdigit():
+                print(f"⚠️ Contacto sin teléfono válido: {fila[1].strip()} - omitido")
+                continue
+
+            disponibilidad = fila[3].strip().upper()
+            contacto_estado = fila[8].strip().upper()
+
+            if disponibilidad != "APTO" or contacto_estado != "CONTACTO":
+                print(f"⚠️ Contacto {fila[1].strip()} no cumple condiciones (APTO y CONTACTO) - omitido")
+                continue
+
             contacto = {
                 "usuario": fila[1].strip(),
-                "telefono": fila[2].strip(),
-                "disponibilidad": fila[3].strip().upper(),
-                "contacto": fila[8].strip().upper(),
+                "telefono": telefono,
+                "disponibilidad": disponibilidad,
+                "contacto": contacto_estado,
                 "respuesta_creador": fila[9].strip().upper(),
                 "perfil": fila[5].strip().upper(),
                 "entrevista": fila[11].strip().upper(),
                 "nickname": fila[17].strip(),
             }
-            print(f"➡️ Contacto {i+1}: {contacto}")
+            print(f"➡️ Contacto válido {i + 1}: {contacto}")
             contactos.append(contacto)
 
         return contactos

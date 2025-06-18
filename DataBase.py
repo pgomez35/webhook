@@ -19,22 +19,33 @@ def guardar_contactos(contactos):
         cur = conn.cursor()
 
         for c in contactos:
+            # Saltar si no hay teléfono
+            if not c["telefono"]:
+                print(f"⚠️ Contacto sin teléfono: {c['usuario']} - omitido")
+                continue
+
             # Insertar en tabla usuarios
             cur.execute("SELECT id FROM usuarios WHERE telefono = %s", (c["telefono"],))
             usuario = cur.fetchone()
+
             if not usuario:
-                cur.execute("INSERT INTO usuarios (telefono, nombre) VALUES (%s, %s) RETURNING id", (c["telefono"], c["usuario"]))
+                cur.execute(
+                    "INSERT INTO usuarios (telefono, nombre) VALUES (%s, %s) RETURNING id",
+                    (c["telefono"], c["usuario"])
+                )
                 usuario_id = cur.fetchone()[0]
             else:
                 usuario_id = usuario[0]
 
-            # Insertar o actualizar contacto_info
+            # Insertar o actualizar en contacto_info
             cur.execute("SELECT 1 FROM contacto_info WHERE usuario_id = %s", (usuario_id,))
             existe = cur.fetchone()
 
             if existe:
                 cur.execute("""
                     UPDATE contacto_info SET
+                        telefono = %s,
+                        usuario = %s,
                         disponibilidad = %s,
                         contacto = %s,
                         respuesta_creador = %s,
@@ -43,18 +54,20 @@ def guardar_contactos(contactos):
                         nickname = %s
                     WHERE usuario_id = %s
                 """, (
-                    c["disponibilidad"], c["contacto"], c["respuesta_creador"],
-                    c["perfil"], c["entrevista"], c["nickname"], usuario_id
+                    c["telefono"], c["usuario"], c["disponibilidad"], c["contacto"],
+                    c["respuesta_creador"], c["perfil"], c["entrevista"], c["nickname"],
+                    usuario_id
                 ))
             else:
                 cur.execute("""
                     INSERT INTO contacto_info (
-                        usuario_id, disponibilidad, contacto, respuesta_creador,
-                        perfil, entrevista, nickname
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        usuario_id, telefono, usuario, disponibilidad, contacto,
+                        respuesta_creador, perfil, entrevista, nickname
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
-                    usuario_id, c["disponibilidad"], c["contacto"], c["respuesta_creador"],
-                    c["perfil"], c["entrevista"], c["nickname"]
+                    usuario_id, c["telefono"], c["usuario"], c["disponibilidad"],
+                    c["contacto"], c["respuesta_creador"], c["perfil"],
+                    c["entrevista"], c["nickname"]
                 ))
 
         conn.commit()
@@ -63,6 +76,7 @@ def guardar_contactos(contactos):
         print("✅ Contactos guardados exitosamente.")
     except Exception as e:
         print(f"❌ Error guardando contactos en base de datos: {e}")
+
 
 def guardar_mensaje(telefono, texto, tipo="recibido", es_audio=False):
     try:
