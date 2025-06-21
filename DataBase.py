@@ -5,6 +5,7 @@ from datetime import datetime
 import re
 import gspread
 from google.oauth2.service_account import Credentials
+from schemas import ActualizacionContactoInfo
 
 # Cargar variables de entorno (incluye DATABASE_URL)
 load_dotenv()
@@ -12,6 +13,84 @@ load_dotenv()
 INTERNAL_DATABASE_URL = os.getenv("EXTERNAL_DATABASE_URL")
 
 EXTERNAL_DATABASE_URL = os.getenv("EXTERNAL_DATABASE_URL")
+
+from typing import Optional
+import psycopg2
+
+def actualizar_contacto_info_db(telefono: str, datos: ActualizacionContactoInfo):
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+
+        updates = []
+        valores = []
+
+        if datos.estado_whatsapp:
+            updates.append("estado_whatsapp = %s")
+            valores.append(datos.estado_whatsapp)
+        if datos.fecha_entrevista:
+            updates.append("fecha_entrevista = %s")
+            valores.append(datos.fecha_entrevista)
+        if datos.entrevista:
+            updates.append("entrevista = %s")
+            valores.append(datos.entrevista)
+
+        if not updates:
+            return {"status": "error", "mensaje": "No se proporcionaron campos para actualizar."}
+
+        valores.append(telefono)
+        query = f"""
+            UPDATE contacto_info
+            SET {', '.join(updates)}
+            WHERE telefono = %s
+        """
+        cur.execute(query, tuple(valores))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"status": "ok", "mensaje": "Contacto actualizado correctamente"}
+
+    except Exception as e:
+        print("❌ Error actualizando contacto_info:", e)
+        return {"status": "error", "mensaje": str(e)}
+
+def obtener_contactos_db(perfil: Optional[str] = None):
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+
+        if perfil:
+            cur.execute("""
+                SELECT telefono, usuario, perfil, estado_whatsapp, entrevista, fecha_entrevista
+                FROM contacto_info
+                WHERE perfil = %s
+            """, (perfil.upper(),))
+        else:
+            cur.execute("""
+                SELECT telefono, usuario, perfil, estado_whatsapp, entrevista, fecha_entrevista
+                FROM contacto_info
+            """)
+
+        contactos = [
+            {
+                "telefono": row[0],
+                "usuario": row[1],
+                "perfil": row[2],
+                "estado_whatsapp": row[3],
+                "entrevista": row[4],
+                "fecha_entrevista": row[5]
+            }
+            for row in cur.fetchall()
+        ]
+
+        cur.close()
+        conn.close()
+        return contactos
+
+    except Exception as e:
+        print("❌ Error obteniendo contactos:", e)
+        return {"status": "error", "mensaje": str(e)}
+
 
 def guardar_contactos(contactos):
     try:

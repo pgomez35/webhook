@@ -74,6 +74,21 @@ def descargar_audio(audio_id, token, carpeta_destino=AUDIO_DIR):
         print("❌ Error al descargar audio:", e)
         return None
 
+from fastapi import Path, Body
+from pydantic import BaseModel
+from typing import Optional
+
+from schemas import ActualizacionContactoInfo
+
+@app.patch("/contacto_info/{telefono}")
+def actualizar_contacto_info(telefono: str = Path(...), datos: ActualizacionContactoInfo = Body(...)):
+    return actualizar_contacto_info_db(telefono, datos)
+
+
+@app.get("/contactos")
+def listar_contactos(perfil: Optional[str] = None):
+    return obtener_contactos_db(perfil)
+
 @app.post("/cargar_contactos")
 def cargar_contactos_desde_excel():
     try:
