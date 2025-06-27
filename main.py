@@ -26,11 +26,11 @@ CHROMA_DIR = "./chroma_faq_openai"
 app = FastAPI()
 
 # ✅ Crear carpeta persistente de audios si no existe
-AUDIO_DIR = "/tmp/audios"
+AUDIO_DIR = "/audios"
 os.makedirs(AUDIO_DIR, exist_ok=True)
 
-# ✅ Montar ruta para servir archivos estáticos desde /tmp/audios
-app.mount("/audios", StaticFiles(directory="/tmp/audios"), name="audios")
+# ✅ Montar ruta para servir archivos estáticos desde /audios
+app.mount("/audios", StaticFiles(directory="/audios"), name="audios")
 
 # Configurar CORS para permitir peticiones del frontend
 app.add_middleware(
