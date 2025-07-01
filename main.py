@@ -194,12 +194,24 @@ def listar_contactos():
 def listar_mensajes(telefono: str):
     return obtener_mensajes(telefono)
 
+from fastapi.responses import JSONResponse
+from enviar_msg_wp import enviar_mensaje_texto_simple
+from enviar_msg_wp import enviar_plantilla_generica
+from DataBase import guardar_mensaje
+
 @app.post("/mensajes")
 async def api_enviar_mensaje(data: dict):
     telefono = data.get("telefono")
     mensaje = data.get("mensaje")
+    nombre = data.get("nombre", "").strip()
 
-    # Enviar mensaje por WhatsApp
+    if not telefono or not mensaje:
+        return JSONResponse({"error": "Faltan datos"}, status_code=400)
+
+    # 1. Intentar enviar mensaje normal
+    print(f"Enviando mensaje a: {telefono}")
+    print(f"📝 Contenido: {mensaje}")
+
     codigo, respuesta_api = enviar_mensaje_texto_simple(
         token=TOKEN,
         numero_id=PHONE_NUMBER_ID,
@@ -207,15 +219,46 @@ async def api_enviar_mensaje(data: dict):
         texto=mensaje
     )
 
-    # Guardar en base de datos
+    # 2. Detectar error de re-engagement
+    if respuesta_api and "error" in respuesta_api:
+        error = respuesta_api["error"]
+        if error.get("code") == 131047:
+            print("⚠️ Error 131047: re-engagement. Reintentando con plantilla...")
+
+            plantilla = "reengagement"
+            parametros = [nombre]
+
+            codigo, respuesta_api = enviar_plantilla_generica(
+                token=TOKEN,
+                phone_number_id=PHONE_NUMBER_ID,
+                numero_destino=telefono,
+                nombre_plantilla=plantilla,
+                parametros=parametros
+            )
+
+            guardar_mensaje(
+                telefono,
+                f"[Plantilla enviada tras error 131047: {plantilla} - {parametros}]",
+                tipo="enviado"
+            )
+
+            return {
+                "status": "plantilla_fallback",
+                "mensaje": "Mensaje falló por ventana de 24 h. Se usó plantilla.",
+                "codigo_api": codigo,
+                "respuesta_api": respuesta_api
+            }
+
+    # 3. Si NO hubo error → guardar mensaje enviado normalmente
     guardar_mensaje(telefono, mensaje, tipo="enviado")
 
     return {
         "status": "ok",
-        "mensaje": "Mensaje guardado y enviado",
+        "mensaje": "Mensaje enviado correctamente",
         "codigo_api": codigo,
         "respuesta_api": respuesta_api
     }
+
 
 from fastapi import UploadFile, Form
 from datetime import datetime
