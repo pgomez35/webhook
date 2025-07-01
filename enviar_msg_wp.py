@@ -151,49 +151,69 @@ def enviar_plantilla_generica(token: str, phone_number_id: str, numero_destino: 
                               nombre_plantilla: str, codigo_idioma: str = "es_CO",
                               parametros: list = None):
 
-    url = f"https://graph.facebook.com/v19.0/{phone_number_id}/messages"
-
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
-
-    data = {
-        "messaging_product": "whatsapp",
-        "to": numero_destino,
-        "type": "template",
-        "template": {
-            "name": nombre_plantilla,
-            "language": {
-                "code": codigo_idioma
+    def construir_payload(idioma):
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": numero_destino,
+            "type": "template",
+            "template": {
+                "name": nombre_plantilla,
+                "language": {
+                    "code": idioma
+                }
             }
         }
-    }
 
-    if parametros:
-        data["template"]["components"] = [
-            {
-                "type": "body",
-                "parameters": [{"type": "text", "text": str(p)} for p in parametros]
+        if parametros:
+            payload["template"]["components"] = [
+                {
+                    "type": "body",
+                    "parameters": [{"type": "text", "text": str(p)} for p in parametros]
+                }
+            ]
+
+        return payload
+
+    idiomas_fallback = ["es_MX", "es_CO", "es_ES", "en_US"]
+
+
+    for idioma in idiomas_fallback:
+        data = construir_payload(idioma)
+
+        print("📤 Enviando plantilla:", nombre_plantilla)
+        print("📨 A:", numero_destino)
+        print(f"🌐 Idioma: {idioma}")
+        print("📦 Data:", json.dumps(data, indent=2))
+
+        response = requests.post(
+            f"https://graph.facebook.com/v19.0/{phone_number_id}/messages",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            },
+            json=data
+        )
+
+        print("✅ Código de estado:", response.status_code)
+
+        try:
+            respuesta_json = response.json()
+        except json.JSONDecodeError:
+            respuesta_json = {
+                "error": "Respuesta no válida en formato JSON",
+                "contenido": response.text
             }
-        ]
 
-    print("📤 Enviando plantilla:", nombre_plantilla)
-    print("📨 A:", numero_destino)
-    print("📦 Data:", json.dumps(data, indent=2))
+        print("📡 Respuesta de la API:", respuesta_json)
 
-    response = requests.post(url, headers=headers, json=data)
+        # Solo repetimos si es el error específico 132001
+        if response.status_code == 404 and respuesta_json.get("error", {}).get("code") == 132001:
+            print(f"⚠️ La plantilla no existe en el idioma {idioma}. Probando siguiente idioma...")
+            continue
+        else:
+            return response.status_code, respuesta_json
 
-    print("✅ Código de estado:", response.status_code)
-
-    try:
-        respuesta_json = response.json()
-    except json.JSONDecodeError:
-        respuesta_json = {
-            "error": "Respuesta no válida en formato JSON",
-            "contenido": response.text
-        }
-
-    print("📡 Respuesta de la API:", respuesta_json)
-
-    return response.status_code, respuesta_json
+    # Si todos fallan
+    return 404, {
+        "error": f"No se pudo enviar la plantilla '{nombre_plantilla}' en ningún idioma disponible"
+    }

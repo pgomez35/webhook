@@ -222,7 +222,7 @@ async def api_enviar_mensaje(data: dict):
             phone_number_id=PHONE_NUMBER_ID,
             numero_destino=telefono,
             nombre_plantilla="reengagement",
-            codigo_idioma="es_CO",  # el primero que probará
+            codigo_idioma="es_MX",  # el primero que probará
             parametros=[nombre] if nombre else []
         )
 
