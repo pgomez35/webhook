@@ -208,67 +208,39 @@ async def api_enviar_mensaje(data: dict):
     if not telefono or not mensaje:
         return JSONResponse({"error": "Faltan datos"}, status_code=400)
 
-    # 1. Intentar enviar mensaje normal
-    print(f"Enviando mensaje a: {telefono}")
-    print(f"📝 Contenido: {mensaje}")
+    # Obtener el usuario_id para validación de 24h
+    usuario_id = obtener_usuario_id_por_telefono(telefono)
 
-    try:
-        codigo, respuesta_api = enviar_mensaje_texto_simple(
+    if usuario_id and paso_limite_24h(usuario_id):
+        print("⏱️ Usuario fuera de la ventana de 24h. Enviando plantilla reengagement.")
+        plantilla = "reengagement"
+        parametros = [nombre]
+
+        codigo, respuesta_api = enviar_plantilla_generica(
             token=TOKEN,
-            numero_id=PHONE_NUMBER_ID,
-            telefono_destino=telefono,
-            texto=mensaje
+            phone_number_id=PHONE_NUMBER_ID,
+            numero_destino=telefono,
+            nombre_plantilla=plantilla,
+            parametros=parametros
         )
-    except Exception as e:
-        print("❌ Error al enviar mensaje:", str(e))
-        return {"status": "error", "mensaje": "Error al enviar mensaje", "detalle": str(e)}
 
-    # Imprimir respuesta para depuración
-    print(f"📡 Código de estado: {codigo}")
-    print(f"📡 Respuesta de la API: {respuesta_api}")
+        guardar_mensaje(telefono, f"[Plantilla enviada por 24h: {plantilla} - {parametros}]", tipo="enviado")
 
-    # 2. Detectar error de re-engagement
-    if isinstance(respuesta_api, dict) and "error" in respuesta_api:
-        error = respuesta_api["error"]
-        print("⚠️ Error detectado:", error)
+        return {
+            "status": "plantilla_auto",
+            "mensaje": "Se envió plantilla por estar fuera de ventana de 24h.",
+            "codigo_api": codigo,
+            "respuesta_api": respuesta_api
+        }
 
-        if error.get("code") == 131047:
-            print("🚨 Código 131047 detectado. Reintentando con plantilla...")
+    # ✅ Si está dentro del rango → enviar mensaje normal
+    codigo, respuesta_api = enviar_mensaje_texto_simple(
+        token=TOKEN,
+        numero_id=PHONE_NUMBER_ID,
+        telefono_destino=telefono,
+        texto=mensaje
+    )
 
-            try:
-                plantilla = "reengagement"
-                parametros = [nombre]
-
-                codigo, respuesta_api = enviar_plantilla_generica(
-                    token=TOKEN,
-                    phone_number_id=PHONE_NUMBER_ID,
-                    numero_destino=telefono,
-                    nombre_plantilla=plantilla,
-                    parametros=parametros
-                )
-
-                guardar_mensaje(
-                    telefono,
-                    f"[Plantilla enviada tras error 131047: {plantilla} - {parametros}]",
-                    tipo="enviado"
-                )
-
-                return {
-                    "status": "plantilla_fallback",
-                    "mensaje": "Mensaje falló por 24 h. Se envió plantilla.",
-                    "codigo_api": codigo,
-                    "respuesta_api": respuesta_api
-                }
-
-            except Exception as e:
-                print("❌ Falló el envío de la plantilla:", str(e))
-                return {
-                    "status": "error",
-                    "mensaje": "Error al enviar plantilla de re-engagement",
-                    "error": str(e)
-                }
-
-    # 3. Si NO hubo error → guardar mensaje enviado normalmente
     guardar_mensaje(telefono, mensaje, tipo="enviado")
 
     return {
@@ -277,7 +249,6 @@ async def api_enviar_mensaje(data: dict):
         "codigo_api": codigo,
         "respuesta_api": respuesta_api
     }
-
 
 
 from fastapi import UploadFile, Form

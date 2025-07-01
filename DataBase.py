@@ -17,6 +17,62 @@ EXTERNAL_DATABASE_URL = os.getenv("EXTERNAL_DATABASE_URL")
 from typing import Optional
 import psycopg2
 
+from datetime import datetime, timedelta
+
+def obtener_usuario_id_por_telefono(telefono: str):
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT id FROM usuarios WHERE telefono = %s
+        """, (telefono,))
+
+        resultado = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        return resultado[0] if resultado else None
+    except Exception as e:
+        print("❌ Error al obtener usuario_id:", e)
+        return None
+
+
+
+from datetime import datetime, timedelta
+
+
+def paso_limite_24h(usuario_id: int):
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT fecha FROM mensajes
+            WHERE usuario_id = %s AND tipo = 'recibido'
+            ORDER BY fecha DESC
+            LIMIT 1
+        """, (usuario_id,))
+
+        resultado = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        if not resultado:
+            # Si no hay mensajes recibidos, se considera fuera del límite
+            return True
+
+        ultima_fecha = resultado[0]
+        ahora = datetime.utcnow()
+        diferencia = ahora - ultima_fecha
+
+        return diferencia > timedelta(hours=24)
+    except Exception as e:
+        print("❌ Error verificando límite 24h:", e)
+        return True  # Por seguridad, asumir que sí pasó el límite
+
+
+
 def actualizar_contacto_info_db(telefono: str, datos: ActualizacionContactoInfo):
     try:
         conn = psycopg2.connect(INTERNAL_DATABASE_URL)
