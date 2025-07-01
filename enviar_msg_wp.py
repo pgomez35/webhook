@@ -146,7 +146,6 @@ def enviar_audio_base64(token, numero_id, telefono_destino, ruta_audio, mimetype
 #     return response_send.status_code, response_send.json()
 
 
-
 def enviar_plantilla_generica(token: str, phone_number_id: str, numero_destino: str,
                               nombre_plantilla: str, codigo_idioma: str = "es_CO",
                               parametros: list = None):
@@ -168,14 +167,20 @@ def enviar_plantilla_generica(token: str, phone_number_id: str, numero_destino: 
             payload["template"]["components"] = [
                 {
                     "type": "body",
-                    "parameters": [{"type": "text", "text": str(p)} for p in parametros]
+                    "parameters": [
+                        {
+                            "type": "text",
+                            "text": str(parametros[i]),
+                            "name": f"variable_{i+1}"
+                        }
+                        for i in range(len(parametros))
+                    ]
                 }
             ]
 
         return payload
 
     idiomas_fallback = ["es_MX", "es_CO", "es_ES", "en_US"]
-
 
     for idioma in idiomas_fallback:
         data = construir_payload(idioma)
