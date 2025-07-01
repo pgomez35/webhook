@@ -149,6 +149,9 @@ async def recibir_mensaje(request: Request):
             audio_info = mensaje.get("audio", {})
             audio_id = audio_info.get("id")
             mensaje_usuario = f"[Audio recibido: {audio_id}]"
+        elif tipo == "button":
+            mensaje_usuario = mensaje.get("button", {}).get("text")
+            print(f"👆 Botón presionado: {mensaje_usuario}")
 
         if not telefono or not mensaje_usuario:
             print("⚠️ Mensaje incompleto.")
