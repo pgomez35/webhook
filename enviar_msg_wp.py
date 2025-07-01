@@ -1,5 +1,7 @@
 import requests
 
+import json
+
 def enviar_mensaje_texto_simple(token: str, numero_id: str, telefono_destino: str, texto: str):
     url = f"https://graph.facebook.com/v19.0/{numero_id}/messages"
 
@@ -23,9 +25,16 @@ def enviar_mensaje_texto_simple(token: str, numero_id: str, telefono_destino: st
     response = requests.post(url, headers=headers, json=mensaje)
 
     print("✅ Código de estado:", response.status_code)
-    print("📡 Respuesta de la API:", response.text)
 
-    return response.status_code, response.json()
+    try:
+        respuesta_json = response.json()
+    except json.JSONDecodeError:
+        respuesta_json = {"error": "Respuesta no válida en formato JSON", "contenido": response.text}
+
+    print("📡 Respuesta de la API:", respuesta_json)
+
+    return response.status_code, respuesta_json
+
 
 import requests
 import base64
@@ -137,12 +146,11 @@ def enviar_audio_base64(token, numero_id, telefono_destino, ruta_audio, mimetype
 #     return response_send.status_code, response_send.json()
 
 
+
 def enviar_plantilla_generica(token: str, phone_number_id: str, numero_destino: str,
                               nombre_plantilla: str, codigo_idioma: str = "es_CO",
                               parametros: list = None):
-    """
 
-    """
     url = f"https://graph.facebook.com/v19.0/{phone_number_id}/messages"
 
     headers = {
@@ -170,5 +178,22 @@ def enviar_plantilla_generica(token: str, phone_number_id: str, numero_destino: 
             }
         ]
 
+    print("📤 Enviando plantilla:", nombre_plantilla)
+    print("📨 A:", numero_destino)
+    print("📦 Data:", json.dumps(data, indent=2))
+
     response = requests.post(url, headers=headers, json=data)
-    return response.status_code, response.json()
+
+    print("✅ Código de estado:", response.status_code)
+
+    try:
+        respuesta_json = response.json()
+    except json.JSONDecodeError:
+        respuesta_json = {
+            "error": "Respuesta no válida en formato JSON",
+            "contenido": response.text
+        }
+
+    print("📡 Respuesta de la API:", respuesta_json)
+
+    return response.status_code, respuesta_json

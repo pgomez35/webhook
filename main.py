@@ -212,42 +212,61 @@ async def api_enviar_mensaje(data: dict):
     print(f"Enviando mensaje a: {telefono}")
     print(f"📝 Contenido: {mensaje}")
 
-    codigo, respuesta_api = enviar_mensaje_texto_simple(
-        token=TOKEN,
-        numero_id=PHONE_NUMBER_ID,
-        telefono_destino=telefono,
-        texto=mensaje
-    )
+    try:
+        codigo, respuesta_api = enviar_mensaje_texto_simple(
+            token=TOKEN,
+            numero_id=PHONE_NUMBER_ID,
+            telefono_destino=telefono,
+            texto=mensaje
+        )
+    except Exception as e:
+        print("❌ Error al enviar mensaje:", str(e))
+        return {"status": "error", "mensaje": "Error al enviar mensaje", "detalle": str(e)}
+
+    # Imprimir respuesta para depuración
+    print(f"📡 Código de estado: {codigo}")
+    print(f"📡 Respuesta de la API: {respuesta_api}")
 
     # 2. Detectar error de re-engagement
-    if respuesta_api and "error" in respuesta_api:
+    if isinstance(respuesta_api, dict) and "error" in respuesta_api:
         error = respuesta_api["error"]
+        print("⚠️ Error detectado:", error)
+
         if error.get("code") == 131047:
-            print("⚠️ Error 131047: re-engagement. Reintentando con plantilla...")
+            print("🚨 Código 131047 detectado. Reintentando con plantilla...")
 
-            plantilla = "reengagement"
-            parametros = [nombre]
+            try:
+                plantilla = "reengagement"
+                parametros = [nombre]
 
-            codigo, respuesta_api = enviar_plantilla_generica(
-                token=TOKEN,
-                phone_number_id=PHONE_NUMBER_ID,
-                numero_destino=telefono,
-                nombre_plantilla=plantilla,
-                parametros=parametros
-            )
+                codigo, respuesta_api = enviar_plantilla_generica(
+                    token=TOKEN,
+                    phone_number_id=PHONE_NUMBER_ID,
+                    numero_destino=telefono,
+                    nombre_plantilla=plantilla,
+                    parametros=parametros
+                )
 
-            guardar_mensaje(
-                telefono,
-                f"[Plantilla enviada tras error 131047: {plantilla} - {parametros}]",
-                tipo="enviado"
-            )
+                guardar_mensaje(
+                    telefono,
+                    f"[Plantilla enviada tras error 131047: {plantilla} - {parametros}]",
+                    tipo="enviado"
+                )
 
-            return {
-                "status": "plantilla_fallback",
-                "mensaje": "Mensaje falló por ventana de 24 h. Se usó plantilla.",
-                "codigo_api": codigo,
-                "respuesta_api": respuesta_api
-            }
+                return {
+                    "status": "plantilla_fallback",
+                    "mensaje": "Mensaje falló por 24 h. Se envió plantilla.",
+                    "codigo_api": codigo,
+                    "respuesta_api": respuesta_api
+                }
+
+            except Exception as e:
+                print("❌ Falló el envío de la plantilla:", str(e))
+                return {
+                    "status": "error",
+                    "mensaje": "Error al enviar plantilla de re-engagement",
+                    "error": str(e)
+                }
 
     # 3. Si NO hubo error → guardar mensaje enviado normalmente
     guardar_mensaje(telefono, mensaje, tipo="enviado")
@@ -258,6 +277,7 @@ async def api_enviar_mensaje(data: dict):
         "codigo_api": codigo,
         "respuesta_api": respuesta_api
     }
+
 
 
 from fastapi import UploadFile, Form
