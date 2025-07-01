@@ -214,16 +214,16 @@ async def api_enviar_mensaje(data: dict):
     if usuario_id and paso_limite_24h(usuario_id):
         print("⏱️ Usuario fuera de la ventana de 24h. Enviando plantilla reengagement.")
 
-        plantilla = "retomar_conversacion"
-        parametros = [nombre]
+        plantilla = "saludo"
+        parametros = []
 
         codigo, respuesta_api = enviar_plantilla_generica(
             token=TOKEN,
             phone_number_id=PHONE_NUMBER_ID,
             numero_destino=telefono,
-            nombre_plantilla=plantilla,
-            codigo_idioma="en_US",  # el primero que probará
-            parametros=[nombre] if nombre else []
+            nombre_plantilla="saludo",
+            codigo_idioma="es_CO",  # ✅ Coincide con el idioma configurado
+            parametros=[]  # ❗️ Importante: SIN parámetros porque no hay variables
         )
 
         guardar_mensaje(
