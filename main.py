@@ -213,6 +213,7 @@ async def api_enviar_mensaje(data: dict):
 
     if usuario_id and paso_limite_24h(usuario_id):
         print("⏱️ Usuario fuera de la ventana de 24h. Enviando plantilla reengagement.")
+
         plantilla = "reengagement"
         parametros = [nombre]
 
@@ -220,11 +221,16 @@ async def api_enviar_mensaje(data: dict):
             token=TOKEN,
             phone_number_id=PHONE_NUMBER_ID,
             numero_destino=telefono,
-            nombre_plantilla=plantilla,
-            parametros=parametros
+            nombre_plantilla="reengagement",
+            codigo_idioma="es_CO",  # el primero que probará
+            parametros=[nombre] if nombre else []
         )
 
-        guardar_mensaje(telefono, f"[Plantilla enviada por 24h: {plantilla} - {parametros}]", tipo="enviado")
+        guardar_mensaje(
+            telefono,
+            f"[Plantilla enviada por 24h: {plantilla} - {parametros}]",
+            tipo="enviado"
+        )
 
         return {
             "status": "plantilla_auto",
