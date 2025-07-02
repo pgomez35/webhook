@@ -217,7 +217,7 @@ async def api_enviar_mensaje(data: dict):
     if usuario_id and paso_limite_24h(usuario_id):
         print("⏱️ Usuario fuera de la ventana de 24h. Enviando plantilla reengagement.")
 
-        plantilla = "reconectar_usuario"
+        plantilla = "reconectar_usuario_boton"
         parametros = [nombre] if nombre else []
 
         codigo, respuesta_api = enviar_plantilla_generica(
