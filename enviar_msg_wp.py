@@ -145,7 +145,6 @@ def enviar_audio_base64(token, numero_id, telefono_destino, ruta_audio, mimetype
 #
 #     return response_send.status_code, response_send.json()
 
-
 def enviar_plantilla_generica(token: str, phone_number_id: str, numero_destino: str,
                               nombre_plantilla: str, codigo_idioma: str = "es_CO",
                               parametros: list = None):
@@ -170,10 +169,8 @@ def enviar_plantilla_generica(token: str, phone_number_id: str, numero_destino: 
                     "parameters": [
                         {
                             "type": "text",
-                            "text": str(parametros[i]),
-                            "name": f"variable_{i+1}"
-                        }
-                        for i in range(len(parametros))
+                            "text": str(p)
+                        } for p in parametros
                     ]
                 }
             ]
@@ -211,14 +208,14 @@ def enviar_plantilla_generica(token: str, phone_number_id: str, numero_destino: 
 
         print("📡 Respuesta de la API:", respuesta_json)
 
-        # Solo repetimos si es el error específico 132001
         if response.status_code == 404 and respuesta_json.get("error", {}).get("code") == 132001:
             print(f"⚠️ La plantilla no existe en el idioma {idioma}. Probando siguiente idioma...")
             continue
         else:
             return response.status_code, respuesta_json
 
-    # Si todos fallan
     return 404, {
         "error": f"No se pudo enviar la plantilla '{nombre_plantilla}' en ningún idioma disponible"
     }
+
+
