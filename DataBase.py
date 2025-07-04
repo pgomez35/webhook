@@ -147,8 +147,53 @@ def obtener_contactos_db(perfil: Optional[str] = None):
         print("❌ Error obteniendo contactos:", e)
         return {"status": "error", "mensaje": str(e)}
 
-
 def guardar_contactos(contactos):
+    conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+    cur = conn.cursor()
+
+    for c in contactos:
+        # Insertar en aspirantes
+        cur.execute("""
+        INSERT INTO aspirantes (usuario, nickname, telefono, email, motivo_no_apto, medio_contacto, mensaje_enviado, tipo_solicitud)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """, (
+            c["usuario"], c["nickname"], c["telefono"], c["email"], c["motivo_no_apto"],
+            c["contacto"], c["respuesta_creador"], c["tipo_solicitud"]
+        ))
+        aspirante_id = cur.fetchone()[0]
+
+        # Insertar en perfil_aspirante
+        cur.execute("""
+        INSERT INTO perfil_aspirante (aspirante_id, clasificacion_inicial, fecha_incorporacion)
+        VALUES (%s, %s, NOW())
+        """, (aspirante_id, c["perfil"]))
+
+        # Insertar en evaluacion_inicial
+        try:
+            seguidores = int(c["seguidores"]) if c["seguidores"].isdigit() else 0
+            likes = int(c["likes"]) if c["likes"].isdigit() else 0
+            videos = int(c["videos"]) if c["videos"].isdigit() else 0
+            duracion = int(c["duracion_emisiones"]) if c["duracion_emisiones"].isdigit() else 0
+            dias = int(c["dias_emisiones"]) if c["dias_emisiones"].isdigit() else 0
+        except:
+            seguidores = likes = videos = duracion = dias = 0
+
+        cur.execute("""
+        INSERT INTO evaluacion_inicial (
+            aspirante_id, seguidores, likes, cantidad_videos,
+            duracion_emisiones, dias_emisiones
+        ) VALUES (%s, %s, %s, %s, %s, %s)
+        """, (
+            aspirante_id, seguidores, likes, videos, duracion, dias
+        ))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+    print("✅ Contactos insertados correctamente.")
+
+def guardar_contactos_(contactos):
     try:
         conn = psycopg2.connect(INTERNAL_DATABASE_URL)
         cur = conn.cursor()

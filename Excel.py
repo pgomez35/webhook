@@ -39,29 +39,24 @@ def obtener_contactos_desde_hoja():
         contactos = []
         for i, fila in enumerate(filas):
             fila += [''] * (18 - len(fila))  # Asegura longitud
-            telefono = fila[2].strip().replace(" ", "").replace("+", "")
-
-            if not telefono or not telefono.isdigit():
-                print(f"⚠️ Contacto sin teléfono válido: {fila[1].strip()} - omitido")
-                continue
-
-            disponibilidad = fila[3].strip().upper()
-            contacto_estado = fila[8].strip().upper()
-
-            # if disponibilidad != "APTO" or contacto_estado != "CONTACTO":
-            if disponibilidad != "APTO":
-                print(f"⚠️ Contacto {fila[1].strip()} no cumple condiciones (APTO y CONTACTO) - omitido")
-                continue
 
             contacto = {
                 "usuario": fila[1].strip(),
-                "telefono": telefono,
-                "disponibilidad": disponibilidad,
-                "contacto": contacto_estado,
-                "respuesta_creador": fila[9].strip().upper(),
-                "perfil": fila[5].strip().upper(),
-                "entrevista": fila[11].strip().upper(),
+                "telefono": fila[2].strip().replace(" ", "").replace("+", ""),
+                "disponibilidad": fila[3].strip(),
+                "motivo_no_apto": fila[4].strip().upper(),
+                "contacto": fila[8].strip(),
+                "respuesta_creador": fila[9].strip(),
+                "perfil": fila[5].strip(),
+                "entrevista": fila[11].strip(),
+                "tipo_solicitud": fila[15].strip(),
+                "email": fila[16].strip(),
                 "nickname": fila[17].strip(),
+                "seguidores": fila[19].strip(),
+                "videos": fila[20].strip(),
+                "likes": fila[21].strip(),
+                "Duracion_Emisiones": fila[22].strip(),
+                "Dias_Emisiones": fila[23].strip()
             }
             print(f"➡️ Contacto válido {i + 1}: {contacto}")
             contactos.append(contacto)
