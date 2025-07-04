@@ -38,7 +38,7 @@ def obtener_contactos_desde_hoja():
 
         contactos = []
         for i, fila in enumerate(filas):
-            fila += [''] * (18 - len(fila))  # Asegura longitud
+            fila += [''] * (25 - len(fila))  # Asegura mínimo 25 columnas
 
             contacto = {
                 "usuario": fila[1].strip(),
