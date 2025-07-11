@@ -59,6 +59,7 @@ from googleapiclient.discovery import build
 import datetime
 import os
 import logging
+from dateutil.parser import isoparse
 
 # CONFIGURACIONES ----
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
@@ -130,8 +131,8 @@ def obtener_eventos() -> List[EventoOut]:
         if inicio and fin:
             resultado.append(EventoOut(
                 titulo=titulo,
-                inicio=inicio,
-                fin=fin,
+                inicio=isoparse(inicio),  # <-- Convierte a datetime
+                fin=isoparse(fin),        # <-- Convierte a datetime
                 descripcion=descripcion
             ))
     return resultado
