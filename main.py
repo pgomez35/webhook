@@ -1,5 +1,5 @@
 # ✅ main.py
-from fastapi import FastAPI, Request, UploadFile, Form
+from fastapi import FastAPI, Request, UploadFile, Form, HTTPException, Path, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
@@ -7,12 +7,21 @@ from dotenv import load_dotenv
 import os
 import json
 import re
+import logging
+import subprocess
+from datetime import datetime
+from typing import List, Optional
+from pydantic import BaseModel
 
 from enviar_msg_wp import *
 from buscador import inicializar_busqueda, responder_pregunta
 from DataBase import *
 from Excel import *
+from schemas import ActualizacionContactoInfo
 
+from dateutil.parser import isoparse
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
 
 # 🔄 Cargar variables de entorno
 load_dotenv()
@@ -40,44 +49,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 # 🧠 Inicializar búsqueda semántica
 client, collection = inicializar_busqueda(API_KEY, persist_dir=CHROMA_DIR)
 
-
-#proyecto calendar
-#------------------------------------------------------------------
-#------------------------------------------------------------------
-#------------------------------------------------------------------
-# backend/main.py
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List
-import uvicorn
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
-import datetime
-import os
-import logging
-from dateutil.parser import isoparse
-
-# CONFIGURACIONES ----
+# ==================== PROYECTO CALENDAR ===========================
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 CREDENTIALS_PATH = 'google_credentials_temp.json'
 TOKEN_PATH = 'google_token_temp.json'
 
-# LOGGING ----
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("calendar_sync")
 
 class EventoOut(BaseModel):
     titulo: str
-    inicio: datetime.datetime
-    fin: datetime.datetime
-    descripcion: str | None = None
+    inicio: datetime
+    fin: datetime
+    descripcion: Optional[str] = None
 
-# FUNCIONES ----
-# FUNCIONES ----
 def ensure_credentials_file():
     if not os.path.exists(CREDENTIALS_PATH):
         creds_content = os.getenv("GOOGLE_CREDENTIALS_JSON_CALEND")
@@ -107,14 +96,13 @@ def ensure_token_file():
 def get_calendar_service():
     ensure_credentials_file()
     ensure_token_file()
-
     creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
     service = build('calendar', 'v3', credentials=creds)
     return service
 
 def obtener_eventos() -> List[EventoOut]:
     service = get_calendar_service()
-    now = datetime.datetime.utcnow().isoformat() + 'Z'
+    now = datetime.utcnow().isoformat() + 'Z'
     events_result = service.events().list(
         calendarId='primary', timeMin=now,
         maxResults=10, singleEvents=True,
@@ -131,8 +119,8 @@ def obtener_eventos() -> List[EventoOut]:
         if inicio and fin:
             resultado.append(EventoOut(
                 titulo=titulo,
-                inicio=isoparse(inicio),  # <-- Convierte a datetime
-                fin=isoparse(fin),        # <-- Convierte a datetime
+                inicio=isoparse(inicio),
+                fin=isoparse(fin),
                 descripcion=descripcion
             ))
     return resultado
@@ -160,12 +148,7 @@ def sincronizar():
         logger.error(f"❌ Error al sincronizar eventos: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-#------------------------------------------------------------------
-#------------------------------------------------------------------
-#------------------------------------------------------------------
-
-
-
+# ==================== FIN PROYECTO CALENDAR =======================
 
 # 🔊 Función para descargar audio desde WhatsApp Cloud API
 def descargar_audio(audio_id, token, carpeta_destino=AUDIO_DIR):
@@ -197,16 +180,9 @@ def descargar_audio(audio_id, token, carpeta_destino=AUDIO_DIR):
         print("❌ Error al descargar audio:", e)
         return None
 
-from fastapi import Path, Body
-from pydantic import BaseModel
-from typing import Optional
-
-from schemas import ActualizacionContactoInfo
-
 @app.patch("/contacto_info/{telefono}")
 def actualizar_contacto_info(telefono: str = Path(...), datos: ActualizacionContactoInfo = Body(...)):
     return actualizar_contacto_info_db(telefono, datos)
-
 
 @app.get("/contactos")
 def listar_contactos(perfil: Optional[str] = None):
@@ -218,9 +194,7 @@ def cargar_contactos_desde_excel():
         contactos = obtener_contactos_desde_hoja()
         if not contactos:
             return {"status": "error", "mensaje": "No se encontraron contactos en la hoja"}
-
         guardar_contactos(contactos)
-
         return {"status": "ok", "mensaje": f"{len(contactos)} contactos cargados y guardados correctamente"}
     except Exception as e:
         return {"status": "error", "mensaje": f"Error al cargar contactos: {str(e)}"}
@@ -232,39 +206,31 @@ async def verify_webhook(request: Request):
     mode = params.get("hub.mode")
     token = params.get("hub.verify_token")
     challenge = params.get("hub.challenge")
-
     print("📡 Verificación recibida:", params)
-
     if mode == "subscribe" and token == VERIFY_TOKEN:
         return PlainTextResponse(challenge or "")
     return PlainTextResponse("Verificación fallida", status_code=403)
 
 # 📩 PROCESAMIENTO DE MENSAJES ENVIADOS AL WEBHOOK
-# 📩 Webhook de recepción de mensajes
 @app.post("/webhook")
 async def recibir_mensaje(request: Request):
     try:
         datos = await request.json()
         print("📨 Payload recibido:")
         print(json.dumps(datos, indent=2))
-
         entrada = datos.get("entry", [{}])[0]
         cambio = entrada.get("changes", [{}])[0]
         valor = cambio.get("value", {})
-
         mensajes = valor.get("messages")
         if not mensajes:
             print("⚠️ No se encontraron mensajes en el payload.")
             return JSONResponse({"status": "ok", "detalle": "Sin mensajes"}, status_code=200)
-
         mensaje = mensajes[0]
         telefono = mensaje.get("from")
         tipo = mensaje.get("type")
-
         mensaje_usuario = None
         es_audio = False
         audio_id = None
-
         if tipo == "text":
             mensaje_usuario = mensaje.get("text", {}).get("body")
         elif tipo == "audio":
@@ -275,18 +241,14 @@ async def recibir_mensaje(request: Request):
         elif tipo == "button":
             mensaje_usuario = mensaje.get("button", {}).get("text")
             print(f"👆 Botón presionado: {mensaje_usuario}")
-
         if not telefono or not mensaje_usuario:
             print("⚠️ Mensaje incompleto.")
             return JSONResponse({"status": "ok", "detalle": "Mensaje incompleto"}, status_code=200)
-
         print(f"📥 Mensaje recibido de {telefono}: {mensaje_usuario}")
         guardar_mensaje(telefono, mensaje_usuario, tipo="recibido", es_audio=es_audio)
-
         if es_audio:
             ruta = descargar_audio(audio_id, TOKEN)
             return JSONResponse({"status": "ok", "detalle": f"Audio guardado en {ruta}"})
-
         # ✉️ Enviar respuesta automática
         respuesta = "Gracias por tu mensaje, te escribiremos una respuesta tan pronto podamos"
         codigo, respuesta_api = enviar_mensaje_texto_simple(
@@ -296,53 +258,34 @@ async def recibir_mensaje(request: Request):
             texto=respuesta,
         )
         guardar_mensaje(telefono, respuesta, tipo="enviado")
-
         print(f"✅ Código de envío: {codigo}")
         print("🛰️ Respuesta API:", respuesta_api)
-
         return JSONResponse({
             "status": "ok",
             "respuesta": respuesta,
             "codigo_envio": codigo,
             "respuesta_api": respuesta_api,
         })
-
     except Exception as e:
         print("❌ Error procesando mensaje:", e)
         return JSONResponse({"error": str(e)}, status_code=500)
 
-# 📡 API para frontend React
-@app.get("/contactos")
-def listar_contactos():
-    return obtener_contactos()
-
 @app.get("/mensajes/{telefono}")
 def listar_mensajes(telefono: str):
     return obtener_mensajes(telefono)
-
-from fastapi.responses import JSONResponse
-from enviar_msg_wp import enviar_mensaje_texto_simple
-from enviar_msg_wp import enviar_plantilla_generica
-from DataBase import guardar_mensaje
 
 @app.post("/mensajes")
 async def api_enviar_mensaje(data: dict):
     telefono = data.get("telefono")
     mensaje = data.get("mensaje")
     nombre = data.get("nombre", "").strip()
-
     if not telefono or not mensaje:
         return JSONResponse({"error": "Faltan datos"}, status_code=400)
-
-    # Obtener el usuario_id para validación de 24h
     usuario_id = obtener_usuario_id_por_telefono(telefono)
-
     if usuario_id and paso_limite_24h(usuario_id):
         print("⏱️ Usuario fuera de la ventana de 24h. Enviando plantilla reengagement.")
-
         plantilla = "reconectar_usuario_boton"
         parametros = [nombre] if nombre else []
-
         codigo, respuesta_api = enviar_plantilla_generica(
             token=TOKEN,
             phone_number_id=PHONE_NUMBER_ID,
@@ -351,43 +294,30 @@ async def api_enviar_mensaje(data: dict):
             codigo_idioma="es_CO",
             parametros=parametros
         )
-
         guardar_mensaje(
             telefono,
             f"[Plantilla enviada por 24h: {plantilla} - {parametros}]",
             tipo="enviado"
         )
-
         return {
             "status": "plantilla_auto",
             "mensaje": "Se envió plantilla por estar fuera de ventana de 24h.",
             "codigo_api": codigo,
             "respuesta_api": respuesta_api
         }
-
-    # ✅ Si está dentro del rango → enviar mensaje normal
     codigo, respuesta_api = enviar_mensaje_texto_simple(
         token=TOKEN,
         numero_id=PHONE_NUMBER_ID,
         telefono_destino=telefono,
         texto=mensaje
     )
-
     guardar_mensaje(telefono, mensaje, tipo="enviado")
-
     return {
         "status": "ok",
         "mensaje": "Mensaje enviado correctamente",
         "codigo_api": codigo,
         "respuesta_api": respuesta_api
     }
-
-
-from fastapi import UploadFile, Form
-from datetime import datetime
-import os
-
-import subprocess
 
 @app.post("/mensajes/audio")
 async def api_enviar_audio(telefono: str = Form(...), audio: UploadFile = Form(...)):
@@ -396,30 +326,21 @@ async def api_enviar_audio(telefono: str = Form(...), audio: UploadFile = Form(.
     filename_ogg = filename_webm.replace(".webm", ".ogg")
     ruta_ogg = os.path.join(AUDIO_DIR, filename_ogg)
     os.makedirs(AUDIO_DIR, exist_ok=True)
-
-    # 1. Guardar .webm
     audio_bytes = await audio.read()
     with open(ruta_webm, "wb") as f:
         f.write(audio_bytes)
-
     print(f"✅ Audio guardado correctamente en: {ruta_webm}")
-
-    # 2. Convertir a .ogg usando ffmpeg
     try:
         subprocess.run(["ffmpeg", "-y", "-i", ruta_webm, "-acodec", "libopus", ruta_ogg], check=True)
         print(f"✅ Audio convertido a .ogg: {ruta_ogg}")
     except subprocess.CalledProcessError as e:
         return {"status": "error", "mensaje": "Error al convertir el audio a .ogg", "error": str(e)}
-
-    # 3. Guardar mensaje
     guardar_mensaje(
         telefono,
         f"[Audio guardado: {filename_ogg}]",
         tipo="enviado",
         es_audio=True
     )
-
-    # 4. Enviar audio a WhatsApp (usar ruta_ogg y mimetype correcto)
     try:
         codigo, respuesta_api = enviar_audio_base64(
             token=TOKEN,
@@ -436,7 +357,6 @@ async def api_enviar_audio(telefono: str = Form(...), audio: UploadFile = Form(.
             "archivo": filename_ogg,
             "error": str(e)
         }
-
     return {
         "status": "ok",
         "mensaje": "Audio recibido y enviado por WhatsApp",
@@ -445,14 +365,12 @@ async def api_enviar_audio(telefono: str = Form(...), audio: UploadFile = Form(.
         "respuesta_api": respuesta_api
     }
 
-
 @app.post("/contactos/nombre")
 async def actualizar_nombre(data: dict):
     telefono = data.get("telefono")
     nombre = data.get("nombre")
     if not telefono or not nombre:
         return JSONResponse({"error": "Faltan parámetros"}, status_code=400)
-
     actualizado = actualizar_nombre_contacto(telefono, nombre)
     if actualizado:
         return {"status": "ok", "mensaje": "Nombre actualizado"}
