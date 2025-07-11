@@ -121,7 +121,7 @@ def obtener_eventos_google() -> List[EventoOut]:
     now = datetime.utcnow().isoformat() + 'Z'
     events_result = service.events().list(
         calendarId='primary', timeMin=now,
-        maxResults=10, singleEvents=True,
+        maxResults=100, singleEvents=True,
         orderBy='startTime'
     ).execute()
     events = events_result.get('items', [])
@@ -132,8 +132,10 @@ def obtener_eventos_google() -> List[EventoOut]:
         fin = event['end'].get('dateTime')
         titulo = event.get('summary', 'Sin título')
         descripcion = event.get('description', '')
+        eid = event.get('id')
         if inicio and fin:
             resultado.append(EventoOut(
+                id=eid,
                 titulo=titulo,
                 inicio=isoparse(inicio),
                 fin=isoparse(fin),
@@ -213,6 +215,7 @@ def borrar_evento(evento_id: str):
     if len(EVENTOS) == n_antes:
         raise HTTPException(status_code=404, detail="Evento no encontrado")
     return {"ok": True}
+
 # ==================== FIN PROYECTO CALENDAR =======================
 
 # 🔊 Función para descargar audio desde WhatsApp Cloud API
