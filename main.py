@@ -76,18 +76,19 @@ class EventoOut(BaseModel):
     descripcion: str | None = None
 
 # FUNCIONES ----
+# FUNCIONES ----
 def ensure_credentials_file():
     if not os.path.exists(CREDENTIALS_PATH):
         creds_content = os.getenv("GOOGLE_CREDENTIALS_JSON_CALEND")
         if not creds_content:
-            raise RuntimeError("No se encontró la variable de entorno GOOGLE_CREDENTIALS_JSON.")
+            raise RuntimeError("No se encontró la variable de entorno GOOGLE_CREDENTIALS_JSON_CALEND.")
         try:
             parsed_json = json.loads(creds_content)
             with open(CREDENTIALS_PATH, 'w') as f:
                 json.dump(parsed_json, f)
             logger.info(f"✅ Archivo temporal {CREDENTIALS_PATH} creado desde variable de entorno.")
         except json.JSONDecodeError as e:
-            raise ValueError("El contenido de GOOGLE_CREDENTIALS_JSON no es un JSON válido.") from e
+            raise ValueError("El contenido de GOOGLE_CREDENTIALS_JSON_CALEND no es un JSON válido.") from e
 
 def ensure_token_file():
     if not os.path.exists(TOKEN_PATH):
@@ -110,7 +111,7 @@ def get_calendar_service():
     service = build('calendar', 'v3', credentials=creds)
     return service
 
-def sync_eventos():
+def obtener_eventos() -> List[EventoOut]:
     service = get_calendar_service()
     now = datetime.datetime.utcnow().isoformat() + 'Z'
     events_result = service.events().list(
@@ -120,18 +121,34 @@ def sync_eventos():
     ).execute()
     events = events_result.get('items', [])
 
-    logger.info(f"🔄 Se encontraron {len(events)} eventos en Google Calendar")
+    resultado = []
     for event in events:
         inicio = event['start'].get('dateTime')
         fin = event['end'].get('dateTime')
         titulo = event.get('summary', 'Sin título')
         descripcion = event.get('description', '')
+        if inicio and fin:
+            resultado.append(EventoOut(
+                titulo=titulo,
+                inicio=inicio,
+                fin=fin,
+                descripcion=descripcion
+            ))
+    return resultado
 
-        logger.info(f"📅 Evento: {titulo} | 🕐 Inicio: {inicio} | 🕓 Fin: {fin} | 📝 Descripción: {descripcion}")
+def sync_eventos():
+    eventos = obtener_eventos()
+    logger.info(f"🔄 Se encontraron {len(eventos)} eventos en Google Calendar")
+    for evento in eventos:
+        logger.info(f"📅 Evento: {evento.titulo} | 🕐 Inicio: {evento.inicio} | 🕓 Fin: {evento.fin} | 📝 Descripción: {evento.descripcion}")
 
 @app.get("/api/eventos", response_model=List[EventoOut])
 def listar_eventos():
-    return []
+    try:
+        return obtener_eventos()
+    except Exception as e:
+        logger.error(f"❌ Error al obtener eventos: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/sync")
 def sincronizar():
