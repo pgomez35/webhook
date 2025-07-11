@@ -40,9 +40,114 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 # 🧠 Inicializar búsqueda semántica
 client, collection = inicializar_busqueda(API_KEY, persist_dir=CHROMA_DIR)
+
+
+#proyecto calendar
+#------------------------------------------------------------------
+#------------------------------------------------------------------
+#------------------------------------------------------------------
+# backend/main.py
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import List
+import uvicorn
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+import datetime
+import os
+import logging
+
+# CONFIGURACIONES ----
+SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
+CREDENTIALS_PATH = 'google_credentials_temp.json'
+TOKEN_PATH = 'google_token_temp.json'
+
+# LOGGING ----
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("calendar_sync")
+
+class EventoOut(BaseModel):
+    titulo: str
+    inicio: datetime.datetime
+    fin: datetime.datetime
+    descripcion: str | None = None
+
+# FUNCIONES ----
+def ensure_credentials_file():
+    if not os.path.exists(CREDENTIALS_PATH):
+        creds_content = os.getenv("GOOGLE_CREDENTIALS_JSON_CALEND")
+        if not creds_content:
+            raise RuntimeError("No se encontró la variable de entorno GOOGLE_CREDENTIALS_JSON.")
+        try:
+            parsed_json = json.loads(creds_content)
+            with open(CREDENTIALS_PATH, 'w') as f:
+                json.dump(parsed_json, f)
+            logger.info(f"✅ Archivo temporal {CREDENTIALS_PATH} creado desde variable de entorno.")
+        except json.JSONDecodeError as e:
+            raise ValueError("El contenido de GOOGLE_CREDENTIALS_JSON no es un JSON válido.") from e
+
+def ensure_token_file():
+    if not os.path.exists(TOKEN_PATH):
+        token_content = os.getenv("GOOGLE_TOKEN_JSON")
+        if not token_content:
+            raise RuntimeError("No se encontró la variable de entorno GOOGLE_TOKEN_JSON.")
+        try:
+            parsed_token = json.loads(token_content)
+            with open(TOKEN_PATH, 'w') as f:
+                json.dump(parsed_token, f)
+            logger.info(f"✅ Archivo temporal {TOKEN_PATH} creado desde variable de entorno.")
+        except json.JSONDecodeError as e:
+            raise ValueError("El contenido de GOOGLE_TOKEN_JSON no es un JSON válido.") from e
+
+def get_calendar_service():
+    ensure_credentials_file()
+    ensure_token_file()
+
+    creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
+    service = build('calendar', 'v3', credentials=creds)
+    return service
+
+def sync_eventos():
+    service = get_calendar_service()
+    now = datetime.datetime.utcnow().isoformat() + 'Z'
+    events_result = service.events().list(
+        calendarId='primary', timeMin=now,
+        maxResults=10, singleEvents=True,
+        orderBy='startTime'
+    ).execute()
+    events = events_result.get('items', [])
+
+    logger.info(f"🔄 Se encontraron {len(events)} eventos en Google Calendar")
+    for event in events:
+        inicio = event['start'].get('dateTime')
+        fin = event['end'].get('dateTime')
+        titulo = event.get('summary', 'Sin título')
+        descripcion = event.get('description', '')
+
+        logger.info(f"📅 Evento: {titulo} | 🕐 Inicio: {inicio} | 🕓 Fin: {fin} | 📝 Descripción: {descripcion}")
+
+@app.get("/api/eventos", response_model=List[EventoOut])
+def listar_eventos():
+    return []
+
+@app.post("/api/sync")
+def sincronizar():
+    try:
+        sync_eventos()
+        return {"status": "ok", "mensaje": "Eventos sincronizados correctamente (logs disponibles)"}
+    except Exception as e:
+        logger.error(f"❌ Error al sincronizar eventos: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+#------------------------------------------------------------------
+#------------------------------------------------------------------
+#------------------------------------------------------------------
+
+
+
 
 # 🔊 Función para descargar audio desde WhatsApp Cloud API
 def descargar_audio(audio_id, token, carpeta_destino=AUDIO_DIR):
