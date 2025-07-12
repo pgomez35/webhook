@@ -75,6 +75,7 @@ app.add_middleware(
 client, collection = inicializar_busqueda(API_KEY, persist_dir=CHROMA_DIR)
 
 # ==================== PROYECTO CALENDAR ===========================
+# ==================== PROYECTO CALENDAR ===========================
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 CREDENTIALS_PATH = 'google_credentials_temp.json'
 TOKEN_PATH = 'google_token_temp.json'
@@ -114,17 +115,7 @@ def ensure_token_file():
         except json.JSONDecodeError as e:
             raise ValueError("El contenido de GOOGLE_TOKEN_JSON no es un JSON válido.") from e
 
-def get_calendar_service_():
-    ensure_credentials_file()
-    ensure_token_file()
-    creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
-    service = build('calendar', 'v3', credentials=creds)
-    return service
-
-# from google.auth.transport.requests import Request
-from google.oauth2 import service_account
-import google.auth
-
+import traceback
 def get_calendar_service():
     ensure_credentials_file()
     ensure_token_file()
@@ -133,22 +124,54 @@ def get_calendar_service():
     with open(TOKEN_PATH, "r") as f:
         token_info = json.load(f)
 
-    creds = Credentials.from_authorized_user_info(token_info, SCOPES)
+    logger.info("Intentando inicializar Credentials.from_authorized_user_info...")
+    logger.info(f"Credentials class: {Credentials}")
+    logger.info(f"Credentials methods: {dir(Credentials)}")
 
-    if not creds.valid and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
+    try:
+        creds = Credentials.from_authorized_user_info(token_info, SCOPES)
+    except Exception as e:
+        logger.error(f"Error al crear Credentials.from_authorized_user_info: {e}")
+        logger.error(traceback.format_exc())
+        raise
 
-    service = build("calendar", "v3", credentials=creds)
+    try:
+        if not creds.valid and creds.expired and creds.refresh_token:
+            from google.auth.transport.requests import Request
+            creds.refresh(Request())
+    except Exception as e:
+        logger.error(f"Error al refrescar Credentials: {e}")
+        logger.error(traceback.format_exc())
+        raise
+
+    try:
+        service = build("calendar", "v3", credentials=creds)
+    except Exception as e:
+        logger.error(f"Error al construir el servicio de Google Calendar: {e}")
+        logger.error(traceback.format_exc())
+        raise
+
     return service
 
 def obtener_eventos() -> List[EventoOut]:
-    service = get_calendar_service()
+    try:
+        service = get_calendar_service()
+    except Exception as e:
+        logger.error(f"❌ Error al obtener el servicio de Calendar: {str(e)}")
+        raise
+
     now = datetime.utcnow().isoformat() + 'Z'
-    events_result = service.events().list(
-        calendarId='primary', timeMin=now,
-        maxResults=10, singleEvents=True,
-        orderBy='startTime'
-    ).execute()
+    try:
+        events_result = service.events().list(
+            calendarId='primary', timeMin=now,
+            maxResults=10, singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+    except Exception as e:
+        logger.error(f"❌ Error al obtener eventos de Google Calendar API: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise
+
     events = events_result.get('items', [])
 
     resultado = []
@@ -178,6 +201,7 @@ def listar_eventos():
         return obtener_eventos()
     except Exception as e:
         logger.error(f"❌ Error al obtener eventos: {str(e)}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/sync")
@@ -187,13 +211,17 @@ def sincronizar():
         return {"status": "ok", "mensaje": "Eventos sincronizados correctamente (logs disponibles)"}
     except Exception as e:
         logger.error(f"❌ Error al sincronizar eventos: {str(e)}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/debug/version")
 def get_version():
     import google.auth
-    return {"google-auth-version": google.auth.__version__}
-
+    return {
+        "google-auth-version": google.auth.__version__,
+        "credentials_methods": dir(Credentials),
+        "credentials_class": str(Credentials)
+    }
 
 # ==================== FIN PROYECTO CALENDAR =======================
 
