@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 # Integración Google Calendar
 from dateutil.parser import isoparse
-# from google.oauth2.credentials import Credentials
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from uuid import uuid4
 
@@ -108,8 +108,7 @@ def get_calendar_service_():
     service = build('calendar', 'v3', credentials=creds)
     return service
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
+# from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 import google.auth
 
@@ -235,17 +234,7 @@ def cargar_contactos_desde_excel():
         return {"status": "error", "mensaje": f"Error al cargar contactos: {str(e)}"}
 
 # ✅ VERIFICACIÓN DEL WEBHOOK (Facebook Developers)
-# @app.get("/webhook")
-# async def verify_webhook(request: Request):
-#     params = dict(request.query_params)
-#     mode = params.get("hub.mode")
-#     token = params.get("hub.verify_token")
-#     challenge = params.get("hub.challenge")
-#     print("📡 Verificación recibida:", params)
-#     if mode == "subscribe" and token == VERIFY_TOKEN:
-#         return PlainTextResponse(challenge or "")
-#     return PlainTextResponse("Verificación fallida", status_code=403)
-@app.get("/webhook", response_class=PlainTextResponse, response_model=None)
+@app.get("/webhook")
 async def verify_webhook(request: Request):
     params = dict(request.query_params)
     mode = params.get("hub.mode")
@@ -256,9 +245,8 @@ async def verify_webhook(request: Request):
         return PlainTextResponse(challenge or "")
     return PlainTextResponse("Verificación fallida", status_code=403)
 
-
 # 📩 PROCESAMIENTO DE MENSAJES ENVIADOS AL WEBHOOK
-@app.post("/webhook", response_class=JSONResponse, response_model=None)
+@app.post("/webhook")
 async def recibir_mensaje(request: Request):
     try:
         datos = await request.json()
