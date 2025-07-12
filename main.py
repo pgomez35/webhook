@@ -155,6 +155,13 @@ def sincronizar():
     except Exception as e:
         logger.error(f"❌ Error al sincronizar eventos: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/debug/version")
+def get_version():
+    import google.auth
+    return {"google-auth-version": google.auth.__version__}
+
+
 # ==================== FIN PROYECTO CALENDAR =======================
 
 # 🔊 Función para descargar audio desde WhatsApp Cloud API
