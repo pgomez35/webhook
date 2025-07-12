@@ -20,6 +20,19 @@ from pydantic import BaseModel
 # Integración Google Calendar
 from dateutil.parser import isoparse
 from google.oauth2.credentials import Credentials
+import google.oauth2.credentials  # <--- Esto es lo que te falta
+
+import sys
+print("==== DEBUG GOOGLE AUTH ====")
+print("google.oauth2.credentials path:", google.oauth2.credentials.__file__)
+print("sys.path:", sys.path)
+print("Credentials class:", google.oauth2.credentials.Credentials)
+print("Has from_authorized_user_file:", hasattr(google.oauth2.credentials.Credentials, "from_authorized_user_file"))
+print("Has from_authorized_user_info:", hasattr(google.oauth2.credentials.Credentials, "from_authorized_user_info"))
+print("===========================")
+
+
+
 from googleapiclient.discovery import build
 from uuid import uuid4
 
