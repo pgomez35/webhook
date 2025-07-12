@@ -235,7 +235,17 @@ def cargar_contactos_desde_excel():
         return {"status": "error", "mensaje": f"Error al cargar contactos: {str(e)}"}
 
 # ✅ VERIFICACIÓN DEL WEBHOOK (Facebook Developers)
-@app.get("/webhook")
+# @app.get("/webhook")
+# async def verify_webhook(request: Request):
+#     params = dict(request.query_params)
+#     mode = params.get("hub.mode")
+#     token = params.get("hub.verify_token")
+#     challenge = params.get("hub.challenge")
+#     print("📡 Verificación recibida:", params)
+#     if mode == "subscribe" and token == VERIFY_TOKEN:
+#         return PlainTextResponse(challenge or "")
+#     return PlainTextResponse("Verificación fallida", status_code=403)
+@app.get("/webhook", response_class=PlainTextResponse, response_model=None)
 async def verify_webhook(request: Request):
     params = dict(request.query_params)
     mode = params.get("hub.mode")
@@ -246,8 +256,9 @@ async def verify_webhook(request: Request):
         return PlainTextResponse(challenge or "")
     return PlainTextResponse("Verificación fallida", status_code=403)
 
+
 # 📩 PROCESAMIENTO DE MENSAJES ENVIADOS AL WEBHOOK
-@app.post("/webhook")
+@app.post("/webhook", response_class=JSONResponse, response_model=None)
 async def recibir_mensaje(request: Request):
     try:
         datos = await request.json()
