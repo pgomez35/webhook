@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 # Integración Google Calendar
 from dateutil.parser import isoparse
-from google.oauth2.credentials import Credentials
+# from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from uuid import uuid4
 
@@ -101,11 +101,32 @@ def ensure_token_file():
         except json.JSONDecodeError as e:
             raise ValueError("El contenido de GOOGLE_TOKEN_JSON no es un JSON válido.") from e
 
-def get_calendar_service():
+def get_calendar_service_():
     ensure_credentials_file()
     ensure_token_file()
     creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
     service = build('calendar', 'v3', credentials=creds)
+    return service
+
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google.oauth2 import service_account
+import google.auth
+
+def get_calendar_service():
+    ensure_credentials_file()
+    ensure_token_file()
+
+    # Cargar token desde archivo JSON
+    with open(TOKEN_PATH, "r") as f:
+        token_info = json.load(f)
+
+    creds = Credentials.from_authorized_user_info(token_info, SCOPES)
+
+    if not creds.valid and creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+
+    service = build("calendar", "v3", credentials=creds)
     return service
 
 def obtener_eventos() -> List[EventoOut]:
