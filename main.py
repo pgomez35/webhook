@@ -69,20 +69,12 @@ TOKEN_PATH = 'google_token_temp.json'
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("calendar_sync")
 
-# --- MODELOS ---
-class EventoIn(BaseModel):
+class EventoOut(BaseModel):
     titulo: str
     inicio: datetime
     fin: datetime
-    descripcion: Optional[str] = ""
+    descripcion: Optional[str] = None
 
-class EventoOut(EventoIn):
-    id: Optional[str] = None
-
-# --- ALMACENAMIENTO LOCAL (en memoria) ---
-EVENTOS: List[EventoOut] = []
-
-# --- FUNCIONES GOOGLE CALENDAR ---
 def ensure_credentials_file():
     if not os.path.exists(CREDENTIALS_PATH):
         creds_content = os.getenv("GOOGLE_CREDENTIALS_JSON_CALEND")
@@ -116,12 +108,12 @@ def get_calendar_service():
     service = build('calendar', 'v3', credentials=creds)
     return service
 
-def obtener_eventos_google() -> List[EventoOut]:
+def obtener_eventos() -> List[EventoOut]:
     service = get_calendar_service()
     now = datetime.utcnow().isoformat() + 'Z'
     events_result = service.events().list(
         calendarId='primary', timeMin=now,
-        maxResults=100, singleEvents=True,
+        maxResults=10, singleEvents=True,
         orderBy='startTime'
     ).execute()
     events = events_result.get('items', [])
@@ -132,10 +124,8 @@ def obtener_eventos_google() -> List[EventoOut]:
         fin = event['end'].get('dateTime')
         titulo = event.get('summary', 'Sin título')
         descripcion = event.get('description', '')
-        eid = event.get('id')
         if inicio and fin:
             resultado.append(EventoOut(
-                id=eid,
                 titulo=titulo,
                 inicio=isoparse(inicio),
                 fin=isoparse(fin),
@@ -143,79 +133,28 @@ def obtener_eventos_google() -> List[EventoOut]:
             ))
     return resultado
 
-def crear_evento_google(evento: EventoIn):
-    service = get_calendar_service()
-    event = {
-        'summary': evento.titulo,
-        'description': evento.descripcion,
-        'start': {'dateTime': evento.inicio.isoformat()},
-        'end': {'dateTime': evento.fin.isoformat()},
-    }
-    created = service.events().insert(calendarId='primary', body=event).execute()
-    return created.get('id')
-
-def actualizar_evento_google(evento_id: str, evento: EventoIn):
-    service = get_calendar_service()
-    event = service.events().get(calendarId='primary', eventId=evento_id).execute()
-    event['summary'] = evento.titulo
-    event['description'] = evento.descripcion
-    event['start']['dateTime'] = evento.inicio.isoformat()
-    event['end']['dateTime'] = evento.fin.isoformat()
-    updated_event = service.events().update(calendarId='primary', eventId=evento_id, body=event).execute()
-    return updated_event.get('id')
-
-def borrar_evento_google(evento_id: str):
-    service = get_calendar_service()
-    service.events().delete(calendarId='primary', eventId=evento_id).execute()
-
-# --- ENDPOINTS FASTAPI ---
+def sync_eventos():
+    eventos = obtener_eventos()
+    logger.info(f"🔄 Se encontraron {len(eventos)} eventos en Google Calendar")
+    for evento in eventos:
+        logger.info(f"📅 Evento: {evento.titulo} | 🕐 Inicio: {evento.inicio} | 🕓 Fin: {evento.fin} | 📝 Descripción: {evento.descripcion}")
 
 @app.get("/api/eventos", response_model=List[EventoOut])
-def listar_eventos(origen: Optional[str] = None):
-    """
-    Si origen=google, trae de Google Calendar, si no, trae de memoria
-    """
+def listar_eventos():
     try:
-        if origen == "google":
-            return obtener_eventos_google()
-        return EVENTOS
+        return obtener_eventos()
     except Exception as e:
         logger.error(f"❌ Error al obtener eventos: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/eventos", response_model=EventoOut)
-def crear_evento(evento: EventoIn):
-    # Crear en Google Calendar
-    google_id = crear_evento_google(evento)
-    nuevo_evento = EventoOut(id=google_id, **evento.dict())
-    EVENTOS.append(nuevo_evento)
-    return nuevo_evento
-
-@app.put("/api/eventos/{evento_id}", response_model=EventoOut)
-def editar_evento(evento_id: str, evento: EventoIn):
-    # Editar en Google Calendar
-    actualizar_evento_google(evento_id, evento)
-    for idx, ev in enumerate(EVENTOS):
-        if ev.id == evento_id:
-            editado = EventoOut(id=evento_id, **evento.dict())
-            EVENTOS[idx] = editado
-            return editado
-    # Si no estaba en memoria, lo agrega
-    editado = EventoOut(id=evento_id, **evento.dict())
-    EVENTOS.append(editado)
-    return editado
-
-@app.delete("/api/eventos/{evento_id}", response_model=dict)
-def borrar_evento(evento_id: str):
-    # Borrar en Google Calendar
-    borrar_evento_google(evento_id)
-    global EVENTOS
-    n_antes = len(EVENTOS)
-    EVENTOS = [ev for ev in EVENTOS if ev.id != evento_id]
-    if len(EVENTOS) == n_antes:
-        raise HTTPException(status_code=404, detail="Evento no encontrado")
-    return {"ok": True}
-
+@app.post("/api/sync")
+def sincronizar():
+    try:
+        sync_eventos()
+        return {"status": "ok", "mensaje": "Eventos sincronizados correctamente (logs disponibles)"}
+    except Exception as e:
+        logger.error(f"❌ Error al sincronizar eventos: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 # ==================== FIN PROYECTO CALENDAR =======================
 
 # 🔊 Función para descargar audio desde WhatsApp Cloud API
