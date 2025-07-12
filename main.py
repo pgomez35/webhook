@@ -75,7 +75,6 @@ app.add_middleware(
 client, collection = inicializar_busqueda(API_KEY, persist_dir=CHROMA_DIR)
 
 # ==================== PROYECTO CALENDAR ===========================
-# ==================== PROYECTO CALENDAR ===========================
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 CREDENTIALS_PATH = 'google_credentials_temp.json'
 TOKEN_PATH = 'google_token_temp.json'
@@ -83,11 +82,28 @@ TOKEN_PATH = 'google_token_temp.json'
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("calendar_sync")
 
+# === FastAPI Setup ===
+app = FastAPI()
+
+AUDIO_DIR = "audios"
+os.makedirs(AUDIO_DIR, exist_ok=True)
+app.mount("/audios", StaticFiles(directory=AUDIO_DIR), name="audios")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 class EventoOut(BaseModel):
     titulo: str
     inicio: datetime
     fin: datetime
     descripcion: Optional[str] = None
+
+# ==================== FUNCIONES DE CREDENCIALES ===========================
 
 def ensure_credentials_file():
     if not os.path.exists(CREDENTIALS_PATH):
@@ -115,32 +131,34 @@ def ensure_token_file():
         except json.JSONDecodeError as e:
             raise ValueError("El contenido de GOOGLE_TOKEN_JSON no es un JSON válido.") from e
 
+# ==================== GOOGLE CALENDAR SERVICE ==============================
 import traceback
 def get_calendar_service():
     ensure_credentials_file()
     ensure_token_file()
 
-    # Cargar token desde archivo JSON
     with open(TOKEN_PATH, "r") as f:
         token_info = json.load(f)
 
-    logger.info("Intentando inicializar Credentials.from_authorized_user_info...")
-    logger.info(f"Credentials class: {Credentials}")
-    logger.info(f"Credentials methods: {dir(Credentials)}")
+    # Detectar tipo de credencial
+    cred_type = token_info.get("type", "")
+    logger.info(f"Intentando inicializar credenciales tipo: {cred_type}")
 
     try:
-        creds = Credentials.from_authorized_user_info(token_info, SCOPES)
+        if cred_type == "service_account":
+            from google.oauth2.service_account import Credentials as SACredentials
+            logger.info(f"Usando service_account.Credentials. Métodos: {dir(SACredentials)}")
+            creds = SACredentials.from_service_account_info(token_info, scopes=SCOPES)
+        else:
+            from google.oauth2.credentials import Credentials as UserCredentials
+            logger.info(f"Usando oauth2.credentials.Credentials. Métodos: {dir(UserCredentials)}")
+            creds = UserCredentials.from_authorized_user_info(token_info, SCOPES)
+            # Refrescar si es necesario
+            if not creds.valid and creds.expired and creds.refresh_token:
+                from google.auth.transport.requests import Request
+                creds.refresh(Request())
     except Exception as e:
-        logger.error(f"Error al crear Credentials.from_authorized_user_info: {e}")
-        logger.error(traceback.format_exc())
-        raise
-
-    try:
-        if not creds.valid and creds.expired and creds.refresh_token:
-            from google.auth.transport.requests import Request
-            creds.refresh(Request())
-    except Exception as e:
-        logger.error(f"Error al refrescar Credentials: {e}")
+        logger.error(f"Error al inicializar las credenciales: {e}")
         logger.error(traceback.format_exc())
         raise
 
@@ -152,6 +170,8 @@ def get_calendar_service():
         raise
 
     return service
+
+# ==================== OBTENER EVENTOS ==============================
 
 def obtener_eventos() -> List[EventoOut]:
     try:
@@ -195,6 +215,8 @@ def sync_eventos():
     for evento in eventos:
         logger.info(f"📅 Evento: {evento.titulo} | 🕐 Inicio: {evento.inicio} | 🕓 Fin: {evento.fin} | 📝 Descripción: {evento.descripcion}")
 
+# ==================== RUTAS FASTAPI ==============================
+
 @app.get("/api/eventos", response_model=List[EventoOut])
 def listar_eventos():
     try:
@@ -217,12 +239,13 @@ def sincronizar():
 @app.get("/debug/version")
 def get_version():
     import google.auth
+    from google.oauth2.credentials import Credentials as UserCredentials
+    from google.oauth2.service_account import Credentials as SACredentials
     return {
         "google-auth-version": google.auth.__version__,
-        "credentials_methods": dir(Credentials),
-        "credentials_class": str(Credentials)
+        "user_credentials_methods": dir(UserCredentials),
+        "service_account_credentials_methods": dir(SACredentials)
     }
-
 # ==================== FIN PROYECTO CALENDAR =======================
 
 # 🔊 Función para descargar audio desde WhatsApp Cloud API
