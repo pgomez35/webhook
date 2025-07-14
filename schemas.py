@@ -14,3 +14,14 @@ class MensajeEntrada(BaseModel):
 class NombreActualizacion(BaseModel):
     telefono: str
     nombre: str
+
+# ✅ Para entrada (crear/editar)
+class EventoIn(BaseModel):
+    titulo: str
+    inicio: datetime
+    fin: datetime
+    descripcion: Optional[str] = None
+
+# ✅ Para salida (incluye ID)
+class EventoOut(EventoIn):
+    id: str

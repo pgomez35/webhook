@@ -25,6 +25,7 @@ from google.oauth2.credentials import Credentials as UserCredentials
 from google.auth.transport.requests import Request as GoogleRequest
 from googleapiclient.discovery import build
 import psycopg2
+from schemas import EventoIn, EventoOut
 
 # from google.oauth2.credentials import Credentials
 # import google.oauth2.credentials  # <--- Esto es lo que te falta
@@ -85,13 +86,6 @@ DB_URL = os.getenv("INTERNAL_DATABASE_URL")  # Debe estar en tus variables de en
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("calendar_sync")
-
-class EventoOut(BaseModel):
-    id: str
-    titulo: str
-    inicio: datetime
-    fin: datetime
-    descripcion: Optional[str] = None
 
 # ==================== FUNCIONES DE BD PARA TOKEN ===========================
 
@@ -229,16 +223,19 @@ def sincronizar():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/eventos/{evento_id}", response_model=EventoOut)
-def editar_evento(evento_id: str, evento: EventoOut):
+def editar_evento(evento_id: str, evento: EventoIn):
     try:
         service = get_calendar_service()
         google_event = service.events().get(calendarId="primary", eventId=evento_id).execute()
+
         google_event['summary'] = evento.titulo
         google_event['description'] = evento.descripcion
         google_event['start']['dateTime'] = evento.inicio.isoformat()
         google_event['end']['dateTime'] = evento.fin.isoformat()
+
         updated = service.events().update(calendarId="primary", eventId=evento_id, body=google_event).execute()
         return EventoOut(
+            id=updated['id'],
             titulo=updated['summary'],
             inicio=isoparse(updated['start']['dateTime']),
             fin=isoparse(updated['end']['dateTime']),
@@ -247,6 +244,7 @@ def editar_evento(evento_id: str, evento: EventoOut):
     except Exception as e:
         logger.error(f"❌ Error al editar evento {evento_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.delete("/api/eventos/{evento_id}")
 def eliminar_evento(evento_id: str):
@@ -259,7 +257,7 @@ def eliminar_evento(evento_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/eventos", response_model=EventoOut)
-def crear_evento(evento: EventoOut):
+def crear_evento(evento: EventoIn):
     try:
         service = get_calendar_service()
         event = {
@@ -271,6 +269,7 @@ def crear_evento(evento: EventoOut):
         creado = service.events().insert(calendarId="primary", body=event).execute()
 
         return EventoOut(
+            id=creado["id"],
             titulo=creado.get("summary"),
             inicio=isoparse(creado["start"]["dateTime"]),
             fin=isoparse(creado["end"]["dateTime"]),
