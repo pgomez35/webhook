@@ -1,15 +1,26 @@
 # ✅ main.py
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Path, Body, Request, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+
+# Respuestas personalizadas (usa solo si las necesitas)
+from fastapi.responses import JSONResponse, PlainTextResponse
+
+from dotenv import load_dotenv  # Solo si usas variables de entorno
 import os
 import json
+import re
 import logging
+import subprocess
 import traceback
+
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel
+
+# Integración Google Calendar
 from dateutil.parser import isoparse
+
 from google.oauth2.credentials import Credentials as UserCredentials
 from google.auth.transport.requests import Request as GoogleRequest
 from googleapiclient.discovery import build
