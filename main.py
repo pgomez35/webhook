@@ -80,13 +80,14 @@ client, collection = inicializar_busqueda(API_KEY, persist_dir=CHROMA_DIR)
 
 # ==================== PROYECTO CALENDAR ===========================
 # === Configuración ===
-SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
+SCOPES = ['https://www.googleapis.com/auth/calendar']
 DB_URL = os.getenv("INTERNAL_DATABASE_URL")  # Debe estar en tus variables de entorno
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("calendar_sync")
 
 class EventoOut(BaseModel):
+    id: str
     titulo: str
     inicio: datetime
     fin: datetime
@@ -192,6 +193,7 @@ def obtener_eventos() -> List[EventoOut]:
         descripcion = event.get('description', '')
         if inicio and fin:
             resultado.append(EventoOut(
+                id=event['id'],
                 titulo=titulo,
                 inicio=isoparse(inicio),
                 fin=isoparse(fin),
