@@ -1,37 +1,30 @@
 # ✅ main.py
-from fastapi import FastAPI, HTTPException, Path, Body, Request, UploadFile, Form
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-
-# Respuestas personalizadas (usa solo si las necesitas)
-from fastapi.responses import JSONResponse, PlainTextResponse
-
-from dotenv import load_dotenv  # Solo si usas variables de entorno
 import os
 import json
-import re
 import logging
-import subprocess
-
+import traceback
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel
-
-# Integración Google Calendar
 from dateutil.parser import isoparse
-from google.oauth2.credentials import Credentials
-import google.oauth2.credentials  # <--- Esto es lo que te falta
+from google.oauth2.credentials import Credentials as UserCredentials
+from google.auth.transport.requests import Request as GoogleRequest
+from googleapiclient.discovery import build
+import psycopg2
 
-import sys
-print("==== DEBUG GOOGLE AUTH ====")
-print("google.oauth2.credentials path:", google.oauth2.credentials.__file__)
-print("sys.path:", sys.path)
-print("Credentials class:", google.oauth2.credentials.Credentials)
-print("Has from_authorized_user_file:", hasattr(google.oauth2.credentials.Credentials, "from_authorized_user_file"))
-print("Has from_authorized_user_info:", hasattr(google.oauth2.credentials.Credentials, "from_authorized_user_info"))
-print("===========================")
-
-
+# from google.oauth2.credentials import Credentials
+# import google.oauth2.credentials  # <--- Esto es lo que te falta
+# import sys
+# print("==== DEBUG GOOGLE AUTH ====")
+# print("google.oauth2.credentials path:", google.oauth2.credentials.__file__)
+# print("sys.path:", sys.path)
+# print("Credentials class:", google.oauth2.credentials.Credentials)
+# print("Has from_authorized_user_file:", hasattr(google.oauth2.credentials.Credentials, "from_authorized_user_file"))
+# print("Has from_authorized_user_info:", hasattr(google.oauth2.credentials.Credentials, "from_authorized_user_info"))
+# print("===========================")
 
 from googleapiclient.discovery import build
 from uuid import uuid4
@@ -75,27 +68,12 @@ app.add_middleware(
 client, collection = inicializar_busqueda(API_KEY, persist_dir=CHROMA_DIR)
 
 # ==================== PROYECTO CALENDAR ===========================
+# === Configuración ===
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
-CREDENTIALS_PATH = 'google_credentials_temp.json'
-TOKEN_PATH = 'google_token_temp.json'
+DB_URL = os.getenv("INTERNAL_DATABASE_URL")  # Debe estar en tus variables de entorno
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("calendar_sync")
-
-# === FastAPI Setup ===
-app = FastAPI()
-
-AUDIO_DIR = "audios"
-os.makedirs(AUDIO_DIR, exist_ok=True)
-app.mount("/audios", StaticFiles(directory=AUDIO_DIR), name="audios")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 class EventoOut(BaseModel):
     titulo: str
@@ -103,73 +81,74 @@ class EventoOut(BaseModel):
     fin: datetime
     descripcion: Optional[str] = None
 
-# ==================== FUNCIONES DE CREDENCIALES ===========================
+# ==================== FUNCIONES DE BD PARA TOKEN ===========================
 
-def ensure_credentials_file():
-    if not os.path.exists(CREDENTIALS_PATH):
-        creds_content = os.getenv("GOOGLE_CREDENTIALS_JSON_CALEND")
-        if not creds_content:
-            raise RuntimeError("No se encontró la variable de entorno GOOGLE_CREDENTIALS_JSON_CALEND.")
-        try:
-            parsed_json = json.loads(creds_content)
-            with open(CREDENTIALS_PATH, 'w') as f:
-                json.dump(parsed_json, f)
-            logger.info(f"✅ Archivo temporal {CREDENTIALS_PATH} creado desde variable de entorno.")
-        except json.JSONDecodeError as e:
-            raise ValueError("El contenido de GOOGLE_CREDENTIALS_JSON_CALEND no es un JSON válido.") from e
+def guardar_token_en_bd(token_dict, nombre='calendar'):
+    try:
+        conn = psycopg2.connect(DB_URL)
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO google_tokens (nombre, token_json, actualizado)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (nombre)
+            DO UPDATE SET token_json = EXCLUDED.token_json, actualizado = EXCLUDED.actualizado;
+        """, (nombre, json.dumps(token_dict), datetime.utcnow()))
+        conn.commit()
+        cur.close()
+        conn.close()
+        logger.info("✅ Token guardado en la base de datos.")
+    except Exception as e:
+        logger.error(f"❌ Error al guardar el token en la base de datos: {e}")
+        raise
 
-def ensure_token_file():
-    if not os.path.exists(TOKEN_PATH):
-        token_content = os.getenv("GOOGLE_TOKEN_JSON")
-        if not token_content:
-            raise RuntimeError("No se encontró la variable de entorno GOOGLE_TOKEN_JSON.")
-        try:
-            parsed_token = json.loads(token_content)
-            with open(TOKEN_PATH, 'w') as f:
-                json.dump(parsed_token, f)
-            logger.info(f"✅ Archivo temporal {TOKEN_PATH} creado desde variable de entorno.")
-        except json.JSONDecodeError as e:
-            raise ValueError("El contenido de GOOGLE_TOKEN_JSON no es un JSON válido.") from e
+def leer_token_de_bd(nombre='calendar'):
+    try:
+        conn = psycopg2.connect(DB_URL)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT token_json FROM google_tokens WHERE nombre = %s LIMIT 1;",
+            (nombre,)
+        )
+        fila = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not fila:
+            raise Exception(f"⚠️ No se encontró ningún token con nombre '{nombre}' en la base de datos.")
+        # Puede salir como str o dict, asegúrate de parsear
+        token_info = fila[0]
+        if isinstance(token_info, str):
+            token_info = json.loads(token_info)
+        # Asegura el campo type
+        if "type" not in token_info:
+            token_info["type"] = "authorized_user"
+        return token_info
+    except Exception as e:
+        logger.error(f"❌ Error al leer el token de la base de datos: {e}")
+        raise
 
 # ==================== GOOGLE CALENDAR SERVICE ==============================
-import traceback
 def get_calendar_service():
-    ensure_credentials_file()
-    ensure_token_file()
-
-    with open(TOKEN_PATH, "r") as f:
-        token_info = json.load(f)
-
-    # Detectar tipo de credencial
-    cred_type = token_info.get("type", "")
-    logger.info(f"Intentando inicializar credenciales tipo: {cred_type}")
-
     try:
-        if cred_type == "service_account":
-            from google.oauth2.service_account import Credentials as SACredentials
-            logger.info(f"Usando service_account.Credentials. Métodos: {dir(SACredentials)}")
-            creds = SACredentials.from_service_account_info(token_info, scopes=SCOPES)
-        else:
-            from google.oauth2.credentials import Credentials as UserCredentials
-            logger.info(f"Usando oauth2.credentials.Credentials. Métodos: {dir(UserCredentials)}")
-            creds = UserCredentials.from_authorized_user_info(token_info, SCOPES)
-            # Refrescar si es necesario
-            if not creds.valid and creds.expired and creds.refresh_token:
-                from google.auth.transport.requests import Request
-                creds.refresh(Request())
-    except Exception as e:
-        logger.error(f"Error al inicializar las credenciales: {e}")
-        logger.error(traceback.format_exc())
-        raise
+        token_info = leer_token_de_bd()
+        creds = UserCredentials.from_authorized_user_info(token_info, SCOPES)
 
-    try:
+        if not creds.valid:
+            if creds.expired and creds.refresh_token:
+                logger.warning("⚠️ Token expirado. Refrescando...")
+                creds.refresh(GoogleRequest())
+                guardar_token_en_bd(json.loads(creds.to_json()))
+                logger.info("✅ Token refrescado y guardado en la base de datos.")
+            else:
+                raise Exception("❌ Token inválido y no puede ser refrescado (sin refresh_token)")
+
         service = build("calendar", "v3", credentials=creds)
+        logger.info("📅 Servicio de Google Calendar inicializado correctamente.")
+        return service
+
     except Exception as e:
-        logger.error(f"Error al construir el servicio de Google Calendar: {e}")
+        logger.error("❌ Error al inicializar el servicio de Google Calendar:")
         logger.error(traceback.format_exc())
         raise
-
-    return service
 
 # ==================== OBTENER EVENTOS ==============================
 
@@ -193,7 +172,6 @@ def obtener_eventos() -> List[EventoOut]:
         raise
 
     events = events_result.get('items', [])
-
     resultado = []
     for event in events:
         inicio = event['start'].get('dateTime')
@@ -240,11 +218,9 @@ def sincronizar():
 def get_version():
     import google.auth
     from google.oauth2.credentials import Credentials as UserCredentials
-    from google.oauth2.service_account import Credentials as SACredentials
     return {
         "google-auth-version": google.auth.__version__,
-        "user_credentials_methods": dir(UserCredentials),
-        "service_account_credentials_methods": dir(SACredentials)
+        "user_credentials_methods": dir(UserCredentials)
     }
 # ==================== FIN PROYECTO CALENDAR =======================
 
