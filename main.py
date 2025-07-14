@@ -226,6 +226,60 @@ def sincronizar():
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.put("/api/eventos/{evento_id}", response_model=EventoOut)
+def editar_evento(evento_id: str, evento: EventoOut):
+    try:
+        service = get_calendar_service()
+        google_event = service.events().get(calendarId="primary", eventId=evento_id).execute()
+        google_event['summary'] = evento.titulo
+        google_event['description'] = evento.descripcion
+        google_event['start']['dateTime'] = evento.inicio.isoformat()
+        google_event['end']['dateTime'] = evento.fin.isoformat()
+        updated = service.events().update(calendarId="primary", eventId=evento_id, body=google_event).execute()
+        return EventoOut(
+            titulo=updated['summary'],
+            inicio=isoparse(updated['start']['dateTime']),
+            fin=isoparse(updated['end']['dateTime']),
+            descripcion=updated.get('description')
+        )
+    except Exception as e:
+        logger.error(f"❌ Error al editar evento {evento_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/eventos/{evento_id}")
+def eliminar_evento(evento_id: str):
+    try:
+        service = get_calendar_service()
+        service.events().delete(calendarId="primary", eventId=evento_id).execute()
+        return {"ok": True, "mensaje": f"Evento {evento_id} eliminado"}
+    except Exception as e:
+        logger.error(f"❌ Error al eliminar evento {evento_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/eventos", response_model=EventoOut)
+def crear_evento(evento: EventoOut):
+    try:
+        service = get_calendar_service()
+        event = {
+            "summary": evento.titulo,
+            "description": evento.descripcion or "",
+            "start": {"dateTime": evento.inicio.isoformat()},
+            "end": {"dateTime": evento.fin.isoformat()},
+        }
+        creado = service.events().insert(calendarId="primary", body=event).execute()
+
+        return EventoOut(
+            titulo=creado.get("summary"),
+            inicio=isoparse(creado["start"]["dateTime"]),
+            fin=isoparse(creado["end"]["dateTime"]),
+            descripcion=creado.get("description"),
+        )
+    except Exception as e:
+        logger.error(f"❌ Error al crear evento: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/debug/version")
 def get_version():
     import google.auth
