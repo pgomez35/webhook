@@ -171,10 +171,11 @@ def obtener_eventos() -> List[EventoOut]:
         raise
 
     now = datetime.utcnow().isoformat() + 'Z'
+    una_semana_atras = (datetime.utcnow() - timedelta(days=7)).isoformat() + 'Z'
     try:
         events_result = service.events().list(
-            calendarId='primary', timeMin=now,
-            maxResults=10, singleEvents=True,
+            calendarId='primary', timeMin=una_semana_atras,
+            maxResults=50, singleEvents=True,
             orderBy='startTime'
         ).execute()
     except Exception as e:
