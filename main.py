@@ -225,15 +225,25 @@ def sincronizar():
 @app.put("/api/eventos/{evento_id}", response_model=EventoOut)
 def editar_evento(evento_id: str, evento: EventoIn):
     try:
+        # Validar las fechas ANTES de proceder
+        if evento.fin <= evento.inicio:
+            raise HTTPException(
+                status_code=400,
+                detail="La fecha de fin debe ser posterior a la fecha de inicio."
+            )
+
         service = get_calendar_service()
         google_event = service.events().get(calendarId="primary", eventId=evento_id).execute()
 
+        # Actualizar campos
         google_event['summary'] = evento.titulo
         google_event['description'] = evento.descripcion
         google_event['start']['dateTime'] = evento.inicio.isoformat()
         google_event['end']['dateTime'] = evento.fin.isoformat()
 
+        # Guardar evento actualizado
         updated = service.events().update(calendarId="primary", eventId=evento_id, body=google_event).execute()
+
         return EventoOut(
             id=updated['id'],
             titulo=updated['summary'],
@@ -259,6 +269,13 @@ def eliminar_evento(evento_id: str):
 @app.post("/api/eventos", response_model=EventoOut)
 def crear_evento(evento: EventoIn):
     try:
+        # Validar el rango de fechas ANTES de intentar crear el evento
+        if evento.fin <= evento.inicio:
+            raise HTTPException(
+                status_code=400,
+                detail="La fecha de fin debe ser posterior a la fecha de inicio."
+            )
+
         service = get_calendar_service()
         event = {
             "summary": evento.titulo,
@@ -279,7 +296,6 @@ def crear_evento(evento: EventoIn):
         logger.error(f"❌ Error al crear evento: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get("/debug/version")
 def get_version():
