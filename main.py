@@ -185,14 +185,41 @@ def obtener_eventos() -> List[EventoOut]:
         fin = event['end'].get('dateTime')
         titulo = event.get('summary', 'Sin título')
         descripcion = event.get('description', '')
+
+        # leer link meet
+        meet_link = None
+        if 'conferenceData' in event:
+            entry_points = event['conferenceData'].get('entryPoints', [])
+            for ep in entry_points:
+                if ep.get('entryPointType') == 'video':
+                    meet_link = ep.get('uri')
+                    break
+
+        tiktok_user = event.get('extendedProperties', {}).get('private', {}).get('tiktok_user')
+
         if inicio and fin:
             resultado.append(EventoOut(
                 id=event['id'],
                 titulo=titulo,
                 inicio=isoparse(inicio),
                 fin=isoparse(fin),
-                descripcion=descripcion
+                descripcion=descripcion,
+                tiktok_user=tiktok_user,
+                link_meet=meet_link
             ))
+    # for event in events:
+    #     inicio = event['start'].get('dateTime')
+    #     fin = event['end'].get('dateTime')
+    #     titulo = event.get('summary', 'Sin título')
+    #     descripcion = event.get('description', '')
+    #     if inicio and fin:
+    #         resultado.append(EventoOut(
+    #             id=event['id'],
+    #             titulo=titulo,
+    #             inicio=isoparse(inicio),
+    #             fin=isoparse(fin),
+    #             descripcion=descripcion
+    #         ))
     return resultado
 
 def sync_eventos():
@@ -222,37 +249,83 @@ def sincronizar():
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
+# @app.put("/api/eventos/{evento_id}", response_model=EventoOut)
+# def editar_evento(evento_id: str, evento: EventoIn):
+#     try:
+#         # Validar las fechas ANTES de proceder
+#         if evento.fin <= evento.inicio:
+#             raise HTTPException(
+#                 status_code=400,
+#                 detail="La fecha de fin debe ser posterior a la fecha de inicio."
+#             )
+#
+#         service = get_calendar_service()
+#         google_event = service.events().get(calendarId="primary", eventId=evento_id).execute()
+#
+#         # Actualizar campos
+#         google_event['summary'] = evento.titulo
+#         google_event['description'] = evento.descripcion
+#         google_event['start']['dateTime'] = evento.inicio.isoformat()
+#         google_event['end']['dateTime'] = evento.fin.isoformat()
+#
+#         # Guardar evento actualizado
+#         updated = service.events().update(calendarId="primary", eventId=evento_id, body=google_event).execute()
+#
+#         return EventoOut(
+#             id=updated['id'],
+#             titulo=updated['summary'],
+#             inicio=isoparse(updated['start']['dateTime']),
+#             fin=isoparse(updated['end']['dateTime']),
+#             descripcion=updated.get('description')
+#         )
+#     except Exception as e:
+#         logger.error(f"❌ Error al editar evento {evento_id}: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
 @app.put("/api/eventos/{evento_id}", response_model=EventoOut)
 def editar_evento(evento_id: str, evento: EventoIn):
     try:
-        # Validar las fechas ANTES de proceder
         if evento.fin <= evento.inicio:
-            raise HTTPException(
-                status_code=400,
-                detail="La fecha de fin debe ser posterior a la fecha de inicio."
-            )
+            raise HTTPException(status_code=400, detail="La fecha de fin debe ser posterior a la fecha de inicio.")
 
         service = get_calendar_service()
         google_event = service.events().get(calendarId="primary", eventId=evento_id).execute()
 
-        # Actualizar campos
         google_event['summary'] = evento.titulo
         google_event['description'] = evento.descripcion
         google_event['start']['dateTime'] = evento.inicio.isoformat()
         google_event['end']['dateTime'] = evento.fin.isoformat()
 
-        # Guardar evento actualizado
-        updated = service.events().update(calendarId="primary", eventId=evento_id, body=google_event).execute()
+        if 'extendedProperties' not in google_event:
+            google_event['extendedProperties'] = {'private': {}}
+        google_event['extendedProperties']['private']['tiktok_user'] = evento.tiktok_user or ""
+
+        updated = service.events().update(
+            calendarId="primary",
+            eventId=evento_id,
+            body=google_event,
+            conferenceDataVersion=1
+        ).execute()
+
+        meet_link = None
+        if 'conferenceData' in updated:
+            entry_points = updated['conferenceData'].get('entryPoints', [])
+            for ep in entry_points:
+                if ep.get('entryPointType') == 'video':
+                    meet_link = ep.get('uri')
+                    break
 
         return EventoOut(
             id=updated['id'],
             titulo=updated['summary'],
             inicio=isoparse(updated['start']['dateTime']),
             fin=isoparse(updated['end']['dateTime']),
-            descripcion=updated.get('description')
+            descripcion=updated.get('description'),
+            tiktok_user=evento.tiktok_user,
+            link_meet=meet_link
         )
     except Exception as e:
         logger.error(f"❌ Error al editar evento {evento_id}: {e}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -269,21 +342,42 @@ def eliminar_evento(evento_id: str):
 @app.post("/api/eventos", response_model=EventoOut)
 def crear_evento(evento: EventoIn):
     try:
-        # Validar el rango de fechas ANTES de intentar crear el evento
         if evento.fin <= evento.inicio:
-            raise HTTPException(
-                status_code=400,
-                detail="La fecha de fin debe ser posterior a la fecha de inicio."
-            )
+            raise HTTPException(status_code=400, detail="La fecha de fin debe ser posterior a la fecha de inicio.")
 
         service = get_calendar_service()
+
         event = {
             "summary": evento.titulo,
             "description": evento.descripcion or "",
             "start": {"dateTime": evento.inicio.isoformat()},
             "end": {"dateTime": evento.fin.isoformat()},
+            "conferenceData": {
+                "createRequest": {
+                    "requestId": str(uuid4())  # genera ID único para que cree link Meet
+                }
+            },
+            "extendedProperties": {
+                "private": {
+                    "tiktok_user": evento.tiktok_user or ""
+                }
+            }
         }
-        creado = service.events().insert(calendarId="primary", body=event).execute()
+
+        creado = service.events().insert(
+            calendarId="primary",
+            body=event,
+            conferenceDataVersion=1
+        ).execute()
+
+        # leer link Meet
+        meet_link = None
+        if 'conferenceData' in creado:
+            entry_points = creado['conferenceData'].get('entryPoints', [])
+            for ep in entry_points:
+                if ep.get('entryPointType') == 'video':
+                    meet_link = ep.get('uri')
+                    break
 
         return EventoOut(
             id=creado["id"],
@@ -291,6 +385,8 @@ def crear_evento(evento: EventoIn):
             inicio=isoparse(creado["start"]["dateTime"]),
             fin=isoparse(creado["end"]["dateTime"]),
             descripcion=creado.get("description"),
+            tiktok_user=evento.tiktok_user,
+            link_meet=meet_link
         )
     except Exception as e:
         logger.error(f"❌ Error al crear evento: {e}")

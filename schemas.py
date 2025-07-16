@@ -21,7 +21,9 @@ class EventoIn(BaseModel):
     inicio: datetime
     fin: datetime
     descripcion: Optional[str] = None
+    tiktok_user: Optional[str] = None
 
 # ✅ Para salida (incluye ID)
 class EventoOut(EventoIn):
     id: str
+    link_meet: Optional[str] = None
