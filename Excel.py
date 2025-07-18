@@ -5,7 +5,7 @@ import os
 import json
 from dotenv import load_dotenv
 
-def obtener_contactos_desde_hoja():
+def obtener_contactos_desde_hoja(NOMBRE_HOJA):
     try:
         STR_KEY = os.getenv("STR_KEY")
         NOMBRE_HOJA = os.getenv("NOMBRE_HOJA")
@@ -52,11 +52,13 @@ def obtener_contactos_desde_hoja():
                 "tipo_solicitud": fila[15].strip(),
                 "email": fila[16].strip(),
                 "nickname": fila[17].strip(),
+                "razon_no_contacto": fila[18].strip().upper(),
                 "seguidores": fila[19].strip(),
                 "videos": fila[20].strip(),
                 "likes": fila[21].strip(),
                 "Duracion_Emisiones": fila[22].strip(),
-                "Dias_Emisiones": fila[23].strip()
+                "Dias_Emisiones": fila[23].strip(),
+                "fila_excel": i + 4  # <---- Añade el número de fila de Excel (comenzando en 4)
             }
             print(f"➡️ Contacto válido {i + 1}: {contacto}")
             contactos.append(contacto)
@@ -66,3 +68,4 @@ def obtener_contactos_desde_hoja():
     except Exception as e:
         print(f"❌ Error leyendo hoja de cálculo: {e}")
         return []
+

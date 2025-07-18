@@ -147,19 +147,233 @@ def obtener_contactos_db(perfil: Optional[str] = None):
         print("❌ Error obteniendo contactos:", e)
         return {"status": "error", "mensaje": str(e)}
 
-def guardar_contactos(contactos):
+def limpiar_telefono(telefono):
+    telefono = telefono.strip().replace("+", "").replace(" ", "")
+    # Si el teléfono comienza con 93, cambia a 57
+    if telefono.startswith("93"):
+        telefono = "57" + telefono[2:]
+    return telefono
+
+def guardar_contactos(contactos, nombre_archivo=None, hoja_excel=None, lote_carga=None, procesado_por=None, observaciones=None):
+    conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+    cur = conn.cursor()
+    resultados = []
+    filas_fallidas = []
+
+    for c in contactos:
+        try:
+            usuario = c.get("usuario")
+            telefono = limpiar_telefono(c.get("telefono"))
+            disponibilidad = c.get("disponibilidad")
+            motivo_no_apto = c.get("motivo_no_apto")
+            perfil = c.get("perfil")
+            contacto_val = c.get("contacto")
+            respuesta_creador = c.get("respuesta_creador")
+            entrevista = c.get("entrevista")
+            tipo_solicitud = c.get("tipo_solicitud")
+            email = c.get("email")
+            nickname = c.get("nickname")
+            razon_no_contacto = c.get("razon_no_contacto")
+            seguidores = int(c.get("seguidores", "0")) if c.get("seguidores", "0").isdigit() else 0
+            videos = int(c.get("videos", "0")) if c.get("videos", "0").isdigit() else 0
+            likes = int(c.get("likes", "0")) if c.get("likes", "0").isdigit() else 0
+            duracion_emisiones = int(c.get("Duracion_Emisiones", "0")) if c.get("Duracion_Emisiones", "0").isdigit() else 0
+            dias_emisiones = int(c.get("Dias_Emisiones", "0")) if c.get("Dias_Emisiones", "0").isdigit() else 0
+            fila_excel = c.get("fila_excel")
+            apto = not bool(motivo_no_apto.strip())
+
+            # 1. Consultar si existe el usuario en creadores
+            cur.execute("SELECT id FROM creadores WHERE usuario = %s", (usuario,))
+            creador_row = cur.fetchone()
+            if creador_row:
+                creador_id = creador_row[0]
+                creador_status = "existente"
+                # Opcional: actualizar datos
+                cur.execute("""
+                    UPDATE creadores SET
+                        nickname = %s,
+                        email = %s,
+                        telefono = %s,
+                        actualizado_en = NOW()
+                    WHERE id = %s
+                """, (
+                    nickname,
+                    email,
+                    telefono,
+                    creador_id
+                ))
+            else:
+                cur.execute("""
+                    INSERT INTO creadores (usuario, nickname, email, telefono, activo, creado_en, actualizado_en)
+                    VALUES (%s, %s, %s, %s, TRUE, NOW(), NOW())
+                    RETURNING id
+                """, (
+                    usuario,
+                    nickname,
+                    email,
+                    telefono,
+                ))
+                creador_id = cur.fetchone()[0]
+                creador_status = "nuevo"
+
+            # 2. Consultar si existe perfil_creador para ese creador
+            cur.execute("SELECT id FROM perfil_creador WHERE creador_id = %s", (creador_id,))
+            perfil_row = cur.fetchone()
+            if perfil_row:
+                perfil_creador_id = perfil_row[0]
+                perfil_status = "actualizado"
+                cur.execute("""
+                    UPDATE perfil_creador SET
+                        perfil = %s,
+                        seguidores = %s,
+                        cantidad_videos = %s,
+                        likes_totales = %s,
+                        duracion_emisiones = %s,
+                        dias_emisiones = %s,
+                        actualizado_en = NOW()
+                    WHERE creador_id = %s
+                """, (
+                    perfil,
+                    seguidores,
+                    videos,
+                    likes,
+                    duracion_emisiones,
+                    dias_emisiones,
+                    creador_id
+                ))
+            else:
+                cur.execute("""
+                    INSERT INTO perfil_creador (
+                        creador_id, perfil,
+                        seguidores, cantidad_videos, likes_totales,
+                        duracion_emisiones, dias_emisiones,
+                        creado_en, actualizado_en
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, NOW(), NOW()
+                    ) RETURNING id
+                """, (
+                    creador_id,
+                    perfil,
+                    seguidores,
+                    videos,
+                    likes,
+                    duracion_emisiones,
+                    dias_emisiones,
+                ))
+                perfil_creador_id = cur.fetchone()[0]
+                perfil_status = "nuevo"
+
+            # 3. Consultar si existe cargue_creadores para usuario y hoja
+            cur.execute(
+                "SELECT id FROM cargue_creadores WHERE usuario = %s AND hoja_excel = %s",
+                (usuario, hoja_excel)
+            )
+            cargue_row = cur.fetchone()
+            if cargue_row:
+                cargue_id = cargue_row[0]
+                cargue_status = "existente"
+                # Opcional: puedes actualizar cargue_creadores si lo necesitas aquí
+            else:
+                cur.execute("""
+                    INSERT INTO cargue_creadores (
+                        usuario, nickname, email, telefono, disponibilidad, perfil, motivo_no_apto,
+                        contacto, respuesta_creador, entrevista, tipo_solicitud, razon_no_contacto,
+                        seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones,
+                        nombre_archivo, hoja_excel, fila_excel, lote_carga, fecha_carga,
+                        estado, procesado, fecha_procesamiento, procesado_por, creador_id,
+                        apto, puntaje_evaluacion,
+                        contactado, fecha_contacto, respondio,
+                        observaciones, activo, creado_en, actualizado_en
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, CURRENT_DATE,
+                        %s, %s, %s, %s, %s,
+                        %s, %s,
+                        %s, %s, %s,
+                        %s, %s, NOW(), NOW()
+                    ) RETURNING id
+                """, (
+                    usuario,
+                    nickname,
+                    email,
+                    telefono,
+                    disponibilidad,
+                    perfil,
+                    motivo_no_apto,
+                    contacto_val,
+                    respuesta_creador,
+                    entrevista,
+                    tipo_solicitud,
+                    razon_no_contacto,
+                    seguidores,
+                    videos,
+                    likes,
+                    duracion_emisiones,
+                    dias_emisiones,
+                    nombre_archivo,
+                    hoja_excel,
+                    fila_excel,
+                    lote_carga,
+                    "Procesando",
+                    False,
+                    None,
+                    procesado_por,
+                    creador_id,
+                    apto,
+                    None,
+                    False,
+                    None,
+                    False,
+                    observaciones,
+                    True
+                ))
+                cargue_id = cur.fetchone()[0]
+                cargue_status = "nuevo"
+
+            resultados.append({
+                "fila": fila_excel,
+                "usuario": usuario,
+                "creador_id": creador_id,
+                "creador_status": creador_status,
+                "perfil_creador_id": perfil_creador_id,
+                "perfil_status": perfil_status,
+                "cargue_creadores_id": cargue_id,
+                "cargue_status": cargue_status
+            })
+
+        except Exception as err:
+            conn.rollback()
+            filas_fallidas.append({
+                "fila": c.get("fila_excel"),
+                "error": str(err),
+                "contacto": c
+            })
+
+    conn.commit()
+    cur.close()
+    conn.close()
+    print(f"✅ Contactos procesados. Filas exitosas: {len(resultados)}. Filas fallidas: {len(filas_fallidas)}")
+    return {
+        "exitosos": resultados,
+        "fallidos": filas_fallidas
+    }
+
+
+def guardar_contactos__(contactos):
     conn = psycopg2.connect(INTERNAL_DATABASE_URL)
     cur = conn.cursor()
 
     for c in contactos:
         # Insertar en aspirantes
         cur.execute("""
-        INSERT INTO aspirantes (usuario, nickname, telefono, email, motivo_no_apto, medio_contacto, mensaje_enviado, tipo_solicitud)
+        INSERT INTO aspirantes (usuario, nickname, telefono, email, motivo_no_apto, medio_contacto, mensaje_enviado, razon_no_contacto, tipo_solicitud)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
         """, (
             c["usuario"], c["nickname"], c["telefono"], c["email"], c["motivo_no_apto"],
-            c["contacto"], c["respuesta_creador"], c["tipo_solicitud"]
+            c["contacto"], c["respuesta_creador"], c["razon_no_contacto"], c["tipo_solicitud"]
         ))
         aspirante_id = cur.fetchone()[0]
 
@@ -440,3 +654,4 @@ def obtener_ultimos_mensajes(limit=10):
         conn.close()
     except Exception as e:
         print("❌ Error al consultar mensajes:", e)
+

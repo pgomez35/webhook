@@ -446,9 +446,9 @@ def listar_contactos(perfil: Optional[str] = None):
     return obtener_contactos_db(perfil)
 
 @app.post("/cargar_contactos")
-def cargar_contactos_desde_excel():
+def cargar_contactos_desde_excel(nombre_hoja: str = Body(..., embed=True)):
     try:
-        contactos = obtener_contactos_desde_hoja()
+        contactos = obtener_contactos_desde_hoja(nombre_hoja)
         if not contactos:
             return {"status": "error", "mensaje": "No se encontraron contactos en la hoja"}
         guardar_contactos(contactos)
@@ -641,3 +641,5 @@ async def borrar_mensajes(telefono: str):
         return {"status": "ok", "mensaje": f"Mensajes de {telefono} eliminados"}
     else:
         return JSONResponse({"error": "No se pudieron eliminar los mensajes"}, status_code=500)
+
+
