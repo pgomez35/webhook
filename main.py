@@ -165,11 +165,15 @@ def obtener_eventos() -> List[EventoOut]:
         logger.error(f"❌ Error al obtener el servicio de Calendar: {str(e)}")
         raise
 
-    now = datetime.utcnow().isoformat() + 'Z'
-    # una_semana_atras = (datetime.utcnow() - timedelta(days=7)).isoformat() + 'Z'
+    # Obtener eventos desde hace 30 días hasta 1 año en el futuro
+    hace_30_dias = (datetime.utcnow() - timedelta(days=30)).isoformat() + 'Z'
+    un_ano_futuro = (datetime.utcnow() + timedelta(days=365)).isoformat() + 'Z'
+
     try:
         events_result = service.events().list(
             calendarId='primary',
+            timeMin=hace_30_dias,  # Desde hace 30 días
+            timeMax=un_ano_futuro,  # Hasta 1 año en el futuro
             maxResults=100, singleEvents=True,
             orderBy='startTime'
         ).execute()
