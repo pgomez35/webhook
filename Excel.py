@@ -33,7 +33,7 @@ def obtener_contactos_desde_hoja(NOMBRE_HOJA):
         columna_B = worksheet.col_values(2)[3:]  # Columna B
         ultima_fila = 3 + len([c for c in columna_B if c.strip() != ""])
 
-        rango = f"A4:R{ultima_fila}"
+        rango = f"A4:X{ultima_fila}"
         filas = worksheet.get(rango)
 
         print(f"📋 Filas leídas desde la hoja: {len(filas)}")

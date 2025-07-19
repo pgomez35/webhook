@@ -154,6 +154,10 @@ def limpiar_telefono(telefono):
         telefono = "57" + telefono[2:]
     return telefono
 
+def safe_int(val):
+    if val is None or str(val).strip() == "":
+        return None
+    return int(val)
 
 def guardar_contactos(contactos, nombre_archivo=None, hoja_excel=None, lote_carga=None, procesado_por=None,
                       observaciones=None):
