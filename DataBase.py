@@ -154,7 +154,177 @@ def limpiar_telefono(telefono):
         telefono = "57" + telefono[2:]
     return telefono
 
-def guardar_contactos(contactos, nombre_archivo=None, hoja_excel=None, lote_carga=None, procesado_por=None, observaciones=None):
+
+def guardar_contactos(contactos, nombre_archivo=None, hoja_excel=None, lote_carga=None, procesado_por=None,
+                      observaciones=None):
+    conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+    cur = conn.cursor()
+    resultados = []
+    filas_fallidas = []
+
+    for c in contactos:
+        try:
+            usuario = c.get("usuario", "")
+            nickname = c.get("nickname", "")
+            email = c.get("email", "")
+            telefono = limpiar_telefono(c.get("telefono", ""))
+            disponibilidad = c.get("disponibilidad", "")
+            perfil = c.get("perfil", "")
+            motivo_no_apto = c.get("motivo_no_apto", "")
+            contacto = c.get("contacto", "")
+            respuesta_creador = c.get("respuesta_creador", "")
+            entrevista = c.get("entrevista", "")
+            tipo_solicitud = c.get("tipo_solicitud", "")
+            razon_no_contacto = c.get("razon_no_contacto", "")
+            seguidores = safe_int(c.get("seguidores", ""))
+            cantidad_videos = safe_int(c.get("videos", ""))
+            likes_totales = safe_int(c.get("likes", ""))
+            duracion_emisiones = safe_int(c.get("Duracion_Emisiones", ""))
+            dias_emisiones = safe_int(c.get("Dias_Emisiones", ""))
+            fila_excel = c.get("fila_excel")
+            apto = not bool(str(motivo_no_apto).strip())
+
+            # 1. creadores
+            cur.execute("SELECT id FROM creadores WHERE usuario = %s", (usuario,))
+            creador_row = cur.fetchone()
+            if creador_row:
+                creador_id = creador_row[0]
+                cur.execute("""
+                    UPDATE creadores SET
+                        nickname = %s,
+                        email = %s,
+                        telefono = %s,
+                        actualizado_en = NOW()
+                    WHERE id = %s
+                """, (nickname, email, telefono, creador_id))
+            else:
+                cur.execute("""
+                    INSERT INTO creadores (usuario, nickname, email, telefono, activo, creado_en, actualizado_en)
+                    VALUES (%s, %s, %s, %s, TRUE, NOW(), NOW())
+                    RETURNING id
+                """, (usuario, nickname, email, telefono))
+                creador_id = cur.fetchone()[0]
+
+            # 2. perfil_creador
+            cur.execute("SELECT id FROM perfil_creador WHERE creador_id = %s", (creador_id,))
+            perfil_row = cur.fetchone()
+            if perfil_row:
+                cur.execute("""
+                    UPDATE perfil_creador SET
+                        perfil = %s,
+                        seguidores = %s,
+                        cantidad_videos = %s,
+                        likes_totales = %s,
+                        duracion_emisiones = %s,
+                        dias_emisiones = %s,
+                        actualizado_en = NOW()
+                    WHERE creador_id = %s
+                """, (
+                perfil, seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones, creador_id))
+            else:
+                cur.execute("""
+                    INSERT INTO perfil_creador (
+                        creador_id, perfil,
+                        seguidores, cantidad_videos, likes_totales,
+                        duracion_emisiones, dias_emisiones,
+                        creado_en, actualizado_en
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, NOW(), NOW()
+                    )
+                """, (
+                creador_id, perfil, seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones))
+
+            # 3. cargue_creadores
+            cur.execute("SELECT id FROM cargue_creadores WHERE usuario = %s AND hoja_excel = %s", (usuario, hoja_excel))
+            cargue_row = cur.fetchone()
+            if cargue_row:
+                cargue_id = cargue_row[0]
+                cur.execute("""
+                    UPDATE cargue_creadores SET
+                        nickname = %s,
+                        email = %s,
+                        telefono = %s,
+                        disponibilidad = %s,
+                        perfil = %s,
+                        motivo_no_apto = %s,
+                        contacto = %s,
+                        respuesta_creador = %s,
+                        entrevista = %s,
+                        tipo_solicitud = %s,
+                        razon_no_contacto = %s,
+                        seguidores = %s,
+                        cantidad_videos = %s,
+                        likes_totales = %s,
+                        duracion_emisiones = %s,
+                        dias_emisiones = %s,
+                        nombre_archivo = %s,
+                        fila_excel = %s,
+                        lote_carga = %s,
+                        estado = %s,
+                        procesado = %s,
+                        procesado_por = %s,
+                        creador_id = %s,
+                        apto = %s,
+                        observaciones = %s,
+                        actualizado_en = NOW()
+                    WHERE id = %s
+                """, (
+                    nickname, email, telefono, disponibilidad, perfil, motivo_no_apto,
+                    contacto, respuesta_creador, entrevista, tipo_solicitud, razon_no_contacto,
+                    seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones,
+                    nombre_archivo, fila_excel, lote_carga, "Procesando", False, procesado_por,
+                    creador_id, apto, observaciones, cargue_id
+                ))
+            else:
+                cur.execute("""
+                    INSERT INTO cargue_creadores (
+                        usuario, nickname, email, telefono, disponibilidad, perfil, motivo_no_apto,
+                        contacto, respuesta_creador, entrevista, tipo_solicitud, razon_no_contacto,
+                        seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones,
+                        nombre_archivo, hoja_excel, fila_excel, lote_carga,
+                        estado, procesado, procesado_por, creador_id,
+                        apto, observaciones, activo, creado_en, actualizado_en
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, TRUE, NOW(), NOW()
+                    )
+                """, (
+                    usuario, nickname, email, telefono, disponibilidad, perfil, motivo_no_apto,
+                    contacto, respuesta_creador, entrevista, tipo_solicitud, razon_no_contacto,
+                    seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones,
+                    nombre_archivo, hoja_excel, fila_excel, lote_carga,
+                    "Procesando", False, procesado_por, creador_id,
+                    apto, observaciones
+                ))
+
+            resultados.append({
+                "fila": fila_excel,
+                "usuario": usuario,
+                "creador_id": creador_id
+            })
+
+        except Exception as err:
+            conn.rollback()
+            filas_fallidas.append({
+                "fila": c.get("fila_excel"),
+                "error": str(err),
+                "contacto": c
+            })
+
+    conn.commit()
+    cur.close()
+    conn.close()
+    print(f"✅ Contactos procesados. Filas exitosas: {len(resultados)}. Filas fallidas: {len(filas_fallidas)}")
+    return {
+        "exitosos": resultados,
+        "fallidos": filas_fallidas
+    }
+
+def guardar_contactos___(contactos, nombre_archivo=None, hoja_excel=None, lote_carga=None, procesado_por=None, observaciones=None):
     conn = psycopg2.connect(INTERNAL_DATABASE_URL)
     cur = conn.cursor()
     resultados = []
