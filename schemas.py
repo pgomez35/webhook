@@ -71,7 +71,7 @@ class AdminUsuarioLogin(BaseModel):
 # ===============================
 
 class PerfilCreadorBase(BaseModel):
-    id_creador: str
+    creador_id: str
     perfil: str
     biografia: Optional[str] = None
     seguidores: int = 0

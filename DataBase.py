@@ -1186,7 +1186,7 @@ def obtener_todos_perfiles_creador():
         cur = conn.cursor()
 
         cur.execute("""
-            SELECT id, id_creador, perfil, biografia, seguidores, videos, engagement, acciones
+            SELECT id, creador_id, perfil, biografia, seguidores, videos, engagement, acciones
             FROM perfil_creador
             ORDER BY id DESC
         """)
@@ -1195,7 +1195,7 @@ def obtener_todos_perfiles_creador():
         for row in cur.fetchall():
             perfiles.append({
                 "id": row[0],
-                "id_creador": row[1] or f"creator_{row[0]}",
+                "creador_id": row[1] or f"creator_{row[0]}",
                 "perfil": row[2] or "Sin clasificar",
                 "biografia": row[3] or "",
                 "seguidores": row[4] or 0,
@@ -1220,7 +1220,7 @@ def obtener_perfil_creador_por_id(perfil_id: int):
         cur = conn.cursor()
 
         cur.execute("""
-            SELECT id, id_creador, perfil, biografia, seguidores, videos, engagement, acciones
+            SELECT id, creador_id, perfil, biografia, seguidores, videos, engagement, acciones
             FROM perfil_creador
             WHERE id = %s
         """, (perfil_id,))
@@ -1229,7 +1229,7 @@ def obtener_perfil_creador_por_id(perfil_id: int):
         if row:
             perfil = {
                 "id": row[0],
-                "id_creador": row[1] or f"creator_{row[0]}",
+                "creador_id": row[1] or f"creator_{row[0]}",
                 "perfil": row[2] or "Sin clasificar",
                 "biografia": row[3] or "",
                 "seguidores": row[4] or 0,
@@ -1256,11 +1256,11 @@ def crear_perfil_creador(perfil_data):
         cur = conn.cursor()
 
         cur.execute("""
-            INSERT INTO perfil_creador (id_creador, perfil, biografia, seguidores, videos, engagement, acciones)
+            INSERT INTO perfil_creador (creador_id, perfil, biografia, seguidores, videos, engagement, acciones)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
-            RETURNING id, id_creador, perfil, biografia, seguidores, videos, engagement, acciones
+            RETURNING id, creador_id, perfil, biografia, seguidores, videos, engagement, acciones
         """, (
-            perfil_data["id_creador"],
+            perfil_data["creador_id"],
             perfil_data["perfil"],
             perfil_data["biografia"],
             perfil_data["seguidores"],
@@ -1272,7 +1272,7 @@ def crear_perfil_creador(perfil_data):
         row = cur.fetchone()
         perfil = {
             "id": row[0],
-            "id_creador": row[1],
+            "creador_id": row[1],
             "perfil": row[2],
             "biografia": row[3],
             "seguidores": row[4],
@@ -1299,12 +1299,12 @@ def actualizar_perfil_creador(perfil_id: int, perfil_data):
 
         cur.execute("""
             UPDATE perfil_creador 
-            SET id_creador = %s, perfil = %s, biografia = %s, seguidores = %s, 
+            SET creador_id = %s, perfil = %s, biografia = %s, seguidores = %s, 
                 videos = %s, engagement = %s, acciones = %s
             WHERE id = %s
-            RETURNING id, id_creador, perfil, biografia, seguidores, videos, engagement, acciones
+            RETURNING id, creador_id, perfil, biografia, seguidores, videos, engagement, acciones
         """, (
-            perfil_data["id_creador"],
+            perfil_data["creador_id"],
             perfil_data["perfil"],
             perfil_data["biografia"],
             perfil_data["seguidores"],
@@ -1318,7 +1318,7 @@ def actualizar_perfil_creador(perfil_id: int, perfil_data):
         if row:
             perfil = {
                 "id": row[0],
-                "id_creador": row[1],
+                "creador_id": row[1],
                 "perfil": row[2],
                 "biografia": row[3],
                 "seguidores": row[4],
