@@ -25,7 +25,7 @@ from google.oauth2.credentials import Credentials as UserCredentials
 from google.auth.transport.requests import Request as GoogleRequest
 from googleapiclient.discovery import build
 import psycopg2
-from schemas import EventoIn, EventoOut
+from schemas import EventoIn, EventoOut, AdminUsuarioCreate, AdminUsuarioUpdate, AdminUsuarioResponse
 
 # from google.oauth2.credentials import Credentials
 # import google.oauth2.credentials  # <--- Esto es lo que te falta
@@ -46,7 +46,7 @@ from enviar_msg_wp import *
 from buscador import inicializar_busqueda, responder_pregunta
 from DataBase import *
 from Excel import *
-from schemas import ActualizacionContactoInfo
+from schemas import ActualizacionContactoInfo, AdminUsuarioCreate, AdminUsuarioUpdate, AdminUsuarioResponse
 
 
 # 🔄 Cargar variables de entorno
@@ -641,5 +641,100 @@ async def borrar_mensajes(telefono: str):
         return {"status": "ok", "mensaje": f"Mensajes de {telefono} eliminados"}
     else:
         return JSONResponse({"error": "No se pudieron eliminar los mensajes"}, status_code=500)
+
+
+# ===============================
+# ENDPOINTS PARA ADMIN_USUARIO
+# ===============================
+
+@app.get("/api/admin-usuario", response_model=List[AdminUsuarioResponse])
+async def obtener_usuarios():
+    """Obtiene todos los usuarios administradores"""
+    usuarios = obtener_todos_admin_usuarios()
+    return usuarios
+
+@app.post("/api/admin-usuario", response_model=dict)
+async def crear_usuario(usuario_data: AdminUsuarioCreate):
+    """Crea un nuevo usuario administrador"""
+    # Convertir a diccionario
+    datos = usuario_data.dict()
+    
+    resultado = crear_admin_usuario(datos)
+    
+    if resultado["status"] == "error":
+        raise HTTPException(status_code=400, detail=resultado["mensaje"])
+    
+    return resultado
+
+@app.get("/api/admin-usuario/{usuario_id}", response_model=AdminUsuarioResponse)
+async def obtener_usuario(usuario_id: int):
+    """Obtiene un usuario administrador por ID"""
+    usuario = obtener_admin_usuario_por_id(usuario_id)
+    
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    
+    return usuario
+
+@app.put("/api/admin-usuario/{usuario_id}", response_model=dict)
+async def actualizar_usuario(usuario_id: int, usuario_data: AdminUsuarioUpdate):
+    """Actualiza un usuario administrador"""
+    # Convertir a diccionario y filtrar campos None
+    datos = {k: v for k, v in usuario_data.dict().items() if v is not None}
+    
+    resultado = actualizar_admin_usuario(usuario_id, datos)
+    
+    if resultado["status"] == "error":
+        raise HTTPException(status_code=400, detail=resultado["mensaje"])
+    
+    return resultado
+
+@app.delete("/api/admin-usuario/{usuario_id}", response_model=dict)
+async def eliminar_usuario(usuario_id: int):
+    """Elimina un usuario administrador"""
+    resultado = eliminar_admin_usuario(usuario_id)
+    
+    if resultado["status"] == "error":
+        raise HTTPException(status_code=400, detail=resultado["mensaje"])
+    
+    return resultado
+
+@app.patch("/api/admin-usuario/{usuario_id}/activo", response_model=dict)
+async def cambiar_estado_usuario(usuario_id: int, activo: bool = Body(...)):
+    """Cambia el estado activo/inactivo de un usuario administrador"""
+    resultado = cambiar_estado_admin_usuario(usuario_id, activo)
+    
+    if resultado["status"] == "error":
+        raise HTTPException(status_code=400, detail=resultado["mensaje"])
+    
+    return resultado
+
+@app.get("/api/admin-usuario/username/{username}", response_model=AdminUsuarioResponse)
+async def obtener_usuario_por_username(username: str):
+    """Obtiene un usuario administrador por username (útil para autenticación)"""
+    usuario = obtener_admin_usuario_por_username(username)
+    
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    
+    # No devolver el password_hash en la respuesta
+    usuario.pop("password_hash", None)
+    return usuario
+
+@app.post("/api/admin-usuario/login", response_model=dict)
+async def login_usuario(credentials: dict = Body(...)):
+    """Autentica un usuario administrador"""
+    username = credentials.get("username")
+    password = credentials.get("password")
+    
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Username y password son requeridos")
+    
+    resultado = autenticar_admin_usuario(username, password)
+    
+    if resultado["status"] == "error":
+        raise HTTPException(status_code=401, detail=resultado["mensaje"])
+    
+    return resultado
 
 

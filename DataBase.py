@@ -6,6 +6,13 @@ import re
 import gspread
 from google.oauth2.service_account import Credentials
 from schemas import ActualizacionContactoInfo
+# Para hash de contraseñas (instalar con: pip install bcrypt)
+try:
+    import bcrypt
+    BCRYPT_AVAILABLE = True
+except ImportError:
+    BCRYPT_AVAILABLE = False
+    print("⚠️ bcrypt no instalado. Las contraseñas no se hashearán correctamente.")
 
 # Cargar variables de entorno (incluye DATABASE_URL)
 load_dotenv()
@@ -828,4 +835,346 @@ def obtener_ultimos_mensajes(limit=10):
         conn.close()
     except Exception as e:
         print("❌ Error al consultar mensajes:", e)
+
+
+# ===============================
+# UTILIDADES PARA CONTRASEÑAS
+# ===============================
+
+def hash_password(password: str) -> str:
+    """Genera un hash seguro de la contraseña usando bcrypt"""
+    if not BCRYPT_AVAILABLE:
+        # Fallback básico (NO usar en producción)
+        return password  # ⚠️ TEMPORAL - instalar bcrypt
+    
+    password_bytes = password.encode('utf-8')
+    salt = bcrypt.gensalt()
+    password_hash = bcrypt.hashpw(password_bytes, salt)
+    return password_hash.decode('utf-8')
+
+def verify_password(password: str, hashed_password: str) -> bool:
+    """Verifica si una contraseña coincide con su hash"""
+    if not BCRYPT_AVAILABLE:
+        # Fallback básico (NO usar en producción)
+        return password == hashed_password  # ⚠️ TEMPORAL
+    
+    password_bytes = password.encode('utf-8')
+    hashed_password_bytes = hashed_password.encode('utf-8')
+    return bcrypt.checkpw(password_bytes, hashed_password_bytes)
+
+# ===============================
+# FUNCIONES PARA ADMIN_USUARIO
+# ===============================
+
+def obtener_todos_admin_usuarios():
+    """Obtiene todos los usuarios administradores"""
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+        
+        cur.execute("""
+            SELECT id, username, nombre_completo, email, telefono, rol, grupo, activo, 
+                   creado_en, actualizado_en
+            FROM admin_usuario
+            ORDER BY creado_en DESC
+        """)
+        
+        usuarios = []
+        for row in cur.fetchall():
+            usuarios.append({
+                "id": row[0],
+                "username": row[1],
+                "nombre_completo": row[2],
+                "email": row[3],
+                "telefono": row[4],
+                "rol": row[5],
+                "grupo": row[6],
+                "activo": row[7],
+                "creado_en": row[8].isoformat() if row[8] else None,
+                "actualizado_en": row[9].isoformat() if row[9] else None
+            })
+        
+        cur.close()
+        conn.close()
+        return usuarios
+        
+    except Exception as e:
+        print("❌ Error al obtener usuarios administradores:", e)
+        return []
+
+
+def crear_admin_usuario(datos):
+    """Crea un nuevo usuario administrador"""
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+        
+        # Verificar si el username ya existe
+        cur.execute("SELECT id FROM admin_usuario WHERE username = %s", (datos.get("username"),))
+        if cur.fetchone():
+            cur.close()
+            conn.close()
+            return {"status": "error", "mensaje": "El username ya existe"}
+        
+        # Verificar si el email ya existe
+        if datos.get("email"):
+            cur.execute("SELECT id FROM admin_usuario WHERE email = %s", (datos.get("email"),))
+            if cur.fetchone():
+                cur.close()
+                conn.close()
+                return {"status": "error", "mensaje": "El email ya existe"}
+        
+        # Hash de la contraseña
+        password_hash = hash_password(datos.get("password_hash", ""))
+        
+        cur.execute("""
+            INSERT INTO admin_usuario (
+                username, nombre_completo, email, telefono, rol, grupo, activo, 
+                password_hash, creado_en, actualizado_en
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            RETURNING id
+        """, (
+            datos.get("username"),
+            datos.get("nombre_completo"),
+            datos.get("email"),
+            datos.get("telefono"),
+            datos.get("rol"),
+            datos.get("grupo"),
+            datos.get("activo", True),
+            password_hash
+        ))
+        
+        usuario_id = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        return {"status": "ok", "mensaje": "Usuario creado correctamente", "id": usuario_id}
+        
+    except Exception as e:
+        print("❌ Error al crear usuario administrador:", e)
+        return {"status": "error", "mensaje": str(e)}
+
+
+def obtener_admin_usuario_por_id(usuario_id):
+    """Obtiene un usuario administrador por ID"""
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+        
+        cur.execute("""
+            SELECT id, username, nombre_completo, email, telefono, rol, grupo, activo,
+                   creado_en, actualizado_en
+            FROM admin_usuario
+            WHERE id = %s
+        """, (usuario_id,))
+        
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        
+        if row:
+            return {
+                "id": row[0],
+                "username": row[1],
+                "nombre_completo": row[2],
+                "email": row[3],
+                "telefono": row[4],
+                "rol": row[5],
+                "grupo": row[6],
+                "activo": row[7],
+                "creado_en": row[8].isoformat() if row[8] else None,
+                "actualizado_en": row[9].isoformat() if row[9] else None
+            }
+        return None
+        
+    except Exception as e:
+        print("❌ Error al obtener usuario administrador:", e)
+        return None
+
+
+def actualizar_admin_usuario(usuario_id, datos):
+    """Actualiza un usuario administrador"""
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+        
+        # Verificar si el usuario existe
+        cur.execute("SELECT id FROM admin_usuario WHERE id = %s", (usuario_id,))
+        if not cur.fetchone():
+            cur.close()
+            conn.close()
+            return {"status": "error", "mensaje": "Usuario no encontrado"}
+        
+        # Verificar username único (excluyendo el usuario actual)
+        if datos.get("username"):
+            cur.execute(
+                "SELECT id FROM admin_usuario WHERE username = %s AND id != %s", 
+                (datos.get("username"), usuario_id)
+            )
+            if cur.fetchone():
+                cur.close()
+                conn.close()
+                return {"status": "error", "mensaje": "El username ya existe"}
+        
+        # Verificar email único (excluyendo el usuario actual)
+        if datos.get("email"):
+            cur.execute(
+                "SELECT id FROM admin_usuario WHERE email = %s AND id != %s", 
+                (datos.get("email"), usuario_id)
+            )
+            if cur.fetchone():
+                cur.close()
+                conn.close()
+                return {"status": "error", "mensaje": "El email ya existe"}
+        
+        # Construir query de actualización dinámicamente
+        updates = []
+        valores = []
+        
+        campos_permitidos = ["username", "nombre_completo", "email", "telefono", "rol", "grupo", "activo"]
+        for campo in campos_permitidos:
+            if campo in datos:
+                updates.append(f"{campo} = %s")
+                valores.append(datos[campo])
+        
+        if not updates:
+            cur.close()
+            conn.close()
+            return {"status": "error", "mensaje": "No se proporcionaron campos para actualizar"}
+        
+        updates.append("actualizado_en = NOW()")
+        valores.append(usuario_id)
+        
+        query = f"UPDATE admin_usuario SET {', '.join(updates)} WHERE id = %s"
+        cur.execute(query, tuple(valores))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        return {"status": "ok", "mensaje": "Usuario actualizado correctamente"}
+        
+    except Exception as e:
+        print("❌ Error al actualizar usuario administrador:", e)
+        return {"status": "error", "mensaje": str(e)}
+
+
+def eliminar_admin_usuario(usuario_id):
+    """Elimina un usuario administrador"""
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+        
+        # Verificar si el usuario existe
+        cur.execute("SELECT id FROM admin_usuario WHERE id = %s", (usuario_id,))
+        if not cur.fetchone():
+            cur.close()
+            conn.close()
+            return {"status": "error", "mensaje": "Usuario no encontrado"}
+        
+        cur.execute("DELETE FROM admin_usuario WHERE id = %s", (usuario_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        return {"status": "ok", "mensaje": "Usuario eliminado correctamente"}
+        
+    except Exception as e:
+        print("❌ Error al eliminar usuario administrador:", e)
+        return {"status": "error", "mensaje": str(e)}
+
+
+def cambiar_estado_admin_usuario(usuario_id, activo):
+    """Cambia el estado activo/inactivo de un usuario administrador"""
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+        
+        # Verificar si el usuario existe
+        cur.execute("SELECT id FROM admin_usuario WHERE id = %s", (usuario_id,))
+        if not cur.fetchone():
+            cur.close()
+            conn.close()
+            return {"status": "error", "mensaje": "Usuario no encontrado"}
+        
+        cur.execute("""
+            UPDATE admin_usuario 
+            SET activo = %s, actualizado_en = NOW() 
+            WHERE id = %s
+        """, (activo, usuario_id))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        estado_texto = "activado" if activo else "desactivado"
+        return {"status": "ok", "mensaje": f"Usuario {estado_texto} correctamente"}
+        
+    except Exception as e:
+        print("❌ Error al cambiar estado del usuario administrador:", e)
+        return {"status": "error", "mensaje": str(e)}
+
+
+def obtener_admin_usuario_por_username(username):
+    """Obtiene un usuario administrador por username (útil para autenticación)"""
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+        
+        cur.execute("""
+            SELECT id, username, nombre_completo, email, telefono, rol, grupo, activo,
+                   password_hash, creado_en, actualizado_en
+            FROM admin_usuario
+            WHERE username = %s
+        """, (username,))
+        
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        
+        if row:
+            return {
+                "id": row[0],
+                "username": row[1],
+                "nombre_completo": row[2],
+                "email": row[3],
+                "telefono": row[4],
+                "rol": row[5],
+                "grupo": row[6],
+                "activo": row[7],
+                "password_hash": row[8],
+                "creado_en": row[9].isoformat() if row[9] else None,
+                "actualizado_en": row[10].isoformat() if row[10] else None
+            }
+        return None
+        
+    except Exception as e:
+        print("❌ Error al obtener usuario por username:", e)
+        return None
+
+
+def autenticar_admin_usuario(username, password):
+    """Autentica un usuario administrador"""
+    try:
+        # Obtener usuario por username
+        usuario = obtener_admin_usuario_por_username(username)
+        
+        if not usuario:
+            return {"status": "error", "mensaje": "Usuario no encontrado"}
+        
+        if not usuario.get("activo"):
+            return {"status": "error", "mensaje": "Usuario inactivo"}
+        
+        # Verificar contraseña
+        if verify_password(password, usuario.get("password_hash", "")):
+            # No retornar el password_hash en la respuesta
+            usuario.pop("password_hash", None)
+            return {"status": "ok", "usuario": usuario}
+        else:
+            return {"status": "error", "mensaje": "Contraseña incorrecta"}
+            
+    except Exception as e:
+        print("❌ Error al autenticar usuario:", e)
+        return {"status": "error", "mensaje": "Error en autenticación"}
 

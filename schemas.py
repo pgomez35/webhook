@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from typing import Optional
 from datetime import datetime
 
@@ -27,3 +27,40 @@ class EventoIn(BaseModel):
 class EventoOut(EventoIn):
     id: str
     link_meet: Optional[str] = None
+
+# ===============================
+# ESQUEMAS PARA ADMIN_USUARIO
+# ===============================
+
+class AdminUsuarioBase(BaseModel):
+    username: str
+    nombre_completo: Optional[str] = None
+    email: Optional[str] = None  # Cambié EmailStr por str para simplicidad
+    telefono: Optional[str] = None
+    rol: str
+    grupo: Optional[str] = None
+    activo: bool = True
+
+class AdminUsuarioCreate(AdminUsuarioBase):
+    password_hash: str
+
+class AdminUsuarioUpdate(BaseModel):
+    username: Optional[str] = None
+    nombre_completo: Optional[str] = None
+    email: Optional[str] = None
+    telefono: Optional[str] = None
+    rol: Optional[str] = None
+    grupo: Optional[str] = None
+    activo: Optional[bool] = None
+
+class AdminUsuarioResponse(AdminUsuarioBase):
+    id: int
+    creado_en: Optional[str] = None  # Como string ISO format
+    actualizado_en: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
+
+class AdminUsuarioLogin(BaseModel):
+    username: str
+    password: str
