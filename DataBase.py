@@ -1178,3 +1178,181 @@ def autenticar_admin_usuario(username, password):
         print("❌ Error al autenticar usuario:", e)
         return {"status": "error", "mensaje": "Error en autenticación"}
 
+
+def obtener_todos_perfiles_creador():
+    """Obtiene todos los perfiles de creadores"""
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT id, id_creador, perfil, biografia, seguidores, videos, engagement, acciones
+            FROM perfil_creador
+            ORDER BY id DESC
+        """)
+
+        perfiles = []
+        for row in cur.fetchall():
+            perfiles.append({
+                "id": row[0],
+                "id_creador": row[1] or f"creator_{row[0]}",
+                "perfil": row[2] or "Sin clasificar",
+                "biografia": row[3] or "",
+                "seguidores": row[4] or 0,
+                "videos": row[5] or 0,
+                "engagement": row[6] or "0%",
+                "acciones": row[7] or "Pendiente"
+            })
+
+        cur.close()
+        conn.close()
+        return perfiles
+
+    except Exception as e:
+        print("❌ Error al obtener perfiles de creadores:", e)
+        return []
+
+
+def obtener_perfil_creador_por_id(perfil_id: int):
+    """Obtiene un perfil de creador por ID"""
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT id, id_creador, perfil, biografia, seguidores, videos, engagement, acciones
+            FROM perfil_creador
+            WHERE id = %s
+        """, (perfil_id,))
+
+        row = cur.fetchone()
+        if row:
+            perfil = {
+                "id": row[0],
+                "id_creador": row[1] or f"creator_{row[0]}",
+                "perfil": row[2] or "Sin clasificar",
+                "biografia": row[3] or "",
+                "seguidores": row[4] or 0,
+                "videos": row[5] or 0,
+                "engagement": row[6] or "0%",
+                "acciones": row[7] or "Pendiente"
+            }
+        else:
+            perfil = None
+
+        cur.close()
+        conn.close()
+        return perfil
+
+    except Exception as e:
+        print("❌ Error al obtener perfil de creador:", e)
+        return None
+
+
+def crear_perfil_creador(perfil_data):
+    """Crea un nuevo perfil de creador"""
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+
+        cur.execute("""
+            INSERT INTO perfil_creador (id_creador, perfil, biografia, seguidores, videos, engagement, acciones)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, id_creador, perfil, biografia, seguidores, videos, engagement, acciones
+        """, (
+            perfil_data["id_creador"],
+            perfil_data["perfil"],
+            perfil_data["biografia"],
+            perfil_data["seguidores"],
+            perfil_data["videos"],
+            perfil_data["engagement"],
+            perfil_data["acciones"]
+        ))
+
+        row = cur.fetchone()
+        perfil = {
+            "id": row[0],
+            "id_creador": row[1],
+            "perfil": row[2],
+            "biografia": row[3],
+            "seguidores": row[4],
+            "videos": row[5],
+            "engagement": row[6],
+            "acciones": row[7]
+        }
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        return perfil
+
+    except Exception as e:
+        print("❌ Error al crear perfil de creador:", e)
+        return None
+
+
+def actualizar_perfil_creador(perfil_id: int, perfil_data):
+    """Actualiza un perfil de creador"""
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+
+        cur.execute("""
+            UPDATE perfil_creador 
+            SET id_creador = %s, perfil = %s, biografia = %s, seguidores = %s, 
+                videos = %s, engagement = %s, acciones = %s
+            WHERE id = %s
+            RETURNING id, id_creador, perfil, biografia, seguidores, videos, engagement, acciones
+        """, (
+            perfil_data["id_creador"],
+            perfil_data["perfil"],
+            perfil_data["biografia"],
+            perfil_data["seguidores"],
+            perfil_data["videos"],
+            perfil_data["engagement"],
+            perfil_data["acciones"],
+            perfil_id
+        ))
+
+        row = cur.fetchone()
+        if row:
+            perfil = {
+                "id": row[0],
+                "id_creador": row[1],
+                "perfil": row[2],
+                "biografia": row[3],
+                "seguidores": row[4],
+                "videos": row[5],
+                "engagement": row[6],
+                "acciones": row[7]
+            }
+        else:
+            perfil = None
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        return perfil
+
+    except Exception as e:
+        print("❌ Error al actualizar perfil de creador:", e)
+        return None
+
+
+def eliminar_perfil_creador(perfil_id: int):
+    """Elimina un perfil de creador"""
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+
+        cur.execute("DELETE FROM perfil_creador WHERE id = %s", (perfil_id,))
+        affected_rows = cur.rowcount
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        return affected_rows > 0
+
+    except Exception as e:
+        print("❌ Error al eliminar perfil de creador:", e)
+        return False

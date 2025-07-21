@@ -64,3 +64,26 @@ class AdminUsuarioResponse(AdminUsuarioBase):
 class AdminUsuarioLogin(BaseModel):
     username: str
     password: str
+
+
+# ===============================
+# ESQUEMAS PARA PERFIL_CREADOR  
+# ===============================
+
+class PerfilCreadorBase(BaseModel):
+    id_creador: str
+    perfil: str
+    biografia: Optional[str] = None
+    seguidores: int = 0
+    videos: int = 0
+    engagement: Optional[str] = None
+    acciones: Optional[str] = None
+
+class PerfilCreadorCreate(PerfilCreadorBase):
+    pass
+
+class PerfilCreador(PerfilCreadorBase):
+    id: int
+
+    class Config:
+        from_attributes = True
