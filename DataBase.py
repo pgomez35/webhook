@@ -869,24 +869,8 @@ def verify_password(password: str, hashed_password: str) -> bool:
 def obtener_todos_admin_usuarios():
     """Obtiene todos los usuarios administradores"""
     try:
-        print(f"🔗 Conectando a: {INTERNAL_DATABASE_URL}")  # Debug log
         conn = psycopg2.connect(INTERNAL_DATABASE_URL)
         cur = conn.cursor()
-        
-        # Verificar si la tabla existe
-        cur.execute("""
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_name = 'admin_usuario'
-            )
-        """)
-        table_exists = cur.fetchone()[0]
-        
-        if not table_exists:
-            print("❌ La tabla admin_usuario no existe")
-            cur.close()
-            conn.close()
-            return []
         
         cur.execute("""
             SELECT id, username, nombre_completo, email, telefono, rol, grupo, activo, 
@@ -895,11 +879,8 @@ def obtener_todos_admin_usuarios():
             ORDER BY creado_en DESC
         """)
         
-        rows = cur.fetchall()
-        print(f"📊 Filas encontradas: {len(rows)}")  # Debug log
-        
         usuarios = []
-        for row in rows:
+        for row in cur.fetchall():
             usuarios.append({
                 "id": row[0],
                 "username": row[1],
@@ -915,14 +896,10 @@ def obtener_todos_admin_usuarios():
         
         cur.close()
         conn.close()
-        print(f"✅ Usuarios procesados: {len(usuarios)}")  # Debug log
         return usuarios
         
-    except psycopg2.Error as e:
-        print(f"❌ Error de base de datos: {e}")
-        return []
     except Exception as e:
-        print(f"❌ Error al obtener usuarios administradores: {e}")
+        print("❌ Error al obtener usuarios administradores:", e)
         return []
 
 

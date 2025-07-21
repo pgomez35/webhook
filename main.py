@@ -706,26 +706,14 @@ async def test_conexion():
 @app.get("/api/admin-usuario", response_model=List[AdminUsuarioResponse])
 async def obtener_usuarios():
     """Obtiene todos los usuarios administradores"""
-    try:
-        usuarios = obtener_todos_admin_usuarios()
-        print(f"✅ Usuarios obtenidos: {len(usuarios)}")  # Debug log
-        return usuarios
-    except Exception as e:
-        print(f"❌ Error en endpoint obtener_usuarios: {e}")
-        raise HTTPException(status_code=500, detail=f"Error interno del servidor: {str(e)}")
+    usuarios = obtener_todos_admin_usuarios()
+    return usuarios
 
-@app.post("/api/admin-usuario", response_model=dict)
-async def crear_usuario(usuario_data: AdminUsuarioCreate):
+@app.post("/api/admin-usuario", response_model=AdminUsuarioResponse)
+async def crear_usuario(usuario: AdminUsuarioCreate):
     """Crea un nuevo usuario administrador"""
-    # Convertir a diccionario
-    datos = usuario_data.dict()
-    
-    resultado = crear_admin_usuario(datos)
-    
-    if resultado["status"] == "error":
-        raise HTTPException(status_code=400, detail=resultado["mensaje"])
-    
-    return resultado
+    usuario_creado = crear_admin_usuario(usuario)
+    return usuario_creado
 
 @app.get("/api/admin-usuario/{usuario_id}", response_model=AdminUsuarioResponse)
 async def obtener_usuario(usuario_id: int):
@@ -737,38 +725,25 @@ async def obtener_usuario(usuario_id: int):
     
     return usuario
 
-@app.put("/api/admin-usuario/{usuario_id}", response_model=dict)
-async def actualizar_usuario(usuario_id: int, usuario_data: AdminUsuarioUpdate):
+@app.put("/api/admin-usuario/{usuario_id}", response_model=AdminUsuarioResponse)
+async def actualizar_usuario(usuario_id: int, usuario: AdminUsuarioUpdate):
     """Actualiza un usuario administrador"""
-    # Convertir a diccionario y filtrar campos None
-    datos = {k: v for k, v in usuario_data.dict().items() if v is not None}
-    
-    resultado = actualizar_admin_usuario(usuario_id, datos)
-    
-    if resultado["status"] == "error":
-        raise HTTPException(status_code=400, detail=resultado["mensaje"])
-    
-    return resultado
+    usuario_actualizado = actualizar_admin_usuario(usuario_id, usuario)
+    if not usuario_actualizado:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    return usuario_actualizado
 
-@app.delete("/api/admin-usuario/{usuario_id}", response_model=dict)
+@app.delete("/api/admin-usuario/{usuario_id}")
 async def eliminar_usuario(usuario_id: int):
     """Elimina un usuario administrador"""
-    resultado = eliminar_admin_usuario(usuario_id)
-    
-    if resultado["status"] == "error":
-        raise HTTPException(status_code=400, detail=resultado["mensaje"])
-    
-    return resultado
+    eliminar_admin_usuario(usuario_id)
+    return {"mensaje": "Usuario eliminado exitosamente"}
 
-@app.patch("/api/admin-usuario/{usuario_id}/activo", response_model=dict)
+@app.patch("/api/admin-usuario/{usuario_id}/activo")
 async def cambiar_estado_usuario(usuario_id: int, activo: bool = Body(...)):
     """Cambia el estado activo/inactivo de un usuario administrador"""
-    resultado = cambiar_estado_admin_usuario(usuario_id, activo)
-    
-    if resultado["status"] == "error":
-        raise HTTPException(status_code=400, detail=resultado["mensaje"])
-    
-    return resultado
+    cambiar_estado_admin_usuario(usuario_id, activo)
+    return {"mensaje": f"Estado actualizado a {'activo' if activo else 'inactivo'}"}
 
 @app.get("/api/admin-usuario/username/{username}", response_model=AdminUsuarioResponse)
 async def obtener_usuario_por_username(username: str):
@@ -778,11 +753,9 @@ async def obtener_usuario_por_username(username: str):
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
-    # No devolver el password_hash en la respuesta
-    usuario.pop("password_hash", None)
     return usuario
 
-@app.post("/api/admin-usuario/login", response_model=dict)
+@app.post("/api/admin-usuario/login")
 async def login_usuario(credentials: dict = Body(...)):
     """Autentica un usuario administrador"""
     username = credentials.get("username")
@@ -791,11 +764,13 @@ async def login_usuario(credentials: dict = Body(...)):
     if not username or not password:
         raise HTTPException(status_code=400, detail="Username y password son requeridos")
     
-    resultado = autenticar_admin_usuario(username, password)
+    # Verificar credenciales
+    usuario = obtener_admin_usuario_por_username(username)
+    if not usuario or not verify_password(password, usuario["password_hash"]):
+        raise HTTPException(status_code=401, detail="Credenciales inválidas")
     
-    if resultado["status"] == "error":
-        raise HTTPException(status_code=401, detail=resultado["mensaje"])
-    
-    return resultado
+    # Retornar datos del usuario sin el password_hash
+    usuario_response = {k: v for k, v in usuario.items() if k != "password_hash"}
+    return {"usuario": usuario_response, "mensaje": "Login exitoso"}
 
 
