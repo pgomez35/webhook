@@ -1178,7 +1178,6 @@ def autenticar_admin_usuario(username, password):
         print("❌ Error al autenticar usuario:", e)
         return {"status": "error", "mensaje": "Error en autenticación"}
 
-
 def obtener_todos_perfiles_creador():
     """Obtiene todos los perfiles de creadores"""
     try:
@@ -1186,7 +1185,7 @@ def obtener_todos_perfiles_creador():
         cur = conn.cursor()
 
         cur.execute("""
-            SELECT id, creador_id, perfil, biografia, seguidores, videos, engagement, acciones
+            SELECT id, creador_id, perfil, biografia_actual  AS biografia, seguidores, cantidad_videos AS videos, engagement_rate AS engagement, clasificacion_actual AS acciones
             FROM perfil_creador
             ORDER BY id DESC
         """)
@@ -1200,7 +1199,7 @@ def obtener_todos_perfiles_creador():
                 "biografia": row[3] or "",
                 "seguidores": row[4] or 0,
                 "videos": row[5] or 0,
-                "engagement": row[6] or "0%",
+                "engagement": f"{row[6]*100:.2f}%" if row[6] is not None else "0%",
                 "acciones": row[7] or "Pendiente"
             })
 
@@ -1220,7 +1219,7 @@ def obtener_perfil_creador_por_id(perfil_id: int):
         cur = conn.cursor()
 
         cur.execute("""
-            SELECT id, creador_id, perfil, biografia, seguidores, videos, engagement, acciones
+            SELECT id, creador_id, perfil, biografia_actual AS biografia, seguidores, cantidad_videos AS videos, engagement_rate AS engagement, clasificacion_actual AS acciones
             FROM perfil_creador
             WHERE id = %s
         """, (perfil_id,))
@@ -1234,7 +1233,7 @@ def obtener_perfil_creador_por_id(perfil_id: int):
                 "biografia": row[3] or "",
                 "seguidores": row[4] or 0,
                 "videos": row[5] or 0,
-                "engagement": row[6] or "0%",
+                "engagement": f"{row[6]*100:.2f}%" if row[6] is not None else "0%",
                 "acciones": row[7] or "Pendiente"
             }
         else:
@@ -1256,16 +1255,16 @@ def crear_perfil_creador(perfil_data):
         cur = conn.cursor()
 
         cur.execute("""
-            INSERT INTO perfil_creador (creador_id, perfil, biografia, seguidores, videos, engagement, acciones)
+            INSERT INTO perfil_creador (creador_id, perfil, biografia_actual, seguidores, cantidad_videos, engagement_rate, clasificacion_actual)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
-            RETURNING id, creador_id, perfil, biografia, seguidores, videos, engagement, acciones
+            RETURNING id, creador_id, perfil, biografia_actual, seguidores, cantidad_videos, engagement_rate, clasificacion_actual
         """, (
             perfil_data["creador_id"],
             perfil_data["perfil"],
             perfil_data["biografia"],
             perfil_data["seguidores"],
             perfil_data["videos"],
-            perfil_data["engagement"],
+            float(perfil_data["engagement"].strip('%')) / 100 if isinstance(perfil_data["engagement"], str) else perfil_data["engagement"],
             perfil_data["acciones"]
         ))
 
@@ -1277,7 +1276,7 @@ def crear_perfil_creador(perfil_data):
             "biografia": row[3],
             "seguidores": row[4],
             "videos": row[5],
-            "engagement": row[6],
+            "engagement": f"{row[6]*100:.2f}%",
             "acciones": row[7]
         }
 
@@ -1299,17 +1298,17 @@ def actualizar_perfil_creador(perfil_id: int, perfil_data):
 
         cur.execute("""
             UPDATE perfil_creador 
-            SET creador_id = %s, perfil = %s, biografia = %s, seguidores = %s, 
-                videos = %s, engagement = %s, acciones = %s
+            SET creador_id = %s, perfil = %s, biografia_actual = %s, seguidores = %s, 
+                cantidad_videos = %s, engagement_rate = %s, clasificacion_actual = %s
             WHERE id = %s
-            RETURNING id, creador_id, perfil, biografia, seguidores, videos, engagement, acciones
+            RETURNING id, creador_id, perfil, biografia_actual, seguidores, cantidad_videos, engagement_rate, clasificacion_actual
         """, (
             perfil_data["creador_id"],
             perfil_data["perfil"],
             perfil_data["biografia"],
             perfil_data["seguidores"],
             perfil_data["videos"],
-            perfil_data["engagement"],
+            float(perfil_data["engagement"].strip('%')) / 100 if isinstance(perfil_data["engagement"], str) else perfil_data["engagement"],
             perfil_data["acciones"],
             perfil_id
         ))
@@ -1323,7 +1322,7 @@ def actualizar_perfil_creador(perfil_id: int, perfil_data):
                 "biografia": row[3],
                 "seguidores": row[4],
                 "videos": row[5],
-                "engagement": row[6],
+                "engagement": f"{row[6]*100:.2f}%",
                 "acciones": row[7]
             }
         else:
@@ -1356,3 +1355,4 @@ def eliminar_perfil_creador(perfil_id: int):
     except Exception as e:
         print("❌ Error al eliminar perfil de creador:", e)
         return False
+
