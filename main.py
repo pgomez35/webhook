@@ -647,11 +647,72 @@ async def borrar_mensajes(telefono: str):
 # ENDPOINTS PARA ADMIN_USUARIO
 # ===============================
 
+@app.get("/api/admin-usuario/test", response_model=dict)
+async def test_conexion():
+    """Prueba la conexión a la base de datos y la tabla admin_usuario"""
+    try:
+        import psycopg2
+        from dotenv import load_dotenv
+        load_dotenv()
+        
+        db_url = os.getenv("EXTERNAL_DATABASE_URL")
+        print(f"🔗 Probando conexión a: {db_url}")
+        
+        conn = psycopg2.connect(db_url)
+        cur = conn.cursor()
+        
+        # Verificar si la tabla existe
+        cur.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'admin_usuario'
+            )
+        """)
+        table_exists = cur.fetchone()[0]
+        
+        if table_exists:
+            # Contar registros
+            cur.execute("SELECT COUNT(*) FROM admin_usuario")
+            count = cur.fetchone()[0]
+            
+            cur.close()
+            conn.close()
+            
+            return {
+                "status": "ok",
+                "message": "Conexión exitosa",
+                "table_exists": True,
+                "record_count": count
+            }
+        else:
+            cur.close()
+            conn.close()
+            
+            return {
+                "status": "warning",
+                "message": "Conexión exitosa pero tabla no existe",
+                "table_exists": False,
+                "record_count": 0
+            }
+            
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error de conexión: {str(e)}",
+            "table_exists": False,
+            "record_count": 0
+        }
+
 @app.get("/api/admin-usuario", response_model=List[AdminUsuarioResponse])
 async def obtener_usuarios():
     """Obtiene todos los usuarios administradores"""
-    usuarios = obtener_todos_admin_usuarios()
-    return usuarios
+    try:
+        usuarios = obtener_todos_admin_usuarios()
+        print(f"✅ Usuarios obtenidos: {len(usuarios)}")  # Debug log
+        return usuarios
+    except Exception as e:
+        print(f"❌ Error en endpoint obtener_usuarios: {e}")
+        raise HTTPException(status_code=500, detail=f"Error interno del servidor: {str(e)}")
 
 @app.post("/api/admin-usuario", response_model=dict)
 async def crear_usuario(usuario_data: AdminUsuarioCreate):
