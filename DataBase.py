@@ -1405,7 +1405,7 @@ def actualizar_perfil_creador(creador_id, evaluacion_dict):
         campos = []
         valores = []
 
-        for campo in ['apariencia', 'engagement', 'calidad_contenido', 'puntaje_total', 'potencial_estimado', 'mejoras_sugeridas']:
+        for campo in ['apariencia', 'engagement', 'calidad_contenido', 'puntaje_total', 'potencial_estimado', 'mejoras_sugeridas','usuario_evalua']:
             if campo in evaluacion_dict:
                 campos.append(f"{campo} = %s")
                 valores.append(evaluacion_dict[campo])

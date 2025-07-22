@@ -77,6 +77,7 @@ class EvaluacionInicialSchema(BaseModel):
     puntaje_total: Optional[float] = Field(None, ge=0, le=100)
     potencial_estimado: Optional[str] = Field(None, example="Alto", description="Bajo, Medio, Alto, Excelente")
     mejoras_sugeridas: Optional[str] = Field(None, max_length=1000)
+    usuario_evalua: Optional[str] = Field(None, max_length=100, description="Usuario que realiza la evaluación")
 
     class Config:
         schema_extra = {
@@ -86,6 +87,7 @@ class EvaluacionInicialSchema(BaseModel):
                 "calidad_contenido": 9,
                 "puntaje_total": 78.5,
                 "potencial_estimado": "Alto",
-                "mejoras_sugeridas": "Podría mejorar la iluminación de sus videos."
+                "mejoras_sugeridas": "Podría mejorar la iluminación de sus videos.",
+                "usuario_evalua": "admin_pedro"
             }
         }
