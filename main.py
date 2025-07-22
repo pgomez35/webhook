@@ -773,64 +773,27 @@ async def login_usuario(credentials: dict = Body(...)):
     usuario_response = {k: v for k, v in usuario.items() if k != "password_hash"}
     return {"usuario": usuario_response, "mensaje": "Login exitoso"}
 
-# ===============================
-# ENDPOINTS PARA PERFILES CREADOR
-# ===============================
+#-------------------------
+#-------------------------
 
-# Endpoints para perfiles de creadores
-@app.post("/perfiles-creador/", response_model=PerfilCreador)
-def create_perfil_creador(perfil: PerfilCreadorCreate):
-    perfil_data = {
-        "id_creador": perfil.id_creador,
-        "perfil": perfil.perfil,
-        "biografia": perfil.biografia,
-        "seguidores": perfil.seguidores,
-        "videos": perfil.videos,
-        "engagement": perfil.engagement,
-        "acciones": perfil.acciones
-    }
+@app.get("/api/creadores")
+def listar_creadores():
+    try:
+        return obtener_creadores()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-    resultado = crear_perfil_creador(perfil_data)
-    if resultado:
-        return resultado
-    else:
-        raise HTTPException(status_code=500, detail="Error al crear perfil")
-
-
-@app.get("/perfiles-creador/", response_model=List[PerfilCreador])
-def read_perfiles_creador():
-    perfiles = obtener_todos_perfiles_creador()
-    return perfiles
-
-
-@app.get("/perfiles-creador/{perfil_id}", response_model=PerfilCreador)
-def read_perfil_creador(perfil_id: int):
-    perfil = obtener_perfil_creador_por_id(perfil_id)
-    if perfil is None:
+@app.get("/api/perfil_creador/{creador_id}")
+def perfil_creador(creador_id: int):
+    perfil = obtener_perfil_creador(creador_id)
+    if not perfil:
         raise HTTPException(status_code=404, detail="Perfil no encontrado")
     return perfil
 
-
-@app.put("/perfiles-creador/{perfil_id}", response_model=PerfilCreador)
-def update_perfil_creador(perfil_id: int, perfil: PerfilCreadorCreate):
-    perfil_data = {
-        "id_creador": perfil.id_creador,
-        "perfil": perfil.perfil,
-        "biografia": perfil.biografia,
-        "seguidores": perfil.seguidores,
-        "videos": perfil.videos,
-        "engagement": perfil.engagement,
-        "acciones": perfil.acciones
-    }
-
-    resultado = actualizar_perfil_creador(perfil_id, perfil_data)
-    if resultado is None:
-        raise HTTPException(status_code=404, detail="Perfil no encontrado")
-    return resultado
-
-@app.delete("/perfiles-creador/{perfil_id}")
-def delete_perfil_creador(perfil_id: int):
-    resultado = eliminar_perfil_creador(perfil_id)
-    if not resultado:
-        raise HTTPException(status_code=404, detail="Perfil no encontrado")
-    return {"message": "Perfil eliminado correctamente"}
+@app.put("/api/perfil_creador/{creador_id}")
+def evaluar_creador(creador_id: int, evaluacion: dict = Body(...)):
+    try:
+        actualizar_perfil_creador(creador_id, evaluacion)
+        return {"status": "ok", "mensaje": "Evaluación actualizada"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

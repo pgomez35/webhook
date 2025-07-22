@@ -1185,7 +1185,7 @@ def obtener_todos_perfiles_creador():
         cur = conn.cursor()
 
         cur.execute("""
-            SELECT id, creador_id, perfil, biografia_actual  AS biografia, seguidores, cantidad_videos AS videos, engagement_rate AS engagement, clasificacion_actual AS acciones
+            SELECT id, creador_id, perfil, biografia_actual as biografia, seguidores, cantidad_videos as videos, engagement_rate as engagement, clasificacion_actual as acciones
             FROM perfil_creador
             ORDER BY id DESC
         """)
@@ -1219,7 +1219,7 @@ def obtener_perfil_creador_por_id(perfil_id: int):
         cur = conn.cursor()
 
         cur.execute("""
-            SELECT id, creador_id, perfil, biografia_actual AS biografia, seguidores, cantidad_videos AS videos, engagement_rate AS engagement, clasificacion_actual AS acciones
+            SELECT id, creador_id, perfil, biografia_actual as biografia, seguidores, cantidad_videos as videos, engagement_rate as engagement, clasificacion_actual as acciones
             FROM perfil_creador
             WHERE id = %s
         """, (perfil_id,))
@@ -1356,3 +1356,81 @@ def eliminar_perfil_creador(perfil_id: int):
         print("❌ Error al eliminar perfil de creador:", e)
         return False
 
+
+# -----------------------------------
+# -----------------------------------
+def obtener_creadores():
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, usuario, nickname, nombre_real, foto_url
+            FROM creadores
+            WHERE activo = TRUE
+            ORDER BY actualizado_en DESC;
+        """)
+        datos = cur.fetchall()
+        columnas = [desc[0] for desc in cur.description]
+        resultados = [dict(zip(columnas, fila)) for fila in datos]
+        cur.close()
+        conn.close()
+        return resultados
+    except Exception as e:
+        print("❌ Error al obtener creadores:", e)
+        return []
+
+def obtener_perfil_creador(creador_id):
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT *
+            FROM perfil_creador
+            WHERE creador_id = %s;
+        """, (creador_id,))
+        fila = cur.fetchone()
+        columnas = [desc[0] for desc in cur.description]
+        cur.close()
+        conn.close()
+        if fila:
+            return dict(zip(columnas, fila))
+        return None
+    except Exception as e:
+        print("❌ Error al obtener perfil del creador:", e)
+        return None
+
+
+def actualizar_perfil_creador(creador_id, evaluacion_dict):
+    try:
+        campos = []
+        valores = []
+
+        for campo in ['apariencia', 'engagement', 'calidad_contenido', 'puntaje_total', 'potencial_estimado']:
+            if campo in evaluacion_dict:
+                campos.append(f"{campo} = %s")
+                valores.append(evaluacion_dict[campo])
+
+        if not campos:
+            raise ValueError("No se enviaron campos válidos para actualizar")
+
+        # Actualizar el campo actualizado_en también
+        campos.append("actualizado_en = NOW()")
+
+        valores.append(creador_id)
+
+        query = f"""
+            UPDATE perfil_creador
+            SET {', '.join(campos)}
+            WHERE creador_id = %s;
+        """
+
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute(query, valores)
+        conn.commit()
+        cur.close()
+        conn.close()
+
+    except Exception as e:
+        print("❌ Error al actualizar evaluación:", e)
+        raise
