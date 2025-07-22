@@ -25,7 +25,7 @@ from google.oauth2.credentials import Credentials as UserCredentials
 from google.auth.transport.requests import Request as GoogleRequest
 from googleapiclient.discovery import build
 import psycopg2
-from schemas import EventoIn, EventoOut, AdminUsuarioCreate, AdminUsuarioUpdate, AdminUsuarioResponse
+from schemas import *
 
 # from google.oauth2.credentials import Credentials
 # import google.oauth2.credentials  # <--- Esto es lo que te falta
@@ -46,7 +46,7 @@ from enviar_msg_wp import *
 from buscador import inicializar_busqueda, responder_pregunta
 from DataBase import *
 from Excel import *
-from schemas import *
+
 
 
 # 🔄 Cargar variables de entorno
@@ -791,9 +791,9 @@ def perfil_creador(creador_id: int):
     return perfil
 
 @app.put("/api/perfil_creador/{creador_id}")
-def evaluar_creador(creador_id: int, evaluacion: dict = Body(...)):
+def evaluar_creador(creador_id: int, evaluacion: EvaluacionInicialSchema):
     try:
-        actualizar_perfil_creador(creador_id, evaluacion)
+        actualizar_perfil_creador(creador_id, evaluacion.dict(exclude_unset=True))
         return {"status": "ok", "mensaje": "Evaluación actualizada"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
