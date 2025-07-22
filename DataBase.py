@@ -1434,3 +1434,40 @@ def actualizar_perfil_creador(creador_id, evaluacion_dict):
     except Exception as e:
         print("❌ Error al actualizar evaluación:", e)
         raise
+
+def obtener_estadisticas_evaluacion():
+    conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT COUNT(*) FROM creadores;
+    """)
+    total_aspirantes = cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT COUNT(*) FROM perfil_creador 
+        WHERE puntaje_total IS NULL OR puntaje_total = 0;
+    """)
+    evaluaciones_pendientes = cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT COUNT(*) FROM perfil_creador 
+        WHERE puntaje_total >= 3.0;
+    """)
+    aprobados = cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT AVG(puntaje_total) FROM perfil_creador 
+        WHERE puntaje_total IS NOT NULL AND puntaje_total > 0;
+    """)
+    promedio = cur.fetchone()[0] or 0
+
+    cur.close()
+    conn.close()
+
+    return {
+        "totalAspirantes": total_aspirantes,
+        "evaluacionesPendientes": evaluaciones_pendientes,
+        "aprobados": aprobados,
+        "promedioPuntuacion": float(promedio)
+    }

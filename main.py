@@ -797,3 +797,11 @@ def evaluar_creador(creador_id: int, evaluacion: EvaluacionInicialSchema):
         return {"status": "ok", "mensaje": "Evaluación actualizada"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/estadisticas-evaluacion")
+def estadisticas_evaluacion():
+    try:
+        estadisticas = obtener_estadisticas_evaluacion()
+        return estadisticas
+    except Exception as e:
+        return {"error": str(e)}
