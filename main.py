@@ -285,12 +285,62 @@ def sincronizar():
 #     except Exception as e:
 #         logger.error(f"❌ Error al editar evento {evento_id}: {e}")
 #         raise HTTPException(status_code=500, detail=str(e))
+
+# @app.put("/api/eventos/{evento_id}", response_model=EventoOut)
+# def editar_evento(evento_id: str, evento: EventoIn):
+#     try:
+#         if evento.fin <= evento.inicio:
+#             raise HTTPException(status_code=400, detail="La fecha de fin debe ser posterior a la fecha de inicio.")
+#
+#         service = get_calendar_service()
+#         google_event = service.events().get(calendarId="primary", eventId=evento_id).execute()
+#
+#         google_event['summary'] = evento.titulo
+#         google_event['description'] = evento.descripcion
+#         google_event['start']['dateTime'] = evento.inicio.isoformat()
+#         google_event['end']['dateTime'] = evento.fin.isoformat()
+#
+#         if 'extendedProperties' not in google_event:
+#             google_event['extendedProperties'] = {'private': {}}
+#         google_event['extendedProperties']['private']['tiktok_user'] = evento.tiktok_user or ""
+#
+#         updated = service.events().update(
+#             calendarId="primary",
+#             eventId=evento_id,
+#             body=google_event,
+#             conferenceDataVersion=1
+#         ).execute()
+#
+#         meet_link = None
+#         if 'conferenceData' in updated:
+#             entry_points = updated['conferenceData'].get('entryPoints', [])
+#             for ep in entry_points:
+#                 if ep.get('entryPointType') == 'video':
+#                     meet_link = ep.get('uri')
+#                     break
+#
+#         return EventoOut(
+#             id=updated['id'],
+#             titulo=updated['summary'],
+#             inicio=isoparse(updated['start']['dateTime']),
+#             fin=isoparse(updated['end']['dateTime']),
+#             descripcion=updated.get('description'),
+#             tiktok_user=evento.tiktok_user,
+#             link_meet=meet_link
+#         )
+#     except Exception as e:
+#         logger.error(f"❌ Error al editar evento {evento_id}: {e}")
+#         logger.error(traceback.format_exc())
+#         raise HTTPException(status_code=500, detail=str(e))
+
 @app.put("/api/eventos/{evento_id}", response_model=EventoOut)
 def editar_evento(evento_id: str, evento: EventoIn):
+    conn, cur = get_connection()
     try:
         if evento.fin <= evento.inicio:
             raise HTTPException(status_code=400, detail="La fecha de fin debe ser posterior a la fecha de inicio.")
 
+        # Actualizar en Google Calendar
         service = get_calendar_service()
         google_event = service.events().get(calendarId="primary", eventId=evento_id).execute()
 
@@ -310,6 +360,7 @@ def editar_evento(evento_id: str, evento: EventoIn):
             conferenceDataVersion=1
         ).execute()
 
+        # Obtener link de Meet (si existe)
         meet_link = None
         if 'conferenceData' in updated:
             entry_points = updated['conferenceData'].get('entryPoints', [])
@@ -317,6 +368,25 @@ def editar_evento(evento_id: str, evento: EventoIn):
                 if ep.get('entryPointType') == 'video':
                     meet_link = ep.get('uri')
                     break
+
+        # Actualizar también en la base de datos
+        cur.execute("""
+            UPDATE agendamientos
+            SET fecha_inicio = %s,
+                fecha_fin = %s,
+                titulo = %s,
+                descripcion = %s,
+                link_meet = %s
+            WHERE google_event_id = %s
+        """, (
+            evento.inicio,
+            evento.fin,
+            evento.titulo,
+            evento.descripcion,
+            meet_link,
+            evento_id
+        ))
+        conn.commit()
 
         return EventoOut(
             id=updated['id'],
@@ -327,10 +397,15 @@ def editar_evento(evento_id: str, evento: EventoIn):
             tiktok_user=evento.tiktok_user,
             link_meet=meet_link
         )
+
     except Exception as e:
         logger.error(f"❌ Error al editar evento {evento_id}: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+        cur.close()
+        conn.close()
 
 
 @app.delete("/api/eventos/{evento_id}")
@@ -338,13 +413,32 @@ def eliminar_evento(evento_id: str):
     try:
         service = get_calendar_service()
         service.events().delete(calendarId="primary", eventId=evento_id).execute()
+
+        conn = psycopg2.connect(DB_URL)
+        cur = conn.cursor()
+        cur.execute("DELETE FROM agendamientos WHERE google_event_id = %s", (evento_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+
         return {"ok": True, "mensaje": f"Evento {evento_id} eliminado"}
     except Exception as e:
         logger.error(f"❌ Error al eliminar evento {evento_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+from fastapi import Depends
+from Agendamientos import get_connection
+from auth import get_usuario_actual_id  # asegúrate de tener esta función
+from schemas import EventoOut, EventoIn
+import traceback, logging
+from uuid import uuid4
+from dateutil.parser import isoparse
+
+logger = logging.getLogger(__name__)
+
 @app.post("/api/eventos", response_model=EventoOut)
-def crear_evento(evento: EventoIn):
+def crear_evento(evento: EventoIn, usuario_actual_id: int = Depends(get_usuario_actual_id)):
+    conn, cur = get_connection()
     try:
         if evento.fin <= evento.inicio:
             raise HTTPException(status_code=400, detail="La fecha de fin debe ser posterior a la fecha de inicio.")
@@ -358,7 +452,7 @@ def crear_evento(evento: EventoIn):
             "end": {"dateTime": evento.fin.isoformat()},
             "conferenceData": {
                 "createRequest": {
-                    "requestId": str(uuid4())  # genera ID único para que cree link Meet
+                    "requestId": str(uuid4())
                 }
             },
             "extendedProperties": {
@@ -374,14 +468,29 @@ def crear_evento(evento: EventoIn):
             conferenceDataVersion=1
         ).execute()
 
-        # leer link Meet
+        # Link de Meet
         meet_link = None
         if 'conferenceData' in creado:
-            entry_points = creado['conferenceData'].get('entryPoints', [])
-            for ep in entry_points:
+            for ep in creado['conferenceData'].get('entryPoints', []):
                 if ep.get('entryPointType') == 'video':
                     meet_link = ep.get('uri')
                     break
+
+        # Guardar en la base de datos
+        cur.execute("""
+            INSERT INTO agendamientos (creador_id, fecha_inicio, fecha_fin, titulo, descripcion, link_meet, estado, responsable_id, google_event_id)
+            VALUES (%s, %s, %s, %s, %s, %s, 'programado', %s, %s)
+        """, (
+            evento.creador_id,
+            evento.inicio,
+            evento.fin,
+            evento.titulo,
+            evento.descripcion,
+            meet_link,
+            usuario_actual_id,
+            creado["id"]
+        ))
+        conn.commit()
 
         return EventoOut(
             id=creado["id"],
@@ -392,10 +501,93 @@ def crear_evento(evento: EventoIn):
             tiktok_user=evento.tiktok_user,
             link_meet=meet_link
         )
+
     except Exception as e:
+        conn.rollback()
         logger.error(f"❌ Error al crear evento: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+@app.get("/api/agendamientos")
+def listar_agendamientos():
+    try:
+        conn = psycopg2.connect(DB_URL)
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT a.id, a.titulo, a.descripcion, a.fecha_inicio, a.fecha_fin,
+                   a.creador_id, a.responsable_id, a.estado, a.link_meet,
+                   c.nickname, u.nombre_completo
+            FROM agendamientos a
+            LEFT JOIN creadores c ON c.id = a.creador_id
+            LEFT JOIN admin_usuario u ON u.id = a.responsable_id
+            ORDER BY a.fecha_inicio DESC;
+        """)
+        filas = cur.fetchall()
+        columnas = [desc[0] for desc in cur.description]
+        eventos = [dict(zip(columnas, fila)) for fila in filas]
+        cur.close()
+        conn.close()
+        return eventos
+    except Exception as e:
+        logger.error(f"❌ Error consultando agendamientos: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# @app.post("/api/eventos", response_model=EventoOut)
+# def crear_evento(evento: EventoIn):
+#     try:
+#         if evento.fin <= evento.inicio:
+#             raise HTTPException(status_code=400, detail="La fecha de fin debe ser posterior a la fecha de inicio.")
+#
+#         service = get_calendar_service()
+#
+#         event = {
+#             "summary": evento.titulo,
+#             "description": evento.descripcion or "",
+#             "start": {"dateTime": evento.inicio.isoformat()},
+#             "end": {"dateTime": evento.fin.isoformat()},
+#             "conferenceData": {
+#                 "createRequest": {
+#                     "requestId": str(uuid4())  # genera ID único para que cree link Meet
+#                 }
+#             },
+#             "extendedProperties": {
+#                 "private": {
+#                     "tiktok_user": evento.tiktok_user or ""
+#                 }
+#             }
+#         }
+#
+#         creado = service.events().insert(
+#             calendarId="primary",
+#             body=event,
+#             conferenceDataVersion=1
+#         ).execute()
+#
+#         # leer link Meet
+#         meet_link = None
+#         if 'conferenceData' in creado:
+#             entry_points = creado['conferenceData'].get('entryPoints', [])
+#             for ep in entry_points:
+#                 if ep.get('entryPointType') == 'video':
+#                     meet_link = ep.get('uri')
+#                     break
+#
+#         return EventoOut(
+#             id=creado["id"],
+#             titulo=creado.get("summary"),
+#             inicio=isoparse(creado["start"]["dateTime"]),
+#             fin=isoparse(creado["end"]["dateTime"]),
+#             descripcion=creado.get("description"),
+#             tiktok_user=evento.tiktok_user,
+#             link_meet=meet_link
+#         )
+#     except Exception as e:
+#         logger.error(f"❌ Error al crear evento: {e}")
+#         logger.error(traceback.format_exc())
+#         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/debug/version")
 def get_version():

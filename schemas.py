@@ -18,10 +18,13 @@ class NombreActualizacion(BaseModel):
 # ✅ Para entrada (crear/editar)
 class EventoIn(BaseModel):
     titulo: str
+    descripcion: Optional[str] = ""
     inicio: datetime
     fin: datetime
-    descripcion: Optional[str] = None
     tiktok_user: Optional[str] = None
+    creador_id: Optional[int] = None
+    responsable_id: Optional[int] = None
+    estado: Optional[str] = "pendiente"
 
 # ✅ Para salida (incluye ID)
 class EventoOut(EventoIn):
