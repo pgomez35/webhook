@@ -1532,3 +1532,22 @@ def guardar_en_bd(agendamiento, meet_link, usuario_actual_id, creado):
     finally:
         cur.close()
         conn.close()
+
+
+def obtener_creador_id_por_usuario(usuario: str) -> Optional[int]:
+    """Busca el creador_id en la base de datos por nombre de usuario"""
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+
+        cur.execute("SELECT id FROM creadores WHERE usuario = %s", (usuario,))
+        result = cur.fetchone()
+
+        cur.close()
+        conn.close()
+
+        return result[0] if result else None
+
+    except Exception as e:
+        print(f"⚠️ Error buscando creador por usuario {usuario}: {str(e)}")
+        return None

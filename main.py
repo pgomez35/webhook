@@ -76,6 +76,16 @@ DB_URL = os.getenv("INTERNAL_DATABASE_URL")  # Debe estar en tus variables de en
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("calendar_sync")
 
+
+# Middleware para manejo de errores
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    logger.error(f"❌ Error no manejado: {str(exc)}")
+    logger.error(traceback.format_exc())
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Error interno del servidor"}
+    )
 # ==================== FUNCIONES DE BD PARA TOKEN ===========================
 
 def guardar_token_en_bd(token_dict, nombre='calendar'):
@@ -147,6 +157,62 @@ def get_calendar_service():
 
 # ==================== OBTENER EVENTOS ==============================
 
+# def obtener_eventos() -> List[EventoOut]:
+#     try:
+#         service = get_calendar_service()
+#     except Exception as e:
+#         logger.error(f"❌ Error al obtener el servicio de Calendar: {str(e)}")
+#         raise
+#
+#     # Obtener eventos desde hace 30 días hasta 1 año en el futuro
+#     hace_30_dias = (datetime.utcnow() - timedelta(days=30)).isoformat() + 'Z'
+#     un_ano_futuro = (datetime.utcnow() + timedelta(days=365)).isoformat() + 'Z'
+#
+#     try:
+#         events_result = service.events().list(
+#             calendarId='primary',
+#             timeMin=hace_30_dias,  # Desde hace 30 días
+#             timeMax=un_ano_futuro,  # Hasta 1 año en el futuro
+#             maxResults=100, singleEvents=True,
+#             orderBy='startTime'
+#         ).execute()
+#     except Exception as e:
+#         logger.error(f"❌ Error al obtener eventos de Google Calendar API: {str(e)}")
+#         logger.error(traceback.format_exc())
+#         raise
+#
+#     events = events_result.get('items', [])
+#     resultado = []
+#     for event in events:
+#         inicio = event['start'].get('dateTime')
+#         fin = event['end'].get('dateTime')
+#         titulo = event.get('summary', 'Sin título')
+#         descripcion = event.get('description', '')
+#
+#         # leer link meet
+#         meet_link = None
+#         if 'conferenceData' in event:
+#             entry_points = event['conferenceData'].get('entryPoints', [])
+#             for ep in entry_points:
+#                 if ep.get('entryPointType') == 'video':
+#                     meet_link = ep.get('uri')
+#                     break
+#
+#         tiktok_user = event.get('extendedProperties', {}).get('private', {}).get('tiktok_user')
+#
+#         if inicio and fin:
+#             resultado.append(EventoOut(
+#                 id=event['id'],
+#                 titulo=titulo,
+#                 inicio=isoparse(inicio),
+#                 fin=isoparse(fin),
+#                 descripcion=descripcion,
+#                 tiktok_user=tiktok_user,
+#                 link_meet=meet_link
+#             ))
+#
+#     return resultado
+
 def obtener_eventos() -> List[EventoOut]:
     try:
         service = get_calendar_service()
@@ -173,47 +239,52 @@ def obtener_eventos() -> List[EventoOut]:
 
     events = events_result.get('items', [])
     resultado = []
+
     for event in events:
-        inicio = event['start'].get('dateTime')
-        fin = event['end'].get('dateTime')
-        titulo = event.get('summary', 'Sin título')
-        descripcion = event.get('description', '')
+        try:  # ← AGREGAR manejo de errores por evento individual
+            inicio = event['start'].get('dateTime')
+            fin = event['end'].get('dateTime')
+            titulo = event.get('summary', 'Sin título')
+            descripcion = event.get('description', '')
 
-        # leer link meet
-        meet_link = None
-        if 'conferenceData' in event:
-            entry_points = event['conferenceData'].get('entryPoints', [])
-            for ep in entry_points:
-                if ep.get('entryPointType') == 'video':
-                    meet_link = ep.get('uri')
-                    break
+            # leer link meet
+            meet_link = None
+            if 'conferenceData' in event:
+                entry_points = event['conferenceData'].get('entryPoints', [])
+                for ep in entry_points:
+                    if ep.get('entryPointType') == 'video':
+                        meet_link = ep.get('uri')
+                        break
 
-        tiktok_user = event.get('extendedProperties', {}).get('private', {}).get('tiktok_user')
+            tiktok_user = event.get('extendedProperties', {}).get('private', {}).get('tiktok_user')
 
-        if inicio and fin:
-            resultado.append(EventoOut(
-                id=event['id'],
-                titulo=titulo,
-                inicio=isoparse(inicio),
-                fin=isoparse(fin),
-                descripcion=descripcion,
-                tiktok_user=tiktok_user,
-                link_meet=meet_link
-            ))
-    # for event in events:
-    #     inicio = event['start'].get('dateTime')
-    #     fin = event['end'].get('dateTime')
-    #     titulo = event.get('summary', 'Sin título')
-    #     descripcion = event.get('description', '')
-    #     if inicio and fin:
-    #         resultado.append(EventoOut(
-    #             id=event['id'],
-    #             titulo=titulo,
-    #             inicio=isoparse(inicio),
-    #             fin=isoparse(fin),
-    #             descripcion=descripcion
-    #         ))
+            # ← BUSCAR creador_id basado en tiktok_user si existe
+            creador_id = None
+            if tiktok_user:
+                # Buscar en la base de datos el creador_id por usuario
+                creador_id = obtener_creador_id_por_usuario(tiktok_user)
+
+            if inicio and fin:
+                resultado.append(EventoOut(
+                    id=event['id'],
+                    titulo=titulo,
+                    inicio=isoparse(inicio),
+                    fin=isoparse(fin),
+                    descripcion=descripcion,
+                    tiktok_user=tiktok_user,
+                    creador_id=creador_id,  # ← AGREGAR este campo
+                    link_meet=meet_link
+                ))
+
+        except Exception as e:
+            # ← MANEJAR errores de eventos individuales
+            logger.warning(f"⚠️ Saltando evento con error: {event.get('id', 'unknown')} - {str(e)}")
+            continue  # Continuar con el siguiente evento
+
+    logger.info(f"✅ Se obtuvieron {len(resultado)} eventos de Google Calendar")
     return resultado
+
+
 
 def sync_eventos():
     eventos = obtener_eventos()

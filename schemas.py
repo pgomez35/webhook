@@ -40,9 +40,15 @@ class EventoIn(BaseModel):
 
 
 # ✅ Para salida (incluye ID)
+# class EventoOut(EventoIn):
+#     id: str
+#     link_meet: Optional[str] = None
+
 class EventoOut(EventoIn):
     id: str
+    creador_id: Optional[int] = None  # Sobrescribir para hacerlo opcional
     link_meet: Optional[str] = None
+    origen: Optional[str] = "google_calendar"  # Para distinguir fuentes
 
 # ===============================
 # ESQUEMAS PARA ADMIN_USUARIO
