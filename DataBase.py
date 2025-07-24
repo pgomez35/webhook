@@ -1364,10 +1364,24 @@ def obtener_creadores():
         conn = psycopg2.connect(INTERNAL_DATABASE_URL)
         cur = conn.cursor()
         cur.execute("""
-            SELECT id, usuario, nickname, nombre_real, foto_url
-            FROM creadores
-            WHERE activo = TRUE
-            ORDER BY actualizado_en DESC;
+                  SELECT 
+                c.id, 
+                c.usuario, 
+                c.nickname, 
+                c.nombre_real, 
+                c.email,
+                c.telefono,
+                c.whatsapp,
+                c.foto_url,
+                c.verificado,
+                c.activo,
+                ec.nombre as estado_nombre,
+                c.creado_en,
+                c.actualizado_en
+            FROM creadores c
+            LEFT JOIN estados_creador ec ON c.estado_id = ec.id
+            WHERE c.activo = TRUE
+            ORDER BY c.actualizado_en DESC;
         """)
         datos = cur.fetchall()
         columnas = [desc[0] for desc in cur.description]
@@ -1471,3 +1485,50 @@ def obtener_estadisticas_evaluacion():
         "aprobados": aprobados,
         "promedioPuntuacion": float(promedio)
     }
+
+def get_connection():
+    conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+    return conn, conn.cursor()
+
+def guardar_en_bd(agendamiento, meet_link, usuario_actual_id, creado):
+    """
+    Guarda un nuevo agendamiento en la base de datos con todos los campos necesarios.
+
+    :param agendamiento: Objeto que contiene los datos del evento (usualmente tipo Pydantic)
+    :param meet_link: Enlace de Google Meet generado automáticamente
+    :param usuario_actual_id: ID del usuario que está creando el evento
+    :param creado: Diccionario con el resultado del evento en Google Calendar (de donde se extrae el ID del evento)
+    """
+    conn, cur = get_connection()
+    try:
+        cur.execute("""
+            INSERT INTO agendamientos (
+                creador_id, fecha_inicio, fecha_fin, titulo, descripcion,
+                link_meet, estado, responsable_id, google_event_id,
+                ubicacion, prioridad, tipo_evento, recordatorio_minutos
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, 'programado', %s, %s, %s, %s, %s, %s)
+        """, (
+            agendamiento.creador_id,
+            agendamiento.inicio,
+            agendamiento.fin,
+            agendamiento.titulo,
+            agendamiento.descripcion,
+            meet_link,
+            usuario_actual_id,
+            creado["id"],  # Google Event ID
+            agendamiento.ubicacion,
+            agendamiento.prioridad,
+            agendamiento.tipo_evento,
+            agendamiento.recordatorio_minutos
+        ))
+        conn.commit()
+        print("Agendamiento guardado correctamente.")
+        return True
+    except Exception as e:
+        print("Error al guardar agendamiento:", e)
+        conn.rollback()
+        return False
+    finally:
+        cur.close()
+        conn.close()

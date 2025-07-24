@@ -16,15 +16,28 @@ class NombreActualizacion(BaseModel):
     nombre: str
 
 # ✅ Para entrada (crear/editar)
+# class EventoIn(BaseModel):
+#     titulo: str
+#     descripcion: Optional[str] = ""
+#     inicio: datetime
+#     fin: datetime
+#     tiktok_user: Optional[str] = None
+#     creador_id: Optional[int] = None
+#     responsable_id: Optional[int] = None
+#     estado: Optional[str] = "pendiente"
+
 class EventoIn(BaseModel):
     titulo: str
-    descripcion: Optional[str] = ""
+    descripcion: Optional[str] = None
     inicio: datetime
     fin: datetime
     tiktok_user: Optional[str] = None
-    creador_id: Optional[int] = None
-    responsable_id: Optional[int] = None
-    estado: Optional[str] = "pendiente"
+    creador_id: int
+    ubicacion: Optional[str] = None
+    prioridad: Optional[str] = "Media"  # 'Alta', 'Media', 'Baja'
+    tipo_evento: Optional[str] = None
+    recordatorio_minutos: Optional[int] = 15
+
 
 # ✅ Para salida (incluye ID)
 class EventoOut(EventoIn):

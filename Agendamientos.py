@@ -285,3 +285,5 @@ def listar_agendamientos_grupales():
     finally:
         cur.close()
         conn.close()
+
+

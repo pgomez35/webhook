@@ -27,17 +27,6 @@ from googleapiclient.discovery import build
 import psycopg2
 from schemas import *
 
-# from google.oauth2.credentials import Credentials
-# import google.oauth2.credentials  # <--- Esto es lo que te falta
-# import sys
-# print("==== DEBUG GOOGLE AUTH ====")
-# print("google.oauth2.credentials path:", google.oauth2.credentials.__file__)
-# print("sys.path:", sys.path)
-# print("Credentials class:", google.oauth2.credentials.Credentials)
-# print("Has from_authorized_user_file:", hasattr(google.oauth2.credentials.Credentials, "from_authorized_user_file"))
-# print("Has from_authorized_user_info:", hasattr(google.oauth2.credentials.Credentials, "from_authorized_user_info"))
-# print("===========================")
-
 from googleapiclient.discovery import build
 from uuid import uuid4
 
@@ -428,7 +417,7 @@ def eliminar_evento(evento_id: str):
 
 from fastapi import Depends
 from Agendamientos import get_connection
-from auth import get_usuario_actual_id  # asegúrate de tener esta función
+from auth import *
 from schemas import EventoOut, EventoIn
 import traceback, logging
 from uuid import uuid4
@@ -437,7 +426,7 @@ from dateutil.parser import isoparse
 logger = logging.getLogger(__name__)
 
 @app.post("/api/eventos", response_model=EventoOut)
-def crear_evento(evento: EventoIn, usuario_actual_id: int = Depends(get_usuario_actual_id)):
+def crear_eventoV0(evento: EventoIn, usuario_actual_id: int = Depends(get_usuario_actual_id)):
     conn, cur = get_connection()
     try:
         if evento.fin <= evento.inicio:
@@ -510,6 +499,120 @@ def crear_evento(evento: EventoIn, usuario_actual_id: int = Depends(get_usuario_
     finally:
         cur.close()
         conn.close()
+
+# @router.post("/agendamientos/", response_model=AgendamientoOut)
+
+
+# @app.post("/api/eventos", response_model=EventoOut)
+# def crear_evento(agendamiento: EventoIn):
+#     try:
+#         creds = Credentials.from_authorized_user_file("token.json")  # debes tener tu token guardado
+#
+#         service = build("calendar", "v3", credentials=creds)
+#
+#         evento = {
+#             "summary": agendamiento.titulo,
+#             "description": agendamiento.descripcion,
+#             "start": {
+#                 "dateTime": agendamiento.inicio.isoformat(),
+#                 "timeZone": "America/Bogota"
+#             },
+#             "end": {
+#                 "dateTime": agendamiento.fin.isoformat(),
+#                 "timeZone": "America/Bogota"
+#             },
+#             "location": agendamiento.ubicacion,
+#             "conferenceData": {
+#                 "createRequest": {
+#                     "requestId": str(uuid.uuid4()),
+#                     "conferenceSolutionKey": {
+#                         "type": "hangoutsMeet"
+#                     }
+#                 }
+#             },
+#             "attendees": [{"email": "invitado@ejemplo.com"}],  # opcional
+#         }
+#
+#         evento_creado = service.events().insert(
+#             calendarId='primary',
+#             body=evento,
+#             conferenceDataVersion=1
+#         ).execute()
+#
+#         meet_link = evento_creado['hangoutLink']
+#
+#         # Guardar agendamiento en la BD con link_meet
+#         nuevo_agendamiento = guardar_en_bd(agendamiento, meet_link)
+#         return nuevo_agendamiento
+#
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/eventos", response_model=EventoOut)
+def crear_evento(evento: EventoIn,
+    usuario_actual: dict = Depends(obtener_usuario_actual)):
+    try:
+        # 1. Crear el evento en Google Calendar
+        google_event = crear_evento_google(
+            resumen=evento.titulo,
+            descripcion=evento.descripcion or "",
+            fecha_inicio=evento.inicio,
+            fecha_fin=evento.fin,
+            correo_asistente=usuario_actual["email"],
+            recordatorio_minutos=evento.recordatorio_minutos
+        )
+
+        link_meet = google_event["hangoutLink"]
+        google_event_id = google_event["id"]
+
+        # 2. Guardar en la base de datos
+        if not guardar_en_bd(evento, link_meet, google_event_id, usuario_actual["id"]):
+            raise HTTPException(status_code=500, detail="Error al guardar agendamiento")
+
+        return {"status": "ok", "mensaje": "Evento creado exitosamente", "meet_link": link_meet}
+
+    except Exception as e:
+        print("Error creando evento:", e)
+        raise HTTPException(status_code=500, detail="Error creando evento")
+
+
+def crear_evento_google(resumen, descripcion, fecha_inicio, fecha_fin, correo_asistente, recordatorio_minutos):
+    service = get_calendar_service()
+
+    evento = {
+        'summary': resumen,
+        'description': descripcion,
+        'start': {
+            'dateTime': fecha_inicio.isoformat(),
+            'timeZone': 'America/Bogota',
+        },
+        'end': {
+            'dateTime': fecha_fin.isoformat(),
+            'timeZone': 'America/Bogota',
+        },
+        'attendees': [{'email': correo_asistente}],
+        'reminders': {
+            'useDefault': False,
+            'overrides': [
+                {'method': 'popup', 'minutes': recordatorio_minutos},
+            ],
+        },
+        'conferenceData': {
+            'createRequest': {
+                'requestId': str(uuid4()),  # ← ID único para evitar duplicados
+                'conferenceSolutionKey': {'type': 'hangoutsMeet'},
+            },
+        },
+    }
+
+    event = service.events().insert(
+        calendarId='primary',
+        body=evento,
+        conferenceDataVersion=1
+    ).execute()
+
+    return event
+
 
 @app.get("/api/agendamientos")
 def listar_agendamientos():
