@@ -1491,21 +1491,12 @@ def get_connection():
     return conn, conn.cursor()
 
 def guardar_en_bd(agendamiento, meet_link, usuario_actual_id, creado):
-    """
-    Guarda un nuevo agendamiento en la base de datos con todos los campos necesarios.
-
-    :param agendamiento: Objeto que contiene los datos del evento (usualmente tipo Pydantic)
-    :param meet_link: Enlace de Google Meet generado automáticamente
-    :param usuario_actual_id: ID del usuario que está creando el evento
-    :param creado: Diccionario con el resultado del evento en Google Calendar (de donde se extrae el ID del evento)
-    """
     conn, cur = get_connection()
     try:
         cur.execute("""
             INSERT INTO agendamientos (
                 creador_id, fecha_inicio, fecha_fin, titulo, descripcion,
-                link_meet, estado, responsable_id, google_event_id,
-                ubicacion, prioridad, tipo_evento, recordatorio_minutos
+                link_meet, estado, responsable_id, google_event_id
             )
             VALUES (%s, %s, %s, %s, %s, %s, 'programado', %s, %s, %s, %s, %s, %s)
         """, (
@@ -1516,11 +1507,7 @@ def guardar_en_bd(agendamiento, meet_link, usuario_actual_id, creado):
             agendamiento.descripcion,
             meet_link,
             usuario_actual_id,
-            creado["id"],  # Google Event ID
-            agendamiento.ubicacion,
-            agendamiento.prioridad,
-            agendamiento.tipo_evento,
-            agendamiento.recordatorio_minutos
+            creado["id"]  # Google Event ID
         ))
         conn.commit()
         print("Agendamiento guardado correctamente.")

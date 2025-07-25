@@ -628,9 +628,7 @@ def crear_evento(evento: EventoIn,
             resumen=evento.titulo,
             descripcion=evento.descripcion or "",
             fecha_inicio=evento.inicio,
-            fecha_fin=evento.fin,
-            correo_asistente=usuario_actual["email"],
-            recordatorio_minutos=evento.recordatorio_minutos
+            fecha_fin=evento.fin
         )
 
         link_meet = google_event["hangoutLink"]
@@ -646,8 +644,7 @@ def crear_evento(evento: EventoIn,
         print("Error creando evento:", e)
         raise HTTPException(status_code=500, detail="Error creando evento")
 
-
-def crear_evento_google(resumen, descripcion, fecha_inicio, fecha_fin, correo_asistente, recordatorio_minutos):
+def crear_evento_google(resumen, descripcion, fecha_inicio, fecha_fin):
     service = get_calendar_service()
 
     evento = {
@@ -661,28 +658,21 @@ def crear_evento_google(resumen, descripcion, fecha_inicio, fecha_fin, correo_as
             'dateTime': fecha_fin.isoformat(),
             'timeZone': 'America/Bogota',
         },
-        'attendees': [{'email': correo_asistente}],
-        'reminders': {
-            'useDefault': False,
-            'overrides': [
-                {'method': 'popup', 'minutes': recordatorio_minutos},
-            ],
-        },
         'conferenceData': {
             'createRequest': {
-                'requestId': str(uuid4()),  # ← ID único para evitar duplicados
+                'requestId': str(uuid4()),
                 'conferenceSolutionKey': {'type': 'hangoutsMeet'},
             },
         },
     }
 
-    event = service.events().insert(
+    evento_creado = service.events().insert(
         calendarId='primary',
         body=evento,
         conferenceDataVersion=1
     ).execute()
 
-    return event
+    return evento_creado
 
 
 @app.get("/api/agendamientos")

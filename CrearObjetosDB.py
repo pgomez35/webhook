@@ -144,23 +144,23 @@ CREATE TABLE IF NOT EXISTS perfil_creador (
     """)
 
     # cur.execute("""
-    # # CREATE TABLE IF NOT EXISTS creadores (
-    # #     id SERIAL PRIMARY KEY,
-    # #     usuario VARCHAR(100) UNIQUE,
-    # #     nickname VARCHAR(200),
-    # #     nombre_real VARCHAR(200),
-    # #     email VARCHAR(200),
-    # #     telefono VARCHAR(50),
-    # #     whatsapp VARCHAR(50),
-    # #     foto_url TEXT,
-    # #     estado_id INTEGER,
-    # #     verificado BOOLEAN DEFAULT FALSE,
-    # #     fecha_verificacion TIMESTAMP,
-    # #     activo BOOLEAN DEFAULT TRUE,
-    # #     creado_en TIMESTAMP DEFAULT NOW(),
-    # #     actualizado_en TIMESTAMP DEFAULT NOW()
-    # # );
-    # # """)
+    # CREATE TABLE IF NOT EXISTS creadores (
+    #     id SERIAL PRIMARY KEY,
+    #     usuario VARCHAR(100) UNIQUE,
+    #     nickname VARCHAR(200),
+    #     nombre_real VARCHAR(200),
+    #     email VARCHAR(200),
+    #     telefono VARCHAR(50),
+    #     whatsapp VARCHAR(50),
+    #     foto_url TEXT,
+    #     estado_id INTEGER,
+    #     verificado BOOLEAN DEFAULT FALSE,
+    #     fecha_verificacion TIMESTAMP,
+    #     activo BOOLEAN DEFAULT TRUE,
+    #     creado_en TIMESTAMP DEFAULT NOW(),
+    #     actualizado_en TIMESTAMP DEFAULT NOW()
+    # );
+    """)
 
     # # Tabla: cargue_creadores
     # cur.execute("""
@@ -339,14 +339,24 @@ def crear_tablas_extra():
     conn = psycopg2.connect(EXTERNAL_DATABASE_URL)
     cur = conn.cursor()
 
-    # # Tabla: agendamiento_creadores
+    # # Tabla: estados_creador
     cur.execute("""
-      CREATE TABLE IF NOT EXISTS agendamiento_creadores (
+CREATE TABLE IF NOT EXISTS estados_creador (
     id SERIAL PRIMARY KEY,
-    agendamiento_id INTEGER NOT NULL REFERENCES agendamientos(id) ON DELETE CASCADE,
-    creador_id INTEGER NOT NULL REFERENCES creadores(id) ON DELETE CASCADE
+    nombre VARCHAR(100) UNIQUE NOT NULL
 );
-    """)
+
+        """)
+
+
+    #     # # Tabla: agendamiento_creadores
+#     cur.execute("""
+#       CREATE TABLE IF NOT EXISTS agendamiento_creadores (
+#     id SERIAL PRIMARY KEY,
+#     agendamiento_id INTEGER NOT NULL REFERENCES agendamientos(id) ON DELETE CASCADE,
+#     creador_id INTEGER NOT NULL REFERENCES creadores(id) ON DELETE CASCADE
+# );
+#     """)
 
 
 
@@ -506,7 +516,33 @@ def crear_tablas_extra():
     conn.close()
     print("✅ Tablas extra creadas exitosamente.")
 
+def insert_estados_creador ():
+    conn = None
+    cur = None
+    try:
+        conn = psycopg2.connect(EXTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("""
+ INSERT INTO estados_creador (nombre) VALUES
+('Preselección'),
+('Entrevista'),
+('Rechazado'),
+('No Apto'),
+('Ingresado'),
+('Incorporado');
 
+        """)
+        conn.commit()
+        print("✅ datos insertados correctamente.")
+    except Exception as e:
+        print(f"❌ Error al insertar:", e)
+        if conn:
+            conn.rollback()
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 
 def add_campo_siguiendo():
     conn = None
@@ -529,6 +565,55 @@ def add_campo_siguiendo():
             cur.close()
         if conn:
             conn.close()
+
+def add_campos_Agendamientos():
+    conn = None
+    cur = None
+    try:
+        conn = psycopg2.connect(EXTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("""
+          ALTER TABLE agendamientos
+DROP COLUMN ubicacion,
+DROP COLUMN prioridad,
+DROP COLUMN tipo_evento,
+DROP COLUMN recordatorio_minutos;
+
+        """)
+        conn.commit()
+        print("✅ Campo 'siguiendo' (INTEGER DEFAULT 0) agregado a perfil_creador correctamente.")
+    except Exception as e:
+        print(f"❌ Error al agregar campo 'siguiendo' a perfil_creador:", e)
+        if conn:
+            conn.rollback()
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
+def borrar_token_BD():
+    conn = None
+    cur = None
+    try:
+        conn = psycopg2.connect(EXTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("""
+            DELETE FROM google_tokens WHERE nombre = 'calendar';
+        """)
+        conn.commit()
+        print("✅ Token borrado.")
+    except Exception as e:
+        print(f"❌ Error al agregar campo 'siguiendo' a perfil_creador:", e)
+        if conn:
+            conn.rollback()
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
 
 def add_campo_foto_url_mini():
     conn = None
@@ -561,5 +646,8 @@ if __name__ == "__main__":
     # eliminar_campo()
     # migrar_datos()
     # crear_tablas()
-    crear_tablas_extra()
+    # crear_tablas_extra()
+    # borrar_token_BD()
     # add_campo_foto_url_mini()
+    # insert_estados_creador()
+    add_campos_Agendamientos()

@@ -33,11 +33,6 @@ class EventoIn(BaseModel):
     fin: datetime
     tiktok_user: Optional[str] = None
     creador_id: int
-    ubicacion: Optional[str] = None
-    prioridad: Optional[str] = "Media"  # 'Alta', 'Media', 'Baja'
-    tipo_evento: Optional[str] = None
-    recordatorio_minutos: Optional[int] = 15
-
 
 # ✅ Para salida (incluye ID)
 # class EventoOut(EventoIn):
