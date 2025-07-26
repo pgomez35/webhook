@@ -309,11 +309,13 @@ def obtener_contactos_db(perfil: Optional[str] = None):
                 SELECT telefono, usuario, 'POTENCIAL' as perfil, '' AS estado_whatsapp, '' AS entrevista,'' AS fecha_entrevista
                 FROM creadores
                 WHERE perfil = %s
+                 ORDER BY usuario ASC
             """, (perfil.upper(),))
         else:
             cur.execute("""
                 SELECT telefono, usuario, 'POTENCIAL' as perfil, '' AS estado_whatsapp, '' AS entrevista,'' AS fecha_entrevista
                 FROM creadores
+                ORDER BY usuario ASC
             """)
 
         contactos = [
