@@ -285,7 +285,7 @@ def actualizar_contacto_info_db(telefono: str, datos: ActualizacionContactoInfo)
 
         valores.append(telefono)
         query = f"""
-            UPDATE contacto_info
+            UPDATE creadores
             SET {', '.join(updates)}
             WHERE telefono = %s
         """
@@ -306,14 +306,14 @@ def obtener_contactos_db(perfil: Optional[str] = None):
 
         if perfil:
             cur.execute("""
-                SELECT telefono, usuario, perfil, estado_whatsapp, entrevista, fecha_entrevista
-                FROM contacto_info
+                SELECT telefono, usuario, 'POTENCIAL' as perfil, '' AS estado_whatsapp, '' AS entrevista,'' AS fecha_entrevista
+                FROM creadores
                 WHERE perfil = %s
             """, (perfil.upper(),))
         else:
             cur.execute("""
-                SELECT telefono, usuario, perfil, estado_whatsapp, entrevista, fecha_entrevista
-                FROM contacto_info
+                SELECT telefono, usuario, 'POTENCIAL' as perfil, '' AS estado_whatsapp, '' AS entrevista,'' AS fecha_entrevista
+                FROM creadores
             """)
 
         contactos = [
