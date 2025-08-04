@@ -1154,6 +1154,20 @@ def evaluar_creador(creador_id: int, evaluacion: EvaluacionInicialSchema):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.put("/api/perfil_creador/{creador_id}")
+def endpoint_actualizar_perfil_creador(creador_id: int, evaluacion: PerfilCreadorSchema):
+    try:
+        data_dict = evaluacion.dict(exclude_unset=True)
+        if not data_dict:
+            raise HTTPException(status_code=400, detail="No se enviaron datos para actualizar.")
+
+        actualizar_datos_perfil_creador(creador_id, data_dict)
+        return {"status": "ok", "mensaje": "Perfil actualizado correctamente"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/estadisticas-evaluacion")
 def estadisticas_evaluacion():
     try:

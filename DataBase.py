@@ -1057,7 +1057,7 @@ def obtener_perfil_creador(creador_id):
         cur = conn.cursor()
         cur.execute("""
             SELECT *
-            FROM perfil_creador
+            FROM perfil_creador  
             WHERE creador_id = %s;
         """, (creador_id,))
         fila = cur.fetchone()
@@ -1071,13 +1071,61 @@ def obtener_perfil_creador(creador_id):
         print("❌ Error al obtener perfil del creador:", e)
         return None
 
+import psycopg2
+
+def actualizar_datos_perfil_creador(creador_id, datos_dict):
+    try:
+        campos_validos = [
+            "nombre",
+            "edad", "genero", "pais", "ciudad", "zona_horaria",
+            "estudios", "campo_estudios", "idioma",
+            "puntaje_datos_personales", "puntaje_datos_personales_categoria",
+            "puntaje_estadistico", "puntaje_estadistico_categoria", "mejoras_sugeridas_estadistica",
+            "biografia", "apariencia", "engagement", "calidad_contenido",
+            "puntaje_manual", "puntaje_manual_categoria", "usuario_id_evalua", "mejoras_sugeridas_manual",
+            "horario_preferido", "intencion_trabajo", "tiempo_disponible", "frecuencia_lives",
+            "experiencia_otras_plataformas", "intereses", "tipo_contenido",
+            "puntaje_perfil", "puntaje_perfil_categoria", "mejoras_sugeridas_perfil",
+            "puntaje_total", "puntaje_total_categoria", "observaciones"
+        ]
+
+        campos = []
+        valores = []
+
+        for campo in campos_validos:
+            if campo in datos_dict:
+                campos.append(f"{campo} = %s")
+                valores.append(datos_dict[campo])
+
+        if not campos:
+            raise ValueError("⚠️ No se enviaron campos válidos para actualizar")
+
+        campos.append("actualizado_en = NOW()")
+        valores.append(creador_id)
+
+        query = f"""
+            UPDATE perfil_creador
+            SET {', '.join(campos)}
+            WHERE creador_id = %s;
+        """
+
+        with psycopg2.connect(INTERNAL_DATABASE_URL) as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, valores)
+                conn.commit()
+                print(f"✅ Datos del perfil del creador {creador_id} actualizados.")
+
+    except Exception as e:
+        print(f"❌ Error al actualizar datos del perfil del creador {creador_id}: {e}")
+        raise
+
 
 def actualizar_perfil_creador(creador_id, evaluacion_dict):
     try:
         campos = []
         valores = []
 
-        for campo in ['apariencia', 'engagement', 'calidad_contenido', 'puntaje_total', 'potencial_estimado', 'mejoras_sugeridas','usuario_evalua']:
+        for campo in ['apariencia', 'engagement', 'calidad_contenido', 'puntaje_total', 'puntaje_manual', 'mejoras_sugeridas_manual','usuario_evalua_inicial']:
             if campo in evaluacion_dict:
                 campos.append(f"{campo} = %s")
                 valores.append(evaluacion_dict[campo])
