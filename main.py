@@ -1155,7 +1155,7 @@ def evaluar_creador(creador_id: int, evaluacion: EvaluacionInicialSchema):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/perfil_creador/{creador_id}")
-def endpoint_actualizar_perfil_creador(creador_id: int, evaluacion: PerfilCreadorSchema):
+def actualizar_perfil_creador(creador_id: int, evaluacion: PerfilCreadorSchema):
     try:
         data_dict = evaluacion.dict(exclude_unset=True)
         if not data_dict:
