@@ -1132,30 +1132,37 @@ async def login_usuario(credentials: dict = Body(...)):
 #-------------------------
 #-------------------------
 
-@app.get("/api/creadores")
+# === Listar todos los creadores ===
+@app.get("/api/creadores", tags=["Creadores"])
 def listar_creadores():
     try:
         return obtener_creadores()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/perfil_creador/{creador_id}")
+
+# === Obtener el perfil de un creador por ID ===
+@app.get("/api/perfil_creador/{creador_id}", tags=["Perfil"])
 def perfil_creador(creador_id: int):
     perfil = obtener_perfil_creador(creador_id)
     if not perfil:
         raise HTTPException(status_code=404, detail="Perfil no encontrado")
     return perfil
 
-@app.put("/api/perfil_creador/{creador_id}")
+
+# === Actualizar evaluación inicial (solo algunos campos) ===
+@app.put("/api/perfil_creador/{creador_id}/evaluacion", tags=["Evaluación"])
 def evaluar_creador(creador_id: int, evaluacion: EvaluacionInicialSchema):
     try:
-        actualizar_perfil_creador(creador_id, evaluacion.dict(exclude_unset=True))
+        actualizar_datos_perfil_creador(creador_id, evaluacion.dict(exclude_unset=True))
         return {"status": "ok", "mensaje": "Evaluación actualizada"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.put("/api/perfil_creador/{creador_id}")
-def actualizar_perfil_creador(creador_id: int, evaluacion: PerfilCreadorSchema):
+
+# === Actualizar el perfil completo del creador ===
+@app.put("/api/perfil_creador/{creador_id}", tags=["Perfil"])
+def actualizar_perfil_creador_endpoint(creador_id: int, evaluacion: PerfilCreadorSchema):
     try:
         data_dict = evaluacion.dict(exclude_unset=True)
         if not data_dict:
@@ -1168,10 +1175,11 @@ def actualizar_perfil_creador(creador_id: int, evaluacion: PerfilCreadorSchema):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/estadisticas-evaluacion")
+
+# === Estadísticas globales de evaluación ===
+@app.get("/api/estadisticas-evaluacion", tags=["Estadísticas"])
 def estadisticas_evaluacion():
     try:
-        estadisticas = obtener_estadisticas_evaluacion()
-        return estadisticas
+        return obtener_estadisticas_evaluacion()
     except Exception as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
