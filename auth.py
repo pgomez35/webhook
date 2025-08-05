@@ -37,7 +37,15 @@ def obtener_usuario_actual_(token: str = Depends(oauth2_scheme)) -> dict:
     except JWTError:
         raise HTTPException(status_code=401, detail="Token inválido")
 
-def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
+
+def obtener_usuario_actual() -> dict:
+    return {
+        "id": 1,
+        "nombre": "pablo gomez",
+        "rol": "admin"
+    }
+
+def obtener_usuario_actualV0(token: str = Depends(oauth2_scheme)) -> dict:
 
         return {
             "id": 1,
