@@ -1119,6 +1119,8 @@ def actualizar_datos_perfil_creador(creador_id, datos_dict):
         print(f"❌ Error al actualizar datos del perfil del creador {creador_id}: {e}")
         raise
 
+import json
+
 def actualizar_datos_perfil_creador(creador_id, datos_dict):
     try:
         campos_validos = [
@@ -1148,8 +1150,12 @@ def actualizar_datos_perfil_creador(creador_id, datos_dict):
 
         for campo in campos_validos:
             if campo in datos_dict:
+                valor = datos_dict[campo]
+                # 👇 Serializa los campos que son diccionarios (jsonb)
+                if isinstance(valor, dict):
+                    valor = json.dumps(valor)
                 campos.append(f"{campo} = %s")
-                valores.append(datos_dict[campo])
+                valores.append(valor)
 
         if not campos:
             raise ValueError("⚠️ No se enviaron campos válidos para actualizar")
