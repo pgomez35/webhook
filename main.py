@@ -1195,14 +1195,23 @@ def actualizar_datos_personales(creador_id: int, datos: DatosPersonalesSchema):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# === Actualizar evaluación cualitativa ===
+from auth import obtener_usuario_actual  # o el nombre correcto del archivo
+
 @app.put("/api/perfil_creador/{creador_id}/evaluacion_cualitativa", tags=["Evaluación"])
-def actualizar_eval_cualitativa(creador_id: int, datos: EvaluacionCualitativaSchema):
+def actualizar_eval_cualitativa(
+    creador_id: int,
+    datos: EvaluacionCualitativaSchema,
+    usuario_actual: dict = Depends(obtener_usuario_actual)  # ← Aquí se obtiene el usuario autenticado
+):
     try:
-        actualizar_datos_perfil_creador(creador_id, datos.dict(exclude_unset=True))
+        data_dict = datos.dict(exclude_unset=True)
+        data_dict["usuario_evalua"] = usuario_actual["nombre"]  # ← Se asigna automáticamente
+
+        actualizar_datos_perfil_creador(creador_id, data_dict)
         return {"status": "ok", "mensaje": "Evaluación cualitativa actualizada"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 # === Actualizar estadísticas del perfil ===
