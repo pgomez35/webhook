@@ -1183,3 +1183,53 @@ def estadisticas_evaluacion():
         return obtener_estadisticas_evaluacion()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# === Actualizar datos personales ===
+@app.put("/api/perfil_creador/{creador_id}/datos_personales", tags=["Perfil"])
+def actualizar_datos_personales(creador_id: int, datos: DatosPersonalesSchema):
+    try:
+        actualizar_datos_perfil_creador(creador_id, datos.dict(exclude_unset=True))
+        return {"status": "ok", "mensaje": "Datos personales actualizados"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# === Actualizar evaluación cualitativa ===
+@app.put("/api/perfil_creador/{creador_id}/evaluacion_cualitativa", tags=["Evaluación"])
+def actualizar_eval_cualitativa(creador_id: int, datos: EvaluacionCualitativaSchema):
+    try:
+        actualizar_datos_perfil_creador(creador_id, datos.dict(exclude_unset=True))
+        return {"status": "ok", "mensaje": "Evaluación cualitativa actualizada"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# === Actualizar estadísticas del perfil ===
+@app.put("/api/perfil_creador/{creador_id}/estadisticas", tags=["Estadísticas"])
+def actualizar_estadisticas(creador_id: int, datos: EstadisticasPerfilSchema):
+    try:
+        actualizar_datos_perfil_creador(creador_id, datos.dict(exclude_unset=True))
+        return {"status": "ok", "mensaje": "Estadísticas actualizadas"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# === Actualizar preferencias y hábitos ===
+@app.put("/api/perfil_creador/{creador_id}/preferencias", tags=["Preferencias"])
+def actualizar_preferencias(creador_id: int, datos: PreferenciasHabitosSchema):
+    try:
+        actualizar_datos_perfil_creador(creador_id, datos.dict(exclude_unset=True))
+        return {"status": "ok", "mensaje": "Preferencias actualizadas"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# === Actualizar resumen y estado ===
+@app.put("/api/perfil_creador/{creador_id}/resumen", tags=["Resumen"])
+def actualizar_resumen(creador_id: int, datos: ResumenEvaluacionSchema):
+    try:
+        actualizar_datos_perfil_creador(creador_id, datos.dict(exclude_unset=True))
+        return {"status": "ok", "mensaje": "Resumen actualizado"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

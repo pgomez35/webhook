@@ -196,3 +196,60 @@ class PerfilCreadorSchema(BaseModel):
                 "observaciones": "Perfil con gran potencial de crecimiento."
             }
         }
+
+
+# === Sección: Datos Personales ===
+class DatosPersonalesSchema(BaseModel):
+    nombre: Optional[str]
+    edad: Optional[int]
+    genero: Optional[str]
+    pais: Optional[str]
+    ciudad: Optional[str]
+    zona_horaria: Optional[str]
+    idioma: Optional[str]
+    campo_estudios: Optional[str]
+    estudios: Optional[str]
+
+# === Sección: Evaluación Cualitativa / Manual ===
+class EvaluacionCualitativaSchema(BaseModel):
+    biografia: Optional[str]
+    apariencia: Optional[int]
+    engagement: Optional[int]
+    calidad_contenido: Optional[int]
+    potencial_estimado: Optional[str]
+    usuario_evalua: Optional[str]
+    mejoras_sugeridas: Optional[str]
+
+# === Sección: Estadísticas / Métricas ===
+class EstadisticasPerfilSchema(BaseModel):
+    seguidores: Optional[int]
+    siguiendo: Optional[int]
+    videos: Optional[int]
+    likes: Optional[int]
+    duracion_emisiones: Optional[int]
+    dias_emisiones: Optional[int]
+
+# === Sección: Contenido / Preferencias ===
+class PreferenciasHabitosSchema(BaseModel):
+    tiempo_disponible: Optional[int]
+    frecuencia_lives: Optional[int]
+    experiencia_otras_plataformas: Optional[Dict]
+    intereses: Optional[Dict]
+    tipo_contenido: Optional[Dict]
+    horario_preferido: Optional[str]
+    intencion_trabajo: Optional[str]
+
+# === Sección: Resumen ===
+class ResumenEvaluacionSchema(BaseModel):
+    estado: Optional[str]
+    observaciones: Optional[str]
+    puntaje_total: Optional[float]
+    puntaje_total_categoria: Optional[str]
+
+# === Esquema completo para actualizar todo ===
+class PerfilCreadorSchema(DatosPersonalesSchema,
+                          EvaluacionCualitativaSchema,
+                          EstadisticasPerfilSchema,
+                          PreferenciasHabitosSchema,
+                          ResumenEvaluacionSchema):
+    pass
