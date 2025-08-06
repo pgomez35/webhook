@@ -360,7 +360,8 @@ def editar_evento(evento_id: str, evento: EventoIn):
     except Exception as e:
         logger.error(f"❌ Error al editar evento {evento_id}: {e}")
         logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail="Error al editar evento.")
+        raise HTTPException(status_code=500, detail=str(e))  # ← TEMPORAL para ver el error real
+
     finally:
         cur.close()
         conn.close()
