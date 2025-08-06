@@ -277,9 +277,7 @@ def editar_evento(evento_id: str, evento: EventoIn):
         google_event['description'] = evento.descripcion or ""
         google_event['start']['dateTime'] = evento.inicio.isoformat()
         google_event['end']['dateTime'] = evento.fin.isoformat()
-        google_event.setdefault('extendedProperties', {}).setdefault('private', {})
-        google_event['extendedProperties']['private']['tiktok_user'] = evento.tiktok_user or ""
-
+     
         updated = service.events().update(
             calendarId="primary",
             eventId=evento_id,
