@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, Union, Dict
+from typing import Optional, Union, Dict,List
 from datetime import datetime
 
 class ActualizacionContactoInfo(BaseModel):
@@ -15,35 +15,19 @@ class NombreActualizacion(BaseModel):
     telefono: str
     nombre: str
 
-# ✅ Para entrada (crear/editar)
-# class EventoIn(BaseModel):
-#     titulo: str
-#     descripcion: Optional[str] = ""
-#     inicio: datetime
-#     fin: datetime
-#     tiktok_user: Optional[str] = None
-#     creador_id: Optional[int] = None
-#     responsable_id: Optional[int] = None
-#     estado: Optional[str] = "pendiente"
-
 class EventoIn(BaseModel):
     titulo: str
     descripcion: Optional[str] = None
     inicio: datetime
     fin: datetime
-    tiktok_user: Optional[str] = None
-    creador_id: Optional[int]
+    participantes_ids: List[int] = []  # << agregar esta línea
 
-# ✅ Para salida (incluye ID)
-# class EventoOut(EventoIn):
-#     id: str
-#     link_meet: Optional[str] = None
 
 class EventoOut(EventoIn):
     id: str
-    creador_id: Optional[int] = None  # Sobrescribir para hacerlo opcional
     link_meet: Optional[str] = None
     origen: Optional[str] = "google_calendar"  # Para distinguir fuentes
+    participantes: Optional[List[dict]] = None  # ← para devolver nombres, roles, etc
 
 # ===============================
 # ESQUEMAS PARA ADMIN_USUARIO
