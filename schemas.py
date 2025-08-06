@@ -233,9 +233,9 @@ class EstadisticasPerfilSchema(BaseModel):
 class PreferenciasHabitosSchema(BaseModel):
     tiempo_disponible: Optional[int]
     frecuencia_lives: Optional[int]
-    experiencia_otras_plataformas: Optional[Dict]
-    intereses: Optional[Dict]
-    tipo_contenido: Optional[Dict]
+    experiencia_otras_plataformas: Optional[Dict[str, int]]
+    intereses: Optional[Dict[str, bool]]
+    tipo_contenido: Optional[Dict[str, bool]]
     horario_preferido: Optional[str]
     intencion_trabajo: Optional[str]
 
