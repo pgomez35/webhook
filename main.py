@@ -277,7 +277,7 @@ def editar_evento(evento_id: str, evento: EventoIn):
         google_event['description'] = evento.descripcion or ""
         google_event['start']['dateTime'] = evento.inicio.isoformat()
         google_event['end']['dateTime'] = evento.fin.isoformat()
-     
+
         updated = service.events().update(
             calendarId="primary",
             eventId=evento_id,
@@ -526,7 +526,7 @@ def listar_agendamientos():
         # Para cada agendamiento, obtener los participantes (nombre, nickname)
         for evento in agendamientos:
             cur.execute("""
-                SELECT c.id, c.nombre, c.nickname
+                SELECT c.id, c.nombre_real as nombre, c.nickname
                 FROM agendamientos_participantes ap
                 JOIN creadores c ON c.id = ap.creador_id
                 WHERE ap.agendamiento_id = %s
