@@ -241,6 +241,61 @@ def sync_eventos():
         logger.info(f"📅 Evento: {evento.titulo} | 🕐 Inicio: {evento.inicio} | 🕓 Fin: {evento.fin} | 📝 Descripción: {evento.descripcion}")
 
 # ==================== RUTAS FASTAPI ==============================
+@app.get("/api/eventos/{evento_id}", response_model=EventoOut)
+def obtener_evento(evento_id: str):
+    conn, cur = get_connection()
+    try:
+        # Obtener datos del evento desde Google Calendar
+        service = get_calendar_service()
+        google_event = service.events().get(calendarId="primary", eventId=evento_id).execute()
+
+        # Obtener link de Meet si existe
+        meet_link = None
+        if 'conferenceData' in google_event:
+            for ep in google_event['conferenceData'].get('entryPoints', []):
+                if ep.get('entryPointType') == 'video':
+                    meet_link = ep.get('uri')
+                    break
+
+        # Obtener agendamiento en base de datos
+        cur.execute("""
+            SELECT id FROM agendamientos WHERE google_event_id = %s
+        """, (evento_id,))
+        agendamiento = cur.fetchone()
+        if not agendamiento:
+            raise HTTPException(status_code=404, detail="Evento no encontrado en la base de datos")
+
+        agendamiento_id = agendamiento[0]
+
+        # Obtener participantes
+        cur.execute("""
+            SELECT c.id, c.nombre_real AS nombre, c.nickname
+            FROM agendamientos_participantes ap
+            JOIN creadores c ON c.id = ap.creador_id
+            WHERE ap.agendamiento_id = %s
+        """, (agendamiento_id,))
+        participantes = cur.fetchall()
+        participantes_ids = [p["id"] for p in participantes]
+
+        return EventoOut(
+            id=google_event["id"],
+            titulo=google_event["summary"],
+            descripcion=google_event.get("description"),
+            inicio=isoparse(google_event["start"]["dateTime"]),
+            fin=isoparse(google_event["end"]["dateTime"]),
+            participantes_ids=participantes_ids,
+            participantes=participantes,
+            link_meet=meet_link,
+            origen="google_calendar"
+        )
+
+    except Exception as e:
+        logger.error(f"❌ Error al obtener evento {evento_id}: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Error al consultar el evento.")
+    finally:
+        cur.close()
+        conn.close()
 
 @app.get("/api/eventos", response_model=List[EventoOut])
 def listar_eventos():
