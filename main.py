@@ -351,7 +351,6 @@ def editar_evento(evento_id: str, evento: EventoIn):
             inicio=isoparse(updated['start']['dateTime']),
             fin=isoparse(updated['end']['dateTime']),
             descripcion=updated.get('description'),
-            tiktok_user=evento.tiktok_user,
             participantes_ids=evento.participantes_ids,
             participantes=participantes,
             link_meet=meet_link,
