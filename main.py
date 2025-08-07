@@ -241,17 +241,6 @@ def sync_eventos():
         logger.info(f"📅 Evento: {evento.titulo} | 🕐 Inicio: {evento.inicio} | 🕓 Fin: {evento.fin} | 📝 Descripción: {evento.descripcion}")
 
 # ==================== RUTAS FASTAPI ==============================
-from fastapi import HTTPException
-from dateutil.parser import isoparse
-from datetime import datetime
-from typing import List
-from schemas import EventoOut
-from db import get_connection
-from utils.google_calendar import get_calendar_service
-import traceback
-import logging
-
-logger = logging.getLogger(__name__)
 
 @app.get("/api/eventos/{evento_id}", response_model=EventoOut)
 def obtener_evento(evento_id: str):
@@ -331,7 +320,6 @@ def obtener_evento(evento_id: str):
     finally:
         cur.close()
         conn.close()
-
 
 @app.get("/api/eventos", response_model=List[EventoOut])
 def listar_eventos():
