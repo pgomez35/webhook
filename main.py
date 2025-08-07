@@ -241,15 +241,32 @@ def sync_eventos():
         logger.info(f"📅 Evento: {evento.titulo} | 🕐 Inicio: {evento.inicio} | 🕓 Fin: {evento.fin} | 📝 Descripción: {evento.descripcion}")
 
 # ==================== RUTAS FASTAPI ==============================
+from fastapi import HTTPException
+from dateutil.parser import isoparse
+from datetime import datetime
+from typing import List
+from schemas import EventoOut
+from db import get_connection
+from utils.google_calendar import get_calendar_service
+import traceback
+import logging
+
+logger = logging.getLogger(__name__)
+
 @app.get("/api/eventos/{evento_id}", response_model=EventoOut)
 def obtener_evento(evento_id: str):
     conn, cur = get_connection()
     try:
-        # Obtener datos del evento desde Google Calendar
         service = get_calendar_service()
         google_event = service.events().get(calendarId="primary", eventId=evento_id).execute()
 
-        # Obtener link de Meet si existe
+        # 📅 Fechas
+        fecha_inicio = isoparse(google_event["start"]["dateTime"])
+        fecha_fin = isoparse(google_event["end"]["dateTime"])
+        titulo = google_event.get("summary", "Sin título")
+        descripcion = google_event.get("description", "")
+
+        # 📹 Link Meet
         meet_link = None
         if 'conferenceData' in google_event:
             for ep in google_event['conferenceData'].get('entryPoints', []):
@@ -257,17 +274,35 @@ def obtener_evento(evento_id: str):
                     meet_link = ep.get('uri')
                     break
 
-        # Obtener agendamiento en base de datos
+        # 🔍 Buscar en base de datos
         cur.execute("""
             SELECT id FROM agendamientos WHERE google_event_id = %s
         """, (evento_id,))
         agendamiento = cur.fetchone()
-        if not agendamiento:
-            raise HTTPException(status_code=404, detail="Evento no encontrado en la base de datos")
 
-        agendamiento_id = agendamiento[0]
+        if agendamiento:
+            agendamiento_id = agendamiento[0]
+        else:
+            # 🆕 Si no existe, lo insertamos
+            cur.execute("""
+                INSERT INTO agendamientos (
+                    titulo, descripcion, fecha_inicio, fecha_fin, google_event_id, link_meet, estado
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                titulo,
+                descripcion,
+                fecha_inicio,
+                fecha_fin,
+                evento_id,
+                meet_link,
+                'programado'  # Puedes ajustar esto
+            ))
+            agendamiento_id = cur.fetchone()[0]
+            conn.commit()
+            logger.info(f"🆕 Evento {evento_id} insertado en la base de datos con ID {agendamiento_id}")
 
-        # Obtener participantes
+        # 👥 Participantes
         cur.execute("""
             SELECT c.id, c.nombre_real AS nombre, c.nickname
             FROM agendamientos_participantes ap
@@ -278,13 +313,13 @@ def obtener_evento(evento_id: str):
         participantes_ids = [p["id"] for p in participantes]
 
         return EventoOut(
-            id=google_event["id"],
-            titulo=google_event["summary"],
-            descripcion=google_event.get("description"),
-            inicio=isoparse(google_event["start"]["dateTime"]),
-            fin=isoparse(google_event["end"]["dateTime"]),
-            participantes_ids=participantes_ids,
+            id=evento_id,
+            titulo=titulo,
+            descripcion=descripcion,
+            inicio=fecha_inicio,
+            fin=fecha_fin,
             participantes=participantes,
+            participantes_ids=participantes_ids,
             link_meet=meet_link,
             origen="google_calendar"
         )
@@ -296,6 +331,7 @@ def obtener_evento(evento_id: str):
     finally:
         cur.close()
         conn.close()
+
 
 @app.get("/api/eventos", response_model=List[EventoOut])
 def listar_eventos():
