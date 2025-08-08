@@ -301,7 +301,12 @@ def obtener_evento(evento_id: str):
             WHERE ap.agendamiento_id = %s
         """, (agendamiento_id,))
         participantes = cur.fetchall()
-        participantes_ids = [p["id"] for p in participantes]
+
+        participantes_ids = [p[0] for p in participantes]  # p[0] = id
+        participantes_out = [
+            {"id": p[0], "nombre": p[1], "nickname": p[2]}
+            for p in participantes
+        ]
 
         return EventoOut(
             id=evento_id,
@@ -309,7 +314,7 @@ def obtener_evento(evento_id: str):
             descripcion=descripcion,
             inicio=fecha_inicio,
             fin=fecha_fin,
-            participantes=participantes,
+            participantes=participantes_out,
             participantes_ids=participantes_ids,
             link_meet=meet_link,
             origen="google_calendar"
