@@ -46,6 +46,12 @@ PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_ID")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "142848PITUFO")
 CHROMA_DIR = "./chroma_faq_openai"
 
+# SERVICE_ACCOUNT_FILE = "credentials.json"
+SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_CREDENTIALS_JSON")
+CALENDAR_ID = os.getenv("CALENDAR_ID")
+# CALENDAR_ID = "atavillamil.prestige@gmail.com"  # ID del calendario Prestige
+
+
 # ⚙️ Inicializar FastAPI
 app = FastAPI()
 
@@ -132,7 +138,24 @@ def leer_token_de_bd(nombre='calendar'):
         raise
 
 # ==================== GOOGLE CALENDAR SERVICE ==============================
+from google.oauth2 import service_account
 def get_calendar_service():
+    try:
+        SCOPES = ["https://www.googleapis.com/auth/calendar"]
+        # SERVICE_ACCOUNT_FILE = "credentials.json"
+        # CALENDAR_ID = "atavillamil.prestige@gmail.com"  # ID del calendario Prestige
+        creds = service_account.Credentials.from_service_account_file(
+            SERVICE_ACCOUNT_FILE, scopes=SCOPES
+        )
+        service = build("calendar", "v3", credentials=creds)
+        logger.info("✅ Servicio de Google Calendar inicializado con cuenta de servicio.")
+        return service
+    except Exception as e:
+        logger.error("❌ Error al inicializar el servicio de Google Calendar:")
+        logger.error(traceback.format_exc())
+        raise
+
+def get_calendar_service_():
     try:
         token_info = leer_token_de_bd()
         creds = UserCredentials.from_authorized_user_info(token_info, SCOPES)
