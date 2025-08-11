@@ -145,10 +145,12 @@ def get_calendar_service():
         SCOPES = ["https://www.googleapis.com/auth/calendar"]
         # SERVICE_ACCOUNT_FILE = "credentials.json"
         # CALENDAR_ID = "atavillamil.prestige@gmail.com"  # ID del calendario Prestige
+
+        creds_dict = json.loads(SERVICE_ACCOUNT_INFO)  # convierte string → dict
         creds = service_account.Credentials.from_service_account_info(
-            SERVICE_ACCOUNT_INFO,
-            scopes=["https://www.googleapis.com/auth/calendar"]
+            creds_dict, scopes=SCOPES
         )
+
         service = build("calendar", "v3", credentials=creds)
         logger.info("✅ Servicio de Google Calendar inicializado con cuenta de servicio.")
         return service
