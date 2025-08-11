@@ -47,9 +47,10 @@ VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "142848PITUFO")
 CHROMA_DIR = "./chroma_faq_openai"
 
 # SERVICE_ACCOUNT_FILE = "credentials.json"
-SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_CREDENTIALS_JSON")
-CALENDAR_ID = os.getenv("CALENDAR_ID")
+SERVICE_ACCOUNT_INFO = os.getenv("GOOGLE_CREDENTIALS_JSON")
+# CALENDAR_ID="primary"
 # CALENDAR_ID = "atavillamil.prestige@gmail.com"  # ID del calendario Prestige
+CALENDAR_ID = os.getenv("CALENDAR_ID")
 
 
 # ⚙️ Inicializar FastAPI
@@ -144,8 +145,9 @@ def get_calendar_service():
         SCOPES = ["https://www.googleapis.com/auth/calendar"]
         # SERVICE_ACCOUNT_FILE = "credentials.json"
         # CALENDAR_ID = "atavillamil.prestige@gmail.com"  # ID del calendario Prestige
-        creds = service_account.Credentials.from_service_account_file(
-            SERVICE_ACCOUNT_FILE, scopes=SCOPES
+        creds = service_account.Credentials.from_service_account_info(
+            SERVICE_ACCOUNT_INFO,
+            scopes=["https://www.googleapis.com/auth/calendar"]
         )
         service = build("calendar", "v3", credentials=creds)
         logger.info("✅ Servicio de Google Calendar inicializado con cuenta de servicio.")
@@ -190,7 +192,7 @@ def obtener_eventos() -> List[EventoOut]:
 
     try:
         events_result = service.events().list(
-            calendarId='primary',
+            calendarId=CALENDAR_ID,
             timeMin=hace_30_dias,
             timeMax=un_ano_futuro,
             maxResults=100,
@@ -274,7 +276,7 @@ def obtener_evento(evento_id: str):
         service = get_calendar_service()
 
         try:
-            google_event = service.events().get(calendarId="primary", eventId=evento_id).execute()
+            google_event = service.events().get(calendarId=CALENDAR_ID, eventId=evento_id).execute()
         except HttpError as e:
             if e.resp.status == 404:
                 logger.warning(f"📭 Evento {evento_id} no encontrado en Google Calendar.")
@@ -382,7 +384,7 @@ def editar_evento(evento_id: str, evento: EventoIn):
 
         # ✅ Obtener el servicio y el evento actual en Google Calendar
         service = get_calendar_service()
-        google_event = service.events().get(calendarId="primary", eventId=evento_id).execute()
+        google_event = service.events().get(calendarId=CALENDAR_ID, eventId=evento_id).execute()
 
         # ✅ Actualizar campos en Google Calendar
         google_event['summary'] = evento.titulo
@@ -391,7 +393,7 @@ def editar_evento(evento_id: str, evento: EventoIn):
         google_event['end']['dateTime'] = evento.fin.isoformat()
 
         updated = service.events().update(
-            calendarId="primary",
+            calendarId=CALENDAR_ID,
             eventId=evento_id,
             body=google_event,
             conferenceDataVersion=1
@@ -494,7 +496,7 @@ def editar_evento(evento_id: str, evento: EventoIn):
 def eliminar_evento(evento_id: str):
     try:
         service = get_calendar_service()
-        service.events().delete(calendarId="primary", eventId=evento_id).execute()
+        service.events().delete(calendarId=CALENDAR_ID, eventId=evento_id).execute()
 
         conn = psycopg2.connect(DB_URL)
         cur = conn.cursor()
@@ -619,7 +621,7 @@ def crear_evento_google(resumen, descripcion, fecha_inicio, fecha_fin):
     }
 
     evento_creado = service.events().insert(
-        calendarId='primary',
+        calendarId=CALENDAR_ID,
         body=evento,
         conferenceDataVersion=1
     ).execute()
