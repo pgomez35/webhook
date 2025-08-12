@@ -389,10 +389,26 @@ def editar_evento(evento_id: str, evento: EventoIn):
         google_event = service.events().get(calendarId=CALENDAR_ID, eventId=evento_id).execute()
 
         # ✅ Actualizar campos en Google Calendar
-        google_event['summary'] = evento.titulo
-        google_event['description'] = evento.descripcion or ""
-        google_event['start']['dateTime'] = evento.inicio.isoformat()
-        google_event['end']['dateTime'] = evento.fin.isoformat()
+        # ✅ Actualizar campos en Google Calendar sin borrar lo existente
+        google_event["summary"] = evento.titulo
+        google_event["description"] = evento.descripcion or ""
+        google_event["start"] = {
+            "dateTime": evento.inicio.isoformat(),
+            "timeZone": "America/Bogota"
+        }
+        google_event["end"] = {
+            "dateTime": evento.fin.isoformat(),
+            "timeZone": "America/Bogota"
+        }
+
+        # ✅ Regenerar enlace Meet si no existe
+        if not google_event.get("conferenceData") or not google_event["conferenceData"].get("conferenceId"):
+            google_event["conferenceData"] = {
+                "createRequest": {
+                    "conferenceSolutionKey": {"type": "hangoutsMeet"},
+                    "requestId": str(uuid4())
+                }
+            }
 
         updated = service.events().update(
             calendarId=CALENDAR_ID,
