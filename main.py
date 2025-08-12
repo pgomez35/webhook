@@ -774,7 +774,7 @@ from googleapiclient.http import MediaFileUpload
 # SERVICE_ACCOUNT_INFO = os.getenv("GOOGLE_CREDENTIALS_JSON")
 SERVICE_ACCOUNT_INFO_DRIVE = json.loads(os.getenv("GOOGLE_CREDENTIALS_JSON"))
 SCOPES_DRIVE = ["https://www.googleapis.com/auth/drive.file"]
-FOLDER_ID = "Audios"  # carpeta donde guardar audios
+FOLDER_ID = "1I40G_-UIBL_rGUd5BnxIP76I18B-zxhi"  # carpeta donde guardar audios,  El ID es la parte después de /folders/ y antes del ?:
 
 creds_drive = service_account.Credentials.from_service_account_info(
     SERVICE_ACCOUNT_INFO_DRIVE,
