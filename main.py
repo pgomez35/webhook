@@ -599,8 +599,61 @@ def crear_evento(evento: EventoIn, usuario_actual: dict = Depends(obtener_usuari
         cur.close()
         conn.close()
 
-
 def crear_evento_google(resumen, descripcion, fecha_inicio, fecha_fin):
+    service = get_calendar_service()
+
+    # 1️⃣ Comprobar si el calendario permite crear Meet
+    try:
+        calendar_info = service.calendarList().get(calendarId=CALENDAR_ID).execute()
+        is_workspace = "primary" in calendar_info.get("id", "") or \
+                       "conferenceProperties" in calendar_info
+        allows_meet = False
+
+        if "conferenceProperties" in calendar_info:
+            allowed_types = calendar_info["conferenceProperties"].get("allowedConferenceSolutionTypes", [])
+            allows_meet = "hangoutsMeet" in allowed_types
+
+        logger.info(f"📝 Calendario detectado: {calendar_info.get('summary')}")
+        logger.info(f"Workspace: {is_workspace}, Permite Meet: {allows_meet}")
+
+    except Exception as e:
+        logger.warning(f"⚠️ No se pudo verificar si el calendario permite Meet: {e}")
+        allows_meet = False
+
+    # 2️⃣ Construir evento
+    evento = {
+        'summary': resumen,
+        'description': descripcion,
+        'start': {
+            'dateTime': fecha_inicio.isoformat(),
+            'timeZone': 'America/Bogota',
+        },
+        'end': {
+            'dateTime': fecha_fin.isoformat(),
+            'timeZone': 'America/Bogota',
+        }
+    }
+
+    # Solo añadir conferencia si está permitido
+    if allows_meet:
+        evento['conferenceData'] = {
+            'createRequest': {
+                'requestId': str(uuid4()),
+                'conferenceSolutionKey': {'type': 'hangoutsMeet'},
+            }
+        }
+
+    # 3️⃣ Crear evento en Google Calendar
+    evento_creado = service.events().insert(
+        calendarId=CALENDAR_ID,
+        body=evento,
+        conferenceDataVersion=1 if allows_meet else 0
+    ).execute()
+
+    return evento_creado
+
+
+def crear_evento_google_(resumen, descripcion, fecha_inicio, fecha_fin):
     service = get_calendar_service()
 
     evento = {
