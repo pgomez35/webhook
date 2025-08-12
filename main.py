@@ -388,8 +388,7 @@ def editar_evento(evento_id: str, evento: EventoIn):
         service = get_calendar_service()
         google_event = service.events().get(calendarId=CALENDAR_ID, eventId=evento_id).execute()
 
-        # ✅ Actualizar campos en Google Calendar
-        # ✅ Actualizar campos en Google Calendar sin borrar lo existente
+        # ✅ Actualizar campos sin borrar lo existente
         google_event["summary"] = evento.titulo
         google_event["description"] = evento.descripcion or ""
         google_event["start"] = {
@@ -401,8 +400,8 @@ def editar_evento(evento_id: str, evento: EventoIn):
             "timeZone": "America/Bogota"
         }
 
-        # ✅ Regenerar enlace Meet si no existe
-        if not google_event.get("conferenceData") or not google_event["conferenceData"].get("conferenceId"):
+        # ⚠️ Solo regenerar Meet si es requerido explícitamente
+        if getattr(evento, "regenerar_meet", False):
             google_event["conferenceData"] = {
                 "createRequest": {
                     "conferenceSolutionKey": {"type": "hangoutsMeet"},
@@ -410,12 +409,25 @@ def editar_evento(evento_id: str, evento: EventoIn):
                 }
             }
 
-        updated = service.events().update(
-            calendarId=CALENDAR_ID,
-            eventId=evento_id,
-            body=google_event,
-            conferenceDataVersion=1
-        ).execute()
+        try:
+            updated = service.events().update(
+                calendarId=CALENDAR_ID,
+                eventId=evento_id,
+                body=google_event,
+                conferenceDataVersion=1 if "conferenceData" in google_event else 0
+            ).execute()
+        except HttpError as e:
+            if e.resp.status == 400 and "Invalid conference type value" in str(e):
+                logger.warning(f"⚠️ Evento {evento_id} sin link de Meet válido, reintentando sin conferenceData...")
+                # Eliminar conferenceData y reintentar
+                google_event.pop("conferenceData", None)
+                updated = service.events().update(
+                    calendarId=CALENDAR_ID,
+                    eventId=evento_id,
+                    body=google_event
+                ).execute()
+            else:
+                raise
 
         # ✅ Obtener link de Meet (si existe)
         meet_link = None
@@ -425,13 +437,12 @@ def editar_evento(evento_id: str, evento: EventoIn):
                     meet_link = ep.get('uri')
                     break
 
-        # ✅ Verificar si existe en la base de datos
+        # ✅ Guardar o actualizar en base de datos
         cur.execute("SELECT id FROM agendamientos WHERE google_event_id = %s", (evento_id,))
         agendamiento = cur.fetchone()
 
         if agendamiento:
             agendamiento_id = agendamiento[0]
-            # ✅ Actualizar agendamiento existente
             cur.execute("""
                 UPDATE agendamientos
                 SET fecha_inicio = %s,
@@ -450,7 +461,6 @@ def editar_evento(evento_id: str, evento: EventoIn):
                 agendamiento_id
             ))
         else:
-            # ✅ Insertar nuevo agendamiento
             cur.execute("""
                 INSERT INTO agendamientos (
                     titulo, descripcion, fecha_inicio, fecha_fin,
