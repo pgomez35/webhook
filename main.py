@@ -772,10 +772,15 @@ from googleapiclient.http import MediaFileUpload
 # Configuración Google Drive
 
 # SERVICE_ACCOUNT_INFO = os.getenv("GOOGLE_CREDENTIALS_JSON")
+SERVICE_ACCOUNT_INFO_DRIVE = json.loads(os.getenv("GOOGLE_CREDENTIALS_JSON"))
 SCOPES_DRIVE = ["https://www.googleapis.com/auth/drive.file"]
 FOLDER_ID = "Audios"  # carpeta donde guardar audios
 
-creds_drive = service_account.Credentials.from_service_account_info(SERVICE_ACCOUNT_INFO, scopes=SCOPES_DRIVE)
+creds_drive = service_account.Credentials.from_service_account_info(
+    SERVICE_ACCOUNT_INFO_DRIVE,
+    scopes=SCOPES_DRIVE
+)
+
 # 🚀 Crear cliente Google Drive
 drive_service = build("drive", "v3", credentials=creds_drive)
 
