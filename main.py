@@ -1003,24 +1003,25 @@ async def recibir_mensaje(request: Request):
         mensaje = mensajes[0]
         telefono = mensaje.get("from")
         tipo = mensaje.get("type")
-        mensaje_usuario = None
         es_audio = False
         audio_id = None
+        mensaje_usuario = None
+
         if tipo == "text":
             mensaje_usuario = mensaje.get("text", {}).get("body")
         elif tipo == "audio":
             es_audio = True
             audio_info = mensaje.get("audio", {})
             audio_id = audio_info.get("id")
-            mensaje_usuario = f"[Audio recibido: {audio_id}]"
         elif tipo == "button":
             mensaje_usuario = mensaje.get("button", {}).get("text")
             print(f"👆 Botón presionado: {mensaje_usuario}")
-        if not telefono or not mensaje_usuario:
+
+        if not telefono or (not mensaje_usuario and not es_audio):
             print("⚠️ Mensaje incompleto.")
             return JSONResponse({"status": "ok", "detalle": "Mensaje incompleto"}, status_code=200)
-        print(f"📥 Mensaje recibido de {telefono}: {mensaje_usuario}")
-        guardar_mensaje(telefono, mensaje_usuario, tipo="recibido", es_audio=es_audio)
+        print(f"📥 Mensaje recibido de {telefono}: {mensaje_usuario if mensaje_usuario else audio_id}")
+
         if es_audio:
             url_cloudinary = descargar_audio(audio_id, TOKEN)
             if url_cloudinary:
@@ -1028,23 +1029,26 @@ async def recibir_mensaje(request: Request):
                 return JSONResponse({"status": "ok", "detalle": "Audio subido a Cloudinary", "url": url_cloudinary})
             else:
                 return JSONResponse({"status": "error", "detalle": "No se pudo subir el audio"}, status_code=500)
+        else:
+            guardar_mensaje(telefono, mensaje_usuario, tipo="recibido", es_audio=False)
+
         # ✉️ Enviar respuesta automática
-        respuesta = "Gracias por tu mensaje, te escribiremos una respuesta tan pronto podamos"
-        codigo, respuesta_api = enviar_mensaje_texto_simple(
-            token=TOKEN,
-            numero_id=PHONE_NUMBER_ID,
-            telefono_destino=telefono,
-            texto=respuesta,
-        )
-        guardar_mensaje(telefono, respuesta, tipo="enviado")
-        print(f"✅ Código de envío: {codigo}")
-        print("🛰️ Respuesta API:", respuesta_api)
-        return JSONResponse({
-            "status": "ok",
-            "respuesta": respuesta,
-            "codigo_envio": codigo,
-            "respuesta_api": respuesta_api,
-        })
+        # respuesta = "Gracias por tu mensaje, te escribiremos una respuesta tan pronto podamos"
+        # codigo, respuesta_api = enviar_mensaje_texto_simple(
+        #     token=TOKEN,
+        #     numero_id=PHONE_NUMBER_ID,
+        #     telefono_destino=telefono,
+        #     texto=respuesta,
+        # )
+        # guardar_mensaje(telefono, respuesta, tipo="enviado")
+        # print(f"✅ Código de envío: {codigo}")
+        # print("🛰️ Respuesta API:", respuesta_api)
+        # return JSONResponse({
+        #     "status": "ok",
+        #     "respuesta": respuesta,
+        #     "codigo_envio": codigo,
+        #     "respuesta_api": respuesta_api,
+        # })
     except Exception as e:
         print("❌ Error procesando mensaje:", e)
         return JSONResponse({"error": str(e)}, status_code=500)
