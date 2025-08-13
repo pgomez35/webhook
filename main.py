@@ -37,7 +37,14 @@ from buscador import inicializar_busqueda, responder_pregunta
 from DataBase import *
 from Excel import *
 
+import cloudinary
 
+cloudinary.config(
+    cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+    api_key=os.environ["CLOUDINARY_API_KEY"],
+    api_secret=os.environ["CLOUDINARY_API_SECRET"],
+    secure=True
+)
 
 # 🔄 Cargar variables de entorno
 load_dotenv()
@@ -772,85 +779,119 @@ from googleapiclient.http import MediaFileUpload
 # Configuración Google Drive
 
 # SERVICE_ACCOUNT_INFO = os.getenv("GOOGLE_CREDENTIALS_JSON")
-SERVICE_ACCOUNT_INFO_DRIVE = json.loads(os.getenv("GOOGLE_CREDENTIALS_JSON"))
-SCOPES_DRIVE = ["https://www.googleapis.com/auth/drive.file"]
-FOLDER_ID = "1I40G_-UIBL_rGUd5BnxIP76I18B-zxhi"  # carpeta donde guardar audios,  El ID es la parte después de /folders/ y antes del ?:
+# SERVICE_ACCOUNT_INFO_DRIVE = json.loads(os.getenv("GOOGLE_CREDENTIALS_JSON"))
+# SCOPES_DRIVE = ["https://www.googleapis.com/auth/drive.file"]
+# FOLDER_ID = "1I40G_-UIBL_rGUd5BnxIP76I18B-zxhi"  # carpeta donde guardar audios,  El ID es la parte después de /folders/ y antes del ?:
+#
+# creds_drive = service_account.Credentials.from_service_account_info(
+#     SERVICE_ACCOUNT_INFO_DRIVE,
+#     scopes=SCOPES_DRIVE
+# )
+#
+# # 🚀 Crear cliente Google Drive
+# drive_service = build("drive", "v3", credentials=creds_drive)
 
-creds_drive = service_account.Credentials.from_service_account_info(
-    SERVICE_ACCOUNT_INFO_DRIVE,
-    scopes=SCOPES_DRIVE
+# def subir_a_drive(ruta_archivo):
+#     try:
+#         nombre_archivo = os.path.basename(ruta_archivo)
+#         file_metadata = {
+#             "name": nombre_archivo,
+#             "parents": [FOLDER_ID]
+#         }
+#         media = MediaFileUpload(ruta_archivo, mimetype="audio/ogg")
+#         file = drive_service.files().create(
+#             body=file_metadata,
+#             media_body=media,
+#             fields="id, webViewLink"
+#         ).execute()
+#
+#         # 🌍 Hacer el archivo público
+#         drive_service.permissions().create(
+#             fileId=file.get("id"),
+#             body={"type": "anyone", "role": "reader"}
+#         ).execute()
+#
+#         url_publica = file.get("webViewLink")
+#         print(f"📤 Audio subido a Drive: {url_publica}")
+#         return url_publica
+#
+#     except Exception as e:
+#         print("❌ Error subiendo a Drive:", e)
+#         return None
+
+
+
+# # 🔊 Descargar audio desde WhatsApp Cloud API y subirlo a Drive
+# def descargar_audio(audio_id, token, carpeta_destino=AUDIO_DIR):
+#     try:
+#         # 📥 Obtener URL de descarga
+#         url_info = f"https://graph.facebook.com/v19.0/{audio_id}"
+#         headers = {"Authorization": f"Bearer {token}"}
+#         response_info = requests.get(url_info, headers=headers)
+#         response_info.raise_for_status()
+#
+#         media_url = response_info.json().get("url")
+#         if not media_url:
+#             print("❌ No se pudo obtener la URL del audio.")
+#             return None
+#
+#         # 📥 Descargar archivo
+#         response_audio = requests.get(media_url, headers=headers)
+#         response_audio.raise_for_status()
+#
+#         os.makedirs(carpeta_destino, exist_ok=True)
+#         nombre_archivo = f"{audio_id}.ogg"
+#         ruta_archivo = os.path.join(carpeta_destino, nombre_archivo)
+#
+#         with open(ruta_archivo, "wb") as f:
+#             f.write(response_audio.content)
+#
+#         print(f"✅ Audio guardado en local: {ruta_archivo}")
+#
+#         # ☁ Subir a Google Drive
+#         url_drive = subir_a_drive(ruta_archivo)
+#         return url_drive or ruta_archivo
+#
+#     except Exception as e:
+#         print("❌ Error al descargar audio:", e)
+#         return None
+
+
+# cloudinary
+# cloudinary
+import cloudinary
+import cloudinary.uploader
+
+# Configuración (puedes usar variables de entorno)
+cloudinary.config(
+    cloud_name=os.environ.get("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.environ.get("CLOUDINARY_API_KEY"),
+    api_secret=os.environ.get("CLOUDINARY_API_SECRET"),
+    secure=True
 )
 
-# 🚀 Crear cliente Google Drive
-drive_service = build("drive", "v3", credentials=creds_drive)
-
-def subir_a_drive(ruta_archivo):
+def subir_audio_cloudinary(ruta_local, public_id=None, carpeta="audios_whatsapp"):
     try:
-        nombre_archivo = os.path.basename(ruta_archivo)
-        file_metadata = {
-            "name": nombre_archivo,
-            "parents": [FOLDER_ID]
-        }
-        media = MediaFileUpload(ruta_archivo, mimetype="audio/ogg")
-        file = drive_service.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields="id, webViewLink"
-        ).execute()
-
-        # 🌍 Hacer el archivo público
-        drive_service.permissions().create(
-            fileId=file.get("id"),
-            body={"type": "anyone", "role": "reader"}
-        ).execute()
-
-        url_publica = file.get("webViewLink")
-        print(f"📤 Audio subido a Drive: {url_publica}")
-        return url_publica
-
+        response = cloudinary.uploader.upload(
+            ruta_local,
+            resource_type="video",  # Cloudinary usa 'video' para audio/ogg/webm
+            folder=carpeta,
+            public_id=public_id,
+            overwrite=True
+        )
+        url = response.get("secure_url")
+        print(f"✅ Audio subido a Cloudinary: {url}")
+        return url
     except Exception as e:
-        print("❌ Error subiendo a Drive:", e)
+        print("❌ Error subiendo audio a Cloudinary:", e)
         return None
+# cloudinary
+# cloudinary
 
+import requests
+import os
 
-
-# 🔊 Descargar audio desde WhatsApp Cloud API y subirlo a Drive
 def descargar_audio(audio_id, token, carpeta_destino=AUDIO_DIR):
-    try:
-        # 📥 Obtener URL de descarga
-        url_info = f"https://graph.facebook.com/v19.0/{audio_id}"
-        headers = {"Authorization": f"Bearer {token}"}
-        response_info = requests.get(url_info, headers=headers)
-        response_info.raise_for_status()
-
-        media_url = response_info.json().get("url")
-        if not media_url:
-            print("❌ No se pudo obtener la URL del audio.")
-            return None
-
-        # 📥 Descargar archivo
-        response_audio = requests.get(media_url, headers=headers)
-        response_audio.raise_for_status()
-
-        os.makedirs(carpeta_destino, exist_ok=True)
-        nombre_archivo = f"{audio_id}.ogg"
-        ruta_archivo = os.path.join(carpeta_destino, nombre_archivo)
-
-        with open(ruta_archivo, "wb") as f:
-            f.write(response_audio.content)
-
-        print(f"✅ Audio guardado en local: {ruta_archivo}")
-
-        # ☁ Subir a Google Drive
-        url_drive = subir_a_drive(ruta_archivo)
-        return url_drive or ruta_archivo
-
-    except Exception as e:
-        print("❌ Error al descargar audio:", e)
-        return None
-
-
-def descargar_audio_(audio_id, token, carpeta_destino=AUDIO_DIR):
     try:
         url_info = f"https://graph.facebook.com/v19.0/{audio_id}"
         headers = {"Authorization": f"Bearer {token}"}
@@ -873,11 +914,47 @@ def descargar_audio_(audio_id, token, carpeta_destino=AUDIO_DIR):
             f.write(response_audio.content)
 
         print(f"✅ Audio guardado en: {ruta_archivo}")
-        return ruta_archivo
+
+        # Sube a Cloudinary y elimina el archivo local si quieres
+        url_cloudinary = subir_audio_cloudinary(ruta_archivo, public_id=audio_id)
+        if url_cloudinary:
+            # os.remove(ruta_archivo)  # Descomenta si quieres borrar el archivo local
+            return url_cloudinary
+        else:
+            return None
 
     except Exception as e:
         print("❌ Error al descargar audio:", e)
         return None
+
+# def descargar_audio(audio_id, token, carpeta_destino=AUDIO_DIR):
+#     try:
+#         url_info = f"https://graph.facebook.com/v19.0/{audio_id}"
+#         headers = {"Authorization": f"Bearer {token}"}
+#         response_info = requests.get(url_info, headers=headers)
+#         response_info.raise_for_status()
+#
+#         media_url = response_info.json().get("url")
+#         if not media_url:
+#             print("❌ No se pudo obtener la URL del audio.")
+#             return None
+#
+#         response_audio = requests.get(media_url, headers=headers)
+#         response_audio.raise_for_status()
+#
+#         os.makedirs(carpeta_destino, exist_ok=True)
+#         nombre_archivo = f"{audio_id}.ogg"
+#         ruta_archivo = os.path.join(carpeta_destino, nombre_archivo)
+#
+#         with open(ruta_archivo, "wb") as f:
+#             f.write(response_audio.content)
+#
+#         print(f"✅ Audio guardado en: {ruta_archivo}")
+#         return ruta_archivo
+#
+#     except Exception as e:
+#         print("❌ Error al descargar audio:", e)
+#         return None
 
 @app.patch("/contacto_info/{telefono}")
 def actualizar_contacto_info(telefono: str = Path(...), datos: ActualizacionContactoInfo = Body(...)):
@@ -910,7 +987,6 @@ async def verify_webhook(request: Request):
         return PlainTextResponse(challenge or "")
     return PlainTextResponse("Verificación fallida", status_code=403)
 
-# 📩 PROCESAMIENTO DE MENSAJES ENVIADOS AL WEBHOOK
 @app.post("/webhook")
 async def recibir_mensaje(request: Request):
     try:
@@ -946,8 +1022,12 @@ async def recibir_mensaje(request: Request):
         print(f"📥 Mensaje recibido de {telefono}: {mensaje_usuario}")
         guardar_mensaje(telefono, mensaje_usuario, tipo="recibido", es_audio=es_audio)
         if es_audio:
-            ruta = descargar_audio(audio_id, TOKEN)
-            return JSONResponse({"status": "ok", "detalle": f"Audio guardado en {ruta}"})
+            url_cloudinary = descargar_audio(audio_id, TOKEN)
+            if url_cloudinary:
+                guardar_mensaje(telefono, url_cloudinary, tipo="recibido", es_audio=True)
+                return JSONResponse({"status": "ok", "detalle": "Audio subido a Cloudinary", "url": url_cloudinary})
+            else:
+                return JSONResponse({"status": "error", "detalle": "No se pudo subir el audio"}, status_code=500)
         # ✉️ Enviar respuesta automática
         respuesta = "Gracias por tu mensaje, te escribiremos una respuesta tan pronto podamos"
         codigo, respuesta_api = enviar_mensaje_texto_simple(
@@ -968,6 +1048,65 @@ async def recibir_mensaje(request: Request):
     except Exception as e:
         print("❌ Error procesando mensaje:", e)
         return JSONResponse({"error": str(e)}, status_code=500)
+
+# 📩 PROCESAMIENTO DE MENSAJES ENVIADOS AL WEBHOOK
+# @app.post("/webhook")
+# async def recibir_mensaje(request: Request):
+#     try:
+#         datos = await request.json()
+#         print("📨 Payload recibido:")
+#         print(json.dumps(datos, indent=2))
+#         entrada = datos.get("entry", [{}])[0]
+#         cambio = entrada.get("changes", [{}])[0]
+#         valor = cambio.get("value", {})
+#         mensajes = valor.get("messages")
+#         if not mensajes:
+#             print("⚠️ No se encontraron mensajes en el payload.")
+#             return JSONResponse({"status": "ok", "detalle": "Sin mensajes"}, status_code=200)
+#         mensaje = mensajes[0]
+#         telefono = mensaje.get("from")
+#         tipo = mensaje.get("type")
+#         mensaje_usuario = None
+#         es_audio = False
+#         audio_id = None
+#         if tipo == "text":
+#             mensaje_usuario = mensaje.get("text", {}).get("body")
+#         elif tipo == "audio":
+#             es_audio = True
+#             audio_info = mensaje.get("audio", {})
+#             audio_id = audio_info.get("id")
+#             mensaje_usuario = f"[Audio recibido: {audio_id}]"
+#         elif tipo == "button":
+#             mensaje_usuario = mensaje.get("button", {}).get("text")
+#             print(f"👆 Botón presionado: {mensaje_usuario}")
+#         if not telefono or not mensaje_usuario:
+#             print("⚠️ Mensaje incompleto.")
+#             return JSONResponse({"status": "ok", "detalle": "Mensaje incompleto"}, status_code=200)
+#         print(f"📥 Mensaje recibido de {telefono}: {mensaje_usuario}")
+#         guardar_mensaje(telefono, mensaje_usuario, tipo="recibido", es_audio=es_audio)
+#         if es_audio:
+#             ruta = descargar_audio(audio_id, TOKEN)
+#             return JSONResponse({"status": "ok", "detalle": f"Audio guardado en {ruta}"})
+#         # ✉️ Enviar respuesta automática
+#         respuesta = "Gracias por tu mensaje, te escribiremos una respuesta tan pronto podamos"
+#         codigo, respuesta_api = enviar_mensaje_texto_simple(
+#             token=TOKEN,
+#             numero_id=PHONE_NUMBER_ID,
+#             telefono_destino=telefono,
+#             texto=respuesta,
+#         )
+#         guardar_mensaje(telefono, respuesta, tipo="enviado")
+#         print(f"✅ Código de envío: {codigo}")
+#         print("🛰️ Respuesta API:", respuesta_api)
+#         return JSONResponse({
+#             "status": "ok",
+#             "respuesta": respuesta,
+#             "codigo_envio": codigo,
+#             "respuesta_api": respuesta_api,
+#         })
+#     except Exception as e:
+#         print("❌ Error procesando mensaje:", e)
+#         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.get("/mensajes/{telefono}")
 def listar_mensajes(telefono: str):
@@ -1018,41 +1157,31 @@ async def api_enviar_mensaje(data: dict):
         "respuesta_api": respuesta_api
     }
 
+
 @app.post("/mensajes/audio")
 async def api_enviar_audio(telefono: str = Form(...), audio: UploadFile = Form(...)):
-    # Guardar temporalmente en local
     filename_webm = f"{telefono}_{int(datetime.now().timestamp())}.webm"
     ruta_webm = os.path.join(AUDIO_DIR, filename_webm)
     filename_ogg = filename_webm.replace(".webm", ".ogg")
     ruta_ogg = os.path.join(AUDIO_DIR, filename_ogg)
     os.makedirs(AUDIO_DIR, exist_ok=True)
-
     audio_bytes = await audio.read()
     with open(ruta_webm, "wb") as f:
         f.write(audio_bytes)
-    print(f"✅ Audio guardado: {ruta_webm}")
-
-    # Convertir a OGG
+    print(f"✅ Audio guardado correctamente en: {ruta_webm}")
     try:
         subprocess.run(["ffmpeg", "-y", "-i", ruta_webm, "-acodec", "libopus", ruta_ogg], check=True)
-        print(f"✅ Convertido a: {ruta_ogg}")
+        print(f"✅ Audio convertido a .ogg: {ruta_ogg}")
     except subprocess.CalledProcessError as e:
-        return {"status": "error", "mensaje": "Error al convertir audio", "error": str(e)}
-
-    # Subir a Google Drive
-    link_drive = subir_a_drive(ruta_ogg)
-    if not link_drive:
-        return {"status": "error", "mensaje": "Error al subir a Google Drive"}
-
-    # Guardar en base de datos
+        return {"status": "error", "mensaje": "Error al convertir el audio a .ogg", "error": str(e)}
+    # Subir a Cloudinary
+    url_cloudinary = subir_audio_cloudinary(ruta_ogg, public_id=filename_ogg.replace(".ogg", ""))
     guardar_mensaje(
         telefono,
-        f"[Audio en Drive: {link_drive}]",
+        url_cloudinary,
         tipo="enviado",
         es_audio=True
     )
-
-    # Enviar por WhatsApp
     try:
         codigo, respuesta_api = enviar_audio_base64(
             token=TOKEN,
@@ -1065,19 +1194,82 @@ async def api_enviar_audio(telefono: str = Form(...), audio: UploadFile = Form(.
     except Exception as e:
         return {
             "status": "error",
-            "mensaje": "Audio guardado en Drive, pero no enviado por WhatsApp",
-            "link_drive": link_drive,
+            "mensaje": "Audio guardado, pero no enviado por WhatsApp",
+            "archivo": filename_ogg,
+            "url_cloudinary": url_cloudinary,
             "error": str(e)
         }
-
     return {
         "status": "ok",
-        "mensaje": "Audio recibido, subido a Drive y enviado por WhatsApp",
+        "mensaje": "Audio recibido, subido y enviado por WhatsApp",
         "archivo": filename_ogg,
-        "link_drive": link_drive,
+        "url_cloudinary": url_cloudinary,
         "codigo_api": codigo,
         "respuesta_api": respuesta_api
     }
+
+
+# con Drive
+# @app.post("/mensajes/audio")
+# async def api_enviar_audio(telefono: str = Form(...), audio: UploadFile = Form(...)):
+#     # Guardar temporalmente en local
+#     filename_webm = f"{telefono}_{int(datetime.now().timestamp())}.webm"
+#     ruta_webm = os.path.join(AUDIO_DIR, filename_webm)
+#     filename_ogg = filename_webm.replace(".webm", ".ogg")
+#     ruta_ogg = os.path.join(AUDIO_DIR, filename_ogg)
+#     os.makedirs(AUDIO_DIR, exist_ok=True)
+#
+#     audio_bytes = await audio.read()
+#     with open(ruta_webm, "wb") as f:
+#         f.write(audio_bytes)
+#     print(f"✅ Audio guardado: {ruta_webm}")
+#
+#     # Convertir a OGG
+#     try:
+#         subprocess.run(["ffmpeg", "-y", "-i", ruta_webm, "-acodec", "libopus", ruta_ogg], check=True)
+#         print(f"✅ Convertido a: {ruta_ogg}")
+#     except subprocess.CalledProcessError as e:
+#         return {"status": "error", "mensaje": "Error al convertir audio", "error": str(e)}
+#
+#     # Subir a Google Drive
+#     link_drive = subir_a_drive(ruta_ogg)
+#     if not link_drive:
+#         return {"status": "error", "mensaje": "Error al subir a Google Drive"}
+#
+#     # Guardar en base de datos
+#     guardar_mensaje(
+#         telefono,
+#         f"[Audio en Drive: {link_drive}]",
+#         tipo="enviado",
+#         es_audio=True
+#     )
+#
+#     # Enviar por WhatsApp
+#     try:
+#         codigo, respuesta_api = enviar_audio_base64(
+#             token=TOKEN,
+#             numero_id=PHONE_NUMBER_ID,
+#             telefono_destino=telefono,
+#             ruta_audio=ruta_ogg,
+#             mimetype="audio/ogg; codecs=opus"
+#         )
+#         print(f"📤 Audio enviado a WhatsApp. Código: {codigo}")
+#     except Exception as e:
+#         return {
+#             "status": "error",
+#             "mensaje": "Audio guardado en Drive, pero no enviado por WhatsApp",
+#             "link_drive": link_drive,
+#             "error": str(e)
+#         }
+#
+#     return {
+#         "status": "ok",
+#         "mensaje": "Audio recibido, subido a Drive y enviado por WhatsApp",
+#         "archivo": filename_ogg,
+#         "link_drive": link_drive,
+#         "codigo_api": codigo,
+#         "respuesta_api": respuesta_api
+#     }
 
 # @app.post("/mensajes/audio")
 # async def api_enviar_audio(telefono: str = Form(...), audio: UploadFile = Form(...)):
