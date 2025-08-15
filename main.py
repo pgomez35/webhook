@@ -961,8 +961,8 @@ def actualizar_contacto_info(telefono: str = Path(...), datos: ActualizacionCont
     return actualizar_contacto_info_db(telefono, datos)
 
 @app.get("/contactos")
-def listar_contactos(perfil: Optional[str] = None):
-    return obtener_contactos_db(perfil)
+def listar_contactos(estado: Optional[str] = None):
+    return obtener_contactos_db(estado)
 
 @app.post("/cargar_contactos")
 def cargar_contactos_desde_excel(nombre_hoja: str = Body(..., embed=True)):
@@ -1126,7 +1126,7 @@ async def api_enviar_mensaje(data: dict):
     usuario_id = obtener_usuario_id_por_telefono(telefono)
     if usuario_id and paso_limite_24h(usuario_id):
         print("⏱️ Usuario fuera de la ventana de 24h. Enviando plantilla reengagement.")
-        plantilla = "reconectar_usuario_boton"
+        plantilla = "reconectar_usuario_saludo"
         parametros = [nombre] if nombre else []
         codigo, respuesta_api = enviar_plantilla_generica(
             token=TOKEN,

@@ -299,33 +299,38 @@ def actualizar_contacto_info_db(telefono: str, datos: ActualizacionContactoInfo)
         print("❌ Error actualizando contacto_info:", e)
         return {"status": "error", "mensaje": str(e)}
 
-def obtener_contactos_db(perfil: Optional[str] = None):
+def obtener_contactos_db(estado: Optional[str] = None):
     try:
         conn = psycopg2.connect(INTERNAL_DATABASE_URL)
         cur = conn.cursor()
 
-        if perfil:
+        if estado:
             cur.execute("""
-                SELECT telefono, usuario, 'POTENCIAL' as perfil, '' AS estado_whatsapp, '' AS entrevista,'' AS fecha_entrevista
-                FROM creadores
-                WHERE perfil = %s AND telefono IS NOT NULL AND telefono != ''
-                 ORDER BY usuario 
-            """, (perfil.upper(),))
+                SELECT a.usuario, a.nickname, a.nombre_real AS nombre, a.whatsapp as telefono, b.nombre AS estado
+                FROM creadores a
+                INNER JOIN estados_creador b ON a.estado_id = b.id
+                WHERE whatsapp IS NOT NULL
+                  AND whatsapp != ''
+                  AND UPPER(b.nombre) = %s
+                ORDER BY a.usuario ASC
+            """, (estado.upper(),))
         else:
             cur.execute("""
-                SELECT telefono, usuario, 'POTENCIAL' as perfil, '' AS estado_whatsapp, '' AS entrevista,'' AS fecha_entrevista
-                FROM creadores  WHERE telefono IS NOT NULL AND telefono != ''
-                ORDER BY usuario ASC
+                SELECT a.usuario, a.nickname, a.nombre_real AS nombre, a.whatsapp as telefono, b.nombre AS estado
+                FROM creadores a
+                INNER JOIN estados_creador b ON a.estado_id = b.id
+                WHERE whatsapp IS NOT NULL
+                  AND whatsapp != ''
+                ORDER BY a.usuario ASC
             """)
 
         contactos = [
             {
-                "telefono": row[0],
-                "usuario": row[1],
-                "perfil": row[2],
-                "estado_whatsapp": row[3],
-                "entrevista": row[4],
-                "fecha_entrevista": row[5]
+                "usuario": row[0],
+                "nickname": row[1],
+                "nombre": row[2],
+                "telefono": row[3],
+                "estado": row[4]
             }
             for row in cur.fetchall()
         ]
@@ -337,6 +342,7 @@ def obtener_contactos_db(perfil: Optional[str] = None):
     except Exception as e:
         print("❌ Error obteniendo contactos:", e)
         return {"status": "error", "mensaje": str(e)}
+
 
 def guardar_mensaje(telefono, texto, tipo="recibido", es_audio=False):
     try:
