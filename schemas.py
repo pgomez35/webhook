@@ -219,6 +219,7 @@ class PreferenciasHabitosSchema(BaseModel):
     tiempo_disponible: Optional[int]
     frecuencia_lives: Optional[int]
     experiencia_otras_plataformas: Optional[Dict[str, int]]
+    experiencia_otras_plataformas_otro_nombre: Optional[str]
     intereses: Optional[Dict[str, bool]]
     tipo_contenido: Optional[Dict[str, bool]]
     horario_preferido: Optional[str]
