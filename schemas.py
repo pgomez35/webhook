@@ -123,6 +123,7 @@ class PerfilCreadorSchema(BaseModel):
     usuario_id_evalua: Optional[int] = None
     mejoras_sugeridas_manual: Optional[str] = Field(None, max_length=500)
 
+
     # Preferencias y hábitos
     horario_preferido: Optional[dict] = None
     intencion_trabajo: Optional[dict] = None
@@ -194,6 +195,7 @@ class DatosPersonalesSchema(BaseModel):
     idioma: Optional[str]
     campo_estudios: Optional[str]
     estudios: Optional[str]
+    actividad_actual: Optional[str]
 
 # === Sección: Evaluación Cualitativa / Manual ===
 class EvaluacionCualitativaSchema(BaseModel):

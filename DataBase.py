@@ -1085,7 +1085,7 @@ def actualizar_datos_perfil_creador(creador_id, datos_dict):
         campos_validos = [
             # Datos personales y generales
             "nombre", "edad", "genero", "pais", "ciudad", "zona_horaria",
-            "idioma", "campo_estudios", "estudios",
+            "idioma", "campo_estudios", "estudios","actividad_actual",
 
             # Evaluación manual/cualitativa
             "biografia", "apariencia", "engagement", "calidad_contenido",
