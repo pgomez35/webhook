@@ -349,36 +349,33 @@ def evaluar_preferencias_habitos(
     return round(score*(5/3), 2)
 
 def generar_mejoras_sugeridas(
-        cualitativa: dict,
-        estadisticas: dict
+    cualitativa: dict,
+    estadisticas: dict
 ) -> dict:
     """
     Genera mejoras sugeridas en base a las métricas cualitativas y estadísticas.
-
-    cualitativa: dict con claves ["apariencia", "engagement", "calidad_contenido", "foto", "biografia", "metadata_videos"]
-    estadisticas: dict con claves ["seguidores", "siguiendo", "videos", "likes", "duracion"]
-
-    return: dict con sugerencias agrupadas
+    Devuelve mensajes claros, motivadores y fáciles de entender para el usuario.
     """
+
     sugerencias = {
-        "cualitativa": [],
-        "estadisticas": [],
-        "general": []
+        "🚀 Recomendaciones generales": [],
+        "💡 Mejora tu contenido": [],
+        "📊 Mejora tus estadísticas": []
     }
 
     # --- Evaluación cualitativa ---
     if cualitativa.get("apariencia", 0) < 3:
-        sugerencias["cualitativa"].append("Mejorar presentación personal en cámara (luz, vestuario, ambiente).")
+        sugerencias["💡 Mejora tu contenido (cualitativa)"].append("✨ Mejora tu presentación en cámara: cuida la luz, vestuario y ambiente.")
     if cualitativa.get("engagement", 0) < 3:
-        sugerencias["cualitativa"].append("Hacer más llamados a la acción e interactuar con seguidores.")
+        sugerencias["💡 Mejora tu contenido (cualitativa)"].append("🤝 Interactúa más con tus seguidores: responde, haz preguntas y usa llamados a la acción.")
     if cualitativa.get("calidad_contenido", 0) < 3:
-        sugerencias["cualitativa"].append("Incrementar la creatividad y edición de los videos.")
+        sugerencias["💡 Mejora tu contenido (cualitativa)"].append("🎬 Trabaja en la creatividad y edición de tus videos para hacerlos más atractivos.")
     if cualitativa.get("foto", 0) < 3:
-        sugerencias["cualitativa"].append("Actualizar la foto de perfil con una más profesional o atractiva.")
+        sugerencias["💡 Mejora tu contenido (cualitativa)"].append("🖼️ Cambia tu foto de perfil por una más profesional y llamativa.")
     if cualitativa.get("biografia", 0) < 3:
-        sugerencias["cualitativa"].append("Optimizar la biografía: debe ser clara, breve y mostrar valor.")
+        sugerencias["💡 Mejora tu contenido (cualitativa)"].append("📖 Optimiza tu biografía: sé claro, breve y destaca tu valor.")
     if cualitativa.get("metadata_videos", 0) < 3:
-        sugerencias["cualitativa"].append("Usar hashtags y títulos más relevantes para aumentar alcance.")
+        sugerencias["💡 Mejora tu contenido (cualitativa)"].append("📌 Usa hashtags y títulos relevantes para mejorar el alcance.")
 
     # --- Evaluación estadística ---
     seguidores = estadisticas.get("seguidores", 0)
@@ -388,37 +385,40 @@ def generar_mejoras_sugeridas(
     duracion = estadisticas.get("duracion", 0)
 
     if seguidores < 50:
-        sugerencias["estadisticas"].append("Necesita conseguir al menos 50 seguidores para ser considerado apto.")
+        sugerencias["📊 Mejora tus estadísticas"].append("👥 Consigue al menos 50 seguidores para empezar a destacar.")
     elif seguidores < 300:
-        sugerencias["estadisticas"].append("Trabajar en estrategias de crecimiento para superar los 300 seguidores.")
+        sugerencias["📊 Mejora tus estadísticas"].append("📈 Crea estrategias para superar los 300 seguidores.")
     elif seguidores < 1000:
-        sugerencias["estadisticas"].append("Potenciar el alcance para pasar de bueno a muy bueno (+1000 seguidores).")
+        sugerencias["📊 Mejora tus estadísticas"].append("🚀 Potencia tu alcance para superar los 1000 seguidores.")
 
-    # Regla de balance seguidores vs siguiendo (independiente de duración)
     if siguiendo >= seguidores or siguiendo >= (0.9 * seguidores):
-        sugerencias["estadisticas"].append(
-            "Se recomienda dejar de seguir tantas cuentas, ya que probablemente no devuelven el seguimiento en igual proporción."
-        )
+        sugerencias["📊 Mejora tus estadísticas"].append("⚖️ Evita seguir a tantas cuentas: muchas no devuelven el follow.")
 
     if likes < 200:
-        sugerencias["estadisticas"].append("Incrementar likes con contenido más viral o compartible.")
+        sugerencias["📊 Mejora tus estadísticas"].append("👍 Crea más contenido viral o compartible para aumentar tus likes.")
     elif likes < 1000:
-        sugerencias["estadisticas"].append("Mantener la consistencia para llegar a +1000 likes.")
+        sugerencias["📊 Mejora tus estadísticas"].append("🔥 Mantén la constancia para superar los 1000 likes.")
 
     if videos < 10:
-        sugerencias["estadisticas"].append("Publicar más videos de forma constante (mínimo 10).")
+        sugerencias["📊 Mejora tus estadísticas"].append("🎥 Publica más videos de forma constante (mínimo 10).")
 
     if duracion < 30:
-        sugerencias["estadisticas"].append("Mantenerse activo al menos un mes para evaluar consistencia.")
-
+        sugerencias["📊 Mejora tus estadísticas"].append("⏳ Mantente activo al menos un mes seguido para mostrar consistencia.")
 
     # --- Sugerencias generales ---
     if cualitativa.get("engagement", 0) < 3 and seguidores < 300:
-        sugerencias["general"].append("Combinar mejoras en interacción y crecimiento de seguidores.")
+        sugerencias["🚀 Recomendaciones generales"].append("🔄 Mejora tu interacción y combina con estrategias de crecimiento.")
     if cualitativa.get("calidad_contenido", 0) >= 4 and seguidores < 300:
-        sugerencias["general"].append("El contenido es bueno, falta difusión y estrategia de crecimiento.")
+        sugerencias["🚀 Recomendaciones generales"].append("✅ Tu contenido es bueno, ahora enfócate en difundirlo más.")
+
+    # --- Eliminar secciones vacías ---
+    sugerencias = {k: v for k, v in sugerencias.items() if v}
+
+    # --- Mensaje positivo final ---
+    sugerencias["✨ Mensaje final"] = ["🌟 ¡Vas por buen camino! Cada mejora te acerca más a tu objetivo."]
 
     return sugerencias
+
 
 
 def evaluar_total(cualitativa: dict, estadistica: dict, general: dict, habitos: dict):
