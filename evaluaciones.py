@@ -350,20 +350,16 @@ def evaluar_preferencias_habitos(
 
 from DataBase import *
 
-def generar_mejoras_sugeridas(
-    cualitativa: dict,
-    creador_id: int
-) -> str:
+def generar_mejoras_sugeridas(cualitativa: dict, creador_id: int) -> str:
     """
     Genera sugerencias en base a métricas cualitativas (payload) y estadísticas (desde BD).
+    Si no hay estadísticas, continúa solo con el análisis cualitativo.
     """
 
     # 🔹 Obtener estadísticas desde la BD
     estadisticas = obtener_estadisticas_perfil_creador(creador_id)
 
-    if not estadisticas:
-        return "❌ No se encontraron estadísticas para este creador."
-
+    # Inicializar sugerencias
     sugerencias = {
         "🚀 Recomendaciones generales": [],
         "💡 Mejora tu contenido": [],
@@ -372,56 +368,97 @@ def generar_mejoras_sugeridas(
 
     # --- Evaluación cualitativa ---
     if cualitativa.get("apariencia", 0) < 3:
-        sugerencias["💡 Mejora tu contenido"].append("✨ Mejora tu presentación en cámara: cuida la luz, vestuario y ambiente.")
+        sugerencias["💡 Mejora tu contenido"].append(
+            "✨ Mejora tu presentación en cámara: cuida la luz, vestuario y ambiente."
+        )
     if cualitativa.get("engagement", 0) < 3:
-        sugerencias["💡 Mejora tu contenido"].append("🤝 Interactúa más con tus seguidores: responde, haz preguntas y usa llamados a la acción.")
+        sugerencias["💡 Mejora tu contenido"].append(
+            "🤝 Interactúa más con tus seguidores: responde, haz preguntas y usa llamados a la acción."
+        )
     if cualitativa.get("calidad_contenido", 0) < 3:
-        sugerencias["💡 Mejora tu contenido"].append("🎬 Trabaja en la creatividad y edición de tus videos para hacerlos más atractivos.")
+        sugerencias["💡 Mejora tu contenido"].append(
+            "🎬 Trabaja en la creatividad y edición de tus videos para hacerlos más atractivos."
+        )
     if cualitativa.get("foto", 0) < 3:
-        sugerencias["💡 Mejora tu contenido"].append("🖼️ Cambia tu foto de perfil por una más profesional y llamativa.")
+        sugerencias["💡 Mejora tu contenido"].append(
+            "🖼️ Cambia tu foto de perfil por una más profesional y llamativa."
+        )
     if cualitativa.get("biografia", 0) < 3:
-        sugerencias["💡 Mejora tu contenido"].append("📖 Optimiza tu biografía: sé claro, breve y destaca tu valor.")
+        sugerencias["💡 Mejora tu contenido"].append(
+            "📖 Optimiza tu biografía: sé claro, breve y destaca tu valor."
+        )
     if cualitativa.get("metadata_videos", 0) < 3:
-        sugerencias["💡 Mejora tu contenido"].append("📌 Usa hashtags y títulos relevantes para mejorar el alcance.")
+        sugerencias["💡 Mejora tu contenido"].append(
+            "📌 Usa hashtags y títulos relevantes para mejorar el alcance."
+        )
 
     # --- Evaluación estadística ---
-    seguidores = estadisticas.get("seguidores", 0)
-    siguiendo = estadisticas.get("siguiendo", 0)
-    likes = estadisticas.get("likes", 0)
-    videos = estadisticas.get("videos", 0)
-    duracion = estadisticas.get("dias_activo", 0)
+    if estadisticas:
+        seguidores = estadisticas.get("seguidores", 0)
+        siguiendo = estadisticas.get("siguiendo", 0)
+        likes = estadisticas.get("likes", 0)
+        videos = estadisticas.get("videos", 0)
+        duracion = estadisticas.get("dias_activo", 0)
 
-    # 🔹 Mostrar siempre los valores actuales
-    sugerencias["📊 Mejora tus estadísticas"].append(
-        f"📌 Estado actual → Seguidores: {seguidores}, Siguiendo: {siguiendo}, Likes: {likes}, Videos: {videos}, Días activo: {duracion}"
-    )
+        # Mostrar siempre los valores actuales
+        sugerencias["📊 Mejora tus estadísticas"].append(
+            f"📌 Estado actual → Seguidores: {seguidores}, Siguiendo: {siguiendo}, Likes: {likes}, Videos: {videos}, Días activo: {duracion}"
+        )
 
-    if seguidores < 50:
-        sugerencias["📊 Mejora tus estadísticas"].append("👥 Consigue al menos 50 seguidores para empezar a destacar.")
-    elif seguidores < 300:
-        sugerencias["📊 Mejora tus estadísticas"].append("📈 Crea estrategias para superar los 300 seguidores.")
-    elif seguidores < 1000:
-        sugerencias["📊 Mejora tus estadísticas"].append("🚀 Potencia tu alcance para superar los 1000 seguidores.")
+        if seguidores < 50:
+            sugerencias["📊 Mejora tus estadísticas"].append(
+                "👥 Consigue al menos 50 seguidores para empezar a destacar."
+            )
+        elif seguidores < 300:
+            sugerencias["📊 Mejora tus estadísticas"].append(
+                "📈 Crea estrategias para superar los 300 seguidores."
+            )
+        elif seguidores < 1000:
+            sugerencias["📊 Mejora tus estadísticas"].append(
+                "🚀 Potencia tu alcance para superar los 1000 seguidores."
+            )
 
-    if siguiendo >= seguidores or (seguidores > 0 and siguiendo >= (0.9 * seguidores)):
-        sugerencias["📊 Mejora tus estadísticas"].append("⚖️ Evita seguir a tantas cuentas: muchas no devuelven el follow.")
+        if siguiendo >= seguidores or (seguidores > 0 and siguiendo >= (0.9 * seguidores)):
+            sugerencias["📊 Mejora tus estadísticas"].append(
+                "⚖️ Evita seguir a tantas cuentas: muchas no devuelven el follow."
+            )
 
-    if likes < 200:
-        sugerencias["📊 Mejora tus estadísticas"].append("👍 Crea más contenido viral o compartible para aumentar tus likes.")
-    elif likes < 1000:
-        sugerencias["📊 Mejora tus estadísticas"].append("🔥 Mantén la constancia para superar los 1000 likes.")
+        if likes < 200:
+            sugerencias["📊 Mejora tus estadísticas"].append(
+                "👍 Crea más contenido viral o compartible para aumentar tus likes."
+            )
+        elif likes < 1000:
+            sugerencias["📊 Mejora tus estadísticas"].append(
+                "🔥 Mantén la constancia para superar los 1000 likes."
+            )
 
-    if videos < 10:
-        sugerencias["📊 Mejora tus estadísticas"].append("🎥 Publica más videos de forma constante (mínimo 10).")
+        if videos < 10:
+            sugerencias["📊 Mejora tus estadísticas"].append(
+                "🎥 Publica más videos de forma constante (mínimo 10)."
+            )
 
-    if duracion < 30:
-        sugerencias["📊 Mejora tus estadísticas"].append("⏳ Mantente activo al menos un mes seguido para mostrar consistencia.")
+        if duracion < 30:
+            sugerencias["📊 Mejora tus estadísticas"].append(
+                "⏳ Mantente activo al menos un mes seguido para mostrar consistencia."
+            )
+
+    else:
+        # Opcional: mensaje cuando no hay estadísticas
+        sugerencias["📊 Mejora tus estadísticas"].append(
+            "ℹ️ No hay estadísticas disponibles actualmente. Las recomendaciones se basan solo en análisis cualitativo."
+        )
 
     # --- Recomendaciones generales ---
+    seguidores = estadisticas.get("seguidores", 0) if estadisticas else 0
+
     if cualitativa.get("engagement", 0) < 3 and seguidores < 300:
-        sugerencias["🚀 Recomendaciones generales"].append("🔄 Mejora tu interacción y combina con estrategias de crecimiento.")
+        sugerencias["🚀 Recomendaciones generales"].append(
+            "🔄 Mejora tu interacción y combina con estrategias de crecimiento."
+        )
     if cualitativa.get("calidad_contenido", 0) >= 4 and seguidores < 300:
-        sugerencias["🚀 Recomendaciones generales"].append("✅ Tu contenido es bueno, ahora enfócate en difundirlo más.")
+        sugerencias["🚀 Recomendaciones generales"].append(
+            "✅ Tu contenido es bueno, ahora enfócate en difundirlo más."
+        )
 
     # --- Eliminar secciones vacías ---
     sugerencias = {k: v for k, v in sugerencias.items() if v}

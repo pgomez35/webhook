@@ -1084,7 +1084,7 @@ def obtener_estadisticas_perfil_creador(creador_id):
         cur = conn.cursor()
         cur.execute("""
            SELECT seguidores, siguiendo, likes, videos, dias_activo
-        FROM estadisticas_creador
+        FROM perfil_creador
         WHERE creador_id = %s
         LIMIT 1
         """, (creador_id,))
