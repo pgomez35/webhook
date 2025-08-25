@@ -420,7 +420,40 @@ def generar_mejoras_sugeridas(
 
     return sugerencias
 
-def evaluar_total(cualitativa, estadisticas, generales, preferencias_habitos):
+
+def evaluar_total(cualitativa: dict, estadistica: dict, general: dict, habitos: dict):
+    """
+    Combina todos los puntajes en un puntaje total.
+    """
+    # Extraer los valores numéricos si vienen en dict
+    cualitativa_score = (
+        cualitativa.get("puntuacion_manual")
+        if isinstance(cualitativa, dict) else cualitativa
+    )
+    estadistica_score = (
+        estadistica.get("puntaje_estadistica")
+        if isinstance(estadistica, dict) else estadistica
+    )
+    general_score = (
+        general.get("puntaje_general")
+        if isinstance(general, dict) else general
+    )
+    habitos_score = (
+        habitos.get("puntaje_habitos")
+        if isinstance(habitos, dict) else habitos
+    )
+
+    total = (
+        (cualitativa_score or 0) * 0.50 +
+        (estadistica_score or 0) * 0.25 +
+        (general_score or 0) * 0.15 +
+        (habitos_score or 0) * 0.10
+    )
+
+    return round(total, 2)
+
+
+def evaluar_total_(cualitativa, estadisticas, generales, preferencias_habitos):
     total = (
         cualitativa * 0.50 +
         estadisticas * 0.10 +
