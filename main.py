@@ -1566,6 +1566,28 @@ def actualizar_eval_cualitativa(
         data_dict["puntaje_manual"] = resultado["puntuacion_manual"]
         data_dict["puntaje_manual_categoria"] = resultado["puntuacion_manual_categoria"]
 
+        # Generar mejoras sugeridas
+        sugerencias = generar_mejoras_sugeridas(
+            cualitativa={
+                "apariencia": data_dict.get("apariencia", 0),
+                "engagement": data_dict.get("engagement", 0),
+                "calidad_contenido": data_dict.get("calidad_contenido", 0),
+                "foto": data_dict.get("eval_foto", 0),
+                "biografia": data_dict.get("eval_biografia", 0),
+                "metadata_videos": data_dict.get("metadata_videos", 0),
+            },
+            estadisticas={
+                "seguidores": data_dict.get("seguidores", 0),
+                "siguiendo": data_dict.get("siguiendo", 0),
+                "videos": data_dict.get("videos", 0),
+                "likes": data_dict.get("likes", 0),
+                "duracion": data_dict.get("duracion", 0),
+            }
+        )
+        data_dict["mejoras_sugeridas"] = sugerencias
+
+
+
         # Actualizar en BD
         actualizar_datos_perfil_creador(creador_id, data_dict)
 
@@ -1573,7 +1595,8 @@ def actualizar_eval_cualitativa(
             "status": "ok",
             "mensaje": "Evaluación cualitativa actualizada",
             "puntaje_manual": resultado["puntuacion_manual"],
-            "puntaje_manual_categoria": resultado["puntuacion_manual_categoria"]
+            "puntaje_manual_categoria": resultado["puntuacion_manual_categoria"],
+            "mejoras_sugeridas": sugerencias
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
