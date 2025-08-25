@@ -398,7 +398,7 @@ def generar_mejoras_sugeridas(cualitativa: dict, creador_id: int) -> str:
         siguiendo = estadisticas.get("siguiendo", 0)
         likes = estadisticas.get("likes", 0)
         videos = estadisticas.get("videos", 0)
-        duracion = estadisticas.get("dias_activo", 0)
+        duracion = estadisticas.get("duracion_emisiones", 0)
 
         # Mostrar siempre los valores actuales
         sugerencias["📊 Mejora tus estadísticas"].append(
@@ -439,7 +439,7 @@ def generar_mejoras_sugeridas(cualitativa: dict, creador_id: int) -> str:
 
         if duracion < 30:
             sugerencias["📊 Mejora tus estadísticas"].append(
-                "⏳ Mantente activo al menos un mes seguido para mostrar consistencia."
+                "⏳ Mantente activo para mostrar consistencia."
             )
 
     else:

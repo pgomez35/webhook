@@ -1083,7 +1083,7 @@ def obtener_estadisticas_perfil_creador(creador_id):
         conn = psycopg2.connect(INTERNAL_DATABASE_URL)
         cur = conn.cursor()
         cur.execute("""
-           SELECT seguidores, siguiendo, likes, videos, dias_activo
+           SELECT seguidores, siguiendo, likes, videos, duracion_emisiones
         FROM perfil_creador
         WHERE creador_id = %s
         LIMIT 1
