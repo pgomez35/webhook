@@ -356,6 +356,7 @@ def generar_mejoras_sugeridas(
     Genera sugerencias en base a métricas cualitativas y estadísticas.
     Devuelve SIEMPRE un solo string agrupado por secciones, ideal para mostrar en React o en mensajes.
     """
+
     sugerencias = {
         "🚀 Recomendaciones generales": [],
         "💡 Mejora tu contenido": [],
@@ -382,6 +383,11 @@ def generar_mejoras_sugeridas(
     likes = estadisticas.get("likes", 0)
     videos = estadisticas.get("videos", 0)
     duracion = estadisticas.get("duracion", 0)
+
+    # 🔹 Mostrar siempre los valores actuales de estadísticas
+    sugerencias["📊 Mejora tus estadísticas"].append(
+        f"📌 Estado actual → Seguidores: {seguidores}, Siguiendo: {siguiendo}, Likes: {likes}, Videos: {videos}, Días activo: {duracion}"
+    )
 
     if seguidores < 50:
         sugerencias["📊 Mejora tus estadísticas"].append("👥 Consigue al menos 50 seguidores para empezar a destacar.")
@@ -424,6 +430,7 @@ def generar_mejoras_sugeridas(
         for item in items:
             mensaje.append(f"  • {item}")
     return "\n".join(mensaje)
+
 
 
 def evaluar_total(cualitativa: dict, estadistica: dict, general: dict, habitos: dict):
