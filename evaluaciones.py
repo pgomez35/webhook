@@ -348,14 +348,21 @@ def evaluar_preferencias_habitos(
 
     return round(score*(5/3), 2)
 
+from DataBase import *
+
 def generar_mejoras_sugeridas(
     cualitativa: dict,
-    estadisticas: dict
+    creador_id: int
 ) -> str:
     """
-    Genera sugerencias en base a métricas cualitativas y estadísticas.
-    Devuelve SIEMPRE un solo string agrupado por secciones, ideal para mostrar en React o en mensajes.
+    Genera sugerencias en base a métricas cualitativas (payload) y estadísticas (desde BD).
     """
+
+    # 🔹 Obtener estadísticas desde la BD
+    estadisticas = obtener_estadisticas_perfil_creador(creador_id)
+
+    if not estadisticas:
+        return "❌ No se encontraron estadísticas para este creador."
 
     sugerencias = {
         "🚀 Recomendaciones generales": [],
@@ -382,9 +389,9 @@ def generar_mejoras_sugeridas(
     siguiendo = estadisticas.get("siguiendo", 0)
     likes = estadisticas.get("likes", 0)
     videos = estadisticas.get("videos", 0)
-    duracion = estadisticas.get("duracion", 0)
+    duracion = estadisticas.get("dias_activo", 0)
 
-    # 🔹 Mostrar siempre los valores actuales de estadísticas
+    # 🔹 Mostrar siempre los valores actuales
     sugerencias["📊 Mejora tus estadísticas"].append(
         f"📌 Estado actual → Seguidores: {seguidores}, Siguiendo: {siguiendo}, Likes: {likes}, Videos: {videos}, Días activo: {duracion}"
     )
@@ -410,7 +417,7 @@ def generar_mejoras_sugeridas(
     if duracion < 30:
         sugerencias["📊 Mejora tus estadísticas"].append("⏳ Mantente activo al menos un mes seguido para mostrar consistencia.")
 
-    # --- Sugerencias generales ---
+    # --- Recomendaciones generales ---
     if cualitativa.get("engagement", 0) < 3 and seguidores < 300:
         sugerencias["🚀 Recomendaciones generales"].append("🔄 Mejora tu interacción y combina con estrategias de crecimiento.")
     if cualitativa.get("calidad_contenido", 0) >= 4 and seguidores < 300:
@@ -423,14 +430,13 @@ def generar_mejoras_sugeridas(
     if sugerencias:
         sugerencias["✨ Mensaje final"] = ["🌟 ¡Vas por buen camino! Cada mejora te acerca más a tu objetivo."]
 
-    # Salida como texto plano SIEMPRE
+    # 🔹 Devolver como string formateado
     mensaje = []
     for seccion, items in sugerencias.items():
         mensaje.append(f"{seccion}")
         for item in items:
             mensaje.append(f"  • {item}")
     return "\n".join(mensaje)
-
 
 
 def evaluar_total(cualitativa: dict, estadistica: dict, general: dict, habitos: dict):

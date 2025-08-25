@@ -1552,7 +1552,7 @@ def actualizar_eval_cualitativa(
         data_dict = datos.dict(exclude_unset=True)
         data_dict["usuario_evalua"] = usuario_actual["nombre"]
 
-        # Calcular puntaje cualitativo si se enviaron métricas
+        # Calcular puntaje cualitativo
         resultado = evaluar_cualitativa(
             apariencia=data_dict.get("apariencia", 0),
             engagement=data_dict.get("engagement", 0),
@@ -1562,11 +1562,10 @@ def actualizar_eval_cualitativa(
             metadata_videos=data_dict.get("metadata_videos", 0),
         )
 
-        # Guardar en el dict para persistencia
         data_dict["puntaje_manual"] = resultado["puntuacion_manual"]
         data_dict["puntaje_manual_categoria"] = resultado["puntuacion_manual_categoria"]
 
-        # Generar mejoras sugeridas
+        # ✅ Generar mejoras sugeridas usando estadísticas desde BD
         sugerencias = generar_mejoras_sugeridas(
             cualitativa={
                 "apariencia": data_dict.get("apariencia", 0),
@@ -1576,17 +1575,11 @@ def actualizar_eval_cualitativa(
                 "biografia": data_dict.get("eval_biografia", 0),
                 "metadata_videos": data_dict.get("metadata_videos", 0),
             },
-            estadisticas={
-                "seguidores": data_dict.get("seguidores", 0),
-                "siguiendo": data_dict.get("siguiendo", 0),
-                "videos": data_dict.get("videos", 0),
-                "likes": data_dict.get("likes", 0),
-                "duracion": data_dict.get("duracion", 0),
-            }
+            creador_id=creador_id  # 🔹 Ahora solo pasamos el ID
         )
         data_dict["mejoras_sugeridas"] = sugerencias
 
-        # Actualizar en BD
+        # Guardar cambios en BD
         actualizar_datos_perfil_creador(creador_id, data_dict)
 
         return {
