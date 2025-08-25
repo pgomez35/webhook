@@ -1586,8 +1586,6 @@ def actualizar_eval_cualitativa(
         )
         data_dict["mejoras_sugeridas"] = sugerencias
 
-
-
         # Actualizar en BD
         actualizar_datos_perfil_creador(creador_id, data_dict)
 
@@ -1599,7 +1597,11 @@ def actualizar_eval_cualitativa(
             "mejoras_sugeridas": sugerencias
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error(f"Error en PUT /api/perfil_creador/{creador_id}/evaluacion_cualitativa: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Ocurrió un error interno en el servidor al procesar la evaluación. Por favor inténtalo nuevamente o contacta al administrador."
+        )
 
 
 # === Actualizar estadísticas del perfil ===

@@ -350,13 +350,13 @@ def evaluar_preferencias_habitos(
 
 def generar_mejoras_sugeridas(
     cualitativa: dict,
-    estadisticas: dict
-) -> dict:
+    estadisticas: dict,
+    como_texto: bool = False
+) -> dict | str:
     """
-    Genera mejoras sugeridas en base a las métricas cualitativas y estadísticas.
-    Devuelve mensajes claros, motivadores y fáciles de entender para el usuario.
+    Genera sugerencias en base a métricas cualitativas y estadísticas.
+    Devuelve un dict agrupado por secciones, o, si como_texto=True, un string.
     """
-
     sugerencias = {
         "🚀 Recomendaciones generales": [],
         "💡 Mejora tu contenido": [],
@@ -365,17 +365,17 @@ def generar_mejoras_sugeridas(
 
     # --- Evaluación cualitativa ---
     if cualitativa.get("apariencia", 0) < 3:
-        sugerencias["💡 Mejora tu contenido (cualitativa)"].append("✨ Mejora tu presentación en cámara: cuida la luz, vestuario y ambiente.")
+        sugerencias["💡 Mejora tu contenido"].append("✨ Mejora tu presentación en cámara: cuida la luz, vestuario y ambiente.")
     if cualitativa.get("engagement", 0) < 3:
-        sugerencias["💡 Mejora tu contenido (cualitativa)"].append("🤝 Interactúa más con tus seguidores: responde, haz preguntas y usa llamados a la acción.")
+        sugerencias["💡 Mejora tu contenido"].append("🤝 Interactúa más con tus seguidores: responde, haz preguntas y usa llamados a la acción.")
     if cualitativa.get("calidad_contenido", 0) < 3:
-        sugerencias["💡 Mejora tu contenido (cualitativa)"].append("🎬 Trabaja en la creatividad y edición de tus videos para hacerlos más atractivos.")
+        sugerencias["💡 Mejora tu contenido"].append("🎬 Trabaja en la creatividad y edición de tus videos para hacerlos más atractivos.")
     if cualitativa.get("foto", 0) < 3:
-        sugerencias["💡 Mejora tu contenido (cualitativa)"].append("🖼️ Cambia tu foto de perfil por una más profesional y llamativa.")
+        sugerencias["💡 Mejora tu contenido"].append("🖼️ Cambia tu foto de perfil por una más profesional y llamativa.")
     if cualitativa.get("biografia", 0) < 3:
-        sugerencias["💡 Mejora tu contenido (cualitativa)"].append("📖 Optimiza tu biografía: sé claro, breve y destaca tu valor.")
+        sugerencias["💡 Mejora tu contenido"].append("📖 Optimiza tu biografía: sé claro, breve y destaca tu valor.")
     if cualitativa.get("metadata_videos", 0) < 3:
-        sugerencias["💡 Mejora tu contenido (cualitativa)"].append("📌 Usa hashtags y títulos relevantes para mejorar el alcance.")
+        sugerencias["💡 Mejora tu contenido"].append("📌 Usa hashtags y títulos relevantes para mejorar el alcance.")
 
     # --- Evaluación estadística ---
     seguidores = estadisticas.get("seguidores", 0)
@@ -391,7 +391,7 @@ def generar_mejoras_sugeridas(
     elif seguidores < 1000:
         sugerencias["📊 Mejora tus estadísticas"].append("🚀 Potencia tu alcance para superar los 1000 seguidores.")
 
-    if siguiendo >= seguidores or siguiendo >= (0.9 * seguidores):
+    if siguiendo >= seguidores or (seguidores > 0 and siguiendo >= (0.9 * seguidores)):
         sugerencias["📊 Mejora tus estadísticas"].append("⚖️ Evita seguir a tantas cuentas: muchas no devuelven el follow.")
 
     if likes < 200:
@@ -415,10 +415,18 @@ def generar_mejoras_sugeridas(
     sugerencias = {k: v for k, v in sugerencias.items() if v}
 
     # --- Mensaje positivo final ---
-    sugerencias["✨ Mensaje final"] = ["🌟 ¡Vas por buen camino! Cada mejora te acerca más a tu objetivo."]
+    if sugerencias:
+        sugerencias["✨ Mensaje final"] = ["🌟 ¡Vas por buen camino! Cada mejora te acerca más a tu objetivo."]
 
+    if como_texto:
+        # Opcional: salida como texto plano
+        mensaje = []
+        for seccion, items in sugerencias.items():
+            mensaje.append(f"{seccion}")
+            for item in items:
+                mensaje.append(f"  • {item}")
+        return "\n".join(mensaje)
     return sugerencias
-
 
 
 def evaluar_total(cualitativa: dict, estadistica: dict, general: dict, habitos: dict):
