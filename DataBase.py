@@ -1089,7 +1089,7 @@ def actualizar_datos_perfil_creador(creador_id, datos_dict):
 
             # Evaluación manual/cualitativa
             "biografia", "apariencia", "engagement", "calidad_contenido",
-            "potencial_estimado", "usuario_evalua", "mejoras_sugeridas",
+            "potencial_estimado", "usuario_evalua", "mejoras_sugeridas","eval_biografia","eval_foto","metadata_videos",
 
             # Estadísticas del perfil
             "seguidores", "siguiendo", "videos", "likes",

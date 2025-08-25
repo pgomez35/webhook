@@ -1518,6 +1518,7 @@ def actualizar_perfil_creador_endpoint(creador_id: int, evaluacion: PerfilCreado
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+from evaluaciones import *
 
 # === Estadísticas globales de evaluación ===
 @app.get("/api/estadisticas-evaluacion", tags=["Estadísticas"])
@@ -1544,17 +1545,38 @@ from auth import obtener_usuario_actual  # o el nombre correcto del archivo
 def actualizar_eval_cualitativa(
     creador_id: int,
     datos: EvaluacionCualitativaSchema,
-    usuario_actual: dict = Depends(obtener_usuario_actual)  # ← Aquí se obtiene el usuario autenticado
+    usuario_actual: dict = Depends(obtener_usuario_actual)
 ):
     try:
+        # Convertir datos a dict y asignar usuario que evalúa
         data_dict = datos.dict(exclude_unset=True)
-        data_dict["usuario_evalua"] = usuario_actual["nombre"]  # ← Se asigna automáticamente
+        data_dict["usuario_evalua"] = usuario_actual["nombre"]
 
+        # Calcular puntaje cualitativo si se enviaron métricas
+        resultado = evaluar_cualitativa(
+            apariencia=data_dict.get("apariencia", 0),
+            engagement=data_dict.get("engagement", 0),
+            calidad_contenido=data_dict.get("calidad_contenido", 0),
+            foto=data_dict.get("eval_foto", 0),
+            biografia=data_dict.get("eval_biografia", 0),
+            metadata_videos=data_dict.get("metadata_videos", 0),
+        )
+
+        # Guardar en el dict para persistencia
+        data_dict["puntaje_manual"] = resultado["puntuacion_manual"]
+        data_dict["puntaje_manual_categoria"] = resultado["puntuacion_manual_categoria"]
+
+        # Actualizar en BD
         actualizar_datos_perfil_creador(creador_id, data_dict)
-        return {"status": "ok", "mensaje": "Evaluación cualitativa actualizada"}
+
+        return {
+            "status": "ok",
+            "mensaje": "Evaluación cualitativa actualizada",
+            "puntaje_manual": resultado["puntuacion_manual"],
+            "puntaje_manual_categoria": resultado["puntuacion_manual_categoria"]
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 
 # === Actualizar estadísticas del perfil ===

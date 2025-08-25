@@ -203,9 +203,13 @@ class EvaluacionCualitativaSchema(BaseModel):
     apariencia: Optional[int]
     engagement: Optional[int]
     calidad_contenido: Optional[int]
+    eval_biografia: Optional[int]
+    eval_foto: Optional[int]
+    metadata_videos: Optional[int]
     potencial_estimado: Optional[str]
     usuario_evalua: Optional[str]
     mejoras_sugeridas: Optional[str]
+
 
 # === Sección: Estadísticas / Métricas ===
 class EstadisticasPerfilSchema(BaseModel):
