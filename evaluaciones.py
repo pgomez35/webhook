@@ -350,12 +350,11 @@ def evaluar_preferencias_habitos(
 
 def generar_mejoras_sugeridas(
     cualitativa: dict,
-    estadisticas: dict,
-    como_texto: bool = False
-) -> dict | str:
+    estadisticas: dict
+) -> str:
     """
     Genera sugerencias en base a métricas cualitativas y estadísticas.
-    Devuelve un dict agrupado por secciones, o, si como_texto=True, un string.
+    Devuelve SIEMPRE un solo string agrupado por secciones, ideal para mostrar en React o en mensajes.
     """
     sugerencias = {
         "🚀 Recomendaciones generales": [],
@@ -418,15 +417,13 @@ def generar_mejoras_sugeridas(
     if sugerencias:
         sugerencias["✨ Mensaje final"] = ["🌟 ¡Vas por buen camino! Cada mejora te acerca más a tu objetivo."]
 
-    if como_texto:
-        # Opcional: salida como texto plano
-        mensaje = []
-        for seccion, items in sugerencias.items():
-            mensaje.append(f"{seccion}")
-            for item in items:
-                mensaje.append(f"  • {item}")
-        return "\n".join(mensaje)
-    return sugerencias
+    # Salida como texto plano SIEMPRE
+    mensaje = []
+    for seccion, items in sugerencias.items():
+        mensaje.append(f"{seccion}")
+        for item in items:
+            mensaje.append(f"  • {item}")
+    return "\n".join(mensaje)
 
 
 def evaluar_total(cualitativa: dict, estadistica: dict, general: dict, habitos: dict):
