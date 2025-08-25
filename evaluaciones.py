@@ -405,41 +405,57 @@ def generar_mejoras_sugeridas(cualitativa: dict, creador_id: int) -> str:
             f"📌 Estado actual → Seguidores: {seguidores}, Siguiendo: {siguiendo}, Likes: {likes}, Videos: {videos}, Días activo: {duracion}"
         )
 
+        mejoras_existentes = False
+
         if seguidores < 50:
             sugerencias["📊 Mejora tus estadísticas"].append(
                 "👥 Consigue al menos 50 seguidores para empezar a destacar."
             )
+            mejoras_existentes = True
         elif seguidores < 300:
             sugerencias["📊 Mejora tus estadísticas"].append(
                 "📈 Crea estrategias para superar los 300 seguidores."
             )
+            mejoras_existentes = True
         elif seguidores < 1000:
             sugerencias["📊 Mejora tus estadísticas"].append(
                 "🚀 Potencia tu alcance para superar los 1000 seguidores."
             )
+            mejoras_existentes = True
 
         if siguiendo >= seguidores or (seguidores > 0 and siguiendo >= (0.9 * seguidores)):
             sugerencias["📊 Mejora tus estadísticas"].append(
                 "⚖️ Evita seguir a tantas cuentas: muchas no devuelven el follow."
             )
+            mejoras_existentes = True
 
         if likes < 200:
             sugerencias["📊 Mejora tus estadísticas"].append(
                 "👍 Crea más contenido viral o compartible para aumentar tus likes."
             )
+            mejoras_existentes = True
         elif likes < 1000:
             sugerencias["📊 Mejora tus estadísticas"].append(
                 "🔥 Mantén la constancia para superar los 1000 likes."
             )
+            mejoras_existentes = True
 
         if videos < 10:
             sugerencias["📊 Mejora tus estadísticas"].append(
                 "🎥 Publica más videos de forma constante (mínimo 10)."
             )
+            mejoras_existentes = True
 
         if duracion < 30:
             sugerencias["📊 Mejora tus estadísticas"].append(
                 "⏳ Mantente activo para mostrar consistencia."
+            )
+            mejoras_existentes = True
+
+        # Si no hay mejoras, agregar mensaje positivo
+        if not mejoras_existentes:
+            sugerencias["📊 Mejora tus estadísticas"].append(
+                "✅ Tienes buenos indicadores! Sigue activo y mantén tu rendimiento."
             )
 
     else:
