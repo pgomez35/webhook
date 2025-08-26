@@ -1528,15 +1528,42 @@ def estadisticas_evaluacion():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# === Actualizar datos personales ===
+# === Actualizar datos personales del perfil ===
 @app.put("/api/perfil_creador/{creador_id}/datos_personales", tags=["Perfil"])
 def actualizar_datos_personales(creador_id: int, datos: DatosPersonalesSchema):
     try:
-        actualizar_datos_perfil_creador(creador_id, datos.dict(exclude_unset=True))
-        return {"status": "ok", "mensaje": "Datos personales actualizados"}
+        data_dict = datos.dict(exclude_unset=True)
+
+        # ✅ Calcular score con evaluar_datos_generales
+        score = evaluar_datos_generales(
+            edad=data_dict.get("edad"),
+            genero=data_dict.get("genero"),
+            idiomas=data_dict.get("idioma"),
+            estudios=data_dict.get("estudios"),
+            pais=data_dict.get("pais"),
+            actividad_actual=data_dict.get("actividad_actual")
+        )
+
+        # Guardar puntaje general y categoría
+        data_dict["puntaje_general"] = score.get("puntaje_general")
+        data_dict["puntaje_general_categoria"] = score.get("puntaje_general_categoria")
+
+        # Actualizar en BD
+        actualizar_datos_perfil_creador(creador_id, data_dict)
+
+        return {
+            "status": "ok",
+            "mensaje": "Datos Personales actualizadas",
+            "puntaje_habitos": score["puntaje_general"],
+            "puntaje_habitos_categoria": score["puntaje_general_categoria"]
+        }
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error(f"Error en PUT /api/perfil_creador/{creador_id}/datos_personales: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Error al actualizar datos personales"
+        )
 
 
 from auth import obtener_usuario_actual  # o el nombre correcto del archivo
@@ -1596,23 +1623,70 @@ def actualizar_eval_cualitativa(
             detail="Ocurrió un error interno en el servidor al procesar la evaluación. Por favor inténtalo nuevamente o contacta al administrador."
         )
 
-
 # === Actualizar estadísticas del perfil ===
 @app.put("/api/perfil_creador/{creador_id}/estadisticas", tags=["Estadísticas"])
 def actualizar_estadisticas(creador_id: int, datos: EstadisticasPerfilSchema):
     try:
-        actualizar_datos_perfil_creador(creador_id, datos.dict(exclude_unset=True))
-        return {"status": "ok", "mensaje": "Estadísticas actualizadas"}
+        data_dict = datos.dict(exclude_unset=True)
+
+        # ✅ Calcular score de estadísticas
+        score = evaluar_estadisticas(
+            seguidores=data_dict.get("seguidores"),
+            siguiendo=data_dict.get("siguiendo"),
+            videos=data_dict.get("videos"),
+            likes=data_dict.get("likes"),
+            duracion=data_dict.get("duracion_emisiones")  # asegúrate que el schema tenga este campo
+        )
+
+        # Guardar score en el mismo registro
+        data_dict["puntaje_estadistica"] = score["puntaje_estadistica"]
+        data_dict["puntaje_estadistica_categoria"] = score["puntaje_estadistica_categoria"]
+
+        # Actualizar en BD
+        actualizar_datos_perfil_creador(creador_id, data_dict)
+
+        return {
+            "status": "ok",
+            "mensaje": "Estadisticas actualizadas",
+            "puntaje_habitos": score["puntaje_estadistica"],
+            "puntaje_habitos_categoria": score["puntaje_estadistica_categoria"]
+        }
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error(f"Error en PUT /api/perfil_creador/{creador_id}/estadisticas: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error al actualizar estadísticas")
 
 
 # === Actualizar preferencias y hábitos ===
 @app.put("/api/perfil_creador/{creador_id}/preferencias", tags=["Preferencias"])
 def actualizar_preferencias(creador_id: int, datos: PreferenciasHabitosSchema):
     try:
-        actualizar_datos_perfil_creador(creador_id, datos.dict(exclude_unset=True))
-        return {"status": "ok", "mensaje": "Preferencias actualizadas"}
+        data_dict = datos.dict(exclude_unset=True)
+
+        # ✅ Calcular score de preferencias y hábitos
+        score = evaluar_preferencias_habitos(
+            exp_otras=data_dict.get("experiencia_otras_plataformas", {}),
+            intereses=data_dict.get("intereses", {}),
+            tipo_contenido=data_dict.get("tipo_contenido", {}),
+            tiempo=data_dict.get("tiempo_disponible"),
+            freq_lives=data_dict.get("frecuencia_lives"),
+            intencion=data_dict.get("intencion_trabajo")
+        )
+
+        # Guardar score en el mismo registro
+        data_dict["puntaje_habitos"] = score["puntaje_habitos"]
+        data_dict["puntaje_habitos_categoria"] = score["puntaje_habitos_categoria"]
+
+        # ✅ Actualizar en BD
+        actualizar_datos_perfil_creador(creador_id, data_dict)
+
+        return {
+            "status": "ok",
+            "mensaje": "Preferencias actualizadas",
+            "puntaje_habitos": score["puntaje_habitos"],
+            "puntaje_habitos_categoria": score["puntaje_habitos_categoria"]
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1621,7 +1695,44 @@ def actualizar_preferencias(creador_id: int, datos: PreferenciasHabitosSchema):
 @app.put("/api/perfil_creador/{creador_id}/resumen", tags=["Resumen"])
 def actualizar_resumen(creador_id: int, datos: ResumenEvaluacionSchema):
     try:
-        actualizar_datos_perfil_creador(creador_id, datos.dict(exclude_unset=True))
-        return {"status": "ok", "mensaje": "Resumen actualizado"}
+        # Convertir datos a dict limpio
+        data_dict = datos.dict(exclude_unset=True)
+        perfil = obtener_puntajes_perfil_creador(creador_id)
+
+        # 🔹 Calcular puntaje general y categoría
+        # ✅ Calcular score de preferencias y hábitos
+        score = evaluacion_total(
+            cualitativa=perfil.get("puntaje_manual"),
+            estadistica=perfil.get("puntaje_estadistica"),
+            general=perfil.get("puntaje_general"),
+            habitos=perfil.get("puntaje_habitos")
+        )
+
+        # 🔹 Generar diagnóstico y mejoras sugeridas
+        diagnostico = diagnostico_perfil_creador(creador_id)
+        mejoras = generar_mejoras_sugeridas_total(creador_id)
+
+        # 🔹 Combinar observaciones en un solo texto
+        observaciones = (
+            f"📊 Evaluación Global:\n{score['observaciones']}\n\n"
+            f"🩺 Diagnóstico Detallado:\n{diagnostico}\n\n"
+            f"🚀 Recomendaciones Personalizadas:\n{mejoras}"
+        )
+
+        data_dict["puntaje_total"] = score["puntaje_total"]
+        data_dict["puntaje_total_categoria"] = score["puntaje_total_categoria"]
+        data_dict["observaciones"] = observaciones
+
+        # 🔹 Actualizar en base de datos
+        actualizar_datos_perfil_creador(creador_id, data_dict)
+
+        return {
+            "status": "ok",
+            "mensaje": "Resumen actualizado con puntaje general",
+            "puntaje_total": score["puntaje_total"],
+            "puntaje_total_categoria": score["puntaje_total_categoria"],
+            "observaciones": observaciones
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

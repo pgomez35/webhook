@@ -1,3 +1,123 @@
+def generar_reporte_completo(cualitativa: dict, creador_id: int) -> str:
+    """
+    Genera un reporte completo de un creador:
+    - Evaluación cualitativa (con etiquetas y descripciones)
+    - Evaluación estadística (valor, categoría y recomendaciones)
+    """
+
+    # --- Etiquetas cualitativas ---
+    labels_cualitativas = {
+        "apariencia": {
+            1: "❌ No destaca — Apariencia poco llamativa",
+            2: "🟡 Presentable — Imagen cuidada, pero neutra",
+            3: "🟢 Agradable — Buena presencia, transmite bien",
+            4: "✨ Muy atractivo — Impacta visualmente, destaca",
+            5: "🌟 Excepcional — Imán visual, realmente impacta"
+        },
+        "engagement": {  # Carisma
+            1: "❌ No conecta — No genera empatía",
+            2: "🟡 Algo interesante — Tiene algo que atrapa",
+            3: "🟢 Muy carismático — Cautiva y es natural al expresarse",
+            4: "✨ Tiene chispa — Brilla con espontaneidad y energía",
+            5: "🌟 Altamente carismático — Captura la atención de todos"
+        },
+        "calidad_contenido": {  # unión de calidad + contenido
+            1: "❌ Mala calidad — Problemas graves de imagen, sonido o contenido",
+            2: "🟡 Aceptable — Se entiende, pero puede mejorar",
+            3: "🟢 Buena producción — Nítido, bien grabado, aporta valor",
+            4: "✨ Excelente — Profesional, creativo y atractivo",
+            5: "🌟 Sobresaliente — Muy original, impactante y cautivador"
+        },
+        "foto": {
+            1: "❌ No tiene foto propia",
+            2: "🟡 Foto genérica, poco clara o de baja calidad",
+            3: "🟢 Buena foto personal",
+            4: "✨ Foto muy buena, bien representado",
+            5: "🌟 Foto excelente, muy profesional y atractiva"
+        },
+        "biografia": {
+            1: "❌ Muy mala (inconexa, sin sentido).",
+            2: "🟡 Deficiente (confusa, larga o sin propósito).",
+            3: "🟢 Aceptable (se entiende pero poca identidad).",
+            4: "✨ Buena (clara, corta, con identidad).",
+            5: "🌟 Excelente (muy corta, clara y coherente)."
+        },
+        "metadata_videos": {
+            1: "❌ Muy malos (hashtags y títulos incoherentes, sin sentido, no describen el video).",
+            2: "🟡 Deficientes (hashtags y títulos poco claros).",
+            3: "🟢 Aceptables (comprensibles pero poco atractivos).",
+            4: "✨ Buenos (claros, alineados con el video).",
+            5: "🌟 Excelentes (claros, breves, llamativos y atrapan al público)."
+        }
+    }
+
+    # --- Obtener estadísticas ---
+    estadisticas = obtener_datos_mejoras_perfil_creador(creador_id)
+
+    # --- Evaluación cualitativa ---
+    reporte = ["💡 Evaluación cualitativa:"]
+    for key, valor in cualitativa.items():
+        puntaje = min(max(valor,1),5)
+        descripcion = labels_cualitativas.get(key, {}).get(puntaje, "❓ Sin etiqueta")
+        reporte.append(f"  • {descripcion}")
+
+    # --- Evaluación estadística ---
+    reporte.append("\n📊 Evaluación estadística:")
+    if estadisticas:
+        # Categorizar indicadores
+        seguidores = estadisticas.get("seguidores",0)
+        siguiendo = estadisticas.get("siguiendo",0)
+        videos = estadisticas.get("videos",0)
+        likes = estadisticas.get("likes",0)
+        duracion = estadisticas.get("duracion_emisiones",0)
+
+        # Función auxiliar para categorizar
+        def categoria_valor(valor, niveles):
+            for label, rango in niveles.items():
+                if rango[0] <= valor <= rango[1]:
+                    return label
+            return "Desconocido"
+
+        niveles_seguidores = {"Malo": (0,49), "Regular": (50,299), "Bueno": (300,999), "Excelente": (1000,9999999)}
+        niveles_videos = {"Malo": (0,9), "Regular": (10,20), "Bueno": (21,40), "Excelente": (41,9999)}
+        niveles_likes = {"Malo": (0,0.02), "Regular": (0.02,0.05), "Bueno": (0.05,0.10), "Excelente": (0.10,1)}
+        niveles_duracion = {"Malo": (0,19), "Regular": (20,89), "Bueno": (90,179), "Excelente": (180,9999)}
+
+        likes_norm = likes / (seguidores*videos) if seguidores>0 and videos>0 else (likes/seguidores if seguidores>0 else 0)
+
+        detalle = {
+            "seguidores": f"Seguidores: {seguidores} → {categoria_valor(seguidores,niveles_seguidores)}",
+            "videos": f"Videos: {videos} → {categoria_valor(videos,niveles_videos)}",
+            "likes": f"Likes normalizados: {round(likes_norm,3)} → {categoria_valor(likes_norm,niveles_likes)}",
+            "duracion": f"Días activo: {duracion} → {categoria_valor(duracion,niveles_duracion)}"
+        }
+
+        # Score global ponderado
+        score_global = (categoria_valor(seguidores,niveles_seguidores) in ["Malo","Regular"])*1 + \
+                       (categoria_valor(videos,niveles_videos) in ["Malo","Regular"])*1 + \
+                       (categoria_valor(likes_norm,niveles_likes) in ["Malo","Regular"])*1 + \
+                       (categoria_valor(duracion,niveles_duracion) in ["Malo","Regular"])*1
+        score_global_text = f"Score global: {score_global}/4"
+
+        for k,v in detalle.items():
+            reporte.append(f"  • {v}")
+            if "Malo" in v or "Regular" in v:
+                if "seguidores" in k:
+                    reporte.append("    - Incrementa tus seguidores mediante colaboraciones o estrategias de crecimiento.")
+                elif "videos" in k:
+                    reporte.append("    - Publica más videos de manera consistente.")
+                elif "likes" in k:
+                    reporte.append("    - Mejora el contenido para aumentar el engagement.")
+                elif "duracion" in k:
+                    reporte.append("    - Mantente activo de forma constante en la plataforma.")
+    else:
+        reporte.append("  ℹ️ No hay estadísticas disponibles, recomendaciones basadas solo en evaluación cualitativa.")
+
+    # --- Mensaje final ---
+    reporte.append("\n✨ Mensaje final: 🌟 ¡Vas por buen camino! Cada mejora te acerca más a tu objetivo.")
+
+    return "\n".join(reporte)
+
 def evaluar_estadisticas(seguidores, siguiendo, videos, likes, duracion):
     # Corte duro: si tiene muy pocos seguidores, no cuenta
     if seguidores is None or seguidores < 50:
@@ -57,7 +177,26 @@ def evaluar_estadisticas(seguidores, siguiendo, videos, likes, duracion):
 
     # Score ponderado
     score = seg * 0.35 + vid * 0.25 + lik * 0.25 + dur * 0.15
-    return round(score*(5/4), 2)
+    score = round(score * (5 / 4), 2)  # Normalización a escala 0–5
+
+    # Categoría proporcional
+    if score == 0:
+        categoria = "No aplicable"
+    elif score < 1.5:
+        categoria = "Muy bajo"
+    elif score < 2.5:
+        categoria = "Bajo"
+    elif score < 3.5:
+        categoria = "Aceptable"
+    elif score < 4.5:
+        categoria = "Bueno"
+    else:
+        categoria = "Excelente"
+
+    return {
+        "puntaje_estadistica": score,
+        "puntaje_estadistica_categoria": categoria
+    }
 
 def evaluar_cualitativa(
     apariencia: float = 0,
@@ -105,6 +244,114 @@ def evaluar_cualitativa(
         "puntuacion_manual_categoria": categoria
     }
 
+
+def diagnostico_perfil_creador(creador_id: int) -> str:
+    """
+    Genera un diagnóstico integral del perfil del creador,
+    evaluando estadísticas, cualidades, datos personales y hábitos.
+    """
+
+    # 🔹 Obtener datos desde la BD o API
+    datos = obtener_datos_mejoras_perfil_creador(creador_id)
+
+    diagnostico = {
+        "📊 Estadísticas": [],
+        "💡 Cualitativo": [],
+        "🧑‍🎓 Datos personales": [],
+        "📅 Hábitos y preferencias": [],
+    }
+
+    # -------------------------
+    # 📊 Estadísticas
+    # -------------------------
+    seguidores = datos.get("seguidores", 0)
+    siguiendo = datos.get("siguiendo", 0)
+    likes = datos.get("likes", 0)
+    videos = datos.get("videos", 0)
+    duracion = datos.get("duracion_emisiones", 0)
+
+    diagnostico["📊 Estadísticas"].append(f"👥 Seguidores: {seguidores}")
+    diagnostico["📊 Estadísticas"].append(f"➡️ Siguiendo: {siguiendo}")
+    diagnostico["📊 Estadísticas"].append(f"👍 Likes: {likes}")
+    diagnostico["📊 Estadísticas"].append(f"🎥 Videos: {videos}")
+    diagnostico["📊 Estadísticas"].append(f"⏳ Días activo: {duracion}")
+
+    if seguidores < 100:
+        diagnostico["📊 Estadísticas"].append("⚠️ Nivel bajo de seguidores.")
+    if likes < 200:
+        diagnostico["📊 Estadísticas"].append("⚠️ Poca interacción (likes bajos).")
+    if videos < 5:
+        diagnostico["📊 Estadísticas"].append("⚠️ Falta constancia en publicaciones.")
+
+    # -------------------------
+    # 💡 Cualitativo
+    # -------------------------
+    apariencia = datos.get("apariencia", 0)
+    engagement = datos.get("engagement", 0)
+    calidad = datos.get("calidad_contenido", 0)
+    eval_foto = datos.get("eval_foto", 0)
+    eval_bio = datos.get("eval_biografia", 0)
+
+    diagnostico["💡 Cualitativo"].append(f"🧑‍🎤 Apariencia en cámara: {apariencia}/5")
+    diagnostico["💡 Cualitativo"].append(f"🤝 Engagement: {engagement}/5")
+    diagnostico["💡 Cualitativo"].append(f"🎬 Calidad del contenido: {calidad}/5")
+    diagnostico["💡 Cualitativo"].append(f"🖼️ Foto de perfil: {eval_foto}/5")
+    diagnostico["💡 Cualitativo"].append(f"📖 Biografía: {eval_bio}/5")
+
+    if engagement <= 2:
+        diagnostico["💡 Cualitativo"].append("⚠️ Necesita mayor interacción con la audiencia.")
+    if calidad <= 2:
+        diagnostico["💡 Cualitativo"].append("⚠️ Contenido de baja calidad percibida.")
+
+    # -------------------------
+    # 🧑‍🎓 Datos personales
+    # -------------------------
+    idioma = datos.get("idioma", "No especificado")
+    estudios = datos.get("estudios", "No especificado")
+    actividad = datos.get("actividad_actual", "No especificado")
+
+    diagnostico["🧑‍🎓 Datos personales"].append(f"🌐 Idioma: {idioma}")
+    diagnostico["🧑‍🎓 Datos personales"].append(f"🎓 Estudios: {estudios}")
+    diagnostico["🧑‍🎓 Datos personales"].append(f"💼 Actividad actual: {actividad}")
+
+    if idioma.lower() != "español":
+        diagnostico["🧑‍🎓 Datos personales"].append("🌍 Puede aprovechar público bilingüe.")
+    if "estudiante" in actividad.lower():
+        diagnostico["🧑‍🎓 Datos personales"].append("📘 Puede aprovechar su etapa de formación para generar contenido educativo.")
+
+    # -------------------------
+    # 📅 Hábitos y preferencias
+    # -------------------------
+    tiempo = datos.get("tiempo_disponible", "No definido")
+    frecuencia = datos.get("frecuencia_lives", "No definido")
+    experiencia = datos.get("experiencia_otras_plataformas", "No definido")
+    intereses = datos.get("intereses", "No definido")
+    tipo_contenido = datos.get("tipo_contenido", "No definido")
+    intencion = datos.get("intencion_trabajo", "No definido")
+
+    diagnostico["📅 Hábitos y preferencias"].append(f"⌛ Tiempo disponible: {tiempo}")
+    diagnostico["📅 Hábitos y preferencias"].append(f"📡 Frecuencia de lives: {frecuencia}")
+    diagnostico["📅 Hábitos y preferencias"].append(f"🌍 Experiencia en otras plataformas: {experiencia}")
+    diagnostico["📅 Hábitos y preferencias"].append(f"🎯 Intereses: {intereses}")
+    diagnostico["📅 Hábitos y preferencias"].append(f"🎨 Tipo de contenido: {tipo_contenido}")
+    diagnostico["📅 Hábitos y preferencias"].append(f"💼 Intención de trabajo: {intencion}")
+
+    if frecuencia == "baja" or tiempo == "limitado":
+        diagnostico["📅 Hábitos y preferencias"].append("⚠️ Tiempo de dedicación limitado.")
+    if intencion.lower() in ["hobbie", "ocasional"]:
+        diagnostico["📅 Hábitos y preferencias"].append("ℹ️ Perfil más recreativo que profesional.")
+
+    # -------------------------
+    # 📌 Formatear salida
+    # -------------------------
+    mensaje = ["📋 DIAGNÓSTICO DEL PERFIL\n"]
+    for seccion, items in diagnostico.items():
+        mensaje.append(seccion)
+        for item in items:
+            mensaje.append(f"  • {item}")
+        mensaje.append("")  # Espacio entre secciones
+
+    return "\n".join(mensaje)
 
 
 def evaluar_datos_generales(edad, genero, idiomas, estudios, pais=None, actividad_actual=None):
@@ -193,7 +440,26 @@ def evaluar_datos_generales(edad, genero, idiomas, estudios, pais=None, activida
              act * 0.20 +
              bonus)
 
-    return round(score * (5/3), 2)
+    score_final = round(score * (5/3), 2)
+
+    # ==== Categorías por puntaje ====
+    if score_final == 0:
+        categoria = "No apto"
+    elif score_final < 1.5:
+        categoria = "Muy bajo"
+    elif score_final < 2.5:
+        categoria = "Bajo"
+    elif score_final < 3.5:
+        categoria = "Medio"
+    elif score_final < 4.5:
+        categoria = "Alto"
+    else:
+        categoria = "Excelente"
+
+    return {
+        "puntaje_general": score_final,
+        "puntaje_general_categoria": categoria
+    }
 
 
 def evaluar_preferencias_habitos(
@@ -346,9 +612,248 @@ def evaluar_preferencias_habitos(
         it * 0.10
     )
 
-    return round(score*(5/3), 2)
+    score = round(score * (5 / 3), 2)  # normalización a 0–5
+
+    # ==============================
+    # Categoría proporcional
+    # ==============================
+    if score == 0:
+        categoria = "No aplicable"
+    elif score < 1.5:
+        categoria = "Muy bajo"
+    elif score < 2.5:
+        categoria = "Bajo"
+    elif score < 3.5:
+        categoria = "Aceptable"
+    elif score < 4.5:
+        categoria = "Bueno"
+    else:
+        categoria = "Excelente"
+
+    return {
+        "puntaje_habitos": score,
+        "puntaje_habitos_categoria": categoria
+    }
 
 from DataBase import *
+
+def generar_mejoras_sugeridas_total(creador_id: int) -> str:
+    """
+    Genera sugerencias en base a:
+    - Evaluación cualitativa
+    - Estadísticas de la BD
+    - Datos generales/personales
+    - Hábitos y preferencias
+    """
+
+    # 🔹 Obtener datos completos desde la BD
+    datos = obtener_datos_mejoras_perfil_creador(creador_id)
+
+    # Inicializar sugerencias
+    sugerencias = {
+        "🚀 Recomendaciones generales": [],
+        "💡 Mejora tu contenido": [],
+        "📊 Mejora tus estadísticas": [],
+        "👤 Perfil personal": [],
+        "🔄 Hábitos y preferencias": []
+    }
+
+    # ==========================
+    # 1. Evaluación cualitativa
+    # ==========================
+    if datos.get("apariencia", 0) < 3:
+        sugerencias["💡 Mejora tu contenido"].append(
+            "✨ Mejora tu presentación en cámara: cuida la luz, vestuario y ambiente."
+        )
+    if datos.get("engagement", 0) < 3:
+        sugerencias["💡 Mejora tu contenido"].append(
+            "🤝 Interactúa más con tus seguidores: responde, haz preguntas y usa llamados a la acción."
+        )
+    if datos.get("calidad_contenido", 0) < 3:
+        sugerencias["💡 Mejora tu contenido"].append(
+            "🎬 Trabaja en la creatividad y edición de tus videos para hacerlos más atractivos."
+        )
+    if datos.get("eval_foto", 0) < 3:
+        sugerencias["💡 Mejora tu contenido"].append(
+            "🖼️ Cambia tu foto de perfil por una más profesional y llamativa."
+        )
+    if datos.get("eval_biografia", 0) < 3:
+        sugerencias["💡 Mejora tu contenido"].append(
+            "📖 Optimiza tu biografía: sé claro, breve y destaca tu valor."
+        )
+    if datos.get("metadata_videos", 0) < 3:
+        sugerencias["💡 Mejora tu contenido"].append(
+            "📌 Usa hashtags y títulos relevantes para mejorar el alcance."
+        )
+
+        # --- Nueva integración con OpenAI para mejorar biografía ---
+    bio_texto = datos.get("biografia")
+    bio_score = datos.get("eval_biografia", 0)
+
+    if bio_texto and 2 <= bio_score <= 4:
+        resultado_bio = evaluar_y_mejorar_biografia(bio_texto, modelo="gpt-4")
+        if resultado_bio:
+            sugerencias["💡 Mejora tu contenido"].append(f"🤖 Evaluación automática de tu biografía:\n{resultado_bio}")
+
+    # ==========================
+    # 2. Evaluación estadística
+    # ==========================
+    if datos.get("seguidores") is not None:
+        seguidores = datos.get("seguidores", 0)
+        siguiendo = datos.get("siguiendo", 0)
+        likes = datos.get("likes", 0)
+        videos = datos.get("videos", 0)
+        duracion = datos.get("duracion_emisiones", 0)
+
+        sugerencias["📊 Mejora tus estadísticas"].append(
+            f"📌 Estado actual → Seguidores: {seguidores}, Siguiendo: {siguiendo}, Likes: {likes}, Videos: {videos}, Días activo: {duracion}"
+        )
+
+        mejoras_existentes = False
+
+        if seguidores < 50:
+            sugerencias["📊 Mejora tus estadísticas"].append("👥 Consigue al menos 50 seguidores para empezar a destacar.")
+            mejoras_existentes = True
+        elif seguidores < 300:
+            sugerencias["📊 Mejora tus estadísticas"].append("📈 Crea estrategias para superar los 300 seguidores.")
+            mejoras_existentes = True
+        elif seguidores < 1000:
+            sugerencias["📊 Mejora tus estadísticas"].append("🚀 Potencia tu alcance para superar los 1000 seguidores.")
+            mejoras_existentes = True
+
+        if siguiendo >= seguidores or (seguidores > 0 and siguiendo >= (0.9 * seguidores)):
+            sugerencias["📊 Mejora tus estadísticas"].append("⚖️ Evita seguir a tantas cuentas: muchas no devuelven el follow.")
+            mejoras_existentes = True
+
+        if likes < 200:
+            sugerencias["📊 Mejora tus estadísticas"].append("👍 Crea más contenido viral o compartible para aumentar tus likes.")
+            mejoras_existentes = True
+        elif likes < 1000:
+            sugerencias["📊 Mejora tus estadísticas"].append("🔥 Mantén la constancia para superar los 1000 likes.")
+            mejoras_existentes = True
+
+        if videos < 10:
+            sugerencias["📊 Mejora tus estadísticas"].append("🎥 Publica más videos de forma constante (mínimo 10).")
+            mejoras_existentes = True
+
+        if duracion < 30:
+            sugerencias["📊 Mejora tus estadísticas"].append("⏳ Mantente activo para mostrar consistencia.")
+            mejoras_existentes = True
+
+        if not mejoras_existentes:
+            sugerencias["📊 Mejora tus estadísticas"].append("✅ Tienes buenos indicadores! Sigue activo y mantén tu rendimiento.")
+    else:
+        sugerencias["📊 Mejora tus estadísticas"].append("ℹ️ No hay estadísticas disponibles actualmente. Solo análisis cualitativo.")
+
+    # ==========================
+    # 3. Evaluación datos generales
+    # ==========================
+    generales = evaluar_datos_generales(
+        edad=datos.get("edad"),
+        genero=datos.get("genero"),
+        idiomas=datos.get("idiomas"),
+        estudios=datos.get("estudios"),
+        pais=datos.get("pais"),
+        actividad_actual=datos.get("actividad_actual")
+    )
+
+    if generales:
+        sugerencias["👤 Perfil personal"].append(
+            f"📌 Puntaje general: {generales['puntaje_general']} → {generales['puntaje_general_categoria']}"
+        )
+        if generales["puntaje_general"] < 2.5:
+            sugerencias["👤 Perfil personal"].append("🔧 Refuerza tu perfil personal: idiomas, formación o disponibilidad.")
+
+    # ==========================
+    # 4. Evaluación hábitos y preferencias
+    # ==========================
+    habitos = evaluar_preferencias_habitos(
+        exp_otras=datos.get("experiencia_otras_plataformas", {}),
+        intereses=datos.get("intereses", {}),
+        tipo_contenido=datos.get("tipo_contenido", {}),
+        tiempo=datos.get("tiempo_disponible"),
+        freq_lives=datos.get("frecuencia_lives"),
+        intencion=datos.get("intencion_trabajo")
+    )
+
+    if habitos:
+        sugerencias["🔄 Hábitos y preferencias"].append(
+            f"📌 Puntaje hábitos: {habitos['puntaje_habitos']} → {habitos['puntaje_habitos_categoria']}"
+        )
+        if habitos["puntaje_habitos"] < 2.5:
+            sugerencias["🔄 Hábitos y preferencias"].append("🔧 Ajusta tu disponibilidad y constancia en lives para mejorar resultados.")
+
+    # ==========================
+    # 5. Recomendaciones generales extra
+    # ==========================
+    seguidores = datos.get("seguidores", 0)
+    if datos.get("engagement", 0) < 3 and seguidores < 300:
+        sugerencias["🚀 Recomendaciones generales"].append("🔄 Mejora tu interacción y combina con estrategias de crecimiento.")
+    if datos.get("calidad_contenido", 0) >= 4 and seguidores < 300:
+        sugerencias["🚀 Recomendaciones generales"].append("✅ Tu contenido es bueno, ahora enfócate en difundirlo más.")
+
+    # ==========================
+    # 6. Limpieza final y salida
+    # ==========================
+    sugerencias = {k: v for k, v in sugerencias.items() if v}
+    if sugerencias:
+        sugerencias["✨ Mensaje final"] = ["🌟 ¡Vas por buen camino! Cada mejora te acerca más a tu objetivo."]
+
+    mensaje = []
+    for seccion, items in sugerencias.items():
+        mensaje.append(f"{seccion}")
+        for item in items:
+            mensaje.append(f"  • {item}")
+    return "\n".join(mensaje)
+
+
+
+from openai import OpenAI
+from dotenv import load_dotenv
+import os
+
+# Cargar variables de entorno
+load_dotenv()
+api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=api_key)
+
+def evaluar_y_mejorar_biografia(bio, modelo="gpt-4"):
+    prompt = f"""
+Evalúa esta biografía de TikTok:
+
+"{bio}"
+
+Para cada uno de estos 3 criterios, responde con "Sí" o "No".  
+Si respondes "No", añade una breve explicación (1 línea) de por qué.
+
+1. ¿Es corta?  
+2. ¿Es comprensible?  
+3. ¿Es consistente con una identidad o propósito?
+
+Al final, si alguno de los criterios fue "No", sugiere una nueva biografía para el creador cuyo nickname es "{nickname}".  
+Responde en este formato estricto:
+
+Corta: Sí / No  
+[Justificación si aplica]  
+Comprensible: Sí / No  
+[Justificación si aplica]  
+Consistente: Sí / No  
+[Justificación si aplica]  
+
+Recomendación: [Solo si algún criterio fue "No", de lo contrario escribe "Ninguna"]
+"""
+
+    try:
+        response = client.chat.completions.create(
+            model=modelo,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.5,
+        )
+        return response.choices[0].message.content.strip()
+
+    except Exception as e:
+        return f"❌ Error al evaluar la biografía: {e}"
+
 
 def generar_mejoras_sugeridas(cualitativa: dict, creador_id: int) -> str:
     """
@@ -357,7 +862,7 @@ def generar_mejoras_sugeridas(cualitativa: dict, creador_id: int) -> str:
     """
 
     # 🔹 Obtener estadísticas desde la BD
-    estadisticas = obtener_estadisticas_perfil_creador(creador_id)
+    estadisticas = obtener_datos_mejoras_perfil_creador(creador_id)
 
     # Inicializar sugerencias
     sugerencias = {
@@ -391,6 +896,17 @@ def generar_mejoras_sugeridas(cualitativa: dict, creador_id: int) -> str:
         sugerencias["💡 Mejora tu contenido"].append(
             "📌 Usa hashtags y títulos relevantes para mejorar el alcance."
         )
+
+    # --- Nueva integración con OpenAI para mejorar biografía ---
+    bio_texto = estadisticas.get("biografia") if estadisticas else None
+    bio_score = cualitativa.get("biografia", 0)
+
+    if bio_texto and 2 <= bio_score <= 4:
+        resultado_bio = evaluar_y_mejorar_biografia(bio_texto, modelo="gpt-4")
+        if resultado_bio:
+            sugerencias["💡 Mejora tu contenido"].append(f"🤖 Evaluación automática de tu biografía:\n{resultado_bio}")
+
+
 
     # --- Evaluación estadística ---
     if estadisticas:
@@ -492,6 +1008,36 @@ def generar_mejoras_sugeridas(cualitativa: dict, creador_id: int) -> str:
     return "\n".join(mensaje)
 
 
+def evaluacion_total(cualitativa_score,estadistica_score,general_score,habitos_score):
+    """
+    Combina todos los puntajes en un puntaje total.
+    """
+    total = (
+        (cualitativa_score or 0) * 0.50 +
+        (estadistica_score or 0) * 0.25 +
+        (general_score or 0) * 0.15 +
+        (habitos_score or 0) * 0.10
+    )
+
+    total_redondeado = round(total, 2)
+
+    # Determinar categoría proporcional (1-5)
+    if total_redondeado < 1.5:
+        categoria = "Muy bajo"
+    elif total_redondeado < 2.5:
+        categoria = "Bajo"
+    elif total_redondeado < 3.5:
+        categoria = "Medio"
+    elif total_redondeado < 4.5:
+        categoria = "Alto"
+    else:
+        categoria = "Excelente"
+
+    return {
+        "puntaje_total": total_redondeado,
+        "puntaje_total_categoria": categoria
+    }
+
 def evaluar_total(cualitativa: dict, estadistica: dict, general: dict, habitos: dict):
     """
     Combina todos los puntajes en un puntaje total.
@@ -521,7 +1067,24 @@ def evaluar_total(cualitativa: dict, estadistica: dict, general: dict, habitos: 
         (habitos_score or 0) * 0.10
     )
 
-    return round(total, 2)
+    total_redondeado = round(total, 2)
+
+    # Determinar categoría proporcional (1-5)
+    if total_redondeado < 1.5:
+        categoria = "Muy bajo"
+    elif total_redondeado < 2.5:
+        categoria = "Bajo"
+    elif total_redondeado < 3.5:
+        categoria = "Medio"
+    elif total_redondeado < 4.5:
+        categoria = "Alto"
+    else:
+        categoria = "Excelente"
+
+    return {
+        "puntaje_total": total_redondeado,
+        "puntaje_total_categoria": categoria
+    }
 
 
 def evaluar_total_(cualitativa, estadisticas, generales, preferencias_habitos):

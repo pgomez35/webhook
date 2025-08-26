@@ -196,6 +196,8 @@ class DatosPersonalesSchema(BaseModel):
     campo_estudios: Optional[str]
     estudios: Optional[str]
     actividad_actual: Optional[str]
+    puntaje_general: Optional[float]
+    puntaje_general_categoria: Optional[str]
 
 # === Sección: Evaluación Cualitativa / Manual ===
 class EvaluacionCualitativaSchema(BaseModel):
@@ -209,6 +211,8 @@ class EvaluacionCualitativaSchema(BaseModel):
     potencial_estimado: Optional[str]
     usuario_evalua: Optional[str]
     mejoras_sugeridas: Optional[str]
+    puntaje_manual: Optional[float]
+    puntaje_manual_categoria: Optional[str]
 
 
 # === Sección: Estadísticas / Métricas ===
@@ -219,6 +223,9 @@ class EstadisticasPerfilSchema(BaseModel):
     likes: Optional[int]
     duracion_emisiones: Optional[int]
     dias_emisiones: Optional[int]
+    puntaje_estadistica: Optional[float]
+    puntaje_estadistica_categoria: Optional[str]
+
 
 # === Sección: Contenido / Preferencias ===
 class PreferenciasHabitosSchema(BaseModel):
@@ -230,6 +237,8 @@ class PreferenciasHabitosSchema(BaseModel):
     tipo_contenido: Optional[Dict[str, bool]]
     horario_preferido: Optional[str]
     intencion_trabajo: Optional[str]
+    puntaje_habitos: Optional[float]
+    puntaje_habitos_categoria: Optional[str]
 
 # === Sección: Resumen ===
 class ResumenEvaluacionSchema(BaseModel):
@@ -237,6 +246,7 @@ class ResumenEvaluacionSchema(BaseModel):
     observaciones: Optional[str]
     puntaje_total: Optional[float]
     puntaje_total_categoria: Optional[str]
+
 
 # === Esquema completo para actualizar todo ===
 class PerfilCreadorSchema(DatosPersonalesSchema,

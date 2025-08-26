@@ -1078,12 +1078,12 @@ def obtener_perfil_creador(creador_id):
         return None
 
 
-def obtener_estadisticas_perfil_creador(creador_id):
+def obtener_datos_mejoras_perfil_creador(creador_id):
     try:
         conn = psycopg2.connect(INTERNAL_DATABASE_URL)
         cur = conn.cursor()
         cur.execute("""
-           SELECT seguidores, siguiendo, likes, videos, duracion_emisiones
+        SELECT seguidores, siguiendo, likes, videos, duracion_emisiones,apariencia,engagement,calidioma,estudios,actividad_actual,tiempo_disponible,frecuencia_lives,experiencia_otras_plataformas,intereses,tipo_contenido,intencion_trabajoidad_contenido,eval_foto,biografia,eval_biografia
         FROM perfil_creador
         WHERE creador_id = %s
         LIMIT 1
@@ -1099,7 +1099,26 @@ def obtener_estadisticas_perfil_creador(creador_id):
         print("❌ Error al obtener perfil del creador:", e)
         return None
 
-
+def obtener_puntajes_perfil_creador(creador_id):
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("""
+           SELECT puntaje_general, puntaje_estadistica, puntaje_manual, puntaje_habitos
+        FROM perfil_creador
+        WHERE creador_id = %s
+        LIMIT 1
+        """, (creador_id,))
+        fila = cur.fetchone()
+        columnas = [desc[0] for desc in cur.description]
+        cur.close()
+        conn.close()
+        if fila:
+            return dict(zip(columnas, fila))
+        return None
+    except Exception as e:
+        print("❌ Error al obtener perfil del creador:", e)
+        return None
 
 import psycopg2
 import json
@@ -1109,20 +1128,20 @@ def actualizar_datos_perfil_creador(creador_id, datos_dict):
         campos_validos = [
             # Datos personales y generales
             "nombre", "edad", "genero", "pais", "ciudad", "zona_horaria",
-            "idioma", "campo_estudios", "estudios","actividad_actual",
+            "idioma", "campo_estudios", "estudios","actividad_actual","puntaje_general","puntaje_general_categoria",
 
             # Evaluación manual/cualitativa
             "biografia", "apariencia", "engagement", "calidad_contenido",
-            "potencial_estimado", "usuario_evalua", "mejoras_sugeridas","eval_biografia","eval_foto","metadata_videos",
+            "potencial_estimado", "usuario_evalua", "mejoras_sugeridas","eval_biografia","eval_foto","metadata_videos","puntaje_manual","puntaje_manual_categoria",
 
             # Estadísticas del perfil
             "seguidores", "siguiendo", "videos", "likes",
-            "duracion_emisiones", "dias_emisiones",
+            "duracion_emisiones", "dias_emisiones","puntaje_estadistica","puntaje_estadistica_categoria",
 
             # Preferencias y hábitos
             "tiempo_disponible", "frecuencia_lives",
             "experiencia_otras_plataformas","experiencia_otras_plataformas_otro_nombre", "intereses", "tipo_contenido",
-            "horario_preferido", "intencion_trabajo",
+            "horario_preferido", "intencion_trabajo","puntaje_habitos","puntaje_habitos_categoria",
 
             # Resumen
             "estado", "observaciones", "puntaje_total", "puntaje_total_categoria"
