@@ -1099,6 +1099,28 @@ def obtener_datos_mejoras_perfil_creador(creador_id):
         print("❌ Error al obtener perfil del creador:", e)
         return None
 
+def obtener_biografia_perfil_creador(creador_id):
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("""
+           SELECT biografia
+        FROM perfil_creador
+        WHERE creador_id = %s
+        LIMIT 1
+        """, (creador_id,))
+        fila = cur.fetchone()
+        columnas = [desc[0] for desc in cur.description]
+        cur.close()
+        conn.close()
+        if fila:
+            return dict(zip(columnas, fila))
+        return None
+    except Exception as e:
+        print("❌ Error al obtener perfil del creador:", e)
+        return None
+
+
 def obtener_puntajes_perfil_creador(creador_id):
     try:
         conn = psycopg2.connect(INTERNAL_DATABASE_URL)
@@ -1132,7 +1154,7 @@ def actualizar_datos_perfil_creador(creador_id, datos_dict):
 
             # Evaluación manual/cualitativa
             "biografia", "apariencia", "engagement", "calidad_contenido",
-            "potencial_estimado", "usuario_evalua", "mejoras_sugeridas","eval_biografia","eval_foto","metadata_videos","puntaje_manual","puntaje_manual_categoria",
+            "potencial_estimado", "usuario_evalua", "biografia_sugerida","eval_biografia","eval_foto","metadata_videos","puntaje_manual","puntaje_manual_categoria",
 
             # Estadísticas del perfil
             "seguidores", "siguiendo", "videos", "likes",
@@ -1144,7 +1166,7 @@ def actualizar_datos_perfil_creador(creador_id, datos_dict):
             "horario_preferido", "intencion_trabajo","puntaje_habitos","puntaje_habitos_categoria",
 
             # Resumen
-            "estado", "observaciones", "puntaje_total", "puntaje_total_categoria"
+            "estado", "observaciones","mejoras_sugeridas","puntaje_total", "puntaje_total_categoria"
         ]
 
         campos = []

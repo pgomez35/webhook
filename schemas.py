@@ -555,7 +555,6 @@ class EvaluacionCualitativaOutput(BaseModel):
     mensaje: str
     puntaje_manual: Optional[float] = None
     puntaje_manual_categoria: Optional[str] = None
-    mejoras_sugeridas: Optional[str] = None  # O dict si lo devuelves agrupado
 
 # === Sección: Contenido / Preferencias ===
 class PreferenciasHabitosInput(BaseModel):
@@ -579,12 +578,14 @@ class PreferenciasHabitosOutput(PreferenciasHabitosInput):
 class ResumenEvaluacionInput(BaseModel):
     estado: Optional[str] = None
     observaciones: Optional[str] = None
+    mejoras_sugeridas: Optional[str] = None
 
 class ResumenEvaluacionOutput(ResumenEvaluacionInput):
     status: Optional[str] = None
     mensaje: Optional[str] = None
     puntaje_total: Optional[float] = None
     puntaje_total_categoria: Optional[str] = None
+
 
 class ResumenEvaluacionSchema(ResumenEvaluacionOutput):
     pass

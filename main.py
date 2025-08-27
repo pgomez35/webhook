@@ -1597,21 +1597,6 @@ def actualizar_eval_cualitativa(
         data_dict["puntaje_manual"] = resultado["puntaje_manual"]
         data_dict["puntaje_manual_categoria"] = resultado["puntaje_manual_categoria"]
 
-        # Generar mejoras sugeridas usando estadísticas desde BD
-        sugerencias = generar_mejoras_sugeridas(
-            cualitativa={
-                "apariencia": data_dict.get("apariencia", 0),
-                "engagement": data_dict.get("engagement", 0),
-                "calidad_contenido": data_dict.get("calidad_contenido", 0),
-                "foto": data_dict.get("eval_foto", 0),
-                "biografia": data_dict.get("eval_biografia", 0),
-                "metadata_videos": data_dict.get("metadata_videos", 0),
-            },
-            creador_id=creador_id
-        )
-        data_dict["mejoras_sugeridas"] = sugerencias
-
-        # Guardar cambios en BD
         actualizar_datos_perfil_creador(creador_id, data_dict)
 
         # === respuesta final ===
@@ -1620,7 +1605,6 @@ def actualizar_eval_cualitativa(
             mensaje="Evaluación cualitativa actualizada",
             puntaje_manual=resultado["puntaje_manual"],
             puntaje_manual_categoria=resultado["puntaje_manual_categoria"],
-            mejoras_sugeridas=sugerencias
         )
 
     except Exception as e:
@@ -1718,20 +1702,19 @@ def actualizar_resumen(creador_id: int, datos: ResumenEvaluacionInput):
 
         perfil = obtener_puntajes_perfil_creador(creador_id)
         print("Puntajes del perfil recuperados:", perfil)
+        if not perfil:
+            raise HTTPException(status_code=404, detail=f"No se encontró el perfil del creador con id {creador_id}.")
 
         # Calcular puntaje general y categoría
         score = evaluacion_total(
-            cualitativa_score=perfil.get("puntaje_manual"),
-            estadistica_score=perfil.get("puntaje_estadistica"),
-            general_score=perfil.get("puntaje_general"),
-            habitos_score=perfil.get("puntaje_habitos")
+            cualitativa_score=perfil.get("puntaje_manual",0),
+            estadistica_score=perfil.get("puntaje_estadistica",0),
+            general_score=perfil.get("puntaje_general",0),
+            habitos_score=perfil.get("puntaje_habitos",0)
         )
         print("Resultado de evaluacion_total:", score)
 
-        # Generar diagnóstico y mejoras sugeridas
-        # diagnostico = diagnostico_perfil_creador(creador_id)
-        # mejoras = generar_mejoras_sugeridas_total(creador_id)
-
+        # Generar diagnóstico y mejoras sugeridas, manejando errores
         try:
             diagnostico = diagnostico_perfil_creador(creador_id)
         except Exception as e:
@@ -1743,19 +1726,19 @@ def actualizar_resumen(creador_id: int, datos: ResumenEvaluacionInput):
         except Exception as e:
             print(f"Error generando mejoras: {e}")
             mejoras = "-"
-        observaciones="-"
+
         # Combinar observaciones de manera robusta
         observaciones = (
             f"📊 Evaluación Global:\n"
             f"Puntaje total: {score['puntaje_total']}\n"
             f"Categoría: {score['puntaje_total_categoria']}\n\n"
-            f"🩺 Diagnóstico Detallado:\n{diagnostico}\n\n"
-            f"🚀 Recomendaciones Personalizadas:\n{mejoras}"
+            f"🩺 Diagnóstico Detallado:\n{diagnostico}\n"
         )
 
         data_dict["puntaje_total"] = score["puntaje_total"]
         data_dict["puntaje_total_categoria"] = score["puntaje_total_categoria"]
         data_dict["observaciones"] = observaciones
+        data_dict["mejoras_sugeridas"] = mejoras
 
         actualizar_datos_perfil_creador(creador_id, data_dict)
 
@@ -1768,4 +1751,43 @@ def actualizar_resumen(creador_id: int, datos: ResumenEvaluacionInput):
 
     except Exception as e:
         print("Error al guardar el perfil:", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/perfil_creador/{creador_id}/biografia_ia",
+         tags=["Biografía IA"])
+def actualizar_biografia_ia(creador_id: int):
+    try:
+        # 1. Validar que existe el perfil
+        bio_texto = obtener_biografia_perfil_creador(creador_id)
+        if not bio_texto:
+            raise HTTPException(status_code=404, detail="No existe biografía previa para este perfil.")
+        # 2. Generar la biografía con IA
+        try:
+            biografia_sugerida = evaluar_y_mejorar_biografia(bio_texto, modelo="gpt-4")
+        except Exception as e:
+            print(f"Error generando biografía IA: {e}")
+            raise HTTPException(status_code=500, detail="Error generando la biografía con IA.")
+
+        # 3. (Opcional) Recortar si tu campo biografía tiene un máximo de caracteres
+        MAX_BIO_LEN = 500
+        biografia_sugerida = biografia_sugerida[:MAX_BIO_LEN]
+
+        # 4. Guardar en base de datos
+        try:
+            actualizar_datos_perfil_creador(creador_id, {"biografia_sugerida": biografia_sugerida})
+        except Exception as e:
+            print(f"Error guardando biografía en base: {e}")
+            raise HTTPException(status_code=500, detail="Error guardando la biografía en la base de datos.")
+
+        # 5. Responder
+        return {
+            "status": "ok",
+            "mensaje": "Biografía IA generada y guardada exitosamente",
+            "biografia": biografia_sugerida
+        }
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        print("Error general en biografía IA:", e)
         raise HTTPException(status_code=500, detail=str(e))
