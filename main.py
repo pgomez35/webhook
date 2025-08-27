@@ -1729,8 +1729,8 @@ def actualizar_resumen(creador_id: int, datos: ResumenEvaluacionInput):
         print("Resultado de evaluacion_total:", score)
 
         # Generar diagnóstico y mejoras sugeridas
-        diagnostico = diagnostico_perfil_creador(creador_id)
-        mejoras = generar_mejoras_sugeridas_total(creador_id)
+        # diagnostico = diagnostico_perfil_creador(creador_id)
+        # mejoras = generar_mejoras_sugeridas_total(creador_id)
 
         try:
             diagnostico = diagnostico_perfil_creador(creador_id)
@@ -1757,7 +1757,7 @@ def actualizar_resumen(creador_id: int, datos: ResumenEvaluacionInput):
         data_dict["puntaje_total_categoria"] = score["puntaje_total_categoria"]
         data_dict["observaciones"] = observaciones
 
-        # actualizar_datos_perfil_creador(creador_id, data_dict)
+        actualizar_datos_perfil_creador(creador_id, data_dict)
 
         return ResumenEvaluacionOutput(
             status="ok",
