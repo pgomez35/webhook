@@ -854,9 +854,6 @@ Conexión: Sí / No
 CTA: Sí / No
 [Justificación si aplica]
 
-Recomendación: [Solo si algún criterio fue "No", de lo contrario "Ninguna"]
-
-
 Recomendación: [Solo si algún criterio fue "No", de lo contrario escribe "Ninguna"]
 """
     return prompt
