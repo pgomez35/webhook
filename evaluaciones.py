@@ -1013,18 +1013,21 @@ def evaluacion_total(
     general_score=None,
     habitos_score=None
 ):
-    # Convierte todos a float (si son None o string vacía, pon 0)
+    """Combina todos los puntajes en un puntaje total y determina la categoría."""
+
     def to_num(val):
         try:
             return float(val)
         except (TypeError, ValueError):
             return 0.0
 
+    # Asegura que todos los puntajes sean numéricos
     cualitativa_score = to_num(cualitativa_score)
     estadistica_score = to_num(estadistica_score)
     general_score = to_num(general_score)
     habitos_score = to_num(habitos_score)
 
+    # Calcula el puntaje total ponderado y lo redondea a 2 decimales
     total = (
         cualitativa_score * 0.50 +
         estadistica_score * 0.25 +
@@ -1033,7 +1036,7 @@ def evaluacion_total(
     )
     total_redondeado = round(total, 2)
 
-    # Determinar categoría proporcional (1-5)
+    # Asigna la categoría basada en el puntaje total
     if total_redondeado < 1.5:
         categoria = "Muy bajo"
     elif total_redondeado < 2.5:
@@ -1049,7 +1052,6 @@ def evaluacion_total(
         "puntaje_total": total_redondeado,
         "puntaje_total_categoria": categoria
     }
-
 
 def evaluar_total(cualitativa: dict, estadistica: dict, general: dict, habitos: dict):
     """

@@ -1711,24 +1711,32 @@ def actualizar_preferencias(creador_id: int, datos: PreferenciasHabitosInput):
          response_model=ResumenEvaluacionOutput)
 def actualizar_resumen(creador_id: int, datos: ResumenEvaluacionInput):
     try:
+        # Depuración: ver datos recibidos
+        print("Datos recibidos del frontend:", datos)
         data_dict = datos.dict(exclude_unset=True)
-        perfil = obtener_puntajes_perfil_creador(creador_id)
+        print("Datos recibidos como dict:", data_dict)
 
-        # 🔹 Calcular puntaje general y categoría
+        perfil = obtener_puntajes_perfil_creador(creador_id)
+        print("Puntajes del perfil recuperados:", perfil)
+
+        # Calcular puntaje general y categoría
         score = evaluacion_total(
             cualitativa_score=perfil.get("puntaje_manual"),
             estadistica_score=perfil.get("puntaje_estadistica"),
             general_score=perfil.get("puntaje_general"),
             habitos_score=perfil.get("puntaje_habitos")
         )
+        print("Resultado de evaluacion_total:", score)
 
-        # 🔹 Generar diagnóstico y mejoras sugeridas
+        # Generar diagnóstico y mejoras sugeridas
         diagnostico = diagnostico_perfil_creador(creador_id)
         mejoras = generar_mejoras_sugeridas_total(creador_id)
 
-        # 🔹 Combinar observaciones
+        # Combinar observaciones de manera robusta
         observaciones = (
-            f"📊 Evaluación Global:\n{score['observaciones']}\n\n"
+            f"📊 Evaluación Global:\n"
+            f"Puntaje total: {score['puntaje_total']}\n"
+            f"Categoría: {score['puntaje_total_categoria']}\n\n"
             f"🩺 Diagnóstico Detallado:\n{diagnostico}\n\n"
             f"🚀 Recomendaciones Personalizadas:\n{mejoras}"
         )
@@ -1747,4 +1755,5 @@ def actualizar_resumen(creador_id: int, datos: ResumenEvaluacionInput):
         )
 
     except Exception as e:
+        print("Error al guardar el perfil:", e)
         raise HTTPException(status_code=500, detail=str(e))
