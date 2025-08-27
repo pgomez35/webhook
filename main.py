@@ -1732,8 +1732,17 @@ def actualizar_resumen(creador_id: int, datos: ResumenEvaluacionInput):
         diagnostico = diagnostico_perfil_creador(creador_id)
         mejoras = generar_mejoras_sugeridas_total(creador_id)
 
-        diagnostico = "-"
-        mejoras = "-"
+        try:
+            diagnostico = diagnostico_perfil_creador(creador_id)
+        except Exception as e:
+            print(f"Error generando diagnóstico: {e}")
+            diagnostico = "-"
+
+        try:
+            mejoras = generar_mejoras_sugeridas_total(creador_id)
+        except Exception as e:
+            print(f"Error generando mejoras: {e}")
+            mejoras = "-"
         observaciones="-"
         # # Combinar observaciones de manera robusta
         # observaciones = (
