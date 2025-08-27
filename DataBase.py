@@ -1083,7 +1083,7 @@ def obtener_datos_mejoras_perfil_creador(creador_id):
         conn = psycopg2.connect(INTERNAL_DATABASE_URL)
         cur = conn.cursor()
         cur.execute("""
-        SELECT seguidores, siguiendo, likes, videos, duracion_emisiones,apariencia,engagement,calidioma,estudios,actividad_actual,tiempo_disponible,frecuencia_lives,experiencia_otras_plataformas,intereses,tipo_contenido,intencion_trabajoidad_contenido,eval_foto,biografia,eval_biografia
+        SELECT seguidores, siguiendo, likes, videos, duracion_emisiones,dias_emisiones,apariencia,engagement,calidad_contenido,estudios,actividad_actual,tiempo_disponible,frecuencia_lives,experiencia_otras_plataformas,intereses,tipo_contenido,intencion_trabajo,eval_foto,biografia,eval_biografia,metadata_videos,potencial_estimado
         FROM perfil_creador
         WHERE creador_id = %s
         LIMIT 1

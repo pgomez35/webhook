@@ -1618,8 +1618,8 @@ def actualizar_eval_cualitativa(
         return EvaluacionCualitativaOutput(
             status="ok",
             mensaje="Evaluación cualitativa actualizada",
-            puntaje_manual=resultado["puntuacion_manual"],
-            puntaje_manual_categoria=resultado["puntuacion_manual_categoria"],
+            puntaje_manual=resultado["puntaje_manual"],
+            puntaje_manual_categoria=resultado["puntaje_manual_categoria"],
             mejoras_sugeridas=sugerencias
         )
 
