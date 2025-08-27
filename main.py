@@ -1763,7 +1763,7 @@ def actualizar_biografia_ia(creador_id: int):
             raise HTTPException(status_code=404, detail="No existe biografía previa para este perfil.")
         # 2. Generar la biografía con IA
         try:
-            biografia_sugerida = evaluar_y_mejorar_biografia(bio_texto, modelo="gpt-4")
+            biografia_sugerida = evaluar_biografia(bio_texto, modelo="gpt-4")
 
         except Exception as e:
             print(f"Error generando biografía IA: {e}")

@@ -843,14 +843,6 @@ Comprensible: Sí / No
 [Justificación si aplica]
 Consistente: Sí / No
 [Justificación si aplica]
-Propuesta de valor: Sí / No
-[Justificación si aplica]
-Originalidad: Sí / No
-[Justificación si aplica]
-Estética: Sí / No
-[Justificación si aplica]
-Conexión: Sí / No
-[Justificación si aplica]
 CTA: Sí / No
 [Justificación si aplica]
 
