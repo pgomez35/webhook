@@ -1016,12 +1016,11 @@ def evaluacion_total(cualitativa_score=None,
     Combina todos los puntajes en un puntaje total.
     """
     total = (
-        (cualitativa_score or 0) * 0.50 +
-        (estadistica_score or 0) * 0.25 +
-        (general_score or 0) * 0.15 +
-        (habitos_score or 0) * 0.10
+        float(cualitativa_score or 0) * 0.50 +
+        float(estadistica_score or 0) * 0.25 +
+        float(general_score or 0) * 0.15 +
+        float(habitos_score or 0) * 0.10
     )
-
     total_redondeado = round(total, 2)
 
     # Determinar categoría proporcional (1-5)
