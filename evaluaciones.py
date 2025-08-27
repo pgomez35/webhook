@@ -1008,7 +1008,10 @@ def generar_mejoras_sugeridas(cualitativa: dict, creador_id: int) -> str:
     return "\n".join(mensaje)
 
 
-def evaluacion_total(cualitativa_score,estadistica_score,general_score,habitos_score):
+def evaluacion_total(cualitativa_score=None,
+    estadistica_score=None,
+    general_score=None,
+    habitos_score=None):
     """
     Combina todos los puntajes en un puntaje total.
     """

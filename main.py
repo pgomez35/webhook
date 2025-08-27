@@ -1716,10 +1716,10 @@ def actualizar_resumen(creador_id: int, datos: ResumenEvaluacionInput):
 
         # 🔹 Calcular puntaje general y categoría
         score = evaluacion_total(
-            cualitativa=perfil.get("puntaje_manual"),
-            estadistica=perfil.get("puntaje_estadistica"),
-            general=perfil.get("puntaje_general"),
-            habitos=perfil.get("puntaje_habitos")
+            cualitativa_score=perfil.get("puntaje_manual"),
+            estadistica_score=perfil.get("puntaje_estadistica"),
+            general_score=perfil.get("puntaje_general"),
+            habitos_score=perfil.get("puntaje_habitos")
         )
 
         # 🔹 Generar diagnóstico y mejoras sugeridas
