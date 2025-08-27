@@ -830,7 +830,7 @@ Si respondes "No", añade una breve explicación (1 línea) de por qué.
 2. ¿Es comprensible?  
 3. ¿Es consistente con una identidad o propósito?
 
-Al final, si alguno de los criterios fue "No", sugiere una nueva biografía para el creador cuyo nickname es "{nickname}".  
+Al final, si alguno de los criterios fue "No", sugiere una nueva biografía para el creador".  
 Responde en este formato estricto:
 
 Corta: Sí / No  
