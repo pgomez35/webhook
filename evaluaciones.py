@@ -822,61 +822,45 @@ load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=api_key)
 
-def limpiar_biografia_ia(respuesta_ia: str, max_len=500) -> str:
-    """
-    Extrae y limpia la biografía sugerida de la respuesta IA.
-    Si no hay recomendación, retorna un mensaje apropiado.
-    """
-    lineas = respuesta_ia.splitlines()
-    bio_lines = []
-    reco_idx = None
-    for i, linea in enumerate(lineas):
-        if linea.strip().lower().startswith("recomendación:"):
-            reco_idx = i
-            break
-    if reco_idx is not None:
-        # Toma todo lo que sigue (puede ser varias líneas)
-        bio_lines = lineas[reco_idx+1:]
-        # Si recomendación viene en la misma línea, extrae después de ':'
-        en_misma = lineas[reco_idx].split(":", 1)[1].strip()
-        if en_misma:
-            bio_lines = [en_misma] + bio_lines
-    # Junta líneas, limpia comillas y \n escapados
-    bio = "\n".join(bio_lines).strip().strip('"').replace("\\n", "\n")
-    # Opcional: elimina líneas vacías
-    bio = "\n".join(l for l in bio.splitlines() if l.strip())
-    # Determina si hay recomendación real
-    if not bio or bio.strip().lower() == "ninguna":
-        return "La biografía actual es adecuada, no se requiere sugerencia de mejora."
-    # Recorta al máximo permitido
-    bio = bio[:max_len]
-    return bio
+def limpiar_biografia_ia(bio_ia: str) -> str:
+    bio_ia = bio_ia.strip()
+    if bio_ia.startswith('"') and bio_ia.endswith('"'):
+        bio_ia = bio_ia[1:-1]
+    bio_ia = bio_ia.replace("\\n", "\n")
+    return "\n".join(line.strip() for line in bio_ia.splitlines())
 
-def evaluar_y_mejorar_biografia(bio, modelo="gpt-4"):
+def evaluar_biografia(bio: str) -> str:
     prompt = f"""
-Evalúa esta biografía de TikTok:
+Evalúa la siguiente biografía de TikTok:
 
-"{bio}"
+\"\"\"{bio}\"\"\"
 
-Para cada uno de estos 3 criterios, responde con "Sí" o "No".  
-Si respondes "No", añade una breve explicación (1 línea) de por qué.
+Responde únicamente siguiendo este formato:
 
-1. ¿Es corta?  
-2. ¿Es comprensible?  
-3. ¿Es consistente con una identidad o propósito?
+Corta: Sí / No
+[Justificación si aplica]
+Comprensible: Sí / No
+[Justificación si aplica]
+Consistente: Sí / No
+[Justificación si aplica]
+Propuesta de valor: Sí / No
+[Justificación si aplica]
+Originalidad: Sí / No
+[Justificación si aplica]
+Estética: Sí / No
+[Justificación si aplica]
+Conexión: Sí / No
+[Justificación si aplica]
+CTA: Sí / No
+[Justificación si aplica]
 
-Al final, si alguno de los criterios fue "No", sugiere una nueva biografía para el creador".  
-Responde en este formato estricto:
+Recomendación: [Solo si algún criterio fue "No", de lo contrario "Ninguna"]
 
-Corta: Sí / No  
-[Justificación si aplica]  
-Comprensible: Sí / No  
-[Justificación si aplica]  
-Consistente: Sí / No  
-[Justificación si aplica]  
 
 Recomendación: [Solo si algún criterio fue "No", de lo contrario escribe "Ninguna"]
 """
+    return prompt
+
 
     try:
         response = client.chat.completions.create(
