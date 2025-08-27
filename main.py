@@ -1734,15 +1734,15 @@ def actualizar_resumen(creador_id: int, datos: ResumenEvaluacionInput):
 
         diagnostico = "-"
         mejoras = "-"
-
-        # Combinar observaciones de manera robusta
-        observaciones = (
-            f"📊 Evaluación Global:\n"
-            f"Puntaje total: {score['puntaje_total']}\n"
-            f"Categoría: {score['puntaje_total_categoria']}\n\n"
-            f"🩺 Diagnóstico Detallado:\n{diagnostico}\n\n"
-            f"🚀 Recomendaciones Personalizadas:\n{mejoras}"
-        )
+        observaciones="-"
+        # # Combinar observaciones de manera robusta
+        # observaciones = (
+        #     f"📊 Evaluación Global:\n"
+        #     f"Puntaje total: {score['puntaje_total']}\n"
+        #     f"Categoría: {score['puntaje_total_categoria']}\n\n"
+        #     f"🩺 Diagnóstico Detallado:\n{diagnostico}\n\n"
+        #     f"🚀 Recomendaciones Personalizadas:\n{mejoras}"
+        # )
 
         data_dict["puntaje_total"] = score["puntaje_total"]
         data_dict["puntaje_total_categoria"] = score["puntaje_total_categoria"]
