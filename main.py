@@ -1764,6 +1764,7 @@ def actualizar_biografia_ia(creador_id: int):
         # 2. Generar la biografía con IA
         try:
             biografia_sugerida = evaluar_y_mejorar_biografia(bio_texto, modelo="gpt-4")
+
         except Exception as e:
             print(f"Error generando biografía IA: {e}")
             raise HTTPException(status_code=500, detail="Error generando la biografía con IA.")
@@ -1771,6 +1772,7 @@ def actualizar_biografia_ia(creador_id: int):
         # 3. (Opcional) Recortar si tu campo biografía tiene un máximo de caracteres
         MAX_BIO_LEN = 500
         biografia_sugerida = biografia_sugerida[:MAX_BIO_LEN]
+        biografia_sugerida =limpiar_biografia_ia(biografia_sugerida)
 
         # 4. Guardar en base de datos
         try:

@@ -822,6 +822,36 @@ load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=api_key)
 
+def limpiar_biografia_ia(respuesta_ia: str, max_len=500) -> str:
+    """
+    Extrae y limpia la biografía sugerida de la respuesta IA.
+    Si no hay recomendación, retorna un mensaje apropiado.
+    """
+    lineas = respuesta_ia.splitlines()
+    bio_lines = []
+    reco_idx = None
+    for i, linea in enumerate(lineas):
+        if linea.strip().lower().startswith("recomendación:"):
+            reco_idx = i
+            break
+    if reco_idx is not None:
+        # Toma todo lo que sigue (puede ser varias líneas)
+        bio_lines = lineas[reco_idx+1:]
+        # Si recomendación viene en la misma línea, extrae después de ':'
+        en_misma = lineas[reco_idx].split(":", 1)[1].strip()
+        if en_misma:
+            bio_lines = [en_misma] + bio_lines
+    # Junta líneas, limpia comillas y \n escapados
+    bio = "\n".join(bio_lines).strip().strip('"').replace("\\n", "\n")
+    # Opcional: elimina líneas vacías
+    bio = "\n".join(l for l in bio.splitlines() if l.strip())
+    # Determina si hay recomendación real
+    if not bio or bio.strip().lower() == "ninguna":
+        return "La biografía actual es adecuada, no se requiere sugerencia de mejora."
+    # Recorta al máximo permitido
+    bio = bio[:max_len]
+    return bio
+
 def evaluar_y_mejorar_biografia(bio, modelo="gpt-4"):
     prompt = f"""
 Evalúa esta biografía de TikTok:
