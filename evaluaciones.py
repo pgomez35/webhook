@@ -646,6 +646,12 @@ def generar_mejoras_sugeridas_total(creador_id: int) -> str:
     - Hábitos y preferencias
     """
 
+    def to_num(val):
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return 0.0
+
     # 🔹 Obtener datos completos desde la BD
     datos = obtener_datos_mejoras_perfil_creador(creador_id)
 
@@ -661,49 +667,47 @@ def generar_mejoras_sugeridas_total(creador_id: int) -> str:
     # ==========================
     # 1. Evaluación cualitativa
     # ==========================
-    if datos.get("apariencia", 0) < 3:
+    apariencia = to_num(datos.get("apariencia", 0))
+    engagement = to_num(datos.get("engagement", 0))
+    calidad_contenido = to_num(datos.get("calidad_contenido", 0))
+    eval_foto = to_num(datos.get("eval_foto", 0))
+    eval_biografia = to_num(datos.get("eval_biografia", 0))
+    metadata_videos = to_num(datos.get("metadata_videos", 0))
+
+    if apariencia < 3:
         sugerencias["💡 Mejora tu contenido"].append(
             "✨ Mejora tu presentación en cámara: cuida la luz, vestuario y ambiente."
         )
-    if datos.get("engagement", 0) < 3:
+    if engagement < 3:
         sugerencias["💡 Mejora tu contenido"].append(
             "🤝 Interactúa más con tus seguidores: responde, haz preguntas y usa llamados a la acción."
         )
-    if datos.get("calidad_contenido", 0) < 3:
+    if calidad_contenido < 3:
         sugerencias["💡 Mejora tu contenido"].append(
             "🎬 Trabaja en la creatividad y edición de tus videos para hacerlos más atractivos."
         )
-    if datos.get("eval_foto", 0) < 3:
+    if eval_foto < 3:
         sugerencias["💡 Mejora tu contenido"].append(
             "🖼️ Cambia tu foto de perfil por una más profesional y llamativa."
         )
-    if datos.get("eval_biografia", 0) < 3:
+    if eval_biografia < 3:
         sugerencias["💡 Mejora tu contenido"].append(
             "📖 Optimiza tu biografía: sé claro, breve y destaca tu valor."
         )
-    if datos.get("metadata_videos", 0) < 3:
+    if metadata_videos < 3:
         sugerencias["💡 Mejora tu contenido"].append(
             "📌 Usa hashtags y títulos relevantes para mejorar el alcance."
         )
-
-        # --- Nueva integración con OpenAI para mejorar biografía ---
-    bio_texto = datos.get("biografia")
-    bio_score = datos.get("eval_biografia", 0)
-
-    if bio_texto and 2 <= bio_score <= 4:
-        resultado_bio = evaluar_y_mejorar_biografia(bio_texto, modelo="gpt-4")
-        if resultado_bio:
-            sugerencias["💡 Mejora tu contenido"].append(f"🤖 Evaluación automática de tu biografía:\n{resultado_bio}")
 
     # ==========================
     # 2. Evaluación estadística
     # ==========================
     if datos.get("seguidores") is not None:
-        seguidores = datos.get("seguidores", 0)
-        siguiendo = datos.get("siguiendo", 0)
-        likes = datos.get("likes", 0)
-        videos = datos.get("videos", 0)
-        duracion = datos.get("duracion_emisiones", 0)
+        seguidores = to_num(datos.get("seguidores", 0))
+        siguiendo = to_num(datos.get("siguiendo", 0))
+        likes = to_num(datos.get("likes", 0))
+        videos = to_num(datos.get("videos", 0))
+        duracion = to_num(datos.get("duracion_emisiones", 0))
 
         sugerencias["📊 Mejora tus estadísticas"].append(
             f"📌 Estado actual → Seguidores: {seguidores}, Siguiendo: {siguiendo}, Likes: {likes}, Videos: {videos}, Días activo: {duracion}"
@@ -758,10 +762,11 @@ def generar_mejoras_sugeridas_total(creador_id: int) -> str:
     )
 
     if generales:
+        puntaje_general = to_num(generales.get("puntaje_general", 0))
         sugerencias["👤 Perfil personal"].append(
-            f"📌 Puntaje general: {generales['puntaje_general']} → {generales['puntaje_general_categoria']}"
+            f"📌 Puntaje general: {puntaje_general} → {generales.get('puntaje_general_categoria', '')}"
         )
-        if generales["puntaje_general"] < 2.5:
+        if puntaje_general < 2.5:
             sugerencias["👤 Perfil personal"].append("🔧 Refuerza tu perfil personal: idiomas, formación o disponibilidad.")
 
     # ==========================
@@ -777,19 +782,20 @@ def generar_mejoras_sugeridas_total(creador_id: int) -> str:
     )
 
     if habitos:
+        puntaje_habitos = to_num(habitos.get("puntaje_habitos", 0))
         sugerencias["🔄 Hábitos y preferencias"].append(
-            f"📌 Puntaje hábitos: {habitos['puntaje_habitos']} → {habitos['puntaje_habitos_categoria']}"
+            f"📌 Puntaje hábitos: {puntaje_habitos} → {habitos.get('puntaje_habitos_categoria', '')}"
         )
-        if habitos["puntaje_habitos"] < 2.5:
+        if puntaje_habitos < 2.5:
             sugerencias["🔄 Hábitos y preferencias"].append("🔧 Ajusta tu disponibilidad y constancia en lives para mejorar resultados.")
 
     # ==========================
     # 5. Recomendaciones generales extra
     # ==========================
-    seguidores = datos.get("seguidores", 0)
-    if datos.get("engagement", 0) < 3 and seguidores < 300:
+    seguidores = to_num(datos.get("seguidores", 0))
+    if engagement < 3 and seguidores < 300:
         sugerencias["🚀 Recomendaciones generales"].append("🔄 Mejora tu interacción y combina con estrategias de crecimiento.")
-    if datos.get("calidad_contenido", 0) >= 4 and seguidores < 300:
+    if calidad_contenido >= 4 and seguidores < 300:
         sugerencias["🚀 Recomendaciones generales"].append("✅ Tu contenido es bueno, ahora enfócate en difundirlo más.")
 
     # ==========================
@@ -805,7 +811,6 @@ def generar_mejoras_sugeridas_total(creador_id: int) -> str:
         for item in items:
             mensaje.append(f"  • {item}")
     return "\n".join(mensaje)
-
 
 
 from openai import OpenAI
