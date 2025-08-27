@@ -1732,6 +1732,9 @@ def actualizar_resumen(creador_id: int, datos: ResumenEvaluacionInput):
         diagnostico = diagnostico_perfil_creador(creador_id)
         mejoras = generar_mejoras_sugeridas_total(creador_id)
 
+        diagnostico = "-"
+        mejoras = "-"
+
         # Combinar observaciones de manera robusta
         observaciones = (
             f"📊 Evaluación Global:\n"
