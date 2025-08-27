@@ -1007,19 +1007,29 @@ def generar_mejoras_sugeridas(cualitativa: dict, creador_id: int) -> str:
             mensaje.append(f"  • {item}")
     return "\n".join(mensaje)
 
-
-def evaluacion_total(cualitativa_score=None,
+def evaluacion_total(
+    cualitativa_score=None,
     estadistica_score=None,
     general_score=None,
-    habitos_score=None):
-    """
-    Combina todos los puntajes en un puntaje total.
-    """
+    habitos_score=None
+):
+    # Convierte todos a float (si son None o string vacía, pon 0)
+    def to_num(val):
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return 0.0
+
+    cualitativa_score = to_num(cualitativa_score)
+    estadistica_score = to_num(estadistica_score)
+    general_score = to_num(general_score)
+    habitos_score = to_num(habitos_score)
+
     total = (
-        float(cualitativa_score or 0) * 0.50 +
-        float(estadistica_score or 0) * 0.25 +
-        float(general_score or 0) * 0.15 +
-        float(habitos_score or 0) * 0.10
+        cualitativa_score * 0.50 +
+        estadistica_score * 0.25 +
+        general_score * 0.15 +
+        habitos_score * 0.10
     )
     total_redondeado = round(total, 2)
 
@@ -1039,6 +1049,7 @@ def evaluacion_total(cualitativa_score=None,
         "puntaje_total": total_redondeado,
         "puntaje_total_categoria": categoria
     }
+
 
 def evaluar_total(cualitativa: dict, estadistica: dict, general: dict, habitos: dict):
     """
