@@ -240,8 +240,8 @@ def evaluar_cualitativa(
         categoria = "Excelente"
 
     return {
-        "puntuacion_manual": score,
-        "puntuacion_manual_categoria": categoria
+        "puntaje_manual": score,
+        "puntaje_manual_categoria": categoria
     }
 
 

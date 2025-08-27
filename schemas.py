@@ -182,118 +182,149 @@ class PerfilCreadorSchema(BaseModel):
                 "observaciones": "Perfil con gran potencial de crecimiento."
             }
         }
-# === Schema de ENTRADA (lo que envía el cliente) ===
-class DatosPersonalesInput(BaseModel):
-    nombre: Optional[str] = None
-    edad: Optional[int] = None
-    genero: Optional[str] = None
-    pais: Optional[str] = None
-    ciudad: Optional[str] = None
-    zona_horaria: Optional[str] = None
-    idioma: Optional[str] = None
-    campo_estudios: Optional[str] = None
-    estudios: Optional[str] = None
-    actividad_actual: Optional[str] = None
-
-# === Schema de SALIDA (lo que devuelve la API) ===
-class DatosPersonalesOutput(DatosPersonalesInput):
-    puntaje_general: Optional[float] = None
-    puntaje_general_categoria: Optional[str] = None
-
-# === Sección: Datos Personales ===
-class DatosPersonalesSchema(DatosPersonalesOutput):
-    pass
-
-# === Sección: Estadísticas / Métricas ===
-class EstadisticasPerfilSchema(BaseModel):
-    seguidores: Optional[int] = None
-    siguiendo: Optional[int] = None
-    videos: Optional[int] = None
-    likes: Optional[int] = None
-    duracion_emisiones: Optional[int] = None
-    dias_emisiones: Optional[int] = None
-    puntaje_estadistica: Optional[float] = None
-    puntaje_estadistica_categoria: Optional[str] = None
-
-# === Sección: Evaluación Cualitativa / Manual ===
-class EvaluacionCualitativaSchema(BaseModel):
-    biografia: Optional[str] = None
-    apariencia: Optional[int] = None
-    engagement: Optional[int] = None
-    calidad_contenido: Optional[int] = None
-    eval_biografia: Optional[int] = None
-    eval_foto: Optional[int] = None
-    metadata_videos: Optional[int] = None
-    potencial_estimado: Optional[str] = None
-
-# === Response Schema (lo que devuelve el endpoint) ===
-class EvaluacionCualitativaResponse(BaseModel):
-    status: str
-    mensaje: str
-    puntaje_manual: Optional[float] = None
-    puntaje_manual_categoria: Optional[str] = None
-    mejoras_sugeridas: Optional[str] = None  # O dict si lo devuelves agrupado
-
-# === Sección: Contenido / Preferencias ===
-class PreferenciasHabitosInput(BaseModel):
-    tiempo_disponible: Optional[int] = None
-    frecuencia_lives: Optional[int] = None
-    experiencia_otras_plataformas: Optional[Dict[str, int]] = None
-    experiencia_otras_plataformas_otro_nombre: Optional[str] = None
-    intereses: Optional[Dict[str, bool]] = None
-    tipo_contenido: Optional[Dict[str, bool]] = None
-    horario_preferido: Optional[str] = None
-    intencion_trabajo: Optional[str] = None
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "tiempo_disponible": 15,
-                "frecuencia_lives": 3,
-                "experiencia_otras_plataformas": {"youtube": 2, "twitch": 1},
-                "experiencia_otras_plataformas_otro_nombre": "Kwai",
-                "intereses": {"deportes": True, "gaming": True},
-                "tipo_contenido": {"tutoriales": True, "entretenimiento": True},
-                "horario_preferido": "tarde",
-                "intencion_trabajo": "profesional"
-            }
-        }
-
-class PreferenciasHabitosOutput(PreferenciasHabitosInput):
-    status: Optional[str] = None
-    mensaje: Optional[str] = None
-    puntaje_habitos: Optional[float] = None
-    puntaje_habitos_categoria: Optional[str] = None
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "status": "ok",
-                "mensaje": "Preferencias actualizadas",
-                "puntaje_habitos": 82.5,
-                "puntaje_habitos_categoria": "alto"
-            }
-        }
-
-# === Sección: Resumen ===
-class ResumenEvaluacionInput(BaseModel):
-    estado: Optional[str] = None
-    observaciones: Optional[str] = None
-
-class ResumenEvaluacionOutput(ResumenEvaluacionInput):
-    puntaje_total: Optional[float] = None
-    puntaje_total_categoria: Optional[str] = None
-
-class ResumenEvaluacionSchema(ResumenEvaluacionOutput):
-    pass
-
-# === Esquema completo para actualizar todo ===
-class PerfilCreadorSchema(BaseModel):
-    datos_personales: Optional[DatosPersonalesOutput] = None
-    evaluacion_cualitativa: Optional[EvaluacionCualitativaResponse] = None
-    estadisticas: Optional[EstadisticasPerfilSchema] = None
-    preferencias: Optional[PreferenciasHabitosOutput] = None
-    resumen: Optional[ResumenEvaluacionOutput] = None
+# # === Schema de ENTRADA (lo que envía el cliente) ===
+# class DatosPersonalesInput(BaseModel):
+#     nombre: Optional[str] = None
+#     edad: Optional[int] = None
+#     genero: Optional[str] = None
+#     pais: Optional[str] = None
+#     ciudad: Optional[str] = None
+#     zona_horaria: Optional[str] = None
+#     idioma: Optional[str] = None
+#     campo_estudios: Optional[str] = None
+#     estudios: Optional[str] = None
+#     actividad_actual: Optional[str] = None
+#
+# # === Schema de SALIDA (lo que devuelve la API) ===
+# class DatosPersonalesOutput(DatosPersonalesInput):
+#     status: str
+#     mensaje: str
+#     puntaje_general: Optional[float] = None
+#     puntaje_general_categoria: Optional[str] = None
+#
+# # === Sección: Datos Personales ===
+# class DatosPersonalesSchema(DatosPersonalesOutput):
+#     pass
+#
+# # # === Sección: Estadísticas / Métricas ===
+# # class EstadisticasPerfilSchema(BaseModel):
+# #     seguidores: Optional[int] = None
+# #     siguiendo: Optional[int] = None
+# #     videos: Optional[int] = None
+# #     likes: Optional[int] = None
+# #     duracion_emisiones: Optional[int] = None
+# #     dias_emisiones: Optional[int] = None
+# #     puntaje_estadistica: Optional[float] = None
+# #     puntaje_estadistica_categoria: Optional[str] = None
+#
+# # === Input Schema (lo que recibe el endpoint) ===
+# class EstadisticasPerfilInput(BaseModel):
+#     seguidores: Optional[int] = None
+#     siguiendo: Optional[int] = None
+#     videos: Optional[int] = None
+#     likes: Optional[int] = None
+#     duracion_emisiones: Optional[int] = None
+#     dias_emisiones: Optional[int] = None
+#
+# # === Output Schema (lo que responde el endpoint) ===
+# class EstadisticasPerfilOutput(BaseModel):
+#     status: str
+#     mensaje: str
+#     puntaje_estadistica: float
+#     puntaje_estadistica_categoria: str
+#
+#     class Config:
+#         schema_extra = {
+#             "example": {
+#                 "status": "ok",
+#                 "mensaje": "Estadisticas actualizadas",
+#                 "puntaje_estadistica": 75.0,
+#                 "puntaje_estadistica_categoria": "medio"
+#             }
+#         }
+#
+#
+# # === Sección: Evaluación Cualitativa / Manual ===
+# class EvaluacionCualitativaInput(BaseModel):
+#     biografia: Optional[str] = None
+#     apariencia: Optional[int] = None
+#     engagement: Optional[int] = None
+#     calidad_contenido: Optional[int] = None
+#     eval_biografia: Optional[int] = None
+#     eval_foto: Optional[int] = None
+#     metadata_videos: Optional[int] = None
+#     potencial_estimado: Optional[str] = None
+#
+# # === Response Schema (lo que devuelve el endpoint) ===
+# class EvaluacionCualitativaOutput(BaseModel):
+#     status: str
+#     mensaje: str
+#     puntaje_manual: Optional[float] = None
+#     puntaje_manual_categoria: Optional[str] = None
+#     mejoras_sugeridas: Optional[str] = None  # O dict si lo devuelves agrupado
+#
+# # === Sección: Contenido / Preferencias ===
+# class PreferenciasHabitosInput(BaseModel):
+#     tiempo_disponible: Optional[int] = None
+#     frecuencia_lives: Optional[int] = None
+#     experiencia_otras_plataformas: Optional[Dict[str, int]] = None
+#     experiencia_otras_plataformas_otro_nombre: Optional[str] = None
+#     intereses: Optional[Dict[str, bool]] = None
+#     tipo_contenido: Optional[Dict[str, bool]] = None
+#     horario_preferido: Optional[str] = None
+#     intencion_trabajo: Optional[str] = None
+#
+#     class Config:
+#         schema_extra = {
+#             "example": {
+#                 "tiempo_disponible": 15,
+#                 "frecuencia_lives": 3,
+#                 "experiencia_otras_plataformas": {"youtube": 2, "twitch": 1},
+#                 "experiencia_otras_plataformas_otro_nombre": "Kwai",
+#                 "intereses": {"deportes": True, "gaming": True},
+#                 "tipo_contenido": {"tutoriales": True, "entretenimiento": True},
+#                 "horario_preferido": "tarde",
+#                 "intencion_trabajo": "profesional"
+#             }
+#         }
+#
+# class PreferenciasHabitosOutput(PreferenciasHabitosInput):
+#     status: Optional[str] = None
+#     mensaje: Optional[str] = None
+#     puntaje_habitos: Optional[float] = None
+#     puntaje_habitos_categoria: Optional[str] = None
+#
+#     class Config:
+#         schema_extra = {
+#             "example": {
+#                 "status": "ok",
+#                 "mensaje": "Preferencias actualizadas",
+#                 "puntaje_habitos": 82.5,
+#                 "puntaje_habitos_categoria": "alto"
+#             }
+#         }
+#
+# # === Sección: Resumen ===
+# class ResumenEvaluacionInput(BaseModel):
+#     estado: Optional[str] = None
+#     observaciones: Optional[str] = None
+#
+# class ResumenEvaluacionOutput(ResumenEvaluacionInput):
+#     status: Optional[str] = None
+#     mensaje: Optional[str] = None
+#     puntaje_total: Optional[float] = None
+#     puntaje_total_categoria: Optional[str] = None
+#
+# class ResumenEvaluacionSchema(ResumenEvaluacionOutput):
+#     pass
+#
+# # === Esquema completo para actualizar todo ===
+# class PerfilCreadorSchema(BaseModel):
+#     datos_personales: Optional[DatosPersonalesOutput] = None
+#     evaluacion_cualitativa: Optional[EvaluacionCualitativaOutput] = None
+#     estadisticas: Optional[EstadisticasPerfilOutput] = None
+#     preferencias: Optional[PreferenciasHabitosOutput] = None
+#     resumen: Optional[ResumenEvaluacionOutput] = None
 
 # # === Schema de ENTRADA (lo que envía el cliente) ===
 # class DatosPersonalesInput(BaseModel):
@@ -469,3 +500,99 @@ class PerfilCreadorSchema(BaseModel):
 #     estadisticas: EstadisticasPerfilSchema
 #     preferencias: PreferenciasHabitosOutput
 #     resumen: ResumenEvaluacionOutput
+
+
+# === Schema de ENTRADA (lo que envía el cliente) ===
+class DatosPersonalesInput(BaseModel):
+    nombre: Optional[str] = None
+    edad: Optional[int] = None
+    genero: Optional[str] = None
+    pais: Optional[str] = None
+    ciudad: Optional[str] = None
+    zona_horaria: Optional[str] = None
+    idioma: Optional[str] = None
+    campo_estudios: Optional[str] = None
+    estudios: Optional[str] = None
+    actividad_actual: Optional[str] = None
+
+# === Schema de SALIDA (lo que devuelve la API) ===
+class DatosPersonalesOutput(DatosPersonalesInput):
+    status: str
+    mensaje: str
+    puntaje_general: Optional[float] = None
+    puntaje_general_categoria: Optional[str] = None
+
+# === Input Schema (lo que recibe el endpoint) ===
+class EstadisticasPerfilInput(BaseModel):
+    seguidores: Optional[int] = None
+    siguiendo: Optional[int] = None
+    videos: Optional[int] = None
+    likes: Optional[int] = None
+    duracion_emisiones: Optional[int] = None
+    dias_emisiones: Optional[int] = None
+
+# === Output Schema (lo que responde el endpoint) ===
+class EstadisticasPerfilOutput(BaseModel):
+    status: str
+    mensaje: str
+    puntaje_estadistica: float = None
+    puntaje_estadistica_categoria: str = None
+
+# === Sección: Evaluación Cualitativa / Manual ===
+class EvaluacionCualitativaInput(BaseModel):
+    biografia: Optional[str] = None
+    apariencia: Optional[int] = None
+    engagement: Optional[int] = None
+    calidad_contenido: Optional[int] = None
+    eval_biografia: Optional[int] = None
+    eval_foto: Optional[int] = None
+    metadata_videos: Optional[int] = None
+    potencial_estimado: Optional[str] = None
+
+# === Response Schema (lo que devuelve el endpoint) ===
+class EvaluacionCualitativaOutput(BaseModel):
+    status: str
+    mensaje: str
+    puntaje_manual: Optional[float] = None
+    puntaje_manual_categoria: Optional[str] = None
+    mejoras_sugeridas: Optional[str] = None  # O dict si lo devuelves agrupado
+
+# === Sección: Contenido / Preferencias ===
+class PreferenciasHabitosInput(BaseModel):
+    tiempo_disponible: Optional[int] = None
+    frecuencia_lives: Optional[int] = None
+    experiencia_otras_plataformas: Optional[Dict[str, int]] = None
+    experiencia_otras_plataformas_otro_nombre: Optional[str] = None
+    intereses: Optional[Dict[str, bool]] = None
+    tipo_contenido: Optional[Dict[str, bool]] = None
+    horario_preferido: Optional[str] = None
+    intencion_trabajo: Optional[str] = None
+
+class PreferenciasHabitosOutput(PreferenciasHabitosInput):
+    status: Optional[str] = None
+    mensaje: Optional[str] = None
+    puntaje_habitos: Optional[float] = None
+    puntaje_habitos_categoria: Optional[str] = None
+
+
+# === Sección: Resumen ===
+class ResumenEvaluacionInput(BaseModel):
+    estado: Optional[str] = None
+    observaciones: Optional[str] = None
+
+class ResumenEvaluacionOutput(ResumenEvaluacionInput):
+    status: Optional[str] = None
+    mensaje: Optional[str] = None
+    puntaje_total: Optional[float] = None
+    puntaje_total_categoria: Optional[str] = None
+
+class ResumenEvaluacionSchema(ResumenEvaluacionOutput):
+    pass
+
+# === Esquema completo para actualizar todo ===
+class PerfilCreadorSchema(BaseModel):
+    datos_personales: Optional[DatosPersonalesOutput] = None
+    evaluacion_cualitativa: Optional[EvaluacionCualitativaOutput] = None
+    estadisticas: Optional[EstadisticasPerfilOutput] = None
+    preferencias: Optional[PreferenciasHabitosOutput] = None
+    resumen: Optional[ResumenEvaluacionOutput] = None
