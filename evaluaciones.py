@@ -829,27 +829,34 @@ def limpiar_biografia_ia(bio_ia: str) -> str:
     bio_ia = bio_ia.replace("\\n", "\n")
     return "\n".join(line.strip() for line in bio_ia.splitlines())
 
-def evaluar_biografia(bio: str) -> str:
+
+def evaluar_y_mejorar_biografia(bio, nickname, modelo="gpt-4"):
     prompt = f"""
-Evalúa la siguiente biografía de TikTok:
+Evalúa esta biografía de TikTok:
 
-\"\"\"{bio}\"\"\"
+"{bio}"
 
-Responde únicamente siguiendo este formato:
+Para cada uno de estos 3 criterios, responde con "Sí" o "No".  
+Si respondes "No", añade una breve explicación (1 línea) de por qué.
 
-Corta: Sí / No
+1. ¿Es corta?  
+2. ¿Es comprensible?  
+3. ¿Es consistente con una identidad o propósito?
+
+Al final, si alguno de los criterios fue "No", sugiere una nueva biografía para el creador cuyo nickname es "{nickname}".  
+Responde en este formato estricto:
+
+Corta: Sí / No  
+[Justificación si aplica]  
+Comprensible: Sí / No  
+[Justificación si aplica]  
+Consistente: Sí / No  
 [Justificación si aplica]
-Comprensible: Sí / No
-[Justificación si aplica]
-Consistente: Sí / No
-[Justificación si aplica]
-CTA: Sí / No
-[Justificación si aplica]
+Estética: Sí / No
+[Justificación si aplica]  
 
 Recomendación: [Solo si algún criterio fue "No", de lo contrario escribe "Ninguna"]
 """
-    return prompt
-
 
     try:
         response = client.chat.completions.create(
