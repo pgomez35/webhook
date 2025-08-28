@@ -1319,13 +1319,13 @@ def evaluar_potencial_creador(creador_id, score_cualitativa: float):
         potencial_estimado = round(score_estadistica * 0.3 + score_cualitativa * 0.7, 2)
 
         # 4. Clasificación en texto
-        if potencial_estimado >= 80:
+        if potencial_estimado >= 4.0:
             nivel = "Alto potencial"
-        elif potencial_estimado >= 60:
+        elif potencial_estimado >= 3.0:
             nivel = "Potencial medio"
-        elif potencial_estimado >= 40:
+        elif potencial_estimado >= 2.0:
             nivel = "Potencial bajo"
-        elif potencial_estimado >= 20:
+        elif potencial_estimado >= 1.0:
             nivel = "Requiere desarrollo"
         else:
             nivel = "No recomendado"
