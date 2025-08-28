@@ -547,7 +547,6 @@ class EvaluacionCualitativaInput(BaseModel):
     eval_biografia: Optional[int] = None
     eval_foto: Optional[int] = None
     metadata_videos: Optional[int] = None
-    potencial_estimado: Optional[str] = None
     biografia_sugerida: Optional[str] = None
 
 # === Response Schema (lo que devuelve el endpoint) ===
@@ -556,6 +555,7 @@ class EvaluacionCualitativaOutput(BaseModel):
     mensaje: str
     puntaje_manual: Optional[float] = None
     puntaje_manual_categoria: Optional[str] = None
+    potencial_estimado: Optional[str] = None
 
 # === Sección: Contenido / Preferencias ===
 class PreferenciasHabitosInput(BaseModel):

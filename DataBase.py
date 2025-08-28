@@ -1120,6 +1120,31 @@ def obtener_biografia_perfil_creador(creador_id):
         print("❌ Error al obtener perfil del creador:", e)
         return None
 
+def obtener_datos_estadisticas_perfil_creador(creador_id):
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("""
+           SELECT 
+            seguidores
+            siguiendo,
+            videos,
+            likes,
+            duracion_emisiones
+        FROM perfil_creador
+        WHERE creador_id = %s
+        LIMIT 1
+        """, (creador_id,))
+        fila = cur.fetchone()
+        columnas = [desc[0] for desc in cur.description]
+        cur.close()
+        conn.close()
+        if fila:
+            return dict(zip(columnas, fila))
+        return None
+    except Exception as e:
+        print("❌ Error al obtener perfil del creador:", e)
+        return None
 
 def obtener_puntajes_perfil_creador(creador_id):
     try:

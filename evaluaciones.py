@@ -922,7 +922,7 @@ Si respondes "No", añade una breve explicación (1 línea) de por qué.
 2. ¿Es comprensible?  
 3. ¿Es consistente con una identidad o propósito?
 
-Al final, si alguno de los criterios fue "No", sugiere una nueva biografía para el creador cuyo nickname es "{nickname}".  
+Al final, si alguno de los criterios fue "No", sugiere una nueva biografía para el creador".  
 Responde en este formato estricto:
 
 Corta: Sí / No  
@@ -1296,6 +1296,48 @@ t4 = evaluar_total(c4, e4, g4, d4)
 print("=== Aspirante 4 ===")
 print("Cualitativa:", c4, "Estadísticas:", e4, "Generales:", g4, "Hábitos:", d4, "TOTAL:", t4, "\n")
 
+
+def evaluar_potencial_creador(creador_id, score_cualitativa: float):
+    """
+    """
+    try:
+        # 1. Obtener métricas del creador
+        data_dict = obtener_datos_estadisticas_perfil_creador(creador_id)
+        if not data_dict:
+            return {"error": "No se encontraron métricas para el creador."}
+
+        # 2. Calcular score estadístico
+        score_estadistica = evaluar_estadisticas(
+            seguidores=data_dict.get("seguidores"),
+            siguiendo=data_dict.get("siguiendo"),
+            videos=data_dict.get("videos"),
+            likes=data_dict.get("likes"),
+            duracion=data_dict.get("duracion_emisiones")
+        )
+
+        # 3. Calcular total ponderado
+        potencial_estimado = round(score_estadistica * 0.3 + score_cualitativa * 0.7, 2)
+
+        # 4. Clasificación en texto
+        if potencial_estimado >= 80:
+            nivel = "Alto potencial"
+        elif potencial_estimado >= 60:
+            nivel = "Potencial medio"
+        elif potencial_estimado >= 40:
+            nivel = "Potencial bajo"
+        elif potencial_estimado >= 20:
+            nivel = "Requiere desarrollo"
+        else:
+            nivel = "No recomendado"
+
+        return {
+            "potencial_estimado": potencial_estimado,
+            "nivel": nivel
+        }
+
+    except Exception as e:
+        print("❌ Error en evaluar_potencial_creador:", e)
+        return {"error": str(e)}
 
 
 
