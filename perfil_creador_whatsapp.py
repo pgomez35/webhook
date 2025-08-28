@@ -91,9 +91,9 @@ async def whatsapp_webhook(request: Request):
             numero = mensaje["from"]
 
             # Botón "continuar"
-            if "interactive" in mensaje and mensaje["interactive"]["type"] == "button_reply":
-                boton_id = mensaje["interactive"]["button_reply"]["id"]
-                if boton_id == "continuar_si":
+            if mensaje.get("type") == "button":
+                boton_texto = mensaje["button"]["text"]
+                if boton_texto.lower() == "sí, continuar":  # puedes comparar por texto
                     usuarios_flujo[numero] = 1  # iniciamos en paso 1
                     enviar_pregunta(numero, 1)
 
