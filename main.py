@@ -1596,7 +1596,9 @@ def actualizar_eval_cualitativa(
 
         data_dict["puntaje_manual"] = resultado["puntaje_manual"]
         data_dict["puntaje_manual_categoria"] = resultado["puntaje_manual_categoria"]
+
         potencial_creador=evaluar_potencial_creador(creador_id, resultado["puntaje_manual"])
+        nivel = potencial_creador.get("nivel")
 
         actualizar_datos_perfil_creador(creador_id, data_dict)
 
@@ -1606,7 +1608,7 @@ def actualizar_eval_cualitativa(
             mensaje="Evaluación cualitativa actualizada",
             puntaje_manual=resultado["puntaje_manual"],
             puntaje_manual_categoria=resultado["puntaje_manual_categoria"],
-            potencial_estimado=potencial_creador
+            potencial_estimado=nivel
         )
 
     except Exception as e:
