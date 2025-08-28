@@ -60,9 +60,14 @@ SERVICE_ACCOUNT_INFO = os.getenv("GOOGLE_CREDENTIALS_JSON")
 # CALENDAR_ID = "atavillamil.prestige@gmail.com"  # ID del calendario Prestige
 CALENDAR_ID = os.getenv("CALENDAR_ID")
 
+from perfil_creador_whatsapp import router as perfil_creador_router
 
 # ⚙️ Inicializar FastAPI
 app = FastAPI()
+
+
+# Incluir las rutas del módulo perfil_creador_whatsapp
+app.include_router(perfil_creador_router, tags=["Perfil Creador WhatsApp"])
 
 # ✅ Crear carpeta persistente de audios si no existe
 AUDIO_DIR = "audios"
@@ -987,7 +992,7 @@ async def verify_webhook(request: Request):
         return PlainTextResponse(challenge or "")
     return PlainTextResponse("Verificación fallida", status_code=403)
 
-@app.post("/webhook")
+@app.post("/webhook_V0")
 async def recibir_mensaje(request: Request):
     try:
         datos = await request.json()

@@ -1353,3 +1353,26 @@ def obtener_creador_id_por_usuario(usuario: str) -> Optional[int]:
     except Exception as e:
         print(f"⚠️ Error buscando creador por usuario {usuario}: {str(e)}")
         return None
+
+
+def eliminar_perfil_creador(perfil_id: int):
+    """Elimina un perfil de creador"""
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+
+        cur.execute("DELETE FROM perfil_creador WHERE id = %s", (perfil_id,))
+        affected_rows = cur.rowcount
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        return affected_rows > 0
+
+    except Exception as e:
+        print("❌ Error al eliminar perfil de creador:", e)
+        return False
+
+
+
+
