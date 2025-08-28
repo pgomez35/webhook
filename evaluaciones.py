@@ -244,16 +244,71 @@ def evaluar_cualitativa(
         "puntaje_manual_categoria": categoria
     }
 
+SLIDER_LABELS = {
+    'apariencia': {
+        1: "No destaca - poco llamativa",
+        2: "Básico - simple, sin esfuerzo",
+        3: "Presentable - cuidada y correcta",
+        4: "Agradable - buena presencia",
+        5: "Muy atractivo - sobresaliente"
+    },
+    'engagement': {
+        1: "No conecta - No genera empatía",
+        2: "Limitado - poca interacción",
+        3: "Interesante - a veces atrapa",
+        4: "Carismático - cautiva natural",
+        5: "Altamente carismático — Captura la atención de todos"
+    },
+    'calidad_contenido': {
+        1: "Muy deficiente - sin calidad ni mensaje",
+        2: "Limitado - aporta poco",
+        3: "Correcto - entendible y algo útil",
+        4: "Bueno - bien producido y valioso",
+        5: "Excelente - profesional con gran aporte"
+    },
+    'eval_biografia': {
+        1: 'No tiene Biografía',
+        2: 'Deficiente (confusa, larga o sin propósito).',
+        3: 'Aceptable (se entiende pero poco identidad).',
+        4: 'Buena (clara, corta, con identidad).',
+        5: 'Excelente (muy corta, clara y coherente).'
+    },
+    'eval_foto': {
+        1: 'No tiene foto propia',
+        2: 'Foto genérica, poco clara o de baja calidad',
+        3: 'Foto aceptable pero mejorable',
+        4: 'Buena foto personal, adecuada',
+        5: 'Foto excelente, muy profesional y atractiva'
+    },
+    'metadata_videos': {
+        1: 'Muy malos – incoherentes, no describen',
+        2: 'Deficientes – poco claros',
+        3: 'Aceptables – comprensibles pero poco atractivos',
+        4: 'Buenos – claros y alineados',
+        5: 'Excelentes – muy claros, breves y llamativos'
+    }
+}
+
+def get_label(campo, valor):
+    try:
+        return SLIDER_LABELS[campo][int(valor)]
+    except Exception:
+        return "No informado"
 
 def diagnostico_perfil_creador(creador_id: int) -> str:
     """
-    Genera un diagnóstico integral del perfil del creador,
-    evaluando estadísticas, cualidades, datos personales y hábitos.
+    Diagnóstico integral del perfil del creador, con puntajes, labels y unidades correctas.
     """
-
-    # 🔹 Obtener datos desde la BD o API
     datos = obtener_datos_mejoras_perfil_creador(creador_id)
+    puntajes = {
+        "Puntaje total": (datos.get("puntaje_total"), datos.get("puntaje_total_categoria")),
+        "Puntaje estadística": (datos.get("puntaje_estadistica"), datos.get("puntaje_estadistica_categoria")),
+        "Puntaje manual": (datos.get("puntaje_manual"), datos.get("puntaje_manual_categoria")),
+        "Puntaje general": (datos.get("puntaje_general"), datos.get("puntaje_general_categoria")),
+        "Puntaje hábitos": (datos.get("puntaje_habitos"), datos.get("puntaje_habitos_categoria")),
+    }
 
+    advertencias = []
     diagnostico = {
         "📊 Estadísticas": [],
         "💡 Cualitativo": [],
@@ -261,51 +316,61 @@ def diagnostico_perfil_creador(creador_id: int) -> str:
         "📅 Hábitos y preferencias": [],
     }
 
-    # -------------------------
-    # 📊 Estadísticas
-    # -------------------------
-    seguidores = datos.get("seguidores", 0)
-    siguiendo = datos.get("siguiendo", 0)
-    likes = datos.get("likes", 0)
-    videos = datos.get("videos", 0)
-    duracion = datos.get("duracion_emisiones", 0)
+    # Puntajes
+    puntajes_lines = ["# 🏅 Puntajes del Perfil"]
+    for nombre, (valor, categoria) in puntajes.items():
+        puntajes_lines.append(f"- {nombre}: {valor if valor is not None else 'No informado'} ({categoria if categoria is not None else 'Sin categoría'})")
+    puntajes_lines.append("")
 
-    diagnostico["📊 Estadísticas"].append(f"👥 Seguidores: {seguidores}")
-    diagnostico["📊 Estadísticas"].append(f"➡️ Siguiendo: {siguiendo}")
-    diagnostico["📊 Estadísticas"].append(f"👍 Likes: {likes}")
-    diagnostico["📊 Estadísticas"].append(f"🎥 Videos: {videos}")
-    diagnostico["📊 Estadísticas"].append(f"⏳ Días activo: {duracion}")
+    # Estadísticas
+    seguidores = datos.get("seguidores")
+    siguiendo = datos.get("siguiendo")
+    likes = datos.get("likes")
+    videos = datos.get("videos")
+    duracion = datos.get("duracion_emisiones")
 
-    if seguidores < 100:
-        diagnostico["📊 Estadísticas"].append("⚠️ Nivel bajo de seguidores.")
-    if likes < 200:
-        diagnostico["📊 Estadísticas"].append("⚠️ Poca interacción (likes bajos).")
-    if videos < 5:
-        diagnostico["📊 Estadísticas"].append("⚠️ Falta constancia en publicaciones.")
+    diagnostico["📊 Estadísticas"].append(f"👥 Seguidores: {seguidores if seguidores is not None else 'No informado'}")
+    diagnostico["📊 Estadísticas"].append(f"➡️ Siguiendo: {siguiendo if siguiendo is not None else 'No informado'}")
+    diagnostico["📊 Estadísticas"].append(f"👍 Likes: {likes if likes is not None else 'No informado'}")
+    diagnostico["📊 Estadísticas"].append(f"🎥 Videos: {videos if videos is not None else 'No informado'}")
+    diagnostico["📊 Estadísticas"].append(f"⏳ Días activo: {duracion if duracion is not None else 'No informado'}")
 
-    # -------------------------
-    # 💡 Cualitativo
-    # -------------------------
-    apariencia = datos.get("apariencia", 0)
-    engagement = datos.get("engagement", 0)
-    calidad = datos.get("calidad_contenido", 0)
-    eval_foto = datos.get("eval_foto", 0)
-    eval_bio = datos.get("eval_biografia", 0)
+    if seguidores is not None and seguidores < 100:
+        advertencias.append("⚠️ Nivel bajo de seguidores.")
+    if likes is not None and likes < 200:
+        advertencias.append("⚠️ Poca interacción (likes bajos).")
+    if videos is not None and videos < 5:
+        advertencias.append("⚠️ Falta constancia en publicaciones.")
 
-    diagnostico["💡 Cualitativo"].append(f"🧑‍🎤 Apariencia en cámara: {apariencia}/5")
-    diagnostico["💡 Cualitativo"].append(f"🤝 Engagement: {engagement}/5")
-    diagnostico["💡 Cualitativo"].append(f"🎬 Calidad del contenido: {calidad}/5")
-    diagnostico["💡 Cualitativo"].append(f"🖼️ Foto de perfil: {eval_foto}/5")
-    diagnostico["💡 Cualitativo"].append(f"📖 Biografía: {eval_bio}/5")
+    # Cualitativo (con labels)
+    apariencia = datos.get("apariencia")
+    engagement = datos.get("engagement")
+    calidad = datos.get("calidad_contenido")
+    eval_foto = datos.get("eval_foto")
+    eval_bio = datos.get("eval_biografia")
 
-    if engagement <= 2:
-        diagnostico["💡 Cualitativo"].append("⚠️ Necesita mayor interacción con la audiencia.")
-    if calidad <= 2:
-        diagnostico["💡 Cualitativo"].append("⚠️ Contenido de baja calidad percibida.")
+    diagnostico["💡 Cualitativo"].append(
+        f"🧑‍🎤 Apariencia en cámara: {apariencia if apariencia is not None else 'No informado'}/5 — {get_label('apariencia', apariencia)}"
+    )
+    diagnostico["💡 Cualitativo"].append(
+        f"🤝 Engagement: {engagement if engagement is not None else 'No informado'}/5 — {get_label('engagement', engagement)}"
+    )
+    diagnostico["💡 Cualitativo"].append(
+        f"🎬 Calidad del contenido: {calidad if calidad is not None else 'No informado'}/5 — {get_label('calidad_contenido', calidad)}"
+    )
+    diagnostico["💡 Cualitativo"].append(
+        f"🖼️ Foto de perfil: {eval_foto if eval_foto is not None else 'No informado'}/5 — {get_label('eval_foto', eval_foto)}"
+    )
+    diagnostico["💡 Cualitativo"].append(
+        f"📖 Biografía: {eval_bio if eval_bio is not None else 'No informado'}/5 — {get_label('eval_biografia', eval_bio)}"
+    )
 
-    # -------------------------
-    # 🧑‍🎓 Datos personales
-    # -------------------------
+    if engagement is not None and engagement <= 2:
+        advertencias.append("⚠️ Necesita mayor interacción con la audiencia.")
+    if calidad is not None and calidad <= 2:
+        advertencias.append("⚠️ Contenido de baja calidad percibida.")
+
+    # Datos personales
     idioma = datos.get("idioma", "No especificado")
     estudios = datos.get("estudios", "No especificado")
     actividad = datos.get("actividad_actual", "No especificado")
@@ -314,45 +379,59 @@ def diagnostico_perfil_creador(creador_id: int) -> str:
     diagnostico["🧑‍🎓 Datos personales"].append(f"🎓 Estudios: {estudios}")
     diagnostico["🧑‍🎓 Datos personales"].append(f"💼 Actividad actual: {actividad}")
 
-    if idioma.lower() != "español":
-        diagnostico["🧑‍🎓 Datos personales"].append("🌍 Puede aprovechar público bilingüe.")
-    if "estudiante" in actividad.lower():
-        diagnostico["🧑‍🎓 Datos personales"].append("📘 Puede aprovechar su etapa de formación para generar contenido educativo.")
+    if idioma and idioma.lower() != "español":
+        advertencias.append("🌍 Puede aprovechar público bilingüe.")
+    if actividad and "estudiante" in actividad.lower():
+        advertencias.append("📘 Puede aprovechar su etapa de formación para contenido educativo.")
 
-    # -------------------------
-    # 📅 Hábitos y preferencias
-    # -------------------------
+    # Hábitos y preferencias (unidades ajustadas)
     tiempo = datos.get("tiempo_disponible", "No definido")
     frecuencia = datos.get("frecuencia_lives", "No definido")
-    experiencia = datos.get("experiencia_otras_plataformas", "No definido")
-    intereses = datos.get("intereses", "No definido")
-    tipo_contenido = datos.get("tipo_contenido", "No definido")
+    experiencia = datos.get("experiencia_otras_plataformas", {})
+    intereses = datos.get("intereses", {})
+    tipo_contenido = datos.get("tipo_contenido", {})
     intencion = datos.get("intencion_trabajo", "No definido")
 
-    diagnostico["📅 Hábitos y preferencias"].append(f"⌛ Tiempo disponible: {tiempo}")
-    diagnostico["📅 Hábitos y preferencias"].append(f"📡 Frecuencia de lives: {frecuencia}")
-    diagnostico["📅 Hábitos y preferencias"].append(f"🌍 Experiencia en otras plataformas: {experiencia}")
-    diagnostico["📅 Hábitos y preferencias"].append(f"🎯 Intereses: {intereses}")
-    diagnostico["📅 Hábitos y preferencias"].append(f"🎨 Tipo de contenido: {tipo_contenido}")
+    experiencia_fmt = [f"{k}: {v}" for k, v in experiencia.items() if v > 0] if isinstance(experiencia, dict) else experiencia
+    experiencia_str = ", ".join(experiencia_fmt) if experiencia_fmt else "Sin experiencia"
+
+    intereses_fmt = [k for k, v in intereses.items() if v] if isinstance(intereses, dict) else intereses
+    intereses_str = ", ".join(intereses_fmt) if intereses_fmt else "No definidos"
+
+    tipo_fmt = [k for k, v in tipo_contenido.items() if v] if isinstance(tipo_contenido, dict) else tipo_contenido
+    tipo_str = ", ".join(tipo_fmt) if tipo_fmt else "No definido"
+
+    diagnostico["📅 Hábitos y preferencias"].append(
+        f"⌛ Tiempo disponible: {tiempo} horas por semana" if tiempo not in [None, "", "No definido"] else "⌛ Tiempo disponible: No definido"
+    )
+    diagnostico["📅 Hábitos y preferencias"].append(
+        f"📡 Frecuencia de lives: {frecuencia} veces por semana" if frecuencia not in [None, "", "No definido"] else "📡 Frecuencia de lives: No definido"
+    )
+    diagnostico["📅 Hábitos y preferencias"].append(f"🌍 Experiencia en otras plataformas: {experiencia_str}")
+    diagnostico["📅 Hábitos y preferencias"].append(f"🎯 Intereses: {intereses_str}")
+    diagnostico["📅 Hábitos y preferencias"].append(f"🎨 Tipo de contenido: {tipo_str}")
     diagnostico["📅 Hábitos y preferencias"].append(f"💼 Intención de trabajo: {intencion}")
 
-    if frecuencia == "baja" or tiempo == "limitado":
-        diagnostico["📅 Hábitos y preferencias"].append("⚠️ Tiempo de dedicación limitado.")
-    if intencion.lower() in ["hobbie", "ocasional"]:
-        diagnostico["📅 Hábitos y preferencias"].append("ℹ️ Perfil más recreativo que profesional.")
+    if (isinstance(frecuencia, str) and frecuencia.lower() == "baja") or (isinstance(tiempo, str) and tiempo.lower() == "limitado"):
+        advertencias.append("⚠️ Tiempo de dedicación limitado.")
+    if isinstance(intencion, str) and intencion.lower() in ["hobbie", "ocasional"]:
+        advertencias.append("ℹ️ Perfil más recreativo que profesional.")
 
-    # -------------------------
-    # 📌 Formatear salida
-    # -------------------------
-    mensaje = ["📋 DIAGNÓSTICO DEL PERFIL\n"]
+    # Formatear salida
+    mensaje = ["# 📋 DIAGNÓSTICO DEL PERFIL\n"]
+    mensaje += puntajes_lines
     for seccion, items in diagnostico.items():
-        mensaje.append(seccion)
+        mensaje.append(f"## {seccion}")
         for item in items:
-            mensaje.append(f"  • {item}")
+            mensaje.append(f"- {item}")
         mensaje.append("")  # Espacio entre secciones
 
-    return "\n".join(mensaje)
+    if advertencias:
+        mensaje.append("### ⚠️ Advertencias y oportunidades de mejora")
+        for adv in advertencias:
+            mensaje.append(f"- {adv}")
 
+    return "\n".join(mensaje)
 
 def evaluar_datos_generales(edad, genero, idiomas, estudios, pais=None, actividad_actual=None):
     """
@@ -830,7 +909,7 @@ def limpiar_biografia_ia(bio_ia: str) -> str:
     return "\n".join(line.strip() for line in bio_ia.splitlines())
 
 
-def evaluar_y_mejorar_biografia(bio, nickname, modelo="gpt-4"):
+def evaluar_y_mejorar_biografia(bio, modelo="gpt-4"):
     prompt = f"""
 Evalúa esta biografía de TikTok:
 
