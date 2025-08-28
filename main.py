@@ -1591,7 +1591,7 @@ def actualizar_eval_cualitativa(
             calidad_contenido=data_dict.get("calidad_contenido", 0),
             foto=data_dict.get("eval_foto", 0),
             biografia=data_dict.get("eval_biografia", 0),
-            metadata_videos=data_dict.get("metadata_videos", 0),
+            metadata_videos=data_dict.get("metadata_videos", 0)
         )
 
         data_dict["puntaje_manual"] = resultado["puntaje_manual"]

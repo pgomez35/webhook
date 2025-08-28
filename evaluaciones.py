@@ -204,7 +204,7 @@ def evaluar_cualitativa(
     calidad_contenido: float = 0,
     foto: float = 0,
     biografia: float = 0,
-    metadata_videos: float = 0,
+    metadata_videos: float = 0
 ):
     # Pesos base
     pesos_base = {

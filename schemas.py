@@ -548,6 +548,7 @@ class EvaluacionCualitativaInput(BaseModel):
     eval_foto: Optional[int] = None
     metadata_videos: Optional[int] = None
     potencial_estimado: Optional[str] = None
+    biografia_sugerida: Optional[str] = None
 
 # === Response Schema (lo que devuelve el endpoint) ===
 class EvaluacionCualitativaOutput(BaseModel):
