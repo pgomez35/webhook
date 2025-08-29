@@ -5,6 +5,8 @@ from dotenv import load_dotenv
 from enviar_msg_wp import enviar_plantilla_generica, enviar_mensaje_texto_simple
 from main import guardar_mensaje
 from utils import *
+import traceback
+
 import psycopg2
 
 load_dotenv()
@@ -878,6 +880,7 @@ async def whatsapp_webhook(request: Request):
 
     except Exception as e:
         print("❌ Error procesando webhook:", e)
+        traceback.print_exc()
 
     return {"status": "ok"}
 
