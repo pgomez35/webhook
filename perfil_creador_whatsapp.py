@@ -351,7 +351,6 @@ def manejar_respuesta(numero, texto):
     # --- MENÚ PRINCIPAL SEGÚN ROL ---
     if paso is None:
         rol = obtener_rol_usuario(numero)
-        rol = "aspirante"
 
         if rol == "aspirante":
             if texto in ["1", "actualizar", "perfil"]:
@@ -451,77 +450,112 @@ def manejar_respuesta(numero, texto):
 
     # --- FLUJOS ESPECIALES ---
 
-    # Selección ciudad principal
-    if paso == 5:
-        ciudad_seleccionada = texto.strip()
-        ciudades_mostradas = respuestas.setdefault(numero, {}).get("ciudades_mostradas")
+    # # Selección ciudad principal
+    # if paso == 5:
+    #     ciudad_seleccionada = texto.strip()
+    #     ciudades_mostradas = respuestas.setdefault(numero, {}).get("ciudades_mostradas")
+    #
+    #     if ciudades_mostradas:
+    #         if ciudad_seleccionada.isdigit():
+    #             idx = int(ciudad_seleccionada) - 1
+    #             if 0 <= idx < len(ciudades_mostradas):
+    #                 ciudad = ciudades_mostradas[idx]
+    #                 respuestas[numero]["ciudad"] = ciudad
+    #                 guardar_respuesta(numero, 5, ciudad)
+    #                 usuarios_flujo[numero] += 1
+    #                 enviar_pregunta(numero, usuarios_flujo[numero])
+    #                 return
+    #             elif idx == len(ciudades_mostradas):
+    #                 usuarios_flujo[numero] = "ciudad_otro"
+    #                 enviar_mensaje(numero, "Por favor, escribe tu ciudad principal:")
+    #                 return
+    #         enviar_mensaje(numero, "Por favor elige una opción válida (ejemplo: 1, 2 ... o el número de 'Otra').")
+    #         return
+    #
+    #     # Si no había ciudades guardadas
+    #     pais_num = respuestas.setdefault(numero, {}).get(4)
+    #     clave_pais = mapa_paises.get(str(pais_num))
+    #     ciudades = ciudades_por_pais.get(clave_pais)
+    #     if ciudades:
+    #         opciones = "\n".join([f"{i+1}. {c}" for i, c in enumerate(ciudades)])
+    #         opciones += f"\n{len(ciudades)+1}. Otra (especifica)"
+    #         respuestas[numero]["ciudades_mostradas"] = ciudades
+    #         enviar_mensaje(numero, f"📌 Elige tu ciudad principal:\n{opciones}")
+    #     else:
+    #         usuarios_flujo[numero] = "ciudad_otro"
+    #         enviar_mensaje(numero, "Por favor, escribe tu ciudad principal:")
+    #     return
+    #
+    # elif paso == "ciudad_otro":
+    #     respuestas[numero]["ciudad"] = texto.strip()
+    #     guardar_respuesta(numero, 5, texto.strip())
+    #     usuarios_flujo[numero] = 6
+    #     enviar_pregunta(numero, 6)
+    #     return
 
-        if ciudades_mostradas:
-            if ciudad_seleccionada.isdigit():
-                idx = int(ciudad_seleccionada) - 1
-                if 0 <= idx < len(ciudades_mostradas):
-                    ciudad = ciudades_mostradas[idx]
-                    respuestas[numero]["ciudad"] = ciudad
-                    guardar_respuesta(numero, 5, ciudad)
-                    usuarios_flujo[numero] += 1
-                    enviar_pregunta(numero, usuarios_flujo[numero])
-                    return
-                elif idx == len(ciudades_mostradas):
-                    usuarios_flujo[numero] = "ciudad_otro"
-                    enviar_mensaje(numero, "Por favor, escribe tu ciudad principal:")
-                    return
-            enviar_mensaje(numero, "Por favor elige una opción válida (ejemplo: 1, 2 ... o el número de 'Otra').")
-            return
+    # # Plataformas (selección múltiple)
+    # if paso == 13:
+    #     seleccion = validar_opciones_multiples(texto, opciones_plataformas)
+    #     if not seleccion:
+    #         enviar_mensaje(numero, "❌ Respuesta inválida. Ejemplo válido: 1,3,5")
+    #         return
+    #     respuestas.setdefault(numero, {})["plataformas"] = seleccion
+    #     if "8" in seleccion:
+    #         usuarios_flujo[numero] = "plataforma_otro_nombre"
+    #         enviar_mensaje(numero, "Indica el nombre de la otra plataforma:")
+    #     else:
+    #         usuarios_flujo[numero] = 14
+    #         enviar_pregunta(numero, 14)
+    #     return
+    #
+    # elif paso == "plataforma_otro_nombre":
+    #     respuestas[numero]["plataforma_otro"] = texto
+    #     usuarios_flujo[numero] = "plataforma_otro_experiencia"
+    #     enviar_mensaje(numero, f"¿Cuántos años de experiencia tienes en {texto}?")
+    #     return
+    #
+    # elif paso == "plataforma_otro_experiencia":
+    #     if not texto.isdigit():
+    #         enviar_mensaje(numero, "Por favor ingresa solo el número de años (ejemplo: 2)")
+    #         return
+    #     respuestas[numero]["plataforma_otro_experiencia"] = int(texto)
+    #     usuarios_flujo[numero] = 14
+    #     enviar_pregunta(numero, 14)
+    #     return
 
-        # Si no había ciudades guardadas
-        pais_num = respuestas.setdefault(numero, {}).get(4)
-        clave_pais = mapa_paises.get(str(pais_num))
-        ciudades = ciudades_por_pais.get(clave_pais)
-        if ciudades:
-            opciones = "\n".join([f"{i+1}. {c}" for i, c in enumerate(ciudades)])
-            opciones += f"\n{len(ciudades)+1}. Otra (especifica)"
-            respuestas[numero]["ciudades_mostradas"] = ciudades
-            enviar_mensaje(numero, f"📌 Elige tu ciudad principal:\n{opciones}")
-        else:
-            usuarios_flujo[numero] = "ciudad_otro"
-            enviar_mensaje(numero, "Por favor, escribe tu ciudad principal:")
-        return
-
-    elif paso == "ciudad_otro":
-        respuestas[numero]["ciudad"] = texto.strip()
-        guardar_respuesta(numero, 5, texto.strip())
-        usuarios_flujo[numero] = 6
-        enviar_pregunta(numero, 6)
-        return
-
-    # Plataformas (selección múltiple)
+    # Cuando selecciona plataformas (paso 13)
     if paso == 13:
         seleccion = validar_opciones_multiples(texto, opciones_plataformas)
         if not seleccion:
             enviar_mensaje(numero, "❌ Respuesta inválida. Ejemplo válido: 1,3,5")
             return
         respuestas.setdefault(numero, {})["plataformas"] = seleccion
-        if "8" in seleccion:
-            usuarios_flujo[numero] = "plataforma_otro_nombre"
-            enviar_mensaje(numero, "Indica el nombre de la otra plataforma:")
+        usuarios_flujo[numero] = ("experiencia_plataforma", 0)  # 0: primer índice de plataforma
+        plataforma_actual = opciones_plataformas[int(seleccion[0]) - 1]
+        enviar_mensaje(numero, f"¿Cuántos años de experiencia tienes en {plataforma_actual}?")
+        return
+
+    # Cuando está preguntando experiencia por plataforma
+    if isinstance(paso, tuple) and paso[0] == "experiencia_plataforma":
+        idx = paso[1]
+        seleccionadas = respuestas[numero]["plataformas"]
+        plataforma_actual = opciones_plataformas[int(seleccionadas[idx]) - 1]
+        # Validar y guardar la respuesta
+        try:
+            años = float(texto.replace(",", "."))
+        except Exception:
+            enviar_mensaje(numero, "Por favor ingresa solo el número de años (ejemplo: 2 o 0.5)")
+            return
+        if "experiencia_por_plataforma" not in respuestas[numero]:
+            respuestas[numero]["experiencia_por_plataforma"] = {}
+        respuestas[numero]["experiencia_por_plataforma"][plataforma_actual] = años
+        if idx + 1 < len(seleccionadas):
+            usuarios_flujo[numero] = ("experiencia_plataforma", idx + 1)
+            plataforma_actual = opciones_plataformas[int(seleccionadas[idx + 1]) - 1]
+            enviar_mensaje(numero, f"¿Cuántos años de experiencia tienes en {plataforma_actual}?")
         else:
             usuarios_flujo[numero] = 14
             enviar_pregunta(numero, 14)
-        return
-
-    elif paso == "plataforma_otro_nombre":
-        respuestas[numero]["plataforma_otro"] = texto
-        usuarios_flujo[numero] = "plataforma_otro_experiencia"
-        enviar_mensaje(numero, f"¿Cuántos años de experiencia tienes en {texto}?")
-        return
-
-    elif paso == "plataforma_otro_experiencia":
-        if not texto.isdigit():
-            enviar_mensaje(numero, "Por favor ingresa solo el número de años (ejemplo: 2)")
-            return
-        respuestas[numero]["plataforma_otro_experiencia"] = int(texto)
-        usuarios_flujo[numero] = 14
-        enviar_pregunta(numero, 14)
         return
 
     # Tipos de contenido
@@ -531,6 +565,7 @@ def manejar_respuesta(numero, texto):
             enviar_mensaje(numero, "❌ Respuesta inválida. Ejemplo válido: 1,4,7")
             return
         respuestas.setdefault(numero, {})["tipos_contenido"] = seleccion
+        guardar_respuesta(numero, 15, seleccion)  # <--- GUARDA LA RESPUESTA
         if "13" in seleccion:
             usuarios_flujo[numero] = "contenido_otro_nombre"
             enviar_mensaje(numero, "Indica el tipo de contenido adicional:")
@@ -541,6 +576,7 @@ def manejar_respuesta(numero, texto):
 
     elif paso == "contenido_otro_nombre":
         respuestas[numero]["contenido_otro"] = texto
+        guardar_respuesta(numero, "contenido_otro_nombre", texto)  # <--- GUARDA
         usuarios_flujo[numero] = 16
         enviar_pregunta(numero, 16)
         return
@@ -552,6 +588,7 @@ def manejar_respuesta(numero, texto):
             enviar_mensaje(numero, "❌ Respuesta inválida. Ejemplo válido: 2,8,12")
             return
         respuestas.setdefault(numero, {})["intereses"] = seleccion
+        guardar_respuesta(numero, 16, seleccion)  # <--- GUARDA LA RESPUESTA
         if "23" in seleccion:
             usuarios_flujo[numero] = "interes_otro_nombre"
             enviar_mensaje(numero, "Indica el interés adicional:")
@@ -563,6 +600,7 @@ def manejar_respuesta(numero, texto):
 
     elif paso == "interes_otro_nombre":
         respuestas[numero]["interes_otro"] = texto
+        guardar_respuesta(numero, "interes_otro_nombre", texto)  # <--- GUARDA
         usuarios_flujo[numero] = 17
         enviar_mensaje(numero, "✅ Gracias, completaste todas las preguntas.")
         consolidar_perfil(numero)
@@ -843,7 +881,21 @@ async def whatsapp_webhook(request: Request):
 
     return {"status": "ok"}
 
-def guardar_respuesta(numero: str, paso: int, texto: str):
+import psycopg2
+import json
+from typing import Union, Any
+
+def guardar_respuesta(numero: str, paso: Union[int, str], texto: Any):
+    """
+    Guarda la respuesta del usuario para un paso, aceptando cualquier tipo de valor.
+    Serializa listas y diccionarios como JSON.
+    """
+    # Serializa el valor si es lista o dict
+    if isinstance(texto, (list, dict)):
+        valor_guardar = json.dumps(texto, ensure_ascii=False)
+    else:
+        valor_guardar = str(texto)
+    print(f"GUARDADO: {numero} | Paso: {paso} | Valor: {valor_guardar}")
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
@@ -851,7 +903,7 @@ def guardar_respuesta(numero: str, paso: int, texto: str):
             INSERT INTO perfil_creador_flujo_temp (telefono, paso, respuesta)
             VALUES (%s, %s, %s)
             ON CONFLICT (telefono, paso) DO UPDATE SET respuesta = EXCLUDED.respuesta
-        """, (numero, paso, texto))
+        """, (numero, str(paso), valor_guardar))
         conn.commit()
     except Exception as e:
         if 'conn' in locals():
