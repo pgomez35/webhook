@@ -954,10 +954,10 @@ def generar_mejoras_sugeridas_total(creador_id: int) -> str:
         elif puntaje_general >= 3.5:
             sugerencias["⚠️ Oportunidades y riesgos"].append("🌟 Oportunidad: Perfil sólido, puedes negociar mejores condiciones o campañas.")
 
-        idioma = datos.get("idioma", "").lower()
+        idioma = str(datos.get("idioma") or "").lower()
         if idioma and idioma not in ["español", "espanol"]:
             sugerencias["⚠️ Oportunidades y riesgos"].append("🌍 Oportunidad: Puedes atraer público bilingüe si produces contenido en otros idiomas.")
-        actividad = datos.get("actividad_actual", "").lower()
+        actividad = str(datos.get("actividad_actual") or "").lower()
         if actividad and "estudiante" in actividad:
             sugerencias["⚠️ Oportunidades y riesgos"].append("🌟 Oportunidad: Aprovecha tu etapa de formación para conectar con público joven y educativo.")
 

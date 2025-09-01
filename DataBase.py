@@ -1112,7 +1112,9 @@ def obtener_perfil_creador(creador_id):
                 metadata_videos,
                 actividad_actual,
                 puntaje_general_categoria,
-                idioma
+                idioma,
+                observaciones,
+                mejoras_sugeridas
             FROM perfil_creador
             WHERE creador_id = %s;
         """, (creador_id,))
@@ -1211,7 +1213,7 @@ def obtener_puntajes_perfil_creador(creador_id):
         conn = psycopg2.connect(INTERNAL_DATABASE_URL)
         cur = conn.cursor()
         cur.execute("""
-           SELECT puntaje_general, puntaje_estadistica, puntaje_manual, puntaje_habitos
+           SELECT puntaje_general, puntaje_estadistica, puntaje_manual, puntaje_habitos,puntaje_general_categoria, puntaje_estadistica_categoria, puntaje_manual_categoria, puntaje_habitos_categoria,puntaje_total,puntaje_total_categoria
         FROM perfil_creador
         WHERE creador_id = %s
         LIMIT 1
