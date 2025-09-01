@@ -5,6 +5,8 @@ from dotenv import load_dotenv
 from enviar_msg_wp import enviar_plantilla_generica, enviar_mensaje_texto_simple
 from main import guardar_mensaje
 from utils import *
+from rapidfuzz import process, fuzz
+import unicodedata
 import traceback
 
 import psycopg2
@@ -26,25 +28,22 @@ respuestas = {}        # { numero: {campo: valor} }
 # ============================
 # OPCIONES
 # ============================
-opciones_plataformas = {
-    "1": "YouTube", "2": "Instagram", "3": "Twitch", "4": "Facebook",
-    "5": "Twitter/X", "6": "LinkedIn", "7": "TikTok", "8": "Otro"
-}
-
-tiposContenido_opciones  = {
-    "1": "bailes", "2": "charlas", "3": "gaming", "4": "tutoriales",
-    "5": "entretenimiento general", "6": "humor", "7": "música en vivo",
-    "8": "reacción a videos", "9": "religión y espiritualidad",
-    "10": "temas sociales", "11": "estudios / tareas", "12": "ventas en vivo",
-    "13": "Otro"
+tiposContenido_opciones = {
+    "1": ["Entretenimiento", "música", "bailes", "humor"],
+    "2": ["Gaming"],
+    "3": ["Educación", "tutoriales", "charlas", "tareas"],
+    "4": ["Sociedad", "temas sociales", "religión"],
+    "5": ["Negocios", "ventas en vivo", "otros"],
+    "6": ["Otros"]
 }
 
 interesesOpciones_opciones = {
-    "1": "Deportes", "2": "Moda", "3": "Maquillaje", "4": "Cocina", "5": "Fitness",
-    "6": "Música", "7": "Bailes", "8": "Gaming", "9": "Lectura", "10": "Salud mental",
-    "11": "Comedia", "12": "Religión", "13": "Política", "14": "Emprendimiento",
-    "15": "Viajes", "16": "Idiomas", "17": "Educación", "18": "Noticias",
-    "19": "Relaciones", "20": "Arte", "21": "Tecnología", "22": "Fotografía", "23": "Otro"
+    "1": ["Estilo vida", "deporte", "moda", "cocina"],
+    "2": ["Arte", "cultura", "música", "baile"],
+    "3": ["Sociedad", "comedia", "religión", "política"],
+    "4": ["Educación", "idiomas", "emprender"],
+    "5": ["Tecnología", "gaming"],
+    "6": ["Otros"]
 }
 
 mapa_paises = {
@@ -178,67 +177,37 @@ preguntas = {
         "1️⃣ Trabajo principal\n"
         "2️⃣ Trabajo secundario\n"
         "3️⃣ No estoy seguro",
-    11: "📌 ¿Cuántos lives haces por semana?",
+    11: "📌 ¿Cuántos lives puedes hacer por semana?",
     12: "📌 ¿Cuántas horas a la semana tienes disponibles para crear contenido?",
 
     # 🔹 Experiencia en plataformas
-    13: "📌 ¿En qué plataformas tienes experiencia como creador de contenido?\n"
-        "Responde con los números separados por coma.\n\n"
-        "1️⃣ YouTube\n"
-        "2️⃣ Instagram\n"
-        "3️⃣ Twitch\n"
-        "4️⃣ Facebook\n"
-        "5️⃣ Twitter/X\n"
-        "6️⃣ LinkedIn\n"
-        "7️⃣ TikTok\n"
-        "8️⃣ Otro",
-    14: "📌 Indica tu experiencia en AÑOS para cada plataforma seleccionada.\n"
-        "Responde en el formato: Plataforma=Años.\n\n"
-        "Ejemplo: YouTube=2, TikTok=1, Otro=Kick=0.5",
+    13: "📌 ¿Cuántos meses de experiencia tienes en TikTok?",
+    14: "📌 ¿Cuántos meses de experiencia tienes en YouTube?",
+    15: "📌 ¿Cuántos meses de experiencia tienes en Instagram?",
+    16: "📌 ¿Cuántos meses de experiencia tienes en Facebook?",
+    17: "📌 ¿Cuántos meses de experiencia tienes en Twitter/X?",
+    18: "📌 ¿Cuántos meses de experiencia tienes en LinkedIn?",
 
-    # 🔹 Tipo de contenido
-    15: "📌 ¿Qué tipo de contenido sueles crear?\n"
-        "Responde con los números correspondientes (puedes elegir varios separados por coma).\n\n"
-        "1️⃣ Bailes\n"
-        "2️⃣ Charlas\n"
-        "3️⃣ Gaming\n"
-        "4️⃣ Tutoriales\n"
-        "5️⃣ Entretenimiento general\n"
-        "6️⃣ Humor\n"
-        "7️⃣ Música en vivo\n"
-        "8️⃣ Reacción a videos\n"
-        "9️⃣ Religión y espiritualidad\n"
-        "🔟 Temas sociales\n"
-        "1️⃣1️⃣ Estudios / tareas\n"
-        "1️⃣2️⃣ Ventas en vivo\n"
-        "1️⃣3️⃣ Otro",
+    19: "📌 ¿Qué tipo de contenido creas?\n"
+        "Responde con los números, separados por coma.\n\n"
+        "1️⃣ Entretenimiento (ocio, diversión, música)\n"
+        "2️⃣ Gaming\n"
+        "3️⃣ Educación (tutoriales, tareas, charlas)\n"
+        "4️⃣ Sociedad (temas sociales, religión)\n"
+        "5️⃣ Negocios/Otros (ventas en vivo, otros)\n"
+        "6️⃣ Otros",
 
     # 🔹 Intereses
-    16: "📌 ¿Cuáles son tus intereses principales?\n"
-        "Responde con los números separados por coma.\n\n"
-        "1️⃣ Deportes\n"
-        "2️⃣ Moda\n"
-        "3️⃣ Maquillaje\n"
-        "4️⃣ Cocina\n"
-        "5️⃣ Fitness\n"
-        "6️⃣ Música\n"
-        "7️⃣ Bailes\n"
-        "8️⃣ Gaming\n"
-        "9️⃣ Lectura\n"
-        "1️⃣0️⃣ Salud mental\n"
-        "1️⃣1️⃣ Comedia\n"
-        "1️⃣2️⃣ Religión\n"
-        "1️⃣3️⃣ Política\n"
-        "1️⃣4️⃣ Emprendimiento\n"
-        "1️⃣5️⃣ Viajes\n"
-        "1️⃣6️⃣ Idiomas\n"
-        "1️⃣7️⃣ Educación\n"
-        "1️⃣8️⃣ Noticias\n"
-        "1️⃣9️⃣ Relaciones\n"
-        "2️⃣0️⃣ Arte\n"
-        "2️⃣1️⃣ Tecnología\n"
-        "2️⃣2️⃣ Fotografía\n"
-        "2️⃣3️⃣ Otro"
+    20: (
+        "📌 ¿Cuáles son tus intereses?\n"
+        "Responde con los números, separados por coma.\n\n"
+        "1️⃣ Estilo vida (deporte, moda, cocina)\n"
+        "2️⃣ Arte & Cultura (música, baile, arte)\n"
+        "3️⃣ Sociedad (comedia, religión, política)\n"
+        "4️⃣ Educación (idiomas, emprendimiento)\n"
+        "5️⃣ Tecno/Gaming\n"
+        "6️⃣ Otros"
+    )
 }
 
 # ============================
@@ -297,9 +266,6 @@ def obtener_rol_usuario(numero):
     else:
         return "aspirante"
 
-
-
-
 def enviar_menu_principal(numero):
     rol = obtener_rol_usuario(numero)
 
@@ -344,10 +310,38 @@ def enviar_menu_principal(numero):
         )
     enviar_mensaje(numero, mensaje)
 
+def normalizar_texto(texto):
+    texto = texto.strip().lower()
+    texto = ''.join(c for c in unicodedata.normalize('NFD', texto)
+                    if unicodedata.category(c) != 'Mn')
+    return texto
+
+# Une todas las ciudades en una sola lista para validación
+CIUDADES_LATAM = []
+for ciudades in ciudades_por_pais.values():
+    CIUDADES_LATAM.extend(ciudades)
+
+def validar_aceptar_ciudad(usuario_ciudad, ciudades=CIUDADES_LATAM, score_minimo=85):
+    usuario_norm = normalizar_texto(usuario_ciudad)
+    ciudades_norm = [normalizar_texto(c) for c in ciudades]
+    matches = process.extract(usuario_norm, ciudades_norm, scorer=fuzz.ratio, limit=1)
+    if matches and matches[0][1] >= score_minimo:
+        idx = ciudades_norm.index(matches[0][0])
+        ciudad_oficial = ciudades[idx]
+        return {"ciudad": ciudad_oficial, "corregida": True}
+    else:
+        return {"ciudad": usuario_ciudad.strip(), "corregida": False}
+
 # ============================
 # MANEJO RESPUESTAS
 # ============================
 def manejar_respuesta(numero, texto):
+    # --- Volver al menú principal ---
+    if texto.strip().lower() in ["menu", "volver", "inicio","brillar"]:
+        if numero in usuarios_flujo:
+            del usuarios_flujo[numero]
+        enviar_menu_principal(numero)
+        return
     paso = usuarios_flujo.get(numero)
 
     # --- MENÚ PRINCIPAL SEGÚN ROL ---
@@ -450,165 +444,15 @@ def manejar_respuesta(numero, texto):
                 enviar_menu_principal(numero)
                 return
 
-    # --- FLUJOS ESPECIALES ---
+    # --- VALIDACIONES ---
 
-    # # Selección ciudad principal
-    # if paso == 5:
-    #     ciudad_seleccionada = texto.strip()
-    #     ciudades_mostradas = respuestas.setdefault(numero, {}).get("ciudades_mostradas")
-    #
-    #     if ciudades_mostradas:
-    #         if ciudad_seleccionada.isdigit():
-    #             idx = int(ciudad_seleccionada) - 1
-    #             if 0 <= idx < len(ciudades_mostradas):
-    #                 ciudad = ciudades_mostradas[idx]
-    #                 respuestas[numero]["ciudad"] = ciudad
-    #                 guardar_respuesta(numero, 5, ciudad)
-    #                 usuarios_flujo[numero] += 1
-    #                 enviar_pregunta(numero, usuarios_flujo[numero])
-    #                 return
-    #             elif idx == len(ciudades_mostradas):
-    #                 usuarios_flujo[numero] = "ciudad_otro"
-    #                 enviar_mensaje(numero, "Por favor, escribe tu ciudad principal:")
-    #                 return
-    #         enviar_mensaje(numero, "Por favor elige una opción válida (ejemplo: 1, 2 ... o el número de 'Otra').")
-    #         return
-    #
-    #     # Si no había ciudades guardadas
-    #     pais_num = respuestas.setdefault(numero, {}).get(4)
-    #     clave_pais = mapa_paises.get(str(pais_num))
-    #     ciudades = ciudades_por_pais.get(clave_pais)
-    #     if ciudades:
-    #         opciones = "\n".join([f"{i+1}. {c}" for i, c in enumerate(ciudades)])
-    #         opciones += f"\n{len(ciudades)+1}. Otra (especifica)"
-    #         respuestas[numero]["ciudades_mostradas"] = ciudades
-    #         enviar_mensaje(numero, f"📌 Elige tu ciudad principal:\n{opciones}")
-    #     else:
-    #         usuarios_flujo[numero] = "ciudad_otro"
-    #         enviar_mensaje(numero, "Por favor, escribe tu ciudad principal:")
-    #     return
-    #
-    # elif paso == "ciudad_otro":
-    #     respuestas[numero]["ciudad"] = texto.strip()
-    #     guardar_respuesta(numero, 5, texto.strip())
-    #     usuarios_flujo[numero] = 6
-    #     enviar_pregunta(numero, 6)
-    #     return
-
-    # # Plataformas (selección múltiple)
-    # if paso == 13:
-    #     seleccion = validar_opciones_multiples(texto, opciones_plataformas)
-    #     if not seleccion:
-    #         enviar_mensaje(numero, "❌ Respuesta inválida. Ejemplo válido: 1,3,5")
-    #         return
-    #     respuestas.setdefault(numero, {})["plataformas"] = seleccion
-    #     if "8" in seleccion:
-    #         usuarios_flujo[numero] = "plataforma_otro_nombre"
-    #         enviar_mensaje(numero, "Indica el nombre de la otra plataforma:")
-    #     else:
-    #         usuarios_flujo[numero] = 14
-    #         enviar_pregunta(numero, 14)
-    #     return
-    #
-    # elif paso == "plataforma_otro_nombre":
-    #     respuestas[numero]["plataforma_otro"] = texto
-    #     usuarios_flujo[numero] = "plataforma_otro_experiencia"
-    #     enviar_mensaje(numero, f"¿Cuántos años de experiencia tienes en {texto}?")
-    #     return
-    #
-    # elif paso == "plataforma_otro_experiencia":
-    #     if not texto.isdigit():
-    #         enviar_mensaje(numero, "Por favor ingresa solo el número de años (ejemplo: 2)")
-    #         return
-    #     respuestas[numero]["plataforma_otro_experiencia"] = int(texto)
-    #     usuarios_flujo[numero] = 14
-    #     enviar_pregunta(numero, 14)
-    #     return
-
-    # Cuando selecciona plataformas (paso 13)
-    if paso == 13:
-        seleccion = validar_opciones_multiples(texto, opciones_plataformas)
-        if not seleccion:
-            enviar_mensaje(numero, "❌ Respuesta inválida. Ejemplo válido: 1,3,5")
+    # 1: Nombre completo
+    if paso == 1:
+        if len(texto.strip()) < 3:
+            enviar_mensaje(numero, "⚠️ Por favor, ingresa tu nombre completo (mínimo 3 caracteres).")
             return
-        respuestas.setdefault(numero, {})["plataformas"] = seleccion
-        usuarios_flujo[numero] = ("experiencia_plataforma", 0)  # 0: primer índice de plataforma
-        plataforma_actual = opciones_plataformas[int(seleccion[0]) - 1]
-        enviar_mensaje(numero, f"¿Cuántos años de experiencia tienes en {plataforma_actual}?")
-        return
 
-    # Cuando está preguntando experiencia por plataforma
-    if isinstance(paso, tuple) and paso[0] == "experiencia_plataforma":
-        idx = paso[1]
-        seleccionadas = respuestas[numero]["plataformas"]
-        plataforma_actual = opciones_plataformas[int(seleccionadas[idx]) - 1]
-        # Validar y guardar la respuesta
-        try:
-            años = float(texto.replace(",", "."))
-        except Exception:
-            enviar_mensaje(numero, "Por favor ingresa solo el número de años (ejemplo: 2 o 0.5)")
-            return
-        if "experiencia_por_plataforma" not in respuestas[numero]:
-            respuestas[numero]["experiencia_por_plataforma"] = {}
-        respuestas[numero]["experiencia_por_plataforma"][plataforma_actual] = años
-        if idx + 1 < len(seleccionadas):
-            usuarios_flujo[numero] = ("experiencia_plataforma", idx + 1)
-            plataforma_actual = opciones_plataformas[int(seleccionadas[idx + 1]) - 1]
-            enviar_mensaje(numero, f"¿Cuántos años de experiencia tienes en {plataforma_actual}?")
-        else:
-            usuarios_flujo[numero] = 14
-            enviar_pregunta(numero, 14)
-        return
-
-    # Tipos de contenido
-    if paso == 15:
-        seleccion = validar_opciones_multiples(texto, tiposContenido_opciones)
-        if not seleccion:
-            enviar_mensaje(numero, "❌ Respuesta inválida. Ejemplo válido: 1,4,7")
-            return
-        respuestas.setdefault(numero, {})["tipos_contenido"] = seleccion
-        guardar_respuesta(numero, 15, seleccion)  # <--- GUARDA LA RESPUESTA
-        if "13" in seleccion:
-            usuarios_flujo[numero] = "contenido_otro_nombre"
-            enviar_mensaje(numero, "Indica el tipo de contenido adicional:")
-        else:
-            usuarios_flujo[numero] = 16
-            enviar_pregunta(numero, 16)
-        return
-
-    elif paso == "contenido_otro_nombre":
-        respuestas[numero]["contenido_otro"] = texto
-        guardar_respuesta(numero, "contenido_otro_nombre", texto)  # <--- GUARDA
-        usuarios_flujo[numero] = 16
-        enviar_pregunta(numero, 16)
-        return
-
-    # Intereses
-    if paso == 16:
-        seleccion = validar_opciones_multiples(texto, interesesOpciones_opciones)
-        if not seleccion:
-            enviar_mensaje(numero, "❌ Respuesta inválida. Ejemplo válido: 2,8,12")
-            return
-        respuestas.setdefault(numero, {})["intereses"] = seleccion
-        guardar_respuesta(numero, 16, seleccion)  # <--- GUARDA LA RESPUESTA
-        if "23" in seleccion:
-            usuarios_flujo[numero] = "interes_otro_nombre"
-            enviar_mensaje(numero, "Indica el interés adicional:")
-        else:
-            usuarios_flujo[numero] = 17
-            enviar_mensaje(numero, "✅ Gracias, completaste todas las preguntas.")
-            consolidar_perfil(numero)
-        return
-
-    elif paso == "interes_otro_nombre":
-        respuestas[numero]["interes_otro"] = texto
-        guardar_respuesta(numero, "interes_otro_nombre", texto)  # <--- GUARDA
-        usuarios_flujo[numero] = 17
-        enviar_mensaje(numero, "✅ Gracias, completaste todas las preguntas.")
-        consolidar_perfil(numero)
-        return
-
-    # Validación de edad
+    # 2: Edad
     if paso == 2:
         try:
             edad = int(texto)
@@ -616,6 +460,102 @@ def manejar_respuesta(numero, texto):
                 raise ValueError
         except Exception:
             enviar_mensaje(numero, "⚠️ Por favor, ingresa una edad válida (número entre 1 y 119).")
+            return
+
+    # 3: Género
+    if paso == 3:
+        if texto not in ["1", "2", "3", "4"]:
+            enviar_mensaje(numero, "⚠️ Ingresa solo el número correspondiente (1, 2, 3 o 4).")
+            return
+
+    # 4: País
+    if paso == 4:
+        opciones_paises = list(mapa_paises.keys()) + ["20"]
+        if texto not in opciones_paises and texto.lower() not in [p.lower() for p in mapa_paises.values()]:
+            enviar_mensaje(numero, "⚠️ Ingresa el número de tu país o escríbelo si no está en la lista.")
+            return
+
+    # 5: Ciudad principal (VALIDACIÓN ROBUSTA)
+    if paso == 5:
+        resultado = validar_aceptar_ciudad(texto)
+        if resultado["corregida"]:
+            texto = resultado["ciudad"]
+            enviar_mensaje(numero, f"✅ Ciudad reconocida y corregida: {texto}")
+        else:
+            enviar_mensaje(numero, f"✅ Ciudad aceptada como la escribiste: {texto}")
+
+    # 6: Nivel de estudios
+    if paso == 6:
+        if texto not in ["1", "2", "3", "4", "5", "6", "7"]:
+            enviar_mensaje(numero, "⚠️ Ingresa solo el número correspondiente (1 a 7).")
+            return
+
+    # 7: Idioma principal
+    if paso == 7:
+        if texto not in ["1", "2", "3", "4"]:
+            enviar_mensaje(numero, "⚠️ Ingresa solo el número correspondiente (1 a 4).")
+            return
+
+    # 8: Actividad actual
+    if paso == 8:
+        if texto not in ["1", "2", "3", "4", "5"]:
+            enviar_mensaje(numero, "⚠️ Ingresa solo el número correspondiente (1 a 5).")
+            return
+
+    # 9: Horario preferido para lives
+    if paso == 9:
+        if texto not in ["1", "2", "3", "4", "5", "6"]:
+            enviar_mensaje(numero, "⚠️ Ingresa solo el número correspondiente (1 a 6).")
+            return
+
+    # 10: Intención principal en la plataforma
+    if paso == 10:
+        if texto not in ["1", "2", "3"]:
+            enviar_mensaje(numero, "⚠️ Ingresa solo el número correspondiente (1 a 3).")
+            return
+
+    # 11: ¿Cuántos lives por semana?
+    if paso == 11:
+        try:
+            cantidad = int(texto)
+            if not (0 < cantidad < 100):
+                raise ValueError
+        except Exception:
+            enviar_mensaje(numero, "⚠️ Ingresa un número válido de lives por semana (1 a 99).")
+            return
+
+    # 12: ¿Cuántas horas a la semana para crear contenido?
+    if paso == 12:
+        try:
+            horas = int(texto)
+            if not (0 < horas < 168):
+                raise ValueError
+        except Exception:
+            enviar_mensaje(numero, "⚠️ Ingresa un número válido de horas por semana (1 a 168).")
+            return
+
+    # 13-18: Meses de experiencia en plataformas
+    if paso in range(13, 19):
+        try:
+            meses = int(texto)
+            if not (0 <= meses <= 999):
+                raise ValueError
+        except Exception:
+            enviar_mensaje(numero, "⚠️ Ingresa la cantidad de meses de experiencia (de 0 a 999).")
+            return
+
+    # 19: Tipo de contenido (múltiple)
+    if paso == 19:
+        seleccion = validar_opciones_multiples(texto, tiposContenido_opciones.keys())
+        if not seleccion:
+            enviar_mensaje(numero, "⚠️ Respuesta inválida. Ejemplo válido: 1,2,3")
+            return
+
+    # 20: Intereses principales (múltiple)
+    if paso == 20:
+        seleccion = validar_opciones_multiples(texto, interesesOpciones_opciones.keys())
+        if not seleccion:
+            enviar_mensaje(numero, "⚠️ Respuesta inválida. Ejemplo válido: 1,3,5")
             return
 
     # Guardar respuesta y avanzar
@@ -630,192 +570,6 @@ def manejar_respuesta(numero, texto):
         consolidar_perfil(numero)
         enviar_menu_principal(numero)  # <-- vuelve al menú según rol
 
-# ============================
-# MANEJO RESPUESTAS
-# ============================
-# def manejar_respuesta(numero, texto):
-#     paso = usuarios_flujo.get(numero)
-#
-#     # Si el usuario no tiene flujo asignado, muestra opciones principales
-#     if paso is None:
-#         if texto in ["1", "actualizar", "actualizar información", "perfil"]:
-#             usuarios_flujo[numero] = 1  # Empieza el flujo de preguntas
-#             enviar_pregunta(numero, 1)
-#             return
-#
-#         elif texto in ["2", "diagnóstico", "diagnostico"]:
-#             usuarios_flujo[numero] = "diagnostico"
-#             enviar_diagnostico(numero)  # función que analiza y envía el diagnóstico
-#             return
-#
-#         elif texto in ["3", "requisitos"]:
-#             usuarios_flujo[numero] = "requisitos"
-#             enviar_requisitos(numero)  # función que envía información de requisitos
-#             return
-#
-#         elif texto in ["4", "chat", "asesor"]:
-#             usuarios_flujo[numero] = "chat_libre"
-#             enviar_mensaje(numero, "Estás en chat libre. Escribe tu consulta y un asesor te responderá pronto.")
-#             return
-#
-#         else:
-#             enviar_mensaje(numero, """
-#     👋 ¡Hola! ¿Qué deseas hacer hoy?
-#     1️⃣ Actualizar información de mi perfil
-#     2️⃣ Diagnóstico y mejoras de mi perfil
-#     3️⃣ Ver requisitos para ingresar a la Agencia
-#     4️⃣ Chat libre con un asesor
-#     Responde con el número de la opción.
-#     """)
-#             return
-#
-#     # --- PASO ESPECIAL: Selección ciudad principal según país ---
-#     if paso == 5:
-#         # Si ya mostramos opciones, validamos la respuesta a la ciudad
-#         ciudad_seleccionada = texto.strip()
-#         ciudades_mostradas = respuestas.setdefault(numero, {}).get("ciudades_mostradas")
-#
-#         if ciudades_mostradas:
-#             # El usuario debe responder con número válido o "otra"
-#             if ciudad_seleccionada.isdigit():
-#                 idx = int(ciudad_seleccionada) - 1
-#                 if idx >= 0 and idx < len(ciudades_mostradas):
-#                     ciudad = ciudades_mostradas[idx]
-#                     respuestas[numero]["ciudad"] = ciudad
-#                     guardar_respuesta(numero, 5, ciudad)
-#                     usuarios_flujo[numero] += 1
-#                     enviar_pregunta(numero, usuarios_flujo[numero])
-#                     return
-#                 elif idx == len(ciudades_mostradas):
-#                     # Eligió "Otra"
-#                     usuarios_flujo[numero] = "ciudad_otro"
-#                     enviar_mensaje(numero, "Por favor, escribe tu ciudad principal:")
-#                     return
-#             # Si no válido, pídelo de nuevo
-#             enviar_mensaje(numero, "Por favor elige una opción válida (ejemplo: 1, 2 ... o el número de 'Otra').")
-#             return
-#
-#         # Si no hay ciudades guardadas, es la primera vez que llega a este paso
-#         pais_num = respuestas.setdefault(numero, {}).get(4)
-#         clave_pais = mapa_paises.get(str(pais_num))
-#         ciudades = ciudades_por_pais.get(clave_pais)
-#         if ciudades:
-#             # Mostrar opciones y guardar para validarlas luego
-#             opciones = "\n".join([f"{i+1}. {ciudad}" for i, ciudad in enumerate(ciudades)])
-#             opciones += f"\n{len(ciudades)+1}. Otra (especifica)"
-#             respuestas[numero]["ciudades_mostradas"] = ciudades
-#             enviar_mensaje(numero, f"📌 Elige tu ciudad principal:\n{opciones}")
-#             return
-#         else:
-#             # Si el país no está en la lista, pide ciudad en texto libre
-#             usuarios_flujo[numero] = "ciudad_otro"
-#             enviar_mensaje(numero, "Por favor, escribe tu ciudad principal:")
-#             return
-#
-#     elif paso == "ciudad_otro":
-#         # Guarda la ciudad escrita por el usuario
-#         respuestas[numero]["ciudad"] = texto.strip()
-#         guardar_respuesta(numero, 5, texto.strip())
-#         usuarios_flujo[numero] = 6
-#         enviar_pregunta(numero, 6)
-#         return
-#
-#     # Plataformas (selección múltiple)
-#     if paso == 13:
-#         seleccion = validar_opciones_multiples(texto, opciones_plataformas)
-#         if not seleccion:
-#             enviar_mensaje(numero, "❌ Respuesta inválida. Ejemplo válido: 1,3,5")
-#             return
-#         respuestas.setdefault(numero, {})["plataformas"] = seleccion
-#         if "8" in seleccion:  # "Otro"
-#             usuarios_flujo[numero] = "plataforma_otro_nombre"
-#             enviar_mensaje(numero, "Indica el nombre de la otra plataforma:")
-#         else:
-#             usuarios_flujo[numero] = 14
-#             enviar_pregunta(numero, 14)
-#         return
-#
-#     elif paso == "plataforma_otro_nombre":
-#         respuestas[numero]["plataforma_otro"] = texto
-#         usuarios_flujo[numero] = "plataforma_otro_experiencia"
-#         enviar_mensaje(numero, f"¿Cuántos años de experiencia tienes en {texto}?")
-#         return
-#
-#     elif paso == "plataforma_otro_experiencia":
-#         if not texto.isdigit():
-#             enviar_mensaje(numero, "Por favor ingresa solo el número de años (ejemplo: 2)")
-#             return
-#         respuestas[numero]["plataforma_otro_experiencia"] = int(texto)
-#         usuarios_flujo[numero] = 14
-#         enviar_pregunta(numero, 14)
-#         return
-#
-#     # Tipo de contenido (selección múltiple)
-#     if paso == 15:
-#         seleccion = validar_opciones_multiples(texto, tiposContenido_opciones)
-#         if not seleccion:
-#             enviar_mensaje(numero, "❌ Respuesta inválida. Ejemplo válido: 1,4,7")
-#             return
-#         respuestas.setdefault(numero, {})["tipos_contenido"] = seleccion
-#         if "13" in seleccion:  # "Otro"
-#             usuarios_flujo[numero] = "contenido_otro_nombre"
-#             enviar_mensaje(numero, "Indica el tipo de contenido adicional:")
-#         else:
-#             usuarios_flujo[numero] = 16
-#             enviar_pregunta(numero, 16)
-#         return
-#
-#     elif paso == "contenido_otro_nombre":
-#         respuestas[numero]["contenido_otro"] = texto
-#         usuarios_flujo[numero] = 16
-#         enviar_pregunta(numero, 16)
-#         return
-#
-#     # Intereses (selección múltiple)
-#     if paso == 16:
-#         seleccion = validar_opciones_multiples(texto, interesesOpciones_opciones)
-#         if not seleccion:
-#             enviar_mensaje(numero, "❌ Respuesta inválida. Ejemplo válido: 2,8,12")
-#             return
-#         respuestas.setdefault(numero, {})["intereses"] = seleccion
-#         if "23" in seleccion:  # "Otro"
-#             usuarios_flujo[numero] = "interes_otro_nombre"
-#             enviar_mensaje(numero, "Indica el interés adicional:")
-#         else:
-#             usuarios_flujo[numero] = 17
-#             enviar_mensaje(numero, "✅ Gracias, completaste todas las preguntas.")
-#             consolidar_perfil(numero)
-#         return
-#
-#     elif paso == "interes_otro_nombre":
-#         respuestas[numero]["interes_otro"] = texto
-#         usuarios_flujo[numero] = 17
-#         enviar_mensaje(numero, "✅ Gracias, completaste todas las preguntas.")
-#         consolidar_perfil(numero)
-#         return
-#
-#     # ----- PASOS GENÉRICOS -----
-#     # Ejemplo: validación de edad
-#     if paso == 2:
-#         try:
-#             edad = int(texto)
-#             if not (0 < edad < 120):
-#                 raise ValueError
-#         except Exception:
-#             enviar_mensaje(numero, "⚠️ Por favor, ingresa una edad válida (número entre 1 y 119).")
-#             return
-#
-#     # Guardar la respuesta
-#     guardar_respuesta(numero, paso, texto)
-#
-#     # Avanzar al siguiente paso (si hay más)
-#     if paso < len(preguntas):
-#         usuarios_flujo[numero] += 1
-#         enviar_pregunta(numero, usuarios_flujo[numero])
-#     else:
-#         del usuarios_flujo[numero]
-#         enviar_mensaje(numero, "✅ Gracias, completaste todas las preguntas.")
-#         consolidar_perfil(numero)
 
 @router.post("/enviar_solicitud_informacion")
 async def api_enviar_solicitar_informacion(data: dict):
@@ -888,17 +642,8 @@ import psycopg2
 import json
 from typing import Union, Any
 
-def guardar_respuesta(numero: str, paso: Union[int, str], texto: Any):
-    """
-    Guarda la respuesta del usuario para un paso, aceptando cualquier tipo de valor.
-    Serializa listas y diccionarios como JSON.
-    """
-    # Serializa el valor si es lista o dict
-    if isinstance(texto, (list, dict)):
-        valor_guardar = json.dumps(texto, ensure_ascii=False)
-    else:
-        valor_guardar = str(texto)
-    print(f"GUARDADO: {numero} | Paso: {paso} | Valor: {valor_guardar}")
+
+def guardar_respuesta(numero: str, paso: int, texto: str):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
@@ -906,7 +651,7 @@ def guardar_respuesta(numero: str, paso: Union[int, str], texto: Any):
             INSERT INTO perfil_creador_flujo_temp (telefono, paso, respuesta)
             VALUES (%s, %s, %s)
             ON CONFLICT (telefono, paso) DO UPDATE SET respuesta = EXCLUDED.respuesta
-        """, (numero, str(paso), valor_guardar))
+        """, (numero, paso, texto))
         conn.commit()
     except Exception as e:
         if 'conn' in locals():
@@ -919,6 +664,38 @@ def guardar_respuesta(numero: str, paso: Union[int, str], texto: Any):
         try:
             conn.close()
         except: pass
+
+# def guardar_respuesta(numero: str, paso: Union[int, str], texto: Any):
+#     """
+#     Guarda la respuesta del usuario para un paso, aceptando cualquier tipo de valor.
+#     Serializa listas y diccionarios como JSON.
+#     """
+#     # Serializa el valor si es lista o dict
+#     if isinstance(texto, (list, dict)):
+#         valor_guardar = json.dumps(texto, ensure_ascii=False)
+#     else:
+#         valor_guardar = str(texto)
+#     print(f"GUARDADO: {numero} | Paso: {paso} | Valor: {valor_guardar}")
+#     try:
+#         conn = psycopg2.connect(DATABASE_URL)
+#         cur = conn.cursor()
+#         cur.execute("""
+#             INSERT INTO perfil_creador_flujo_temp (telefono, paso, respuesta)
+#             VALUES (%s, %s, %s)
+#             ON CONFLICT (telefono, paso) DO UPDATE SET respuesta = EXCLUDED.respuesta
+#         """, (numero, str(paso), valor_guardar))
+#         conn.commit()
+#     except Exception as e:
+#         if 'conn' in locals():
+#             conn.rollback()
+#         print("❌ Error guardando respuesta:", e)
+#     finally:
+#         try:
+#             cur.close()
+#         except: pass
+#         try:
+#             conn.close()
+#         except: pass
 
 def consolidar_perfil(numero: str):
     try:
