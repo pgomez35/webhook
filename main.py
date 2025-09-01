@@ -1737,25 +1737,32 @@ def actualizar_resumen(creador_id: int, datos: ResumenEvaluacionInput):
             mejoras = "-"
 
         # Combinar observaciones de manera robusta
-        observaciones = (
+        observaciones_totales = (
             f"📊 Evaluación Global:\n"
             f"Puntaje total: {score['puntaje_total']}\n"
             f"Categoría: {score['puntaje_total_categoria']}\n\n"
             f"🩺 Diagnóstico Detallado:\n{diagnostico}\n"
         )
 
-        data_dict["puntaje_total"] = score["puntaje_total"]
-        data_dict["puntaje_total_categoria"] = score["puntaje_total_categoria"]
-        data_dict["observaciones"] = observaciones
-        data_dict["mejoras_sugeridas"] = mejoras
+        data_dict["estado"] = "Evaluado"
 
         actualizar_datos_perfil_creador(creador_id, data_dict)
 
         return ResumenEvaluacionOutput(
             status="ok",
             mensaje="Evaluación datos Resumen actualizada",
+            puntaje_manual = perfil.get("puntaje_manual", 0),
+            puntaje_manual_categoria = perfil.get("puntaje_manual_categoria"),
+            puntaje_estadistica = perfil.get("puntaje_estadistica", 0),
+            puntaje_estadistica_categoria= perfil.get("puntaje_estadistica_categoria"),
+            puntaje_general = perfil.get("puntaje_general", 0),
+            puntaje_general_categoria = perfil.get("puntaje_general_categoria"),
+            puntaje_habitos = perfil.get("puntaje_habitos", 0),
+            puntaje_habitos_categoria = perfil.get("puntaje_habitos_categoria"),
             puntaje_total=score["puntaje_total"],
-            puntaje_total_categoria=score["puntaje_total_categoria"]
+            puntaje_total_categoria=score["puntaje_total_categoria"],
+            observaciones = observaciones_totales,
+            mejoras_sugeridas = mejoras,
         )
 
     except Exception as e:
@@ -1802,3 +1809,8 @@ def actualizar_biografia_ia(creador_id: int):
     except Exception as e:
         print("Error general en biografía IA:", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# if __name__ == "__main__":
+#     resultado = diagnostico_perfil_creador(27)  # id de prueba
+#     print(resultado)

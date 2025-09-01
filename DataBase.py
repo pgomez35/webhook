@@ -1062,8 +1062,58 @@ def obtener_perfil_creador(creador_id):
         conn = psycopg2.connect(INTERNAL_DATABASE_URL)
         cur = conn.cursor()
         cur.execute("""
-            SELECT *
-            FROM perfil_creador  
+            SELECT
+                id,
+                creador_id,
+                edad,
+                seguidores,
+                siguiendo,
+                videos,
+                likes,
+                duracion_emisiones,
+                dias_emisiones,
+                apariencia,
+                engagement,
+                calidad_contenido,
+                frecuencia_lives,
+                creado_en,
+                actualizado_en,
+                puntaje_total,
+                tiempo_disponible,
+                experiencia_otras_plataformas,
+                intereses,
+                tipo_contenido,
+                puntaje_estadistica,
+                puntaje_manual,
+                puntaje_general,
+                puntaje_habitos,
+                puntaje_total_categoria,
+                campo_estudios,
+                estudios,
+                horario_preferido,
+                intencion_trabajo,
+                puntaje_estadistica_categoria,
+                usuario,
+                biografia_sugerida,
+                puntaje_manual_categoria,
+                genero,
+                pais,
+                ciudad,
+                zona_horaria,
+                puntaje_habitos_categoria,
+                nombre,
+                usuario_evalua,
+                potencial_estimado,
+                experiencia_otras_plataformas_otro_nombre,
+                eval_foto,
+                eval_biografia,
+                biografia,
+                estado,
+                metadata_videos,
+                actividad_actual,
+                puntaje_general_categoria,
+                idioma
+            FROM perfil_creador
             WHERE creador_id = %s;
         """, (creador_id,))
         fila = cur.fetchone()
@@ -1083,7 +1133,17 @@ def obtener_datos_mejoras_perfil_creador(creador_id):
         conn = psycopg2.connect(INTERNAL_DATABASE_URL)
         cur = conn.cursor()
         cur.execute("""
-        SELECT seguidores, siguiendo, likes, videos, duracion_emisiones,dias_emisiones,apariencia,engagement,calidad_contenido,estudios,actividad_actual,tiempo_disponible,frecuencia_lives,experiencia_otras_plataformas,intereses,tipo_contenido,intencion_trabajo,eval_foto,biografia,eval_biografia,metadata_videos,potencial_estimado
+        SELECT  edad,genero,idioma,estudios,pais,actividad_actual,seguidores, siguiendo, likes, videos, duracion_emisiones,dias_emisiones,apariencia,engagement,calidad_contenido,estudios,actividad_actual,tiempo_disponible,frecuencia_lives,experiencia_otras_plataformas,intereses,tipo_contenido,intencion_trabajo,eval_foto,biografia,eval_biografia,biografia_sugerida,metadata_videos,potencial_estimado,
+        puntaje_total,
+        puntaje_estadistica,
+        puntaje_manual,
+        puntaje_general,
+        puntaje_habitos,
+        puntaje_total_categoria,
+        puntaje_estadistica_categoria,
+        puntaje_habitos_categoria,
+        puntaje_general_categoria,
+        puntaje_manual_categoria
         FROM perfil_creador
         WHERE creador_id = %s
         LIMIT 1
@@ -1373,6 +1433,14 @@ def eliminar_perfil_creador(perfil_id: int):
         print("❌ Error al eliminar perfil de creador:", e)
         return False
 
+
+# if __name__ == "__main__":
+#     print("Probando diagnóstico...")
+#     # resultado = diagnostico_perfil_creador(27)  # Cambia el ID según quieras
+#     creador_id=69
+#     resultado=obtener_perfil_creador(creador_id)
+#
+#     print("Resultado:", resultado)
 
 
 

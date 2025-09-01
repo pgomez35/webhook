@@ -29,20 +29,20 @@ respuestas = {}        # { numero: {campo: valor} }
 # OPCIONES
 # ============================
 tiposContenido_opciones = {
-    "1": ["Entretenimiento", "música", "bailes", "humor"],
-    "2": ["Gaming"],
-    "3": ["Educación", "tutoriales", "charlas", "tareas"],
-    "4": ["Sociedad", "temas sociales", "religión"],
+    "1": ["Entretenimiento", "música en vivo", "bailes", "humor","shows en vivo"],
+    "2": ["Gaming", "streams de videojuegos"],
+    "3": ["tutoriales", "charlas", "clases", "estudios/tareas"],
+    "4": ["temas sociales","debates","foros", "religión"],
     "5": ["Negocios", "ventas en vivo", "otros"],
     "6": ["Otros"]
 }
 
 interesesOpciones_opciones = {
-    "1": ["Estilo vida", "deporte", "moda", "cocina"],
-    "2": ["Arte", "cultura", "música", "baile"],
-    "3": ["Sociedad", "comedia", "religión", "política"],
-    "4": ["Educación", "idiomas", "emprender"],
-    "5": ["Tecnología", "gaming"],
+    "1": ["Estilo vida", "deporte", "moda", "cocina","fitness", "salud"],
+    "2": ["Arte y cultura", "música","baile","lectura", "fotografía"],
+    "3": ["religión", "política", "noticias", "relaciones", "psicología"],
+    "4": ["Educación", "idiomas", "emprendimiento"],
+    "5": ["Tecnología y gaming", "innovación"],
     "6": ["Otros"]
 }
 
@@ -184,30 +184,78 @@ preguntas = {
     13: "📌 ¿Cuántos meses de experiencia tienes en TikTok?",
     14: "📌 ¿Cuántos meses de experiencia tienes en YouTube?",
     15: "📌 ¿Cuántos meses de experiencia tienes en Instagram?",
-    16: "📌 ¿Cuántos meses de experiencia tienes en Facebook?",
-    17: "📌 ¿Cuántos meses de experiencia tienes en Twitter/X?",
-    18: "📌 ¿Cuántos meses de experiencia tienes en LinkedIn?",
 
-    19: "📌 ¿Qué tipo de contenido creas?\n"
-        "Responde con los números, separados por coma.\n\n"
-        "1️⃣ Entretenimiento (ocio, diversión, música)\n"
-        "2️⃣ Gaming\n"
-        "3️⃣ Educación (tutoriales, tareas, charlas)\n"
-        "4️⃣ Sociedad (temas sociales, religión)\n"
-        "5️⃣ Negocios/Otros (ventas en vivo, otros)\n"
-        "6️⃣ Otros",
+    # 16: "📌 ¿Qué tipo de contenido creas?\n"
+    #     "Responde con los números, separados por coma.\n\n"
+    #     "1️⃣ Entretenimiento (entretenimiento general, humor, música en vivo, bailes, reacción a videos)\n"
+    #     "2️⃣ Gaming\n"
+    #     "3️⃣ Educación (tutoriales, charlas, estudios / tareas)\n"
+    #     "4️⃣ Sociedad y espiritualidad (temas sociales, religión y espiritualidad)\n"
+    #     "5️⃣ Ventas en vivo\n"
+    #     "6️⃣ Otros",
 
-    # 🔹 Intereses
-    20: (
-        "📌 ¿Cuáles son tus intereses?\n"
-        "Responde con los números, separados por coma.\n\n"
-        "1️⃣ Estilo vida (deporte, moda, cocina)\n"
-        "2️⃣ Arte & Cultura (música, baile, arte)\n"
-        "3️⃣ Sociedad (comedia, religión, política)\n"
-        "4️⃣ Educación (idiomas, emprendimiento)\n"
-        "5️⃣ Tecno/Gaming\n"
-        "6️⃣ Otros"
-    )
+    # # 🔹 Intereses
+    # 17: (
+    #     "📌 ¿Cuáles son tus intereses?\n"
+    #     "Responde con los números, separados por coma.\n\n"
+    #     "1️⃣ Estilo vida (deportes, moda, cocina, maquillaje, fitness, viajes, relaciones)\n"
+    #     "2️⃣ Arte & Cultura (música, bailes, arte, fotografía, lectura, comedia)\n"
+    #     "3️⃣ Sociedad (salud mental, religión, política, noticias))\n"
+    #     "4️⃣ Educación (idiomas, emprendimiento, educación)\n"
+    #     "5️⃣ Tecno/Gaming(tecnología, gaming)\n"
+    #     "6️⃣ Otros"
+    # )
+
+# 🔹 Tipo de Contenido
+16: (
+    "📌 ¿Qué tipo de contenido creas?\n"
+    "Responde con los números, separados por coma.\n\n"
+    "1️⃣ Bailes\n"
+    "2️⃣ Charlas\n"
+    "3️⃣ Gaming\n"
+    "4️⃣ Tutoriales\n"
+    "5️⃣ Entretenimiento general\n"
+    "6️⃣ Humor\n"
+    "7️⃣ Música en vivo\n"
+    "8️⃣ Reacción a videos\n"
+    "9️⃣ Religión y espiritualidad\n"
+    "1️⃣0️⃣ Temas sociales\n"
+    "1️⃣1️⃣ Estudios / tareas\n"
+    "1️⃣2️⃣ Ventas en vivo\n"
+    "1️⃣3️⃣ Otro"
+),
+
+# 🔹 Intereses
+17: (
+    "📌 ¿Cuáles son tus intereses?\n"
+    "Responde con los números, separados por coma.\n\n"
+    "1️⃣ Deportes\n"
+    "2️⃣ Moda\n"
+    "3️⃣ Maquillaje\n"
+    "4️⃣ Cocina\n"
+    "5️⃣ Fitness\n"
+    "6️⃣ Música\n"
+    "7️⃣ Bailes\n"
+    "8️⃣ Gaming\n"
+    "9️⃣ Lectura\n"
+    "1️⃣0️⃣ Salud mental\n"
+    "1️⃣1️⃣ Comedia\n"
+    "1️⃣2️⃣ Religión\n"
+    "1️⃣3️⃣ Política\n"
+    "1️⃣4️⃣ Emprendimiento\n"
+    "1️⃣5️⃣ Viajes\n"
+    "1️⃣6️⃣ Idiomas\n"
+    "1️⃣7️⃣ Educación\n"
+    "1️⃣8️⃣ Noticias\n"
+    "1️⃣9️⃣ Relaciones\n"
+    "2️⃣0️⃣ Arte\n"
+    "2️⃣1️⃣ Tecnología\n"
+    "2️⃣2️⃣ Fotografía\n"
+    "2️⃣3️⃣ Otro"
+)
+
+
+
 }
 
 # ============================
@@ -534,8 +582,8 @@ def manejar_respuesta(numero, texto):
             enviar_mensaje(numero, "⚠️ Ingresa un número válido de horas por semana (1 a 168).")
             return
 
-    # 13-18: Meses de experiencia en plataformas
-    if paso in range(13, 19):
+    # 13-15: Meses de experiencia en plataformas
+    if paso in range(13, 15):
         try:
             meses = int(texto)
             if not (0 <= meses <= 999):
@@ -545,14 +593,14 @@ def manejar_respuesta(numero, texto):
             return
 
     # 19: Tipo de contenido (múltiple)
-    if paso == 19:
+    if paso == 16:
         seleccion = validar_opciones_multiples(texto, tiposContenido_opciones.keys())
         if not seleccion:
             enviar_mensaje(numero, "⚠️ Respuesta inválida. Ejemplo válido: 1,2,3")
             return
 
     # 20: Intereses principales (múltiple)
-    if paso == 20:
+    if paso == 17:
         seleccion = validar_opciones_multiples(texto, interesesOpciones_opciones.keys())
         if not seleccion:
             enviar_mensaje(numero, "⚠️ Respuesta inválida. Ejemplo válido: 1,3,5")
