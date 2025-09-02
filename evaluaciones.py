@@ -989,39 +989,39 @@ def mejoras_sugeridas_cualitativa(
             return 0
 
     RECOMENDACIONES_APARIENCIA = {
-        1: "Tu apariencia no destaca aún. Mejora tu arreglo personal y elige una vestimenta adecuada y llamativa para captar mejor la atención.",
-        2: "Imagen presentable pero algo neutra. Añade detalles a tu estilo, como accesorios o colores, para resaltar más.",
-        3: "Buena presencia, pero aún puedes potenciar tu atractivo visual con mejor peinado, ropa y cuidados en la iluminación de tus videos.",
-        4: "Muy buena apariencia y presencia en cámara. Mantén tu estilo y sigue cuidando los detalles.",
-        5: "Excelente presencia: tu imagen sobresale y aporta mucho a tu contenido."
+        1: "Tu apariencia no destaca y puede pasar desapercibida. Mejora tu arreglo y elige vestimenta que te favorezca para captar mejor la atención.",
+        2: "Imagen presentable pero neutra. Añade detalles distintivos, como accesorios, colores vivos o cambios de peinado.",
+        3: "Buena presencia, pero puedes mejorar tu atractivo visual con mejor peinado, ropa y buena iluminación en tus videos.",
+        4: "¡Muy bien! Tu apariencia es atractiva y destaca ante la cámara. Mantén tu estilo y atención a los detalles.",
+        5: "¡Excelente! Tu presencia sobresale y complementa perfectamente tu contenido."
     }
     RECOMENDACIONES_CALIDAD_CONTENIDO = {
-        1: "Tu contenido necesita mejorar: haz videos auténticos, originales y enfocados en tu audiencia. Cuida la producción y evita material ajeno.",
-        2: "El contenido aporta poco valor. Define bien cada video, mejora el mensaje y los aspectos técnicos.",
-        3: "Tu contenido es útil, pero puede ser más atractivo si refuerzas tu mensaje personal.",
-        4: "Buen contenido, bien producido y valioso. Perfecciona la edición e innova para crecer.",
-        5: "Excelente calidad y aporte. Mantén el estándar profesional."
+        1: "La calidad es baja y no aporta valor propio. Haz videos originales y relevantes, mejora producción y evita material ajeno.",
+        2: "Contenido limitado y de poco valor. Define mejor tus objetivos, entrega mensajes útiles y cuida sonido e iluminación.",
+        3: "Contenido correcto y útil, pero puede ser más atractivo si refuerzas tu mensaje y estilo.",
+        4: "¡Muy bien! Tu contenido está bien producido y aporta valor. Perfecciona edición e innova para consolidar tu comunidad.",
+        5: "¡Excelente! La calidad es profesional y aporta mucho valor. Mantén ese nivel."
     }
     RECOMENDACIONES_EMPATIA = {
-        1: "Poca conexión con la audiencia. Interactúa más, responde comentarios y muestra cercanía.",
-        2: "La interacción es limitada. Usa dinámicas, llamados a la acción y mantén comunicación constante.",
-        3: "Generas cierta conexión. Poténciala con colaboraciones y agradecimientos.",
-        4: "Muy buen engagement, conectas de forma natural. Sigue promoviendo la participación.",
-        5: "Excelente empatía y conexión. Mantén tu carisma y busca nuevas formas de interactuar."
+        1: "Poca empatía y conexión. Interactúa más, responde comentarios y muestra cercanía en tus transmisiones.",
+        2: "Interacción limitada con la audiencia. Usa llamados a la acción, pide opiniones y mantén comunicación constante.",
+        3: "Tu contenido genera algo de conexión. Potencia la empatía con dinámicas y agradecimientos.",
+        4: "¡Muy bien! Conectas de forma natural y la audiencia responde positivamente. Promueve la participación.",
+        5: "¡Excelente! Generas empatía y conexión con facilidad. Mantén tu carisma y busca nuevas formas de interactuar."
     }
     RECOMENDACIONES_EVAL_FOTO = {
-        1: "Sin foto personal. Sube una imagen clara y auténtica que transmita confianza.",
-        2: "Tu foto es genérica o de baja calidad. Elige una imagen con buena iluminación y resolución.",
-        3: "Foto aceptable, pero puede mejorar. Actualízala para reflejar profesionalismo.",
-        4: "Buena foto, transmite confianza. Mantén la imagen cuidada y actualizada.",
-        5: "Foto profesional y atractiva. Mantén ese estándar."
+        1: "Sin foto personal. Sube una imagen clara y auténtica para que tu audiencia te identifique y confíe en ti.",
+        2: "Foto genérica o de baja calidad. Elige una imagen con buena iluminación y resolución.",
+        3: "Foto aceptable, pero puede mejorar. Actualízala para reflejar mejor tu profesionalismo.",
+        4: "¡Muy bien! Tu foto transmite confianza. Sigue cuidando y actualizando tu imagen.",
+        5: "¡Excelente! Foto profesional y atractiva. Mantén ese estándar."
     }
     RECOMENDACIONES_METADATA_VIDEOS = {
         1: "Títulos y hashtags deficientes. Hazlos claros, breves y relacionados con tu contenido. Usa hashtags relevantes.",
-        2: "Títulos y hashtags poco claros. Sé específico y elige hashtags que representen tu tema.",
-        3: "Aceptables pero pueden ser más llamativos. Crea títulos que despierten interés y usa hashtags efectivos.",
-        4: "Títulos y hashtags claros y alineados. Sigue buscando originalidad.",
-        5: "Excelentes títulos y hashtags: claros, breves y llamativos."
+        2: "Títulos y hashtags poco claros. Sé específico y elige hashtags que representen el tema central.",
+        3: "Aceptables pero pueden ser más atractivos. Crea títulos que despierten interés y usa hashtags efectivos.",
+        4: "¡Muy bien! Los títulos y hashtags son claros y alineados con el contenido.",
+        5: "¡Excelente! Títulos y hashtags claros, breves y llamativos."
     }
 
     apariencia_val = to_num(apariencia)
@@ -1051,12 +1051,18 @@ def mejoras_sugeridas_cualitativa(
         sugerencias.append(f"📝 Sugerencia de biografía:\n{bio_limpia}")
 
     # Metadata videos
-    sugerencias.append(f"🏷️ Metadata videos: {RECOMENDACIONES_METADATA_VIDEOS.get(metadata_videos_val, '')}")
+    sugerencias.append(f"🏷️ Hastags y títulos de videos: {RECOMENDACIONES_METADATA_VIDEOS.get(metadata_videos_val, '')}")
 
     # Limpia para no mostrar elementos vacíos
     return [s for s in sugerencias if s.strip()]
 
+
 def mejorar_biografia_sugerida(bio_salida: str, eval_biografia: int) -> str:
+    """
+    Si hay una biografía sugerida real, solo la muestra.
+    Si solo hay atributos, muestra la frase resumen.
+    Si está vacío, muestra sugerencias automáticas.
+    """
 
     labels = {
         1: 'No tiene Biografía',
@@ -1068,59 +1074,133 @@ def mejorar_biografia_sugerida(bio_salida: str, eval_biografia: int) -> str:
 
     markdown = []
 
-    # Si hay biografía sugerida, mostrar SOLO eso, limpio y bien redactado
-    if bio_salida and str(bio_salida).strip():
-        # Procesa atributos si están en formato "Corta: Sí", etc.
-        atributos = {
-            "Corta": False,
-            "Comprensible": False,
-            "Consistente": False,
-            "Estética": False,
-        }
-        lineas = [l.strip() for l in bio_salida.splitlines() if l.strip()]
-        frases = []
-        bio_texto_final = []
-        for linea in lineas:
-            if ":" in linea:
-                campo, valor = [x.strip() for x in linea.split(":", 1)]
-                if campo in atributos and valor.lower() == "sí":
-                    atributos[campo] = True
-            elif "Recomendación:" in linea:
-                continue  # omite esta línea
-            else:
-                bio_texto_final.append(linea)
-
-        # Genera frase resumen de atributos
-        if any(atributos.values()):
-            lista_frases = []
-            if atributos["Corta"]: lista_frases.append("corta")
-            if atributos["Comprensible"]: lista_frases.append("comprensible")
-            if atributos["Consistente"]: lista_frases.append("consistente")
-            if atributos["Estética"]: lista_frases.append("estéticamente cuidada")
-            frase_atributos = f"Tu biografía es {' ,'.join(lista_frases[:-1]) + ' y ' + lista_frases[-1] if len(lista_frases)>1 else lista_frases[0]}."
-            markdown.append(f"**Biografía sugerida:**\n{frase_atributos}")
-
-        if bio_texto_final:
-            markdown.append("\n" + "\n".join(bio_texto_final))
-
-        # NO agrega recomendaciones automáticas si existe bio_salida
+    # Si NO hay biografía sugerida
+    if not bio_salida or not str(bio_salida).strip():
+        observacion = labels.get(eval_biografia, "Sin evaluación.")
+        markdown.append(f"**Observación de la biografía:** {observacion}")
+        if eval_biografia == 1:
+            markdown.append(
+                "✍️ _No tienes biografía, agrega una descripción breve y atractiva que resuma tu identidad o intereses._")
+        elif eval_biografia == 2:
+            markdown.append(
+                "⚠️ _Tu biografía actual es confusa, extensa o sin propósito claro. Reescríbela para que sea corta, directa y comunique quién eres o qué ofreces._")
+        elif eval_biografia == 3:
+            markdown.append(
+                "🔄 _La biografía es aceptable pero puedes reforzar tu identidad o mensaje. Agrega palabras clave, emojis o detalles que te diferencien._")
+        elif eval_biografia == 4:
+            markdown.append(
+                "👍 _Tu biografía es buena, pero puedes pulirla para ser aún más memorable o coherente con tu marca personal._")
+        elif eval_biografia == 5:
+            markdown.append("🌟 _¡Excelente biografía! Es corta, clara y coherente. Mantén ese estilo._")
         return "\n".join(markdown)
 
-    # Si NO hay biografía sugerida, muestra observación y recomendaciones automáticas
-    observacion = labels.get(eval_biografia, "Sin evaluación.")
-    markdown.append(f"**Observación de la biografía:** {observacion}")
-    if eval_biografia == 1:
-        markdown.append("✍️ _No tienes biografía, agrega una descripción breve y atractiva que resuma tu identidad o intereses._")
-    elif eval_biografia == 2:
-        markdown.append("⚠️ _Tu biografía actual es confusa, extensa o sin propósito claro. Reescríbela para que sea corta, directa y comunique quién eres o qué ofreces._")
-    elif eval_biografia == 3:
-        markdown.append("🔄 _La biografía es aceptable pero puedes reforzar tu identidad o mensaje. Agrega palabras clave, emojis o detalles que te diferencien._")
-    elif eval_biografia == 4:
-        markdown.append("👍 _Tu biografía es buena, pero puedes pulirla para ser aún más memorable o coherente con tu marca personal._")
-    elif eval_biografia == 5:
-        markdown.append("🌟 _¡Excelente biografía! Es corta, clara y coherente. Mantén ese estilo._")
+    # Procesa atributos y texto
+    atributos = {
+        "Corta": False,
+        "Comprensible": False,
+        "Consistente": False,
+        "Estética": False,
+    }
+    lineas = [l.strip() for l in bio_salida.splitlines() if l.strip()]
+    texto_personalizado = []
+    solo_atributos = True
+    for linea in lineas:
+        if ":" in linea:
+            campo, valor = [x.strip() for x in linea.split(":", 1)]
+            if campo in atributos and valor.lower() == "sí":
+                atributos[campo] = True
+            else:
+                # Si hay un campo fuera de los atributos, lo tratamos como texto personalizado
+                solo_atributos = False
+                texto_personalizado.append(linea)
+        elif "Recomendación:" in linea:
+            continue  # omite esta línea
+        else:
+            # Si hay texto que no es atributo, lo tratamos como personalizado
+            solo_atributos = False
+            texto_personalizado.append(linea)
+
+    # Decide qué mostrar
+    markdown.append("**Biografía sugerida:**")
+    if solo_atributos and any(atributos.values()):
+        lista_frases = []
+        if atributos["Corta"]: lista_frases.append("corta")
+        if atributos["Comprensible"]: lista_frases.append("comprensible")
+        if atributos["Consistente"]: lista_frases.append("consistente")
+        if atributos["Estética"]: lista_frases.append("estéticamente cuidada")
+        frase_atributos = f"Tu biografía es {' ,'.join(lista_frases[:-1]) + ' y ' + lista_frases[-1] if len(lista_frases) > 1 else lista_frases[0]}."
+        markdown.append(frase_atributos)
+    elif texto_personalizado:
+        # Si hay texto personalizado, solo mostrar eso
+        markdown.append("\n".join(texto_personalizado))
 
     return "\n".join(markdown)
+
+# def mejorar_biografia_sugerida(bio_salida: str, eval_biografia: int) -> str:
+#
+#     labels = {
+#         1: 'No tiene Biografía',
+#         2: 'Deficiente (confusa, larga o sin propósito).',
+#         3: 'Aceptable (se entiende pero poco identidad).',
+#         4: 'Buena (clara, corta, con identidad).',
+#         5: 'Excelente (muy corta, clara y coherente).'
+#     }
+#
+#     markdown = []
+#
+#     # Si hay biografía sugerida, mostrar SOLO eso, limpio y bien redactado
+#     if bio_salida and str(bio_salida).strip():
+#         # Procesa atributos si están en formato "Corta: Sí", etc.
+#         atributos = {
+#             "Corta": False,
+#             "Comprensible": False,
+#             "Consistente": False,
+#             "Estética": False,
+#         }
+#         lineas = [l.strip() for l in bio_salida.splitlines() if l.strip()]
+#         frases = []
+#         bio_texto_final = []
+#         for linea in lineas:
+#             if ":" in linea:
+#                 campo, valor = [x.strip() for x in linea.split(":", 1)]
+#                 if campo in atributos and valor.lower() == "sí":
+#                     atributos[campo] = True
+#             elif "Recomendación:" in linea:
+#                 continue  # omite esta línea
+#             else:
+#                 bio_texto_final.append(linea)
+#
+#         # Genera frase resumen de atributos
+#         if any(atributos.values()):
+#             lista_frases = []
+#             if atributos["Corta"]: lista_frases.append("corta")
+#             if atributos["Comprensible"]: lista_frases.append("comprensible")
+#             if atributos["Consistente"]: lista_frases.append("consistente")
+#             if atributos["Estética"]: lista_frases.append("estéticamente cuidada")
+#             frase_atributos = f"Tu biografía es {' ,'.join(lista_frases[:-1]) + ' y ' + lista_frases[-1] if len(lista_frases)>1 else lista_frases[0]}."
+#             markdown.append(f"**Biografía sugerida:**\n{frase_atributos}")
+#
+#         if bio_texto_final:
+#             markdown.append("\n" + "\n".join(bio_texto_final))
+#
+#         # NO agrega recomendaciones automáticas si existe bio_salida
+#         return "\n".join(markdown)
+#
+#     # Si NO hay biografía sugerida, muestra observación y recomendaciones automáticas
+#     observacion = labels.get(eval_biografia, "Sin evaluación.")
+#     markdown.append(f"**Observación de la biografía:** {observacion}")
+#     if eval_biografia == 1:
+#         markdown.append("✍️ _No tienes biografía, agrega una descripción breve y atractiva que resuma tu identidad o intereses._")
+#     elif eval_biografia == 2:
+#         markdown.append("⚠️ _Tu biografía actual es confusa, extensa o sin propósito claro. Reescríbela para que sea corta, directa y comunique quién eres o qué ofreces._")
+#     elif eval_biografia == 3:
+#         markdown.append("🔄 _La biografía es aceptable pero puedes reforzar tu identidad o mensaje. Agrega palabras clave, emojis o detalles que te diferencien._")
+#     elif eval_biografia == 4:
+#         markdown.append("👍 _Tu biografía es buena, pero puedes pulirla para ser aún más memorable o coherente con tu marca personal._")
+#     elif eval_biografia == 5:
+#         markdown.append("🌟 _¡Excelente biografía! Es corta, clara y coherente. Mantén ese estilo._")
+#
+#     return "\n".join(markdown)
 
 def mejoras_sugeridas_datos_generales(edad, genero, idiomas, estudios, pais=None, actividad_actual=None):
 
