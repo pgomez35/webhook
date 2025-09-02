@@ -796,412 +796,223 @@ def mejoras_sugeridas_estadisticas(
 
     return sugerencias
 
-    def mejoras_sugeridas_cualitativa(
-            apariencia=0,
-            engagement=0,
-            calidad_contenido=0,
-            eval_foto=0,
-            eval_biografia=0,
-            metadata_videos=0,
-            biografia_sugerida=""
-    ):
-        def to_num(val):
-            try:
-                return int(round(float(val)))
-            except (TypeError, ValueError):
-                return 0
+def mejoras_sugeridas_cualitativa(
+    apariencia=0,
+    engagement=0,
+    calidad_contenido=0,
+    eval_foto=0,
+    eval_biografia=0,
+    metadata_videos=0,
+    biografia_sugerida=""
+):
+    def to_num(val):
+        try:
+            return int(round(float(val)))
+        except (TypeError, ValueError):
+            return 0
 
-        SLIDER_LABELS = {
-            'apariencia': {
-                1: "No destaca - poco llamativa",
-                2: "Básico - simple, sin esfuerzo",
-                3: "Presentable - cuidada y correcta",
-                4: "Agradable - buena presencia",
-                5: "Muy atractivo - sobresaliente"
-            },
-            'engagement': {
-                1: "No conecta - No genera empatía",
-                2: "Limitado - poca interacción",
-                3: "Interesante - a veces atrapa",
-                4: "Carismático - cautiva natural",
-                5: "Altamente carismático — Captura la atención de todos"
-            },
-            'calidad_contenido': {
-                1: "Muy deficiente o son videos no propios",
-                2: "Limitado - aporta poco",
-                3: "Correcto - entendible y algo útil",
-                4: "Bueno - bien producido y valioso",
-                5: "Excelente - profesional con gran aporte"
-            },
-            'eval_biografia': {
-                1: 'No tiene Biografía',
-                2: 'Deficiente (confusa, larga o sin propósito).',
-                3: 'Aceptable (se entiende pero poco identidad).',
-                4: 'Buena (clara, corta, con identidad).',
-                5: 'Excelente (muy corta, clara y coherente).'
-            },
-            'eval_foto': {
-                1: 'No tiene foto propia',
-                2: 'Foto genérica, poco clara o de baja calidad',
-                3: 'Foto aceptable pero mejorable',
-                4: 'Buena foto personal, adecuada',
-                5: 'Foto excelente, muy profesional y atractiva'
-            },
-            'metadata_videos': {
-                1: 'Muy malos – incoherentes, no describen',
-                2: 'Deficientes – poco claros',
-                3: 'Aceptables – comprensibles pero poco atractivos',
-                4: 'Buenos – claros y alineados',
-                5: 'Excelentes – muy claros, breves y llamativos'
-            }
-        }
-
-        # Recomendaciones personalizadas
-        RECOMENDACIONES_APARIENCIA = {
-            1: "Tu apariencia actualmente no destaca y resulta poco llamativa para la audiencia. Es fundamental mejorar tu atractivo visual para captar la atención. Cuida tu arreglo personal, elige un peinado ordenado y una vestimenta que te favorezca y se adapte al contenido. Presta atención al fondo, la iluminación y mantén una postura segura frente a cámara. Una expresión amigable y actitud positiva también suman mucho. Pequeños cambios en estos aspectos pueden generar un gran impacto en cómo te percibe tu público.",
-            2: "Tu imagen es presentable y cuidada, pero sigue siendo neutra y no logra destacar. Para mejorar, añade detalles distintivos a tu estilo, como accesorios, colores vivos o cambios en tu peinado. Asegúrate de transmitir energía y confianza con tu postura y expresión facial.",
-            3: "Tu presencia es agradable y transmites buena imagen, pero tienes oportunidad de potenciar aún más tu atractivo visual. Perfecciona tu peinado, elige ropa que resalte tus mejores atributos y cuida la iluminación de tus videos. Una sonrisa y actitud positiva siempre generan mayor conexión con la audiencia.",
-            4: "¡Muy bien! Tu apariencia es muy atractiva y destaca visualmente. Mantén tu estilo, cuida los detalles y procura que cada video refleje autenticidad y confianza. Puedes agregar pequeños cambios ocasionales para sorprender a tu audiencia.",
-            5: "¡Excelente! Tu apariencia sobresale y complementa perfectamente tu contenido. Tu imagen es profesional y atractiva."
-        }
-        RECOMENDACIONES_CALIDAD_CONTENIDO = {
-            1: "La calidad de tu contenido es muy baja y no aporta valor propio. Crea videos auténticos y originales, enfocados en los intereses de tu audiencia. Mejora la estructura, producción (audio, imagen, edición) y evita publicar material ajeno para construir tu identidad como creador.",
-            2: "Tu contenido es limitado y aporta poco valor. Define mejor el objetivo de cada video, entrega mensajes útiles o entretenidos y cuida aspectos técnicos como sonido e iluminación. Evita videos de terceros y desarrolla propuestas originales para conectar mejor con tu audiencia.",
-            3: "Tu contenido es correcto y algo útil, pero puede ser más atractivo y relevante si refuerzas tu mensaje personal. Agrega llamados a la acción, mejora la edición y comparte experiencias propias para crecer.",
-            4: "¡Muy bien! Tu contenido está bien producido y aporta valor. Sigue perfeccionando la edición y busca innovar para consolidar tu comunidad.",
-            5: "¡Excelente! La calidad de tu contenido es profesional y aporta mucho valor. Mantén el estándar y considera colaborar o diversificar formatos para expandirte."
-        }
-        RECOMENDACIONES_EMPATIA = {
-            1: "Tu nivel de empatía es muy bajo y no logras conectar con la audiencia. Interactúa más en tus transmisiones: responde comentarios, haz preguntas abiertas e involucra a tus seguidores. Trabaja en tu lenguaje corporal y expresión facial para transmitir cercanía y energía.",
-            2: "Tu interacción es limitada y la audiencia participa poco. Incluye llamados a la acción, pide opiniones o responde dudas en directo. Muestra interés genuino por tus seguidores y mantén una comunicación constante.",
-            3: "Tu contenido genera algo de interacción y conexión. Potencia la empatía usando dinámicas regulares, colaboraciones y agradeciendo la participación de tus seguidores.",
-            4: "¡Muy bien! Conectas de forma natural y la audiencia responde positivamente. Consolida tu comunidad y sigue promoviendo la participación activa.",
-            5: "¡Excelente! Generas empatía y conexión con facilidad. Mantén tu carisma y explora nuevas formas de interactuar, como eventos en vivo o contenidos exclusivos."
-        }
-        RECOMENDACIONES_EVAL_FOTO = {
-            1: "No tienes una foto propia en tu perfil. Te recomendamos subir una imagen personal, clara y acorde al propósito de tu cuenta. Una foto auténtica ayuda a que tu audiencia te identifique y genera mayor confianza.",
-            2: "Tu foto de perfil es genérica, poco clara o de baja calidad. Intenta elegir una imagen donde se te vea bien, con buena iluminación y resolución. Evita fotos borrosas o imágenes no relacionadas contigo para mejorar tu presencia digital.",
-            3: "Tu foto de perfil es aceptable, pero podría mejorar. Prueba actualizarla con una imagen más reciente, de mejor calidad o que refleje mejor tu personalidad y profesionalismo.",
-            4: "¡Muy bien! Tu foto personal es adecuada y transmite confianza. Sigue manteniendo una imagen cuidada y actualizada para reforzar tu presencia en la plataforma.",
-            5: "¡Excelente! Tu foto de perfil es muy profesional y atractiva. Mantén este estándar."
-        }
-        RECOMENDACIONES_METADATA_VIDEOS = {
-            1: "Los títulos y hashtags de tus videos son muy deficientes: resultan incoherentes y no describen adecuadamente el contenido. Te recomiendo que cada título sea breve, claro y directamente relacionado con lo que muestras. Utiliza hashtags relevantes y específicos para que tu audiencia pueda encontrar fácilmente tus videos.",
-            2: "Los títulos y hashtags que usas son poco claros y no logran resaltar tu contenido. Procura que los títulos sean específicos, atractivos y que despierten curiosidad, como 'La boda inimaginable' en un video de boda. Selecciona hashtags que realmente representen el tema central del video.",
-            3: "Tus títulos y hashtags son aceptables y comprensibles, pero podrían ser más atractivos y efectivos. Intenta crear títulos que inviten a la acción o despierten interés, y usa hashtags que ayuden a posicionar mejor tu contenido en búsquedas relevantes.",
-            4: "¡Muy bien! Los títulos y hashtags de tus videos son claros y están alineados con el contenido. Sigue manteniendo esta coherencia y busca oportunidades para hacerlo aún más llamativo y memorable, aprovechando frases creativas y hashtags populares en tu nicho.",
-            5: "¡Excelente! Tus títulos y hashtags son muy claros, breves y llamativos, lo que facilita que tu audiencia identifique y encuentre tus videos rápidamente."
-        }
-
-        # Etiquetas
-        apariencia_val = to_num(apariencia)
-        engagement_val = to_num(engagement)
-        calidad_contenido_val = to_num(calidad_contenido)
-        eval_foto_val = to_num(eval_foto)
-        eval_biografia_val = to_num(eval_biografia)
-        metadata_videos_val = to_num(metadata_videos)
-
-        sugerencias = []
-        sugerencias.append(
-            f"🧑‍🎤 Apariencia en cámara: {SLIDER_LABELS['apariencia'].get(apariencia_val, 'No evaluado')}")
-        sugerencias.append(f"🤝 Engagement: {SLIDER_LABELS['engagement'].get(engagement_val, 'No evaluado')}")
-        sugerencias.append(
-            f"🎬 Calidad del contenido: {SLIDER_LABELS['calidad_contenido'].get(calidad_contenido_val, 'No evaluado')}")
-        sugerencias.append(f"🖼️ Foto de perfil: {SLIDER_LABELS['eval_foto'].get(eval_foto_val, 'No evaluado')}")
-        sugerencias.append(f"📖 Biografía: {SLIDER_LABELS['eval_biografia'].get(eval_biografia_val, 'No evaluado')}")
-        sugerencias.append(
-            f"🏷️ Metadata videos: {SLIDER_LABELS['metadata_videos'].get(metadata_videos_val, 'No evaluado')}")
-
-        # Recomendaciones ampliadas
-        sugerencias.append(
-            f"\n🔎 Recomendación personalizada en apariencia: {RECOMENDACIONES_APARIENCIA.get(apariencia_val, '')}")
-        sugerencias.append(
-            f"\n🔎 Recomendación personalizada en engagement/empatía: {RECOMENDACIONES_EMPATIA.get(engagement_val, '')}")
-        sugerencias.append(
-            f"\n🔎 Recomendación personalizada en calidad de contenido: {RECOMENDACIONES_CALIDAD_CONTENIDO.get(calidad_contenido_val, '')}")
-        sugerencias.append(
-            f"\n🔎 Recomendación personalizada en foto de perfil: {RECOMENDACIONES_EVAL_FOTO.get(eval_foto_val, '')}")
-        sugerencias.append(
-            f"\n🔎 Recomendación personalizada en metadata videos: {RECOMENDACIONES_METADATA_VIDEOS.get(metadata_videos_val, '')}")
-
-        # ---- SUGERENCIA DE BIOGRAFÍA ----
-        bio_limpia = mejorar_biografia_sugerida(biografia_sugerida, eval_biografia_val)
-        if bio_limpia:
-            sugerencias.append(f"\n📝 Sugerencia de biografía:\n{bio_limpia}")
-
-        return [s for s in sugerencias if s.strip()]
-
-    def mejorar_biografia_sugerida(bio_salida: str, eval_biografia: int) -> str:
-        """
-        Recibe el texto de salida de la biografía sugerida y la evaluación.
-        Devuelve una versión limpia y mejor redactada.
-        """
-
-        labels = {
+    SLIDER_LABELS = {
+        'apariencia': {
+            1: "No destaca - poco llamativa",
+            2: "Básico - simple, sin esfuerzo",
+            3: "Presentable - cuidada y correcta",
+            4: "Agradable - buena presencia",
+            5: "Muy atractivo - sobresaliente"
+        },
+        'engagement': {
+            1: "No conecta - No genera empatía",
+            2: "Limitado - poca interacción",
+            3: "Interesante - a veces atrapa",
+            4: "Carismático - cautiva natural",
+            5: "Altamente carismático — Captura la atención de todos"
+        },
+        'calidad_contenido': {
+            1: "Muy deficiente o son videos no propios",
+            2: "Limitado - aporta poco",
+            3: "Correcto - entendible y algo útil",
+            4: "Bueno - bien producido y valioso",
+            5: "Excelente - profesional con gran aporte"
+        },
+        'eval_biografia': {
             1: 'No tiene Biografía',
             2: 'Deficiente (confusa, larga o sin propósito).',
             3: 'Aceptable (se entiende pero poco identidad).',
             4: 'Buena (clara, corta, con identidad).',
             5: 'Excelente (muy corta, clara y coherente).'
+        },
+        'eval_foto': {
+            1: 'No tiene foto propia',
+            2: 'Foto genérica, poco clara o de baja calidad',
+            3: 'Foto aceptable pero mejorable',
+            4: 'Buena foto personal, adecuada',
+            5: 'Foto excelente, muy profesional y atractiva'
+        },
+        'metadata_videos': {
+            1: 'Muy malos – incoherentes, no describen',
+            2: 'Deficientes – poco claros',
+            3: 'Aceptables – comprensibles pero poco atractivos',
+            4: 'Buenos – claros y alineados',
+            5: 'Excelentes – muy claros, breves y llamativos'
         }
+    }
 
-        markdown = []
+    # Recomendaciones personalizadas
+    RECOMENDACIONES_APARIENCIA = {
+        1: "Tu apariencia actualmente no destaca y resulta poco llamativa para la audiencia. Es fundamental mejorar tu atractivo visual para captar la atención. Cuida tu arreglo personal, elige un peinado ordenado y una vestimenta que te favorezca y se adapte al contenido. Presta atención al fondo, la iluminación y mantén una postura segura frente a cámara. Una expresión amigable y actitud positiva también suman mucho. Pequeños cambios en estos aspectos pueden generar un gran impacto en cómo te percibe tu público.",
+        2: "Tu imagen es presentable y cuidada, pero sigue siendo neutra y no logra destacar. Para mejorar, añade detalles distintivos a tu estilo, como accesorios, colores vivos o cambios en tu peinado. Asegúrate de transmitir energía y confianza con tu postura y expresión facial.",
+        3: "Tu presencia es agradable y transmites buena imagen, pero tienes oportunidad de potenciar aún más tu atractivo visual. Perfecciona tu peinado, elige ropa que resalte tus mejores atributos y cuida la iluminación de tus videos. Una sonrisa y actitud positiva siempre generan mayor conexión con la audiencia.",
+        4: "¡Muy bien! Tu apariencia es muy atractiva y destaca visualmente. Mantén tu estilo, cuida los detalles y procura que cada video refleje autenticidad y confianza. Puedes agregar pequeños cambios ocasionales para sorprender a tu audiencia.",
+        5: "¡Excelente! Tu apariencia sobresale y complementa perfectamente tu contenido. Tu imagen es profesional y atractiva."
+    }
+    RECOMENDACIONES_CALIDAD_CONTENIDO = {
+        1: "La calidad de tu contenido es muy baja y no aporta valor propio. Crea videos auténticos y originales, enfocados en los intereses de tu audiencia. Mejora la estructura, producción (audio, imagen, edición) y evita publicar material ajeno para construir tu identidad como creador.",
+        2: "Tu contenido es limitado y aporta poco valor. Define mejor el objetivo de cada video, entrega mensajes útiles o entretenidos y cuida aspectos técnicos como sonido e iluminación. Evita videos de terceros y desarrolla propuestas originales para conectar mejor con tu audiencia.",
+        3: "Tu contenido es correcto y algo útil, pero puede ser más atractivo y relevante si refuerzas tu mensaje personal. Agrega llamados a la acción, mejora la edición y comparte experiencias propias para crecer.",
+        4: "¡Muy bien! Tu contenido está bien producido y aporta valor. Sigue perfeccionando la edición y busca innovar para consolidar tu comunidad.",
+        5: "¡Excelente! La calidad de tu contenido es profesional y aporta mucho valor. Mantén el estándar y considera colaborar o diversificar formatos para expandirte."
+    }
+    RECOMENDACIONES_EMPATIA = {
+        1: "Tu nivel de empatía es muy bajo y no logras conectar con la audiencia. Interactúa más en tus transmisiones: responde comentarios, haz preguntas abiertas e involucra a tus seguidores. Trabaja en tu lenguaje corporal y expresión facial para transmitir cercanía y energía.",
+        2: "Tu interacción es limitada y la audiencia participa poco. Incluye llamados a la acción, pide opiniones o responde dudas en directo. Muestra interés genuino por tus seguidores y mantén una comunicación constante.",
+        3: "Tu contenido genera algo de interacción y conexión. Potencia la empatía usando dinámicas regulares, colaboraciones y agradeciendo la participación de tus seguidores.",
+        4: "¡Muy bien! Conectas de forma natural y la audiencia responde positivamente. Consolida tu comunidad y sigue promoviendo la participación activa.",
+        5: "¡Excelente! Generas empatía y conexión con facilidad. Mantén tu carisma y explora nuevas formas de interactuar, como eventos en vivo o contenidos exclusivos."
+    }
+    RECOMENDACIONES_EVAL_FOTO = {
+        1: "No tienes una foto propia en tu perfil. Te recomendamos subir una imagen personal, clara y acorde al propósito de tu cuenta. Una foto auténtica ayuda a que tu audiencia te identifique y genera mayor confianza.",
+        2: "Tu foto de perfil es genérica, poco clara o de baja calidad. Intenta elegir una imagen donde se te vea bien, con buena iluminación y resolución. Evita fotos borrosas o imágenes no relacionadas contigo para mejorar tu presencia digital.",
+        3: "Tu foto de perfil es aceptable, pero podría mejorar. Prueba actualizarla con una imagen más reciente, de mejor calidad o que refleje mejor tu personalidad y profesionalismo.",
+        4: "¡Muy bien! Tu foto personal es adecuada y transmite confianza. Sigue manteniendo una imagen cuidada y actualizada para reforzar tu presencia en la plataforma.",
+        5: "¡Excelente! Tu foto de perfil es muy profesional y atractiva. Mantén este estándar."
+    }
+    RECOMENDACIONES_METADATA_VIDEOS = {
+        1: "Los títulos y hashtags de tus videos son muy deficientes: resultan incoherentes y no describen adecuadamente el contenido. Te recomiendo que cada título sea breve, claro y directamente relacionado con lo que muestras. Utiliza hashtags relevantes y específicos para que tu audiencia pueda encontrar fácilmente tus videos.",
+        2: "Los títulos y hashtags que usas son poco claros y no logran resaltar tu contenido. Procura que los títulos sean específicos, atractivos y que despierten curiosidad, como 'La boda inimaginable' en un video de boda. Selecciona hashtags que realmente representen el tema central del video.",
+        3: "Tus títulos y hashtags son aceptables y comprensibles, pero podrían ser más atractivos y efectivos. Intenta crear títulos que inviten a la acción o despierten interés, y usa hashtags que ayuden a posicionar mejor tu contenido en búsquedas relevantes.",
+        4: "¡Muy bien! Los títulos y hashtags de tus videos son claros y están alineados con el contenido. Sigue manteniendo esta coherencia y busca oportunidades para hacerlo aún más llamativo y memorable, aprovechando frases creativas y hashtags populares en tu nicho.",
+        5: "¡Excelente! Tus títulos y hashtags son muy claros, breves y llamativos, lo que facilita que tu audiencia identifique y encuentre tus videos rápidamente."
+    }
 
-        # Si NO hay biografía sugerida
-        if not bio_salida or not str(bio_salida).strip():
-            observacion = labels.get(eval_biografia, "Sin evaluación.")
-            markdown.append(f"**Observación de la biografía:** {observacion}")
-            if eval_biografia == 1:
-                markdown.append(
-                    "✍️ _No tienes biografía, agrega una descripción breve y atractiva que resuma tu identidad o intereses._")
-            elif eval_biografia == 2:
-                markdown.append(
-                    "⚠️ _Tu biografía actual es confusa, extensa o sin propósito claro. Reescríbela para que sea corta, directa y comunique quién eres o qué ofreces._")
-            elif eval_biografia == 3:
-                markdown.append(
-                    "🔄 _La biografía es aceptable pero puedes reforzar tu identidad o mensaje. Agrega palabras clave, emojis o detalles que te diferencien._")
-            elif eval_biografia == 4:
-                markdown.append(
-                    "👍 _Tu biografía es buena, pero puedes pulirla para ser aún más memorable o coherente con tu marca personal._")
-            elif eval_biografia == 5:
-                markdown.append("🌟 _¡Excelente biografía! Es corta, clara y coherente. Mantén ese estilo._")
-            return "\n".join(markdown)
-
-        # LIMPIEZA: Procesa el bloque de atributos
-        atributos = {
-            "Corta": False,
-            "Comprensible": False,
-            "Consistente": False,
-            "Estética": False,
-        }
-        # Separa líneas y filtra
-        lineas = [l.strip() for l in bio_salida.splitlines() if l.strip()]
-        frase_atributos = []
-        bio_texto_final = []
-        for linea in lineas:
-            if ":" in linea:
-                campo, valor = [x.strip() for x in linea.split(":", 1)]
-                if campo in atributos and valor.lower() == "sí":
-                    atributos[campo] = True
-            elif "Recomendación:" in linea:
-                continue  # omite esta línea
-            else:
-                bio_texto_final.append(linea)
-
-        # Genera frase resumen de atributos
-        frases = []
-        if atributos["Corta"]:
-            frases.append("corta")
-        if atributos["Comprensible"]:
-            frases.append("comprensible")
-        if atributos["Consistente"]:
-            frases.append("consistente")
-        if atributos["Estética"]:
-            frases.append("estéticamente cuidada")
-        if frases:
-            frase_atributos = f"Tu biografía es {' ,'.join(frases[:-1]) + ' y ' + frases[-1] if len(frases) > 1 else frases[0]}."
-            markdown.append(f"**Biografía sugerida:**\n{frase_atributos}")
-        # Si hay texto extra en la biografía, lo agrega
-        if bio_texto_final:
-            markdown.append("\n" + "\n".join(bio_texto_final))
-
-        # Recomendaciones automáticas (no muestra ninguna si no hay)
-        recomendaciones = []
-        bio_limpio = " ".join(bio_texto_final)
-        if len(bio_limpio) > 120:
-            recomendaciones.append(
-                "⚠️ La biografía es algo extensa. Intenta resumirla para que sea más fácil de leer y recordar.")
-        palabras = [w for w in bio_limpio.split() if ":" not in w]
-        if len(palabras) < 6:
-            recomendaciones.append(
-                "🔎 La biografía es muy corta. Puedes agregar algún detalle extra para que tu perfil sea más atractivo.")
-        if not any(char in bio_limpio for char in "😊🌟✨💡🔥🎯❤️"):
-            recomendaciones.append("💡 Considera agregar un emoji para darle más personalidad y atraer la atención.")
-        if bio_limpio and not bio_limpio[0].isupper():
-            recomendaciones.append("✍️ Comienza la biografía con mayúscula para mejorar la presentación.")
-        if not any(p in bio_limpio for p in [".", ","]):
-            recomendaciones.append("📝 Puedes separar ideas usando puntos o comas para una mejor lectura.")
-
-        if recomendaciones:
-            markdown.append("\n**Recomendación de mejora:**")
-            markdown.extend(recomendaciones)
-
-        return "\n".join(markdown)
-
-    def mejoras_sugeridas_cualitativa(
-            apariencia=0,
-            engagement=0,
-            calidad_contenido=0,
-            eval_foto=0,
-            eval_biografia=0,
-            metadata_videos=0,
-            biografia_sugerida=""
-    ):
-        def to_num(val):
-            try:
-                return int(round(float(val)))
-            except (TypeError, ValueError):
-                return 0
-
-        SLIDER_LABELS = {
-            'apariencia': {
-                1: "No destaca - poco llamativa",
-                2: "Básico - simple, sin esfuerzo",
-                3: "Presentable - cuidada y correcta",
-                4: "Agradable - buena presencia",
-                5: "Muy atractivo - sobresaliente"
-            },
-            'engagement': {
-                1: "No conecta - No genera empatía",
-                2: "Limitado - poca interacción",
-                3: "Interesante - a veces atrapa",
-                4: "Carismático - cautiva natural",
-                5: "Altamente carismático — Captura la atención de todos"
-            },
-            'calidad_contenido': {
-                1: "Muy deficiente o son videos no propios",
-                2: "Limitado - aporta poco",
-                3: "Correcto - entendible y algo útil",
-                4: "Bueno - bien producido y valioso",
-                5: "Excelente - profesional con gran aporte"
-            },
-            'eval_biografia': {
-                1: 'No tiene Biografía',
-                2: 'Deficiente (confusa, larga o sin propósito).',
-                3: 'Aceptable (se entiende pero poco identidad).',
-                4: 'Buena (clara, corta, con identidad).',
-                5: 'Excelente (muy corta, clara y coherente).'
-            },
-            'eval_foto': {
-                1: 'No tiene foto propia',
-                2: 'Foto genérica, poco clara o de baja calidad',
-                3: 'Foto aceptable pero mejorable',
-                4: 'Buena foto personal, adecuada',
-                5: 'Foto excelente, muy profesional y atractiva'
-            },
-            'metadata_videos': {
-                1: 'Muy malos – incoherentes, no describen',
-                2: 'Deficientes – poco claros',
-                3: 'Aceptables – comprensibles pero poco atractivos',
-                4: 'Buenos – claros y alineados',
-                5: 'Excelentes – muy claros, breves y llamativos'
-            }
-        }
-
-        # Recomendaciones personalizadas
-        RECOMENDACIONES_APARIENCIA = {
-            1: "Tu apariencia actualmente no destaca y resulta poco llamativa para la audiencia. Es fundamental mejorar tu atractivo visual para captar la atención. Cuida tu arreglo personal, elige un peinado ordenado y una vestimenta que te favorezca y se adapte al contenido. Presta atención al fondo, la iluminación y mantén una postura segura frente a cámara. Una expresión amigable y actitud positiva también suman mucho. Pequeños cambios en estos aspectos pueden generar un gran impacto en cómo te percibe tu público.",
-            2: "Tu imagen es presentable y cuidada, pero sigue siendo neutra y no logra destacar. Para mejorar, añade detalles distintivos a tu estilo, como accesorios, colores vivos o cambios en tu peinado. Asegúrate de transmitir energía y confianza con tu postura y expresión facial.",
-            3: "Tu presencia es agradable y transmites buena imagen, pero tienes oportunidad de potenciar aún más tu atractivo visual. Perfecciona tu peinado, elige ropa que resalte tus mejores atributos y cuida la iluminación de tus videos. Una sonrisa y actitud positiva siempre generan mayor conexión con la audiencia.",
-            4: "¡Muy bien! Tu apariencia es muy atractiva y destaca visualmente. Mantén tu estilo, cuida los detalles y procura que cada video refleje autenticidad y confianza. Puedes agregar pequeños cambios ocasionales para sorprender a tu audiencia.",
-            5: "¡Excelente! Tu apariencia sobresale y complementa perfectamente tu contenido. Tu imagen es profesional y atractiva."
-        }
-        RECOMENDACIONES_CALIDAD_CONTENIDO = {
-            1: "La calidad de tu contenido es muy baja y no aporta valor propio. Crea videos auténticos y originales, enfocados en los intereses de tu audiencia. Mejora la estructura, producción (audio, imagen, edición) y evita publicar material ajeno para construir tu identidad como creador.",
-            2: "Tu contenido es limitado y aporta poco valor. Define mejor el objetivo de cada video, entrega mensajes útiles o entretenidos y cuida aspectos técnicos como sonido e iluminación. Evita videos de terceros y desarrolla propuestas originales para conectar mejor con tu audiencia.",
-            3: "Tu contenido es correcto y algo útil, pero puede ser más atractivo y relevante si refuerzas tu mensaje personal. Agrega llamados a la acción, mejora la edición y comparte experiencias propias para crecer.",
-            4: "¡Muy bien! Tu contenido está bien producido y aporta valor. Sigue perfeccionando la edición y busca innovar para consolidar tu comunidad.",
-            5: "¡Excelente! La calidad de tu contenido es profesional y aporta mucho valor. Mantén el estándar y considera colaborar o diversificar formatos para expandirte."
-        }
-        RECOMENDACIONES_EMPATIA = {
-            1: "Tu nivel de empatía es muy bajo y no logras conectar con la audiencia. Interactúa más en tus transmisiones: responde comentarios, haz preguntas abiertas e involucra a tus seguidores. Trabaja en tu lenguaje corporal y expresión facial para transmitir cercanía y energía.",
-            2: "Tu interacción es limitada y la audiencia participa poco. Incluye llamados a la acción, pide opiniones o responde dudas en directo. Muestra interés genuino por tus seguidores y mantén una comunicación constante.",
-            3: "Tu contenido genera algo de interacción y conexión. Potencia la empatía usando dinámicas regulares, colaboraciones y agradeciendo la participación de tus seguidores.",
-            4: "¡Muy bien! Conectas de forma natural y la audiencia responde positivamente. Consolida tu comunidad y sigue promoviendo la participación activa.",
-            5: "¡Excelente! Generas empatía y conexión con facilidad. Mantén tu carisma y explora nuevas formas de interactuar, como eventos en vivo o contenidos exclusivos."
-        }
-        RECOMENDACIONES_EVAL_FOTO = {
-            1: "No tienes una foto propia en tu perfil. Te recomendamos subir una imagen personal, clara y acorde al propósito de tu cuenta. Una foto auténtica ayuda a que tu audiencia te identifique y genera mayor confianza.",
-            2: "Tu foto de perfil es genérica, poco clara o de baja calidad. Intenta elegir una imagen donde se te vea bien, con buena iluminación y resolución. Evita fotos borrosas o imágenes no relacionadas contigo para mejorar tu presencia digital.",
-            3: "Tu foto de perfil es aceptable, pero podría mejorar. Prueba actualizarla con una imagen más reciente, de mejor calidad o que refleje mejor tu personalidad y profesionalismo.",
-            4: "¡Muy bien! Tu foto personal es adecuada y transmite confianza. Sigue manteniendo una imagen cuidada y actualizada para reforzar tu presencia en la plataforma.",
-            5: "¡Excelente! Tu foto de perfil es muy profesional y atractiva. Mantén este estándar."
-        }
-        RECOMENDACIONES_METADATA_VIDEOS = {
-            1: "Los títulos y hashtags de tus videos son muy deficientes: resultan incoherentes y no describen adecuadamente el contenido. Te recomiendo que cada título sea breve, claro y directamente relacionado con lo que muestras. Utiliza hashtags relevantes y específicos para que tu audiencia pueda encontrar fácilmente tus videos.",
-            2: "Los títulos y hashtags que usas son poco claros y no logran resaltar tu contenido. Procura que los títulos sean específicos, atractivos y que despierten curiosidad, como 'La boda inimaginable' en un video de boda. Selecciona hashtags que realmente representen el tema central del video.",
-            3: "Tus títulos y hashtags son aceptables y comprensibles, pero podrían ser más atractivos y efectivos. Intenta crear títulos que inviten a la acción o despierten interés, y usa hashtags que ayuden a posicionar mejor tu contenido en búsquedas relevantes.",
-            4: "¡Muy bien! Los títulos y hashtags de tus videos son claros y están alineados con el contenido. Sigue manteniendo esta coherencia y busca oportunidades para hacerlo aún más llamativo y memorable, aprovechando frases creativas y hashtags populares en tu nicho.",
-            5: "¡Excelente! Tus títulos y hashtags son muy claros, breves y llamativos, lo que facilita que tu audiencia identifique y encuentre tus videos rápidamente."
-        }
-
-        # Etiquetas
-        apariencia_val = to_num(apariencia)
-        engagement_val = to_num(engagement)
-        calidad_contenido_val = to_num(calidad_contenido)
-        eval_foto_val = to_num(eval_foto)
-        eval_biografia_val = to_num(eval_biografia)
-        metadata_videos_val = to_num(metadata_videos)
-
-        sugerencias = []
-        sugerencias.append(
-            f"🧑‍🎤 Apariencia en cámara: {SLIDER_LABELS['apariencia'].get(apariencia_val, 'No evaluado')}")
-        sugerencias.append(f"🤝 Engagement: {SLIDER_LABELS['engagement'].get(engagement_val, 'No evaluado')}")
-        sugerencias.append(
-            f"🎬 Calidad del contenido: {SLIDER_LABELS['calidad_contenido'].get(calidad_contenido_val, 'No evaluado')}")
-        sugerencias.append(f"🖼️ Foto de perfil: {SLIDER_LABELS['eval_foto'].get(eval_foto_val, 'No evaluado')}")
-        sugerencias.append(
-            f"🏷️ Metadata videos: {SLIDER_LABELS['metadata_videos'].get(metadata_videos_val, 'No evaluado')}")
-
-        # Recomendaciones ampliadas
-        sugerencias.append(
-            f"\n🔎 Recomendación personalizada en apariencia: {RECOMENDACIONES_APARIENCIA.get(apariencia_val, '')}")
-        sugerencias.append(
-            f"\n🔎 Recomendación personalizada en engagement/empatía: {RECOMENDACIONES_EMPATIA.get(engagement_val, '')}")
-        sugerencias.append(
-            f"\n🔎 Recomendación personalizada en calidad de contenido: {RECOMENDACIONES_CALIDAD_CONTENIDO.get(calidad_contenido_val, '')}")
-        sugerencias.append(
-            f"\n🔎 Recomendación personalizada en foto de perfil: {RECOMENDACIONES_EVAL_FOTO.get(eval_foto_val, '')}")
-        sugerencias.append(
-            f"\n🔎 Recomendación personalizada en metadata videos: {RECOMENDACIONES_METADATA_VIDEOS.get(metadata_videos_val, '')}")
-
-        # ---- SUGERENCIA DE BIOGRAFÍA ----
-        bio_limpia = mejorar_biografia_sugerida(biografia_sugerida, eval_biografia_val)
-        if bio_limpia:
-            sugerencias.append(f"\n📝 Sugerencia de biografía:\n{bio_limpia}")
-
-        return [s for s in sugerencias if s.strip()]
-
-
-    def label(section, value):
-        try:
-            v = int(round(to_num(value)))
-            return SLIDER_LABELS.get(section, {}).get(v, "No evaluado")
-        except Exception:
-            return "No evaluado"
+    # Etiquetas
+    apariencia_val = to_num(apariencia)
+    engagement_val = to_num(engagement)
+    calidad_contenido_val = to_num(calidad_contenido)
+    eval_foto_val = to_num(eval_foto)
+    eval_biografia_val = to_num(eval_biografia)
+    metadata_videos_val = to_num(metadata_videos)
 
     sugerencias = []
-    apariencia = to_num(apariencia)
-    engagement = to_num(engagement)
-    calidad_contenido = to_num(calidad_contenido)
-    eval_foto = to_num(eval_foto)
-    eval_biografia = to_num(eval_biografia)
-    metadata_videos = to_num(metadata_videos)
+    sugerencias.append(f"🧑‍🎤 Apariencia en cámara: {SLIDER_LABELS['apariencia'].get(apariencia_val, 'No evaluado')}")
+    sugerencias.append(f"🤝 Engagement: {SLIDER_LABELS['engagement'].get(engagement_val, 'No evaluado')}")
+    sugerencias.append(f"🎬 Calidad del contenido: {SLIDER_LABELS['calidad_contenido'].get(calidad_contenido_val, 'No evaluado')}")
+    sugerencias.append(f"🖼️ Foto de perfil: {SLIDER_LABELS['eval_foto'].get(eval_foto_val, 'No evaluado')}")
+    sugerencias.append(f"📖 Biografía: {SLIDER_LABELS['eval_biografia'].get(eval_biografia_val, 'No evaluado')}")
+    sugerencias.append(f"🏷️ Metadata videos: {SLIDER_LABELS['metadata_videos'].get(metadata_videos_val, 'No evaluado')}")
 
-    sugerencias.append(f"🧑‍🎤 Apariencia en cámara: {label('apariencia', apariencia)}")
-    sugerencias.append(f"🤝 Engagement: {label('engagement', engagement)}")
-    sugerencias.append(f"🎬 Calidad del contenido: {label('calidad_contenido', calidad_contenido)}")
-    sugerencias.append(f"🖼️ Foto de perfil: {label('eval_foto', eval_foto)}")
-    sugerencias.append(f"📖 Biografía: {label('eval_biografia', eval_biografia)}")
-    sugerencias.append(f"🏷️ Metadata videos: {label('metadata_videos', metadata_videos)}")
-
-    if apariencia < 3:
-        sugerencias.append("✨ Mejora tu presentación en cámara: cuida la luz, vestuario y ambiente.")
-    if engagement < 3:
-        sugerencias.append("🤝 Interactúa más con tus seguidores: responde, haz preguntas y usa llamados a la acción.")
-    if calidad_contenido < 3:
-        sugerencias.append("🎬 Trabaja en la creatividad y edición de tus videos para hacerlos más atractivos.")
-    if eval_foto < 3:
-        sugerencias.append("🖼️ Cambia tu foto de perfil por una más profesional y llamativa.")
-    if metadata_videos < 3:
-        sugerencias.append("📌 Usa hashtags y títulos relevantes para mejorar el alcance.")
+    # Recomendaciones ampliadas
+    sugerencias.append(f"\n🔎 Recomendación personalizada en apariencia: {RECOMENDACIONES_APARIENCIA.get(apariencia_val, '')}")
+    sugerencias.append(f"\n🔎 Recomendación personalizada en engagement/empatía: {RECOMENDACIONES_EMPATIA.get(engagement_val, '')}")
+    sugerencias.append(f"\n🔎 Recomendación personalizada en calidad de contenido: {RECOMENDACIONES_CALIDAD_CONTENIDO.get(calidad_contenido_val, '')}")
+    sugerencias.append(f"\n🔎 Recomendación personalizada en foto de perfil: {RECOMENDACIONES_EVAL_FOTO.get(eval_foto_val, '')}")
+    sugerencias.append(f"\n🔎 Recomendación personalizada en metadata videos: {RECOMENDACIONES_METADATA_VIDEOS.get(metadata_videos_val, '')}")
 
     # ---- SUGERENCIA DE BIOGRAFÍA ----
-    bio_limpia = mejorar_biografia_sugerida(biografia_sugerida, eval_biografia)
+    bio_limpia = mejorar_biografia_sugerida(biografia_sugerida, eval_biografia_val)
     if bio_limpia:
-        sugerencias.append(f"📝 Sugerencia de biografía:\n{bio_limpia}")
+        sugerencias.append(f"\n📝 Sugerencia de biografía:\n{bio_limpia}")
 
-    return sugerencias
+    return [s for s in sugerencias if s.strip()]
+
+def mejorar_biografia_sugerida(bio_salida: str, eval_biografia: int) -> str:
+    """
+    Recibe el texto de salida de la biografía sugerida y la evaluación.
+    Devuelve una versión limpia y mejor redactada.
+    """
+
+    labels = {
+        1: 'No tiene Biografía',
+        2: 'Deficiente (confusa, larga o sin propósito).',
+        3: 'Aceptable (se entiende pero poco identidad).',
+        4: 'Buena (clara, corta, con identidad).',
+        5: 'Excelente (muy corta, clara y coherente).'
+    }
+
+    markdown = []
+
+    # Si NO hay biografía sugerida
+    if not bio_salida or not str(bio_salida).strip():
+        observacion = labels.get(eval_biografia, "Sin evaluación.")
+        markdown.append(f"**Observación de la biografía:** {observacion}")
+        if eval_biografia == 1:
+            markdown.append("✍️ _No tienes biografía, agrega una descripción breve y atractiva que resuma tu identidad o intereses._")
+        elif eval_biografia == 2:
+            markdown.append("⚠️ _Tu biografía actual es confusa, extensa o sin propósito claro. Reescríbela para que sea corta, directa y comunique quién eres o qué ofreces._")
+        elif eval_biografia == 3:
+            markdown.append("🔄 _La biografía es aceptable pero puedes reforzar tu identidad o mensaje. Agrega palabras clave, emojis o detalles que te diferencien._")
+        elif eval_biografia == 4:
+            markdown.append("👍 _Tu biografía es buena, pero puedes pulirla para ser aún más memorable o coherente con tu marca personal._")
+        elif eval_biografia == 5:
+            markdown.append("🌟 _¡Excelente biografía! Es corta, clara y coherente. Mantén ese estilo._")
+        return "\n".join(markdown)
+
+    # LIMPIEZA: Procesa el bloque de atributos
+    atributos = {
+        "Corta": False,
+        "Comprensible": False,
+        "Consistente": False,
+        "Estética": False,
+    }
+    # Separa líneas y filtra
+    lineas = [l.strip() for l in bio_salida.splitlines() if l.strip()]
+    frase_atributos = []
+    bio_texto_final = []
+    for linea in lineas:
+        if ":" in linea:
+            campo, valor = [x.strip() for x in linea.split(":", 1)]
+            if campo in atributos and valor.lower() == "sí":
+                atributos[campo] = True
+        elif "Recomendación:" in linea:
+            continue  # omite esta línea
+        else:
+            bio_texto_final.append(linea)
+
+    # Genera frase resumen de atributos
+    frases = []
+    if atributos["Corta"]:
+        frases.append("corta")
+    if atributos["Comprensible"]:
+        frases.append("comprensible")
+    if atributos["Consistente"]:
+        frases.append("consistente")
+    if atributos["Estética"]:
+        frases.append("estéticamente cuidada")
+    if frases:
+        frase_atributos = f"Tu biografía es {' ,'.join(frases[:-1]) + ' y ' + frases[-1] if len(frases)>1 else frases[0]}."
+        markdown.append(f"**Biografía sugerida:**\n{frase_atributos}")
+    # Si hay texto extra en la biografía, lo agrega
+    if bio_texto_final:
+        markdown.append("\n" + "\n".join(bio_texto_final))
+
+    # Recomendaciones automáticas (no muestra ninguna si no hay)
+    recomendaciones = []
+    bio_limpio = " ".join(bio_texto_final)
+    if len(bio_limpio) > 120:
+        recomendaciones.append("⚠️ La biografía es algo extensa. Intenta resumirla para que sea más fácil de leer y recordar.")
+    palabras = [w for w in bio_limpio.split() if ":" not in w]
+    if len(palabras) < 6:
+        recomendaciones.append("🔎 La biografía es muy corta. Puedes agregar algún detalle extra para que tu perfil sea más atractivo.")
+    if not any(char in bio_limpio for char in "😊🌟✨💡🔥🎯❤️"):
+        recomendaciones.append("💡 Considera agregar un emoji para darle más personalidad y atraer la atención.")
+    if bio_limpio and not bio_limpio[0].isupper():
+        recomendaciones.append("✍️ Comienza la biografía con mayúscula para mejorar la presentación.")
+    if not any(p in bio_limpio for p in [".", ","]):
+        recomendaciones.append("📝 Puedes separar ideas usando puntos o comas para una mejor lectura.")
+
+    if recomendaciones:
+        markdown.append("\n**Recomendación de mejora:**")
+        markdown.extend(recomendaciones)
+
+    return "\n".join(markdown)
 
 def mejoras_sugeridas_datos_generales(edad, genero, idiomas, estudios, pais=None, actividad_actual=None):
 
