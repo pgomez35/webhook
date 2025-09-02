@@ -186,11 +186,11 @@ def diagnostico_perfil_creador(creador_id: int) -> str:
     mensaje.append("")
 
     # Advertencias y oportunidades de mejora
-    if advertencias:
-        mensaje.append("### ⚠️ Advertencias y oportunidades de mejora")
-        for adv in advertencias:
-            mensaje.append(f"- {adv}")
-        mensaje.append("")
+    # if advertencias:
+    #     mensaje.append("### ⚠️ Advertencias y oportunidades de mejora")
+    #     for adv in advertencias:
+    #         mensaje.append(f"- {adv}")
+    #     mensaje.append("")
 
     # Calificaciones y puntajes al final
     mensaje.append("# 🏅 Categorías y puntajes del Perfil")
@@ -1057,86 +1057,12 @@ def mejoras_sugeridas_cualitativa(
     return [s for s in sugerencias if s.strip()]
 
 
-def mejorar_biografia_sugerida(bio_salida: str, eval_biografia: int) -> str:
-    """
-    Si hay una biografía sugerida real, solo la muestra.
-    Si solo hay atributos, muestra la frase resumen.
-    Si está vacío, muestra sugerencias automáticas.
-    """
-
-    labels = {
-        1: 'No tiene Biografía',
-        2: 'Deficiente (confusa, larga o sin propósito).',
-        3: 'Aceptable (se entiende pero poco identidad).',
-        4: 'Buena (clara, corta, con identidad).',
-        5: 'Excelente (muy corta, clara y coherente).'
-    }
-
-    markdown = []
-
-    # Si NO hay biografía sugerida
-    if not bio_salida or not str(bio_salida).strip():
-        observacion = labels.get(eval_biografia, "Sin evaluación.")
-        markdown.append(f"**Observación de la biografía:** {observacion}")
-        if eval_biografia == 1:
-            markdown.append(
-                "✍️ _No tienes biografía, agrega una descripción breve y atractiva que resuma tu identidad o intereses._")
-        elif eval_biografia == 2:
-            markdown.append(
-                "⚠️ _Tu biografía actual es confusa, extensa o sin propósito claro. Reescríbela para que sea corta, directa y comunique quién eres o qué ofreces._")
-        elif eval_biografia == 3:
-            markdown.append(
-                "🔄 _La biografía es aceptable pero puedes reforzar tu identidad o mensaje. Agrega palabras clave, emojis o detalles que te diferencien._")
-        elif eval_biografia == 4:
-            markdown.append(
-                "👍 _Tu biografía es buena, pero puedes pulirla para ser aún más memorable o coherente con tu marca personal._")
-        elif eval_biografia == 5:
-            markdown.append("🌟 _¡Excelente biografía! Es corta, clara y coherente. Mantén ese estilo._")
-        return "\n".join(markdown)
-
-    # Procesa atributos y texto
-    atributos = {
-        "Corta": False,
-        "Comprensible": False,
-        "Consistente": False,
-        "Estética": False,
-    }
-    lineas = [l.strip() for l in bio_salida.splitlines() if l.strip()]
-    texto_personalizado = []
-    solo_atributos = True
-    for linea in lineas:
-        if ":" in linea:
-            campo, valor = [x.strip() for x in linea.split(":", 1)]
-            if campo in atributos and valor.lower() == "sí":
-                atributos[campo] = True
-            else:
-                # Si hay un campo fuera de los atributos, lo tratamos como texto personalizado
-                solo_atributos = False
-                texto_personalizado.append(linea)
-        elif "Recomendación:" in linea:
-            continue  # omite esta línea
-        else:
-            # Si hay texto que no es atributo, lo tratamos como personalizado
-            solo_atributos = False
-            texto_personalizado.append(linea)
-
-    # Decide qué mostrar
-    markdown.append("**Biografía sugerida:**")
-    if solo_atributos and any(atributos.values()):
-        lista_frases = []
-        if atributos["Corta"]: lista_frases.append("corta")
-        if atributos["Comprensible"]: lista_frases.append("comprensible")
-        if atributos["Consistente"]: lista_frases.append("consistente")
-        if atributos["Estética"]: lista_frases.append("estéticamente cuidada")
-        frase_atributos = f"Tu biografía es {' ,'.join(lista_frases[:-1]) + ' y ' + lista_frases[-1] if len(lista_frases) > 1 else lista_frases[0]}."
-        markdown.append(frase_atributos)
-    elif texto_personalizado:
-        # Si hay texto personalizado, solo mostrar eso
-        markdown.append("\n".join(texto_personalizado))
-
-    return "\n".join(markdown)
-
 # def mejorar_biografia_sugerida(bio_salida: str, eval_biografia: int) -> str:
+#     """
+#     Si hay una biografía sugerida real, solo la muestra.
+#     Si solo hay atributos, muestra la frase resumen.
+#     Si está vacío, muestra sugerencias automáticas.
+#     """
 #
 #     labels = {
 #         1: 'No tiene Biografía',
@@ -1148,59 +1074,133 @@ def mejorar_biografia_sugerida(bio_salida: str, eval_biografia: int) -> str:
 #
 #     markdown = []
 #
-#     # Si hay biografía sugerida, mostrar SOLO eso, limpio y bien redactado
-#     if bio_salida and str(bio_salida).strip():
-#         # Procesa atributos si están en formato "Corta: Sí", etc.
-#         atributos = {
-#             "Corta": False,
-#             "Comprensible": False,
-#             "Consistente": False,
-#             "Estética": False,
-#         }
-#         lineas = [l.strip() for l in bio_salida.splitlines() if l.strip()]
-#         frases = []
-#         bio_texto_final = []
-#         for linea in lineas:
-#             if ":" in linea:
-#                 campo, valor = [x.strip() for x in linea.split(":", 1)]
-#                 if campo in atributos and valor.lower() == "sí":
-#                     atributos[campo] = True
-#             elif "Recomendación:" in linea:
-#                 continue  # omite esta línea
-#             else:
-#                 bio_texto_final.append(linea)
-#
-#         # Genera frase resumen de atributos
-#         if any(atributos.values()):
-#             lista_frases = []
-#             if atributos["Corta"]: lista_frases.append("corta")
-#             if atributos["Comprensible"]: lista_frases.append("comprensible")
-#             if atributos["Consistente"]: lista_frases.append("consistente")
-#             if atributos["Estética"]: lista_frases.append("estéticamente cuidada")
-#             frase_atributos = f"Tu biografía es {' ,'.join(lista_frases[:-1]) + ' y ' + lista_frases[-1] if len(lista_frases)>1 else lista_frases[0]}."
-#             markdown.append(f"**Biografía sugerida:**\n{frase_atributos}")
-#
-#         if bio_texto_final:
-#             markdown.append("\n" + "\n".join(bio_texto_final))
-#
-#         # NO agrega recomendaciones automáticas si existe bio_salida
+#     # Si NO hay biografía sugerida
+#     if not bio_salida or not str(bio_salida).strip():
+#         observacion = labels.get(eval_biografia, "Sin evaluación.")
+#         markdown.append(f"**Observación de la biografía:** {observacion}")
+#         if eval_biografia == 1:
+#             markdown.append(
+#                 "✍️ _No tienes biografía, agrega una descripción breve y atractiva que resuma tu identidad o intereses._")
+#         elif eval_biografia == 2:
+#             markdown.append(
+#                 "⚠️ _Tu biografía actual es confusa, extensa o sin propósito claro. Reescríbela para que sea corta, directa y comunique quién eres o qué ofreces._")
+#         elif eval_biografia == 3:
+#             markdown.append(
+#                 "🔄 _La biografía es aceptable pero puedes reforzar tu identidad o mensaje. Agrega palabras clave, emojis o detalles que te diferencien._")
+#         elif eval_biografia == 4:
+#             markdown.append(
+#                 "👍 _Tu biografía es buena, pero puedes pulirla para ser aún más memorable o coherente con tu marca personal._")
+#         elif eval_biografia == 5:
+#             markdown.append("🌟 _¡Excelente biografía! Es corta, clara y coherente. Mantén ese estilo._")
 #         return "\n".join(markdown)
 #
-#     # Si NO hay biografía sugerida, muestra observación y recomendaciones automáticas
-#     observacion = labels.get(eval_biografia, "Sin evaluación.")
-#     markdown.append(f"**Observación de la biografía:** {observacion}")
-#     if eval_biografia == 1:
-#         markdown.append("✍️ _No tienes biografía, agrega una descripción breve y atractiva que resuma tu identidad o intereses._")
-#     elif eval_biografia == 2:
-#         markdown.append("⚠️ _Tu biografía actual es confusa, extensa o sin propósito claro. Reescríbela para que sea corta, directa y comunique quién eres o qué ofreces._")
-#     elif eval_biografia == 3:
-#         markdown.append("🔄 _La biografía es aceptable pero puedes reforzar tu identidad o mensaje. Agrega palabras clave, emojis o detalles que te diferencien._")
-#     elif eval_biografia == 4:
-#         markdown.append("👍 _Tu biografía es buena, pero puedes pulirla para ser aún más memorable o coherente con tu marca personal._")
-#     elif eval_biografia == 5:
-#         markdown.append("🌟 _¡Excelente biografía! Es corta, clara y coherente. Mantén ese estilo._")
+#     # Procesa atributos y texto
+#     atributos = {
+#         "Corta": False,
+#         "Comprensible": False,
+#         "Consistente": False,
+#         "Estética": False,
+#     }
+#     lineas = [l.strip() for l in bio_salida.splitlines() if l.strip()]
+#     texto_personalizado = []
+#     solo_atributos = True
+#     for linea in lineas:
+#         if ":" in linea:
+#             campo, valor = [x.strip() for x in linea.split(":", 1)]
+#             if campo in atributos and valor.lower() == "sí":
+#                 atributos[campo] = True
+#             else:
+#                 # Si hay un campo fuera de los atributos, lo tratamos como texto personalizado
+#                 solo_atributos = False
+#                 texto_personalizado.append(linea)
+#         elif "Recomendación:" in linea:
+#             continue  # omite esta línea
+#         else:
+#             # Si hay texto que no es atributo, lo tratamos como personalizado
+#             solo_atributos = False
+#             texto_personalizado.append(linea)
+#
+#     # Decide qué mostrar
+#     markdown.append("**Biografía sugerida:**")
+#     if solo_atributos and any(atributos.values()):
+#         lista_frases = []
+#         if atributos["Corta"]: lista_frases.append("corta")
+#         if atributos["Comprensible"]: lista_frases.append("comprensible")
+#         if atributos["Consistente"]: lista_frases.append("consistente")
+#         if atributos["Estética"]: lista_frases.append("estéticamente cuidada")
+#         frase_atributos = f"Tu biografía es {' ,'.join(lista_frases[:-1]) + ' y ' + lista_frases[-1] if len(lista_frases) > 1 else lista_frases[0]}."
+#         markdown.append(frase_atributos)
+#     elif texto_personalizado:
+#         # Si hay texto personalizado, solo mostrar eso
+#         markdown.append("\n".join(texto_personalizado))
 #
 #     return "\n".join(markdown)
+
+def mejorar_biografia_sugerida(bio_salida: str, eval_biografia: int) -> str:
+
+    labels = {
+        1: 'No tiene Biografía',
+        2: 'Deficiente (confusa, larga o sin propósito).',
+        3: 'Aceptable (se entiende pero poco identidad).',
+        4: 'Buena (clara, corta, con identidad).',
+        5: 'Excelente (muy corta, clara y coherente).'
+    }
+
+    markdown = []
+
+    # Si hay biografía sugerida, mostrar SOLO eso, limpio y bien redactado
+    if bio_salida and str(bio_salida).strip():
+        # Procesa atributos si están en formato "Corta: Sí", etc.
+        atributos = {
+            "Corta": False,
+            "Comprensible": False,
+            "Consistente": False,
+            "Estética": False,
+        }
+        lineas = [l.strip() for l in bio_salida.splitlines() if l.strip()]
+        frases = []
+        bio_texto_final = []
+        for linea in lineas:
+            if ":" in linea:
+                campo, valor = [x.strip() for x in linea.split(":", 1)]
+                if campo in atributos and valor.lower() == "sí":
+                    atributos[campo] = True
+            elif "Recomendación:" in linea:
+                continue  # omite esta línea
+            else:
+                bio_texto_final.append(linea)
+
+        # Genera frase resumen de atributos
+        if any(atributos.values()):
+            lista_frases = []
+            if atributos["Corta"]: lista_frases.append("corta")
+            if atributos["Comprensible"]: lista_frases.append("comprensible")
+            if atributos["Consistente"]: lista_frases.append("consistente")
+            if atributos["Estética"]: lista_frases.append("estéticamente cuidada")
+            frase_atributos = f"Tu biografía es {' ,'.join(lista_frases[:-1]) + ' y ' + lista_frases[-1] if len(lista_frases)>1 else lista_frases[0]}."
+            markdown.append(f"**Biografía sugerida:**\n{frase_atributos}")
+
+        if bio_texto_final:
+            markdown.append("\n" + "\n".join(bio_texto_final))
+
+        # NO agrega recomendaciones automáticas si existe bio_salida
+        return "\n".join(markdown)
+
+    # Si NO hay biografía sugerida, muestra observación y recomendaciones automáticas
+    observacion = labels.get(eval_biografia, "Sin evaluación.")
+    markdown.append(f"**Observación de la biografía:** {observacion}")
+    if eval_biografia == 1:
+        markdown.append("✍️ _No tienes biografía, agrega una descripción breve y atractiva que resuma tu identidad o intereses._")
+    elif eval_biografia == 2:
+        markdown.append("⚠️ _Tu biografía actual es confusa, extensa o sin propósito claro. Reescríbela para que sea corta, directa y comunique quién eres o qué ofreces._")
+    elif eval_biografia == 3:
+        markdown.append("🔄 _La biografía es aceptable pero puedes reforzar tu identidad o mensaje. Agrega palabras clave, emojis o detalles que te diferencien._")
+    elif eval_biografia == 4:
+        markdown.append("👍 _Tu biografía es buena, pero puedes pulirla para ser aún más memorable o coherente con tu marca personal._")
+    elif eval_biografia == 5:
+        markdown.append("🌟 _¡Excelente biografía! Es corta, clara y coherente. Mantén ese estilo._")
+
+    return "\n".join(markdown)
 
 def mejoras_sugeridas_datos_generales(edad, genero, idiomas, estudios, pais=None, actividad_actual=None):
 

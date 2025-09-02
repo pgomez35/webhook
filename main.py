@@ -1745,6 +1745,11 @@ def actualizar_resumen(creador_id: int, datos: ResumenEvaluacionInput):
         )
 
         data_dict["estado"] = "Evaluado"
+        data_dict["observaciones"] = observaciones_totales
+        data_dict["mejoras_sugeridas"] = mejoras
+        data_dict["puntaje_total"] = score["puntaje_total"]
+        data_dict["puntaje_total_categoria"] = score["puntaje_total_categoria"]
+
 
         actualizar_datos_perfil_creador(creador_id, data_dict)
 
