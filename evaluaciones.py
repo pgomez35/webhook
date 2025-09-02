@@ -886,10 +886,14 @@ def generar_mejoras_sugeridas_total(creador_id: int) -> str:
         ]
 
     mensaje = []
-    for seccion, items in sugerencias.items():
+    secciones = list(sugerencias.keys())
+    for idx, seccion in enumerate(secciones):
         mensaje.append(f"{seccion}")
-        for item in items:
+        for item in sugerencias[seccion]:
             mensaje.append(f"  • {item}")
+        # Agrega línea de espacio después de cada sección, excepto la última
+        if idx < len(secciones) - 1:
+            mensaje.append("")
     return "\n".join(mensaje)
 
 
@@ -1299,18 +1303,18 @@ def mejoras_sugeridas_datos_generales(edad, genero, idiomas, estudios, pais=None
     sugerencias.append(f"\n📊 **Categoría de perfil**: {categoria}")
 
     # Mensaje motivacional según categoría
-    if categoria == "No apto":
-        sugerencias.append("❌ Necesitas completar o mejorar tus datos personales para avanzar como creador.")
-    elif categoria == "Muy bajo":
-        sugerencias.append("⚠️ Tu perfil personal es débil, enfócate en mejorar formación, idiomas o disponibilidad.")
-    elif categoria == "Bajo":
-        sugerencias.append("🔧 Hay margen de mejora, potencia tus estudios, idiomas y actividad profesional.")
-    elif categoria == "Medio":
-        sugerencias.append("👍 Vas por buen camino, sigue reforzando tu perfil y aprovecha tus fortalezas.")
-    elif categoria == "Alto":
-        sugerencias.append("🌟 Tu perfil es muy sólido, busca colaboraciones y oportunidades premium.")
-    elif categoria == "Excelente":
-        sugerencias.append("🏆 ¡Perfil excelente! Aprovecha tu potencial para liderar proyectos y campañas.")
+    # if categoria == "No apto":
+    #     sugerencias.append("❌ Necesitas completar o mejorar tus datos personales para avanzar como creador.")
+    # elif categoria == "Muy bajo":
+    #     sugerencias.append("⚠️ Tu perfil personal es débil, enfócate en mejorar formación, idiomas o disponibilidad.")
+    # elif categoria == "Bajo":
+    #     sugerencias.append("🔧 Hay margen de mejora, potencia tus estudios, idiomas y actividad profesional.")
+    # elif categoria == "Medio":
+    #     sugerencias.append("👍 Vas por buen camino, sigue reforzando tu perfil y aprovecha tus fortalezas.")
+    # elif categoria == "Alto":
+    #     sugerencias.append("🌟 Tu perfil es muy sólido, busca colaboraciones y oportunidades premium.")
+    # elif categoria == "Excelente":
+    #     sugerencias.append("🏆 ¡Perfil excelente! Aprovecha tu potencial para liderar proyectos y campañas.")
 
     return "\n".join(sugerencias)
 
@@ -1578,3 +1582,15 @@ def evaluar_potencial_creador(creador_id, score_cualitativa: float):
     except Exception as e:
         print("❌ Error en evaluar_potencial_creador:", e)
         return {"error": str(e)}
+
+
+def limpiar_biografia_ia(bio_ia: str) -> str:
+    # Elimina comillas dobles al inicio y final, si están
+    bio_ia = bio_ia.strip()
+    if bio_ia.startswith('"') and bio_ia.endswith('"'):
+        bio_ia = bio_ia[1:-1]
+    # Reemplaza secuencias "\n" (texto) por salto de línea real
+    bio_ia = bio_ia.replace("\\n", "\n")
+    # (opcional) Borra espacios extra al inicio/final de cada línea
+    bio_ia = "\n".join(line.strip() for line in bio_ia.splitlines())
+    return bio_ia
