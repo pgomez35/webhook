@@ -22,17 +22,38 @@ def to_num(val):
     except (TypeError, ValueError):
         return 0.0
 
-def diagnostico_perfil_creador(creador_id: int) -> str:
+def diagnostico_perfil_creador(
+    creador_id: int,
+    puntajes_calculados: dict = None
+) -> str:
     """
     Diagnóstico integral del perfil del creador, con puntajes, labels y unidades correctas.
+    Si se pasan puntajes_calculados, se usan para la sección final de categorías y puntajes.
     """
     datos = obtener_datos_mejoras_perfil_creador(creador_id)
+
+    # Obtén los puntajes y categorías, usando puntajes_calculados si está disponible
     puntajes = {
-        "Calificación total": (datos.get("puntaje_total"), datos.get("puntaje_total_categoria")),
-        "Calificación Estadísticas": (datos.get("puntaje_estadistica"), datos.get("puntaje_estadistica_categoria")),
-        "Calificación Cualitativo": (datos.get("puntaje_manual"), datos.get("puntaje_manual_categoria")),
-        "Calificación Datos personales": (datos.get("puntaje_general"), datos.get("puntaje_general_categoria")),
-        "Calificación Hábitos y preferencias": (datos.get("puntaje_habitos"), datos.get("puntaje_habitos_categoria")),
+        "Calificación total": (
+            (puntajes_calculados or datos).get("puntaje_total"),
+            (puntajes_calculados or datos).get("puntaje_total_categoria"),
+        ),
+        "Calificación Estadísticas": (
+            (puntajes_calculados or datos).get("puntaje_estadistica"),
+            (puntajes_calculados or datos).get("puntaje_estadistica_categoria"),
+        ),
+        "Calificación Cualitativo": (
+            (puntajes_calculados or datos).get("puntaje_manual"),
+            (puntajes_calculados or datos).get("puntaje_manual_categoria"),
+        ),
+        "Calificación Datos personales": (
+            (puntajes_calculados or datos).get("puntaje_general"),
+            (puntajes_calculados or datos).get("puntaje_general_categoria"),
+        ),
+        "Calificación Hábitos y preferencias": (
+            (puntajes_calculados or datos).get("puntaje_habitos"),
+            (puntajes_calculados or datos).get("puntaje_habitos_categoria"),
+        ),
     }
 
     advertencias = []
@@ -85,7 +106,7 @@ def diagnostico_perfil_creador(creador_id: int) -> str:
     if videos is not None and videos < 5:
         advertencias.append("⚠️ Falta constancia en publicaciones.")
 
-    # Evaluación cualitativa (con labels)
+    # Evaluación cualitativa
     apariencia = datos.get("apariencia")
     engagement = datos.get("engagement")
     calidad = datos.get("calidad_contenido")
@@ -113,21 +134,20 @@ def diagnostico_perfil_creador(creador_id: int) -> str:
     if calidad is not None and calidad <= 2:
         advertencias.append("⚠️ Contenido de baja calidad percibida.")
 
-    # Preferencias y hábitos (unidades ajustadas)
+    # Preferencias y hábitos (corregido con or {})
     tiempo = datos.get("tiempo_disponible", "No definido")
     frecuencia = datos.get("frecuencia_lives", "No definido")
-    experiencia = datos.get("experiencia_otras_plataformas", {})
-    intereses = datos.get("intereses", {})
-    tipo_contenido = datos.get("tipo_contenido", {})
+    experiencia = datos.get("experiencia_otras_plataformas") or {}
+    intereses = datos.get("intereses") or {}
+    tipo_contenido = datos.get("tipo_contenido") or {}
     intencion = datos.get("intencion_trabajo", "No definido")
 
     experiencia_fmt = []
     for plataforma, valor in experiencia.items():
-        if not valor or valor == 0:  # ignora None y 0
+        if not valor or valor == 0:
             continue
         sufijo = "año" if valor == 1 else "años"
         experiencia_fmt.append(f"{plataforma}: {valor} {sufijo}")
-
     experiencia_str = ", ".join(experiencia_fmt) if experiencia_fmt else "Sin experiencia"
 
     intereses_fmt = [k for k, v in intereses.items() if v] if isinstance(intereses, dict) else intereses
@@ -152,7 +172,7 @@ def diagnostico_perfil_creador(creador_id: int) -> str:
     if isinstance(intencion, str) and intencion.lower() in ["hobbie", "ocasional"]:
         advertencias.append("ℹ️ Perfil más recreativo que profesional.")
 
-    # Análisis de puntajes bajos en advertencias y oportunidades de mejora
+    # Análisis de categorías bajas
     categoria_baja = []
     for nombre, (_, categoria) in puntajes.items():
         if categoria is not None and categoria.lower() in ['bajo', 'medio']:
@@ -164,192 +184,31 @@ def diagnostico_perfil_creador(creador_id: int) -> str:
 
     # Formatear salida
     mensaje = ["# 📋 DIAGNÓSTICO DEL PERFIL\n"]
-    # 1) Datos personales y generales
     mensaje.append("## 🧑‍🎓 Datos personales y generales")
     for item in diagnostico["🧑‍🎓 Datos personales y generales"]:
         mensaje.append(f"- {item}")
     mensaje.append("")
-    # 2) Estadísticas
+
     mensaje.append("## 📊 Estadísticas")
     for item in diagnostico["📊 Estadísticas"]:
         mensaje.append(f"- {item}")
     mensaje.append("")
-    # 3) Evaluación cualitativa
+
     mensaje.append("## 💡 Evaluación cualitativa")
     for item in diagnostico["💡 Evaluación cualitativa"]:
         mensaje.append(f"- {item}")
     mensaje.append("")
-    # 4) Preferencias y hábitos
+
     mensaje.append("## 📅 Preferencias y hábitos")
     for item in diagnostico["📅 Preferencias y hábitos"]:
         mensaje.append(f"- {item}")
     mensaje.append("")
 
-    # Advertencias y oportunidades de mejora
-    # if advertencias:
-    #     mensaje.append("### ⚠️ Advertencias y oportunidades de mejora")
-    #     for adv in advertencias:
-    #         mensaje.append(f"- {adv}")
-    #     mensaje.append("")
-
-    # Calificaciones y puntajes al final
     mensaje.append("# 🏅 Categorías y puntajes del Perfil")
     for nombre, (_, categoria) in puntajes.items():
         mensaje.append(f"- {nombre}: {categoria if categoria is not None else 'Sin categoría'}")
 
     return "\n".join(mensaje)
-
-# def diagnostico_perfil_creador(creador_id: int) -> str:
-#     """
-#     Diagnóstico integral del perfil del creador, con puntajes, labels y unidades correctas.
-#     """
-#     datos = obtener_datos_mejoras_perfil_creador(creador_id)
-#     puntajes = {
-#         "Calificación total": (datos.get("puntaje_total"), datos.get("puntaje_total_categoria")),
-#         "Calificación Estadísticas": (datos.get("puntaje_estadistica"), datos.get("puntaje_estadistica_categoria")),
-#         "Calificación Cualitativo": (datos.get("puntaje_manual"), datos.get("puntaje_manual_categoria")),
-#         "Calificación Datos personales": (datos.get("puntaje_general"), datos.get("puntaje_general_categoria")),
-#         "Calificación Hábitos y preferencias": (datos.get("puntaje_habitos"), datos.get("puntaje_habitos_categoria")),
-#     }
-#
-#     advertencias = []
-#     diagnostico = {
-#         "📊 Estadísticas": [],
-#         "💡 Cualitativo": [],
-#         "🧑‍🎓 Datos personales": [],
-#         "📅 Hábitos y preferencias": [],
-#     }
-#
-#     # Puntajes
-#     puntajes_lines = ["# 🏅 Categorías del Perfil"]
-#     for nombre, (_, categoria) in puntajes.items():
-#         puntajes_lines.append(
-#             f"- {nombre}: {categoria if categoria is not None else 'Sin categoría'}"
-#         )
-#     puntajes_lines.append("")
-#
-#     # Estadísticas
-#     seguidores = datos.get("seguidores")
-#     siguiendo = datos.get("siguiendo")
-#     likes = datos.get("likes")
-#     videos = datos.get("videos")
-#     duracion = datos.get("duracion_emisiones")
-#
-#     diagnostico["📊 Estadísticas"].append(f"👥 Seguidores: {seguidores if seguidores is not None else 'No informado'}")
-#     diagnostico["📊 Estadísticas"].append(f"➡️ Siguiendo: {siguiendo if siguiendo is not None else 'No informado'}")
-#     diagnostico["📊 Estadísticas"].append(f"👍 Likes: {likes if likes is not None else 'No informado'}")
-#     diagnostico["📊 Estadísticas"].append(f"🎥 Videos: {videos if videos is not None else 'No informado'}")
-#     diagnostico["📊 Estadísticas"].append(f"⏳ Días activo: {duracion if duracion is not None else 'No informado'}")
-#
-#     if seguidores is not None and seguidores < 100:
-#         advertencias.append("⚠️ Nivel bajo de seguidores.")
-#     if likes is not None and likes < 200:
-#         advertencias.append("⚠️ Poca interacción (likes bajos).")
-#     if videos is not None and videos < 5:
-#         advertencias.append("⚠️ Falta constancia en publicaciones.")
-#
-#     # Cualitativo (con labels)
-#     apariencia = datos.get("apariencia")
-#     engagement = datos.get("engagement")
-#     calidad = datos.get("calidad_contenido")
-#     eval_foto = datos.get("eval_foto")
-#     eval_bio = datos.get("eval_biografia")
-#
-#     diagnostico["💡 Cualitativo"].append(
-#         f"🧑‍🎤 Apariencia en cámara: {get_label('apariencia', apariencia)}"
-#     )
-#     diagnostico["💡 Cualitativo"].append(
-#         f"🤝 Engagement: {get_label('engagement', engagement)}"
-#     )
-#     diagnostico["💡 Cualitativo"].append(
-#         f"🎬 Calidad del contenido: {get_label('calidad_contenido', calidad)}"
-#     )
-#     diagnostico["💡 Cualitativo"].append(
-#         f"🖼️ Foto de perfil: {get_label('eval_foto', eval_foto)}"
-#     )
-#     diagnostico["💡 Cualitativo"].append(
-#         f"📖 Biografía: {get_label('eval_biografia', eval_bio)}"
-#     )
-#
-#     if engagement is not None and engagement <= 2:
-#         advertencias.append("⚠️ Necesita mayor interacción con la audiencia.")
-#     if calidad is not None and calidad <= 2:
-#         advertencias.append("⚠️ Contenido de baja calidad percibida.")
-#
-#     # Datos personales
-#     idioma = datos.get("idioma", "No especificado")
-#     estudios = datos.get("estudios", "No especificado")
-#     actividad = datos.get("actividad_actual", "No especificado")
-#
-#     diagnostico["🧑‍🎓 Datos personales"].append(f"🌐 Idioma: {idioma}")
-#     diagnostico["🧑‍🎓 Datos personales"].append(
-#         f"- - 🎓 Estudios: {(estudios.replace('_', ' ') if estudios else 'No informado')}"
-#     )
-#     diagnostico["🧑‍🎓 Datos personales"].append(f"💼 Actividad actual: {actividad}")
-#
-#     if idioma and idioma.lower() != "español":
-#         advertencias.append("🌍 Puede aprovechar público bilingüe.")
-#     if actividad and "estudiante" in actividad.lower():
-#         advertencias.append("📘 Puede aprovechar su etapa de formación para contenido educativo.")
-#
-#     # Hábitos y preferencias (unidades ajustadas)
-#     tiempo = datos.get("tiempo_disponible", "No definido")
-#     frecuencia = datos.get("frecuencia_lives", "No definido")
-#     experiencia = datos.get("experiencia_otras_plataformas", {})
-#     intereses = datos.get("intereses", {})
-#     tipo_contenido = datos.get("tipo_contenido", {})
-#     intencion = datos.get("intencion_trabajo", "No definido")
-#
-#     experiencia_fmt = [f"{k}: {v}" for k, v in experiencia.items() if v > 0] if isinstance(experiencia, dict) else experiencia
-#     # experiencia_str = ", ".join(experiencia_fmt) if experiencia_fmt else "Sin experiencia"
-#
-#     experiencia_fmt = []
-#     for plataforma, valor in experiencia.items():
-#         if not valor or valor == 0:  # ignora None y 0
-#             continue
-#         sufijo = "año" if valor == 1 else "años"
-#         experiencia_fmt.append(f"{plataforma}: {valor} {sufijo}")
-#
-#     experiencia_str = ", ".join(experiencia_fmt) if experiencia_fmt else "Sin experiencia"
-#
-#     intereses_fmt = [k for k, v in intereses.items() if v] if isinstance(intereses, dict) else intereses
-#     intereses_str = ", ".join(intereses_fmt) if intereses_fmt else "No definidos"
-#
-#     tipo_fmt = [k for k, v in tipo_contenido.items() if v] if isinstance(tipo_contenido, dict) else tipo_contenido
-#     tipo_str = ", ".join(tipo_fmt) if tipo_fmt else "No definido"
-#
-#     diagnostico["📅 Hábitos y preferencias"].append(
-#         f"⌛ Tiempo disponible: {tiempo} horas por semana" if tiempo not in [None, "", "No definido"] else "⌛ Tiempo disponible: No definido"
-#     )
-#     diagnostico["📅 Hábitos y preferencias"].append(
-#         f"📡 Frecuencia de lives: {frecuencia} veces por semana" if frecuencia not in [None, "", "No definido"] else "📡 Frecuencia de lives: No definido"
-#     )
-#     diagnostico["📅 Hábitos y preferencias"].append(f"🌍 Experiencia en otras plataformas: {experiencia_str}")
-#     diagnostico["📅 Hábitos y preferencias"].append(f"🎯 Intereses: {intereses_str}")
-#     diagnostico["📅 Hábitos y preferencias"].append(f"🎨 Tipo de contenido: {tipo_str}")
-#     diagnostico["📅 Hábitos y preferencias"].append(f"💼 Intención de trabajo: {intencion}")
-#
-#     if (isinstance(frecuencia, str) and frecuencia.lower() == "baja") or (isinstance(tiempo, str) and tiempo.lower() == "limitado"):
-#         advertencias.append("⚠️ Tiempo de dedicación limitado.")
-#     if isinstance(intencion, str) and intencion.lower() in ["hobbie", "ocasional"]:
-#         advertencias.append("ℹ️ Perfil más recreativo que profesional.")
-#
-#     # Formatear salida
-#     mensaje = ["# 📋 DIAGNÓSTICO DEL PERFIL\n"]
-#     mensaje += puntajes_lines
-#     for seccion, items in diagnostico.items():
-#         mensaje.append(f"## {seccion}")
-#         for item in items:
-#             mensaje.append(f"- {item}")
-#         mensaje.append("")  # Espacio entre secciones
-#
-#     if advertencias:
-#         mensaje.append("### ⚠️ Advertencias y oportunidades de mejora")
-#         for adv in advertencias:
-#             mensaje.append(f"- {adv}")
-#
-#     return "\n".join(mensaje)
-
 
 def evaluar_estadisticas(seguidores, siguiendo, videos, likes, duracion):
     # Corte duro: si tiene muy pocos seguidores, no cuenta
@@ -441,8 +300,8 @@ def evaluar_cualitativa(
 ):
     # Pesos base
     pesos_base = {
-        "apariencia": 0.37,
-        "engagement": 0.28,
+        "apariencia": 0.33,
+        "engagement": 0.32,
         "calidad_contenido": 0.2,
         "foto": 0.05,
         "biografia": 0.05,
@@ -480,24 +339,24 @@ def evaluar_cualitativa(
 SLIDER_LABELS = {
     'apariencia': {
         1: "No destaca - poco llamativa",
-        2: "Básico - simple, sin esfuerzo",
-        3: "Presentable - cuidada y correcta",
-        4: "Agradable - buena presencia",
-        5: "Muy atractivo - sobresaliente"
+        2: "Básico - Imagen neutra, sin impacto pero correcta",
+        3: "Buena presencia — Estilo acorde, genera interés visual",
+        4: "Agradable - buena presencia y tiene estilo propio",
+        5: "Muy atractivo - Imagen profesional y sobresaliente"
     },
     'engagement': {
-        1: "No conecta - No genera empatía",
-        2: "Limitado - poca interacción",
+        1: "No conecta - sin emoción; no genera empatía ni interacción",
+        2: "Limitado - poca interacción, le falta chispa",
         3: "Interesante - a veces atrapa",
-        4: "Carismático - cautiva natural",
+        4: "Carismático - expresivo y cautiva con naturalidad",
         5: "Altamente carismático — Captura la atención de todos"
     },
     'calidad_contenido': {
-        1: "Muy deficiente - sin calidad ni mensaje",
-        2: "Limitado - aporta poco",
-        3: "Correcto - entendible y algo útil",
-        4: "Bueno - bien producido y valioso",
-        5: "Excelente - profesional con gran aporte"
+        1: "Vacío — Solo bailes, lipsyncs o videos de terceros",
+        2: "Básico — Intenta transmitir algo, pero poca creatividad",
+        3: "Valioso — Entretenido, muestra creatividad o información útil",
+        4: "Original — Innovador y bien producido",
+        5: "Sobresaliente — Profesional, creativo y con gran impacto"
     },
     'eval_biografia': {
         1: 'No tiene Biografía',
@@ -507,8 +366,8 @@ SLIDER_LABELS = {
         5: 'Excelente (muy corta, clara y coherente).'
     },
     'eval_foto': {
-        1: 'No tiene foto propia',
-        2: 'Foto genérica, poco clara o de baja calidad',
+        1: 'Sin foto propia - Avatar genérico o ausente ',
+        2: 'Foto genérica, poco clara, de baja calidad o en grupo',
         3: 'Foto aceptable pero mejorable',
         4: 'Buena foto personal, adecuada',
         5: 'Foto excelente, muy profesional y atractiva'
@@ -524,10 +383,6 @@ SLIDER_LABELS = {
 
 
 def evaluar_datos_generales(edad, genero, idiomas, estudios, pais=None, actividad_actual=None):
-    """
-    Evalúa características generales del creador.
-    Retorna un score normalizado 0–3, luego escalado a 0–5.
-    """
 
     # ==== Edad ====
     if edad is None:
@@ -639,13 +494,6 @@ def evaluar_preferencias_habitos(
     freq_lives=None,
     intencion=None
 ):
-    """
-    Evalúa las preferencias y hábitos con base en:
-    - Experiencia en otras plataformas (dict con conteos por plataforma)
-    - Intereses (dict con booleanos)
-    - Tipo de contenido (dict con booleanos)
-    - Opcional: tiempo disponible, frecuencia de lives, intención de trabajo
-    """
 
     # ==============================
     # 1. Experiencia en otras plataformas
@@ -738,11 +586,11 @@ def evaluar_preferencias_habitos(
     # ==============================
     if tiempo is None:
         t = 0
-    elif tiempo < 4:
+    elif tiempo < 12:
         t = 1
-    elif tiempo <= 7:
+    elif tiempo < 21:
         t = 2
-    elif tiempo <= 10:
+    elif tiempo < 36:
         t = 3
     else:
         t = 4
@@ -927,8 +775,10 @@ def mejoras_sugeridas_estadisticas(
 
     # Seguidores
     if seguidores < 50:
-        sugerencias.append("🔍 Analiza qué videos atraen nuevos seguidores y replica o mejora ese formato.")
-        sugerencias.append("🌐 Promociona tu perfil en otras redes para atraer nuevos seguidores.")
+        sugerencias.append("❌ Actualmente no es apto para ingresar a la agencia. El requisito mínimo es superar los 50 seguidores.")
+        sugerencias.append("📌 Enfócate primero en superar los 50 seguidores antes de continuar con otros aspectos.")
+        sugerencias.append("🔍 Revisa qué tipo de videos generan más interacción y replica los formatos que funcionen mejor.")
+        sugerencias.append("🌐 Promociona tu perfil en otras redes sociales o grupos para atraer seguidores iniciales.")
     elif seguidores < 300:
         sugerencias.append("⏫ Prueba nuevas temáticas o formatos para atraer diferentes públicos.")
         sugerencias.append("🎯 Haz colaboraciones con otros creadores para aumentar tu alcance.")
@@ -947,16 +797,16 @@ def mejoras_sugeridas_estadisticas(
     # Likes normalizados (engagement relativo)
     if likes_normalizado == 0:
         sugerencias.append(
-            "⚡ Tus videos aún no generan interacción. Enfócate en contenidos que inviten a comentar, compartir y dar 'me gusta'.")
+            "⚡ Según el número de likes tus videos aún no generan interacción. Enfócate en contenidos que inviten a comentar, compartir y dar 'me gusta'.")
     elif likes_normalizado < 0.02:
         sugerencias.append(
-            "📈 El nivel de interacción es bajo en relación a tus seguidores y videos. Prueba diferentes formatos y fomenta la participación en tus publicaciones.")
+            "📈 Según el número de likes el nivel de interacción es bajo en relación a tus seguidores y videos. Prueba diferentes formatos y fomenta la participación en tus publicaciones.")
     elif likes_normalizado <= 0.05:
         sugerencias.append(
-            "🎯 Tienes una interacción moderada. Identifica qué tipos de contenido generan más respuesta y potencia esos temas.")
+            "🎯 Según el número de likes tienes una interacción moderada. Identifica qué tipos de contenido generan más respuesta y potencia esos temas.")
     elif likes_normalizado <= 0.10:
         sugerencias.append(
-            "🔥 Tu nivel de interacción es bueno. Mantén la constancia y busca sorprender para seguir creciendo.")
+            "🔥 Según el número de likes tu nivel de interacción es bueno. Mantén la constancia y busca sorprender para seguir creciendo.")
     else:
         sugerencias.append(
             "✅ Excelente nivel de interacción relativa. Aprovecha tu comunidad activa para lanzar iniciativas, retos o colaboraciones.")
@@ -992,39 +842,59 @@ def mejoras_sugeridas_cualitativa(
         except (TypeError, ValueError):
             return 0
 
+    RECOMENDACIONES_USUARIO = {
+        1: "Tu nombre de usuario incluye números o símbolos poco profesionales. Considera elegir un nombre sencillo, memorable y sin cifras, que represente tu identidad y facilite que otros te recuerden y te encuentren.",
+        2: "El nombre de usuario es aceptable pero podría ser más profesional. Si es posible, elimina cifras o símbolos y utiliza tu nombre real o artístico para fortalecer tu marca personal.",
+        3: "Tu nombre de usuario es claro y fácil de recordar, aunque puede beneficiarse de pequeños ajustes para hacerlo aún más profesional y representativo.",
+        4: "¡Muy bien! Tu nombre de usuario es profesional y refleja tu identidad como creador. Mantén esta coherencia en todas tus plataformas.",
+        5: "¡Excelente! Tu nombre de usuario es auténtico, profesional y se asocia fácilmente a tu contenido. Es ideal para construir tu marca."
+    }
+
+    RECOMENDACIONES_BIOGRAFIA = {
+        1: "Tu biografía está incompleta o no comunica claramente quién eres y qué haces. Redáctala de forma auténtica, específica y orientada al tipo de contenido que realizas. Agrega una descripción personal que refleje tu esencia y motive a otros a seguirte.",
+        2: "La biografía es genérica o poco clara. Intenta ser más específico sobre tu perfil y el tipo de contenido que ofreces. Incluye detalles sobre tus intereses y lo que te hace diferente.",
+        3: "Biografía correcta, pero puede mejorar en autenticidad y claridad. Incorpora una frase que te defina y que conecte con tu audiencia.",
+        4: "¡Muy bien! Tu biografía es clara y coherente con tu contenido. Personalízala regularmente para mantenerla actualizada y relevante.",
+        5: "¡Excelente! Biografía auténtica, bien redactada y específica. Comunica perfectamente tu personalidad y estilo como creador."
+    }
+
     RECOMENDACIONES_APARIENCIA = {
-        1: "Tu apariencia no destaca y puede pasar desapercibida. Mejora tu arreglo y elige vestimenta que te favorezca para captar mejor la atención.",
-        2: "Imagen presentable pero neutra. Añade detalles distintivos, como accesorios, colores vivos o cambios de peinado.",
-        3: "Buena presencia, pero puedes mejorar tu atractivo visual con mejor peinado, ropa y buena iluminación en tus videos.",
-        4: "¡Muy bien! Tu apariencia es atractiva y destaca ante la cámara. Mantén tu estilo y atención a los detalles.",
-        5: "¡Excelente! Tu presencia sobresale y complementa perfectamente tu contenido."
+        1: "Tu apariencia actualmente no consigue captar la atención ni transmitir autenticidad. Trabaja en tu imagen personal, elige vestimenta que te favorezca y cuida detalles como peinado e higiene. Mostrarte auténtico y natural frente a cámara genera confianza y conexión.",
+        2: "Imagen correcta pero neutra. Incorpora accesorios, colores y elementos que reflejen tu personalidad. Busca destacar con detalles propios y transmite autenticidad.",
+        3: "Buena presencia, pero puedes mejorar tu atractivo visual y autenticidad. Ajusta iluminación, fondo y estilo de ropa para reforzar tu marca personal.",
+        4: "¡Muy bien! Tu apariencia es agradable, auténtica y destaca frente a la cámara. Mantén tu estilo y cuida los detalles para seguir conectando con tu audiencia.",
+        5: "¡Excelente! Tu presencia transmite autenticidad y profesionalismo, y complementa perfectamente tu contenido. Sigue mostrando tu esencia y fortalece tu conexión visual."
     }
+
     RECOMENDACIONES_CALIDAD_CONTENIDO = {
-        1: "La calidad es baja y no aporta valor propio. Haz videos originales y relevantes, mejora producción y evita material ajeno.",
-        2: "Contenido limitado y de poco valor. Define mejor tus objetivos, entrega mensajes útiles y cuida sonido e iluminación.",
-        3: "Contenido correcto y útil, pero puede ser más atractivo si refuerzas tu mensaje y estilo.",
-        4: "¡Muy bien! Tu contenido está bien producido y aporta valor. Perfecciona edición e innova para consolidar tu comunidad.",
-        5: "¡Excelente! La calidad es profesional y aporta mucho valor. Mantén ese nivel."
+        1: "La calidad de tu contenido es baja y parece poco personal. Prioriza videos originales y propios, que comuniquen tu mensaje y estilo. Evita copiar contenido y enfócate en aportar valor auténtico a tu audiencia.",
+        2: "Tu contenido es genérico o carece de autenticidad. Define claramente tu objetivo y tipo de creador, y muestra tu voz personal en cada video. Cuida la producción y elige temas que te representen.",
+        3: "Contenido correcto, pero puede ser más personal y atractivo. Refuerza tu mensaje y experimenta con formatos que te permitan destacar tu estilo y creatividad.",
+        4: "¡Muy bien! Tu contenido es innovador y aporta un mensaje claro. Se nota tu esfuerzo creativo y tu sello propio. Puedes seguir perfeccionando la edición y explorar nuevas ideas para diferenciarte.",
+        5: "¡Excelente! La calidad de tu contenido es profesional, creativo y genera gran impacto o aporte en tu audiencia. Mantén ese enfoque y continúa evolucionando tu estilo."
     }
+
     RECOMENDACIONES_EMPATIA = {
-        1: "Poca empatía y conexión. Interactúa más, responde comentarios y muestra cercanía en tus transmisiones.",
-        2: "Interacción limitada con la audiencia. Usa llamados a la acción, pide opiniones y mantén comunicación constante.",
-        3: "Tu contenido genera algo de conexión. Potencia la empatía con dinámicas y agradecimientos.",
-        4: "¡Muy bien! Conectas de forma natural y la audiencia responde positivamente. Promueve la participación.",
+        1: "Tu nivel de empatía con la audiencia es bajo y cuesta generar conexión. Es fundamental interactuar más durante las transmisiones, responder comentarios y mostrarte cercano a tu público. Trabaja en tu lenguaje corporal y expresión para transmitir energía y autenticidad.",
+        2: "La interacción con tu audiencia es limitada y se refleja en una baja participación. Incorpora llamados a la acción, solicita opiniones y responde dudas en directo para que tus seguidores se sientan parte activa de tus contenidos. Mantén una comunicación constante y muestra interés genuino por su participación.",
+        3: "Tu contenido comienza a generar conexión, pero puede potenciarse. Incrementa la empatía usando dinámicas regulares, colaboraciones y agradece siempre la participación de tus seguidores para fortalecer el vínculo.",
+        4: "¡Muy bien! Conectas de forma natural y la audiencia responde positivamente. Promueves la participación y generas cercanía con tus seguidores.",
         5: "¡Excelente! Generas empatía y conexión con facilidad. Mantén tu carisma y busca nuevas formas de interactuar."
     }
+
     RECOMENDACIONES_EVAL_FOTO = {
-        1: "Sin foto personal. Sube una imagen clara y auténtica para que tu audiencia te identifique y confíe en ti.",
-        2: "Foto genérica o de baja calidad. Elige una imagen con buena iluminación y resolución.",
-        3: "Foto aceptable, pero puede mejorar. Actualízala para reflejar mejor tu profesionalismo.",
-        4: "¡Muy bien! Tu foto transmite confianza. Sigue cuidando y actualizando tu imagen.",
+        1: "Actualmente no tienes una foto personal en tu perfil. Es fundamental mostrar una imagen clara y auténtica, donde solo aparezcas tú, para que tu audiencia te identifique y confíe en tu perfil.",
+        2: "La foto de perfil es genérica o de baja calidad, lo que puede afectar la percepción de profesionalismo. Elige una foto donde se te vea bien, con buena iluminación y resolución. Evita imágenes borrosas, impersonales o en las que aparezcas acompañado.",
+        3: "Tu foto de perfil es aceptable, pero se puede mejorar. Actualízala con una imagen más reciente, de mejor calidad o que refleje mejor tu personalidad y propósito.",
+        4: "¡Muy bien! Tu foto transmite confianza y profesionalismo, lo que genera una excelente primera impresión.",
         5: "¡Excelente! Foto profesional y atractiva. Mantén ese estándar."
     }
+
     RECOMENDACIONES_METADATA_VIDEOS = {
-        1: "Títulos y hashtags deficientes. Hazlos claros, breves y relacionados con tu contenido. Usa hashtags relevantes.",
-        2: "Títulos y hashtags poco claros. Sé específico y elige hashtags que representen el tema central.",
-        3: "Aceptables pero pueden ser más atractivos. Crea títulos que despierten interés y usa hashtags efectivos.",
-        4: "¡Muy bien! Los títulos y hashtags son claros y alineados con el contenido.",
+        1: "Los títulos, subtítulos y hashtags de tus videos actualmente son deficientes y no describen bien el contenido. Es fundamental que cada video tenga un título visible en la portada. Los títulos y subtitulos deben ser breves, claros y relacionados directamente con lo que muestras. Utiliza hashtags relevantes y específicos para facilitar que tu audiencia encuentre tus videos y mejorar tu alcance.",
+        2: "Tus títulos, subtítulos y hashtags no logran resaltar tu contenido y pueden pasar desapercibidos. Procura que sean específicos, atractivos y despierten curiosidad. Selecciona hashtags que realmente representen el tema central del video.",
+        3: "Tus títulos, subtítulos y hashtags son aceptables y comprensibles, pero pueden ser mucho más atractivos y efectivos. Intenta crear títulos que inviten a la acción y utiliza hashtags que ayuden a posicionar mejor tu contenido.",
+        4: "¡Muy bien! Los títulos, subtítulos y hashtags son claros y alineados con el contenido que ofreces.",
         5: "¡Excelente! Títulos y hashtags claros, breves y llamativos."
     }
 
@@ -1060,85 +930,6 @@ def mejoras_sugeridas_cualitativa(
     # Limpia para no mostrar elementos vacíos
     return [s for s in sugerencias if s.strip()]
 
-
-# def mejorar_biografia_sugerida(bio_salida: str, eval_biografia: int) -> str:
-#     """
-#     Si hay una biografía sugerida real, solo la muestra.
-#     Si solo hay atributos, muestra la frase resumen.
-#     Si está vacío, muestra sugerencias automáticas.
-#     """
-#
-#     labels = {
-#         1: 'No tiene Biografía',
-#         2: 'Deficiente (confusa, larga o sin propósito).',
-#         3: 'Aceptable (se entiende pero poco identidad).',
-#         4: 'Buena (clara, corta, con identidad).',
-#         5: 'Excelente (muy corta, clara y coherente).'
-#     }
-#
-#     markdown = []
-#
-#     # Si NO hay biografía sugerida
-#     if not bio_salida or not str(bio_salida).strip():
-#         observacion = labels.get(eval_biografia, "Sin evaluación.")
-#         markdown.append(f"**Observación de la biografía:** {observacion}")
-#         if eval_biografia == 1:
-#             markdown.append(
-#                 "✍️ _No tienes biografía, agrega una descripción breve y atractiva que resuma tu identidad o intereses._")
-#         elif eval_biografia == 2:
-#             markdown.append(
-#                 "⚠️ _Tu biografía actual es confusa, extensa o sin propósito claro. Reescríbela para que sea corta, directa y comunique quién eres o qué ofreces._")
-#         elif eval_biografia == 3:
-#             markdown.append(
-#                 "🔄 _La biografía es aceptable pero puedes reforzar tu identidad o mensaje. Agrega palabras clave, emojis o detalles que te diferencien._")
-#         elif eval_biografia == 4:
-#             markdown.append(
-#                 "👍 _Tu biografía es buena, pero puedes pulirla para ser aún más memorable o coherente con tu marca personal._")
-#         elif eval_biografia == 5:
-#             markdown.append("🌟 _¡Excelente biografía! Es corta, clara y coherente. Mantén ese estilo._")
-#         return "\n".join(markdown)
-#
-#     # Procesa atributos y texto
-#     atributos = {
-#         "Corta": False,
-#         "Comprensible": False,
-#         "Consistente": False,
-#         "Estética": False,
-#     }
-#     lineas = [l.strip() for l in bio_salida.splitlines() if l.strip()]
-#     texto_personalizado = []
-#     solo_atributos = True
-#     for linea in lineas:
-#         if ":" in linea:
-#             campo, valor = [x.strip() for x in linea.split(":", 1)]
-#             if campo in atributos and valor.lower() == "sí":
-#                 atributos[campo] = True
-#             else:
-#                 # Si hay un campo fuera de los atributos, lo tratamos como texto personalizado
-#                 solo_atributos = False
-#                 texto_personalizado.append(linea)
-#         elif "Recomendación:" in linea:
-#             continue  # omite esta línea
-#         else:
-#             # Si hay texto que no es atributo, lo tratamos como personalizado
-#             solo_atributos = False
-#             texto_personalizado.append(linea)
-#
-#     # Decide qué mostrar
-#     markdown.append("**Biografía sugerida:**")
-#     if solo_atributos and any(atributos.values()):
-#         lista_frases = []
-#         if atributos["Corta"]: lista_frases.append("corta")
-#         if atributos["Comprensible"]: lista_frases.append("comprensible")
-#         if atributos["Consistente"]: lista_frases.append("consistente")
-#         if atributos["Estética"]: lista_frases.append("estéticamente cuidada")
-#         frase_atributos = f"Tu biografía es {' ,'.join(lista_frases[:-1]) + ' y ' + lista_frases[-1] if len(lista_frases) > 1 else lista_frases[0]}."
-#         markdown.append(frase_atributos)
-#     elif texto_personalizado:
-#         # Si hay texto personalizado, solo mostrar eso
-#         markdown.append("\n".join(texto_personalizado))
-#
-#     return "\n".join(markdown)
 
 def mejorar_biografia_sugerida(bio_salida: str, eval_biografia: int) -> str:
 
@@ -1192,17 +983,17 @@ def mejorar_biografia_sugerida(bio_salida: str, eval_biografia: int) -> str:
 
     # Si NO hay biografía sugerida, muestra observación y recomendaciones automáticas
     observacion = labels.get(eval_biografia, "Sin evaluación.")
-    markdown.append(f"**Observación de la biografía:** {observacion}")
+    markdown.append(f"{observacion}")
     if eval_biografia == 1:
-        markdown.append("✍️ _No tienes biografía, agrega una descripción breve y atractiva que resuma tu identidad o intereses._")
+        markdown.append("✍️ No tienes biografía, agrega una descripción breve y atractiva que resuma tu identidad o intereses.")
     elif eval_biografia == 2:
-        markdown.append("⚠️ _Tu biografía actual es confusa, extensa o sin propósito claro. Reescríbela para que sea corta, directa y comunique quién eres o qué ofreces._")
+        markdown.append("⚠️ Tu biografía actual es confusa, extensa o sin propósito claro. Reescríbela para que sea corta, directa y comunique quién eres o qué ofreces.")
     elif eval_biografia == 3:
-        markdown.append("🔄 _La biografía es aceptable pero puedes reforzar tu identidad o mensaje. Agrega palabras clave, emojis o detalles que te diferencien._")
+        markdown.append("🔄 La biografía es aceptable pero puedes reforzar tu identidad o mensaje. Agrega palabras clave, emojis o detalles que te diferencien.")
     elif eval_biografia == 4:
-        markdown.append("👍 _Tu biografía es buena, pero puedes pulirla para ser aún más memorable o coherente con tu marca personal._")
+        markdown.append("👍 Tu biografía es buena, pero puedes pulirla para ser aún más memorable o coherente con tu marca personal.")
     elif eval_biografia == 5:
-        markdown.append("🌟 _¡Excelente biografía! Es corta, clara y coherente. Mantén ese estilo._")
+        markdown.append("🌟 ¡Excelente biografía! Es corta, clara y coherente. Mantén ese estilo.")
 
     return "\n".join(markdown)
 
@@ -1214,7 +1005,7 @@ def mejoras_sugeridas_datos_generales(edad, genero, idiomas, estudios, pais=None
     if edad is None:
         sugerencias.append("🔎 Completa tu edad para mejorar tu perfil.")
     elif edad < 18:
-        sugerencias.append("🚫 Debes ser mayor de edad para participar como creador.")
+        sugerencias.append("🚫 Debes ser mayor de edad para participar como creador de lives en Tiktok.")
     elif edad < 20:
         sugerencias.append("🧑‍🎓 Eres joven, aprovecha tu energía y cercanía con tendencias actuales para conectar con audiencias similares.")
     elif edad <= 40:
@@ -1300,21 +1091,7 @@ def mejoras_sugeridas_datos_generales(edad, genero, idiomas, estudios, pais=None
     resultado = evaluar_datos_generales(edad, genero, idiomas, estudios, pais, actividad_actual)
     puntaje = resultado["puntaje_general"]
     categoria = resultado["puntaje_general_categoria"]
-    sugerencias.append(f"\n📊 **Categoría de perfil**: {categoria}")
 
-    # Mensaje motivacional según categoría
-    # if categoria == "No apto":
-    #     sugerencias.append("❌ Necesitas completar o mejorar tus datos personales para avanzar como creador.")
-    # elif categoria == "Muy bajo":
-    #     sugerencias.append("⚠️ Tu perfil personal es débil, enfócate en mejorar formación, idiomas o disponibilidad.")
-    # elif categoria == "Bajo":
-    #     sugerencias.append("🔧 Hay margen de mejora, potencia tus estudios, idiomas y actividad profesional.")
-    # elif categoria == "Medio":
-    #     sugerencias.append("👍 Vas por buen camino, sigue reforzando tu perfil y aprovecha tus fortalezas.")
-    # elif categoria == "Alto":
-    #     sugerencias.append("🌟 Tu perfil es muy sólido, busca colaboraciones y oportunidades premium.")
-    # elif categoria == "Excelente":
-    #     sugerencias.append("🏆 ¡Perfil excelente! Aprovecha tu potencial para liderar proyectos y campañas.")
 
     return "\n".join(sugerencias)
 
@@ -1395,15 +1172,23 @@ def mejoras_sugeridas_preferencias_habitos(
             tiempo_float = float(tiempo)
         except (ValueError, TypeError):
             tiempo_float = 0
-        if tiempo_float < 4:
+
+        if tiempo_float < 12:
             sugerencias_habitos.append(
-                "⏳ Solo cuentas con poco tiempo disponible para crear contenido. "
-                "Esto limita tu constancia y crecimiento. Planifica bien tus sesiones y opta por videos cortos y de calidad."
+                "⏳ Tu tiempo disponible para realizar lives es menor a 12 horas por semana (menos de 2h diarias durante 6 días). Será muy difícil mantener constancia y crecer como creador. Te recomendamos organizar tu agenda y reservar al menos 2 horas diarias, 6 días a la semana."
             )
-        elif tiempo_float <= 10:
-            sugerencias_habitos.append("🕒 Puedes mantener una frecuencia regular y experimentar con nuevos formatos.")
-        else:
-            sugerencias_habitos.append("🔄 Con mucha disponibilidad, aprovecha para colaborar y mejorar tu producción.")
+        elif tiempo_float < 21:
+            sugerencias_habitos.append(
+                "⚠️ Tu tiempo disponible para realizar lives está entre 12 y 20 horas semanales. Cumples el mínimo necesario, pero si puedes aumentar tu disponibilidad te acercarás al rango ideal para ver mejores resultados."
+            )
+        elif tiempo_float < 36:
+            sugerencias_habitos.append(
+                "✅ ¡Muy bien! Tu tiempo disponible está entre 21 y 35 horas por semana. Este es el rango ideal para un crecimiento constante, engagement y resultados positivos como creador de lives."
+            )
+        else:  # tiempo_float >= 36
+            sugerencias_habitos.append(
+                "🌟 Excelente, tienes 36 horas o más por semana para lives (por ejemplo, 3h en la mañana y 3h en la noche). Este nivel de dedicación es propio de creadores profesionales y te permitirá maximizar tu alcance y crecimiento."
+            )
 
     # Frecuencia de lives
     freq_lives_int = 0

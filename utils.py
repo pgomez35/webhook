@@ -3,12 +3,93 @@ import psycopg2
 from dotenv import load_dotenv  # Solo si usas variables de entorno
 import os
 import re
+
+from fastapi import FastAPI
+from starlette.staticfiles import StaticFiles
+
 from enviar_msg_wp import enviar_plantilla_generica, enviar_mensaje_texto_simple
 
 # Cargar variables de entorno (incluye DATABASE_URL)
 load_dotenv()
 
 INTERNAL_DATABASE_URL = os.getenv("EXTERNAL_DATABASE_URL")
+
+import requests
+import os
+
+import cloudinary
+import cloudinary.uploader
+
+# ⚙️ Inicializar FastAPI
+app = FastAPI()
+
+# ✅ Crear carpeta persistente de audios si no existe
+AUDIO_DIR = "audios"
+os.makedirs(AUDIO_DIR, exist_ok=True)
+
+# ✅ Montar ruta para servir archivos estáticos desde /audios
+app.mount("/audios", StaticFiles(directory=AUDIO_DIR), name="audios")
+
+
+# Configuración (puedes usar variables de entorno)
+cloudinary.config(
+    cloud_name=os.environ.get("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.environ.get("CLOUDINARY_API_KEY"),
+    api_secret=os.environ.get("CLOUDINARY_API_SECRET"),
+    secure=True
+)
+
+def subir_audio_cloudinary(ruta_local, public_id=None, carpeta="audios_whatsapp"):
+    try:
+        response = cloudinary.uploader.upload(
+            ruta_local,
+            resource_type="video",  # Cloudinary usa 'video' para audio/ogg/webm
+            folder=carpeta,
+            public_id=public_id,
+            overwrite=True
+        )
+        url = response.get("secure_url")
+        print(f"✅ Audio subido a Cloudinary: {url}")
+        return url
+    except Exception as e:
+        print("❌ Error subiendo audio a Cloudinary:", e)
+        return None
+
+def descargar_audio(audio_id, token, carpeta_destino=AUDIO_DIR):
+    try:
+        url_info = f"https://graph.facebook.com/v19.0/{audio_id}"
+        headers = {"Authorization": f"Bearer {token}"}
+        response_info = requests.get(url_info, headers=headers)
+        response_info.raise_for_status()
+
+        media_url = response_info.json().get("url")
+        if not media_url:
+            print("❌ No se pudo obtener la URL del audio.")
+            return None
+
+        response_audio = requests.get(media_url, headers=headers)
+        response_audio.raise_for_status()
+
+        os.makedirs(carpeta_destino, exist_ok=True)
+        nombre_archivo = f"{audio_id}.ogg"
+        ruta_archivo = os.path.join(carpeta_destino, nombre_archivo)
+
+        with open(ruta_archivo, "wb") as f:
+            f.write(response_audio.content)
+
+        print(f"✅ Audio guardado en: {ruta_archivo}")
+
+        # Sube a Cloudinary y elimina el archivo local si quieres
+        url_cloudinary = subir_audio_cloudinary(ruta_archivo, public_id=audio_id)
+        if url_cloudinary:
+            # os.remove(ruta_archivo)  # Descomenta si quieres borrar el archivo local
+            return url_cloudinary
+        else:
+            return None
+
+    except Exception as e:
+        print("❌ Error al descargar audio:", e)
+        return None
 
 def guardar_mensaje(telefono, texto, tipo="recibido", es_audio=False):
     try:
@@ -79,7 +160,4 @@ def gestionar_recursos(numero: str):
 def enviar_info_general(numero: str):
     print(f"[MOCK] Enviando información general al número {numero}")
     return {"status": "ok", "accion": "info_general", "numero": numero}
-
-
-
 

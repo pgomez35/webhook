@@ -292,27 +292,63 @@ def enviar_mensaje(numero: str, texto: str):
         texto=texto
     )
 
-miembros_agencia = [
-    {"telefono": "+573001234567", "nombre": "Pedro", "rol": "miembro"},
-    {"telefono": "+5491133344455", "nombre": "Lucía", "rol": "miembro"},
-    {"telefono": "+34666111222", "nombre": "Carlos", "rol": "miembro"},
-]
-admins = [
-    {"telefono": "+573005551234", "nombre": "Admin Juan"},
-    {"telefono": "+5491177788899", "nombre": "Admin Paula"},
-    {"telefono": "+34666111223", "nombre": "Admin Sergio"}
-]
-def obtener_rol_usuario(numero):
-    # Ejemplo: consulta a base de datos
-    # Retorna: 'aspirante', 'miembro', 'admin', etc.
-    # Aquí sólo para ejemplo:
 
-    if numero in miembros_agencia:
-        return "miembro"
-    elif numero in admins:
-        return "admin"
-    else:
-        return "aspirante"
+import time
+
+# 🗂️ Cachés en memoria con timestamp
+usuarios_flujo = {}   # {numero: (paso, timestamp)}
+usuarios_roles = {}   # {numero: (rol, timestamp)}
+
+# Tiempo de vida en segundos (1 hora = 3600)
+TTL = 3600
+
+
+# --- Funciones de cache ---
+def actualizar_flujo(numero, paso):
+    usuarios_flujo[numero] = (paso, time.time())
+
+def obtener_flujo(numero):
+    if numero in usuarios_flujo:
+        paso, t = usuarios_flujo[numero]
+        if time.time() - t < TTL:
+            return paso
+        else:
+            usuarios_flujo.pop(numero, None)  # 🧹 expira por inactividad
+    return None
+
+def consultar_rol_bd(numero):
+
+    miembros_agencia = [
+        {"telefono": "+573001234567", "nombre": "Pedro", "rol": "miembro"},
+        {"telefono": "+5491133344455", "nombre": "Lucía", "rol": "miembro"},
+        {"telefono": "+34666111222", "nombre": "Carlos", "rol": "miembro"},
+    ]
+    admins = [
+        {"telefono": "+573005551234", "nombre": "Admin Juan"},
+        {"telefono": "+5491177788899", "nombre": "Admin Paula"},
+        {"telefono": "+34666111223", "nombre": "Admin Sergio"}
+    ]
+
+    for m in miembros_agencia:
+        if m["telefono"] == numero:
+            return m.get("rol", "miembro")
+    for a in admins:
+        if a["telefono"] == numero:
+            return "admin"
+    return "aspirante"
+
+
+def obtener_rol_usuario(numero):
+    if numero in usuarios_roles:
+        rol, t = usuarios_roles[numero]
+        if time.time() - t < TTL:
+            return rol
+        else:
+            usuarios_roles.pop(numero, None)  # 🧹 expira por inactividad
+
+    rol = consultar_rol_bd(numero)
+    usuarios_roles[numero] = (rol, time.time())
+    return rol
 
 def enviar_menu_principal(numero):
     rol = obtener_rol_usuario(numero)
@@ -385,12 +421,17 @@ def validar_aceptar_ciudad(usuario_ciudad, ciudades=CIUDADES_LATAM, score_minimo
 # ============================
 def manejar_respuesta(numero, texto):
     # --- Volver al menú principal ---
-    if texto.strip().lower() in ["menu", "volver", "inicio","brillar"]:
-        if numero in usuarios_flujo:
-            del usuarios_flujo[numero]
+    if texto.strip().lower() in ["menu", "volver", "inicio", "brillar"]:
+        usuarios_flujo.pop(numero, None)   # 🧹 limpieza manual
+        usuarios_roles.pop(numero, None)   # 🧹 limpieza manual
         enviar_menu_principal(numero)
         return
+    
     paso = usuarios_flujo.get(numero)
+
+    # 🚫 IMPORTANTE: si el paso es "chat_libre", salimos y no hacemos nada aquí
+    if paso == "chat_libre":
+        return
 
     # --- MENÚ PRINCIPAL SEGÚN ROL ---
     if paso is None:
@@ -409,10 +450,7 @@ def manejar_respuesta(numero, texto):
                 usuarios_flujo[numero] = "requisitos"
                 enviar_requisitos(numero)
                 return
-            elif texto in ["4", "chat", "asesor"]:
-                usuarios_flujo[numero] = "chat_libre"
-                enviar_mensaje(numero, "Estás en chat libre. Escribe tu consulta y un asesor te responderá pronto.")
-                return
+                # 👇 Ya no manejamos el "4" aquí
             else:
                 enviar_menu_principal(numero)
                 return
@@ -437,10 +475,6 @@ def manejar_respuesta(numero, texto):
             elif texto == "6":
                 usuarios_flujo[numero] = "soporte"
                 enviar_mensaje(numero, "📩 Describe tu problema y el equipo técnico te responderá.")
-                return
-            elif texto == "7":
-                usuarios_flujo[numero] = "chat_libre"
-                enviar_mensaje(numero, "Estás en chat libre con el equipo.")
                 return
             elif texto == "8":
                 usuarios_flujo[numero] = "estadisticas"
@@ -471,10 +505,6 @@ def manejar_respuesta(numero, texto):
                 usuarios_flujo[numero] = "recursos_admin"
                 gestionar_recursos(numero)
                 return
-            elif texto == "5":
-                usuarios_flujo[numero] = "chat_libre"
-                enviar_mensaje(numero, "Estás en chat libre con el equipo.")
-                return
             else:
                 enviar_menu_principal(numero)
                 return
@@ -483,10 +513,6 @@ def manejar_respuesta(numero, texto):
             if texto == "1":
                 usuarios_flujo[numero] = "info"
                 enviar_info_general(numero)
-                return
-            elif texto == "2":
-                usuarios_flujo[numero] = "chat_libre"
-                enviar_mensaje(numero, "Estás en chat libre.")
                 return
             else:
                 enviar_menu_principal(numero)
@@ -618,74 +644,6 @@ def manejar_respuesta(numero, texto):
         consolidar_perfil(numero)
         enviar_menu_principal(numero)  # <-- vuelve al menú según rol
 
-
-@router.post("/enviar_solicitud_informacion")
-async def api_enviar_solicitar_informacion(data: dict):
-    telefono = data.get("telefono")
-    nombre = data.get("nombre", "").strip()
-
-    if not telefono or not nombre:
-        return JSONResponse({"error": "Faltan datos (telefono o nombre)"}, status_code=400)
-
-    try:
-        plantilla = "solicitar_informacion"
-        parametros = [nombre]
-
-        codigo, respuesta_api = enviar_plantilla_generica(
-            token=TOKEN,
-            phone_number_id=PHONE_NUMBER_ID,
-            numero_destino=telefono,
-            nombre_plantilla=plantilla,
-            codigo_idioma="es_CO",
-            parametros=parametros
-        )
-
-        guardar_mensaje(
-            telefono,
-            f"[Plantilla enviada: {plantilla} - {parametros}]",
-            tipo="enviado"
-        )
-
-        return {
-            "status": "ok",
-            "mensaje": f"Se envió la plantilla {plantilla} a {telefono}",
-            "codigo_api": codigo,
-            "respuesta_api": respuesta_api
-        }
-
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-
-@router.post("/webhook")
-async def whatsapp_webhook(request: Request):
-    data = await request.json()
-    print("📩 Webhook recibido:", json.dumps(data, indent=2))
-
-    try:
-        mensajes = data["entry"][0]["changes"][0]["value"].get("messages", [])
-        for mensaje in mensajes:
-            numero = mensaje["from"]
-
-            # Botón "continuar"
-            if mensaje.get("type") == "button":
-                boton_texto = mensaje["button"]["text"]
-                if boton_texto.lower() == "sí, continuar":  # puedes comparar por texto
-                    usuarios_flujo[numero] = 1  # iniciamos en paso 1
-                    enviar_pregunta(numero, 1)
-
-            # Mensaje de texto
-            elif "text" in mensaje:
-                texto = mensaje["text"]["body"].strip().lower()
-                print(f"📥 Texto recibido de {numero}: {texto}")
-                manejar_respuesta(numero, texto)
-
-    except Exception as e:
-        print("❌ Error procesando webhook:", e)
-        traceback.print_exc()
-
-    return {"status": "ok"}
-
 import psycopg2
 import json
 from typing import Union, Any
@@ -713,37 +671,6 @@ def guardar_respuesta(numero: str, paso: int, texto: str):
             conn.close()
         except: pass
 
-# def guardar_respuesta(numero: str, paso: Union[int, str], texto: Any):
-#     """
-#     Guarda la respuesta del usuario para un paso, aceptando cualquier tipo de valor.
-#     Serializa listas y diccionarios como JSON.
-#     """
-#     # Serializa el valor si es lista o dict
-#     if isinstance(texto, (list, dict)):
-#         valor_guardar = json.dumps(texto, ensure_ascii=False)
-#     else:
-#         valor_guardar = str(texto)
-#     print(f"GUARDADO: {numero} | Paso: {paso} | Valor: {valor_guardar}")
-#     try:
-#         conn = psycopg2.connect(DATABASE_URL)
-#         cur = conn.cursor()
-#         cur.execute("""
-#             INSERT INTO perfil_creador_flujo_temp (telefono, paso, respuesta)
-#             VALUES (%s, %s, %s)
-#             ON CONFLICT (telefono, paso) DO UPDATE SET respuesta = EXCLUDED.respuesta
-#         """, (numero, str(paso), valor_guardar))
-#         conn.commit()
-#     except Exception as e:
-#         if 'conn' in locals():
-#             conn.rollback()
-#         print("❌ Error guardando respuesta:", e)
-#     finally:
-#         try:
-#             cur.close()
-#         except: pass
-#         try:
-#             conn.close()
-#         except: pass
 
 def consolidar_perfil(numero: str):
     try:
@@ -862,3 +789,146 @@ def enviar_requisitos(numero):
         "\n¿Tienes dudas? Responde este mensaje y te ayudamos. Puedes volver al *menú principal* escribiendo 'menu'."
     )
     enviar_mensaje(numero, requisitos)
+
+
+
+
+@router.post("/enviar_solicitud_informacion")
+async def api_enviar_solicitar_informacion(data: dict):
+    telefono = data.get("telefono")
+    nombre = data.get("nombre", "").strip()
+
+    if not telefono or not nombre:
+        return JSONResponse({"error": "Faltan datos (telefono o nombre)"}, status_code=400)
+
+    try:
+        plantilla = "solicitar_informacion"
+        parametros = [nombre]
+
+        codigo, respuesta_api = enviar_plantilla_generica(
+            token=TOKEN,
+            phone_number_id=PHONE_NUMBER_ID,
+            numero_destino=telefono,
+            nombre_plantilla=plantilla,
+            codigo_idioma="es_CO",
+            parametros=parametros
+        )
+
+        guardar_mensaje(
+            telefono,
+            f"[Plantilla enviada: {plantilla} - {parametros}]",
+            tipo="enviado"
+        )
+
+        return {
+            "status": "ok",
+            "mensaje": f"Se envió la plantilla {plantilla} a {telefono}",
+            "codigo_api": codigo,
+            "respuesta_api": respuesta_api
+        }
+
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@router.post("/webhook")
+async def whatsapp_webhook(request: Request):
+    data = await request.json()
+    print("📩 Webhook recibido:", json.dumps(data, indent=2))
+
+    try:
+        mensajes = data["entry"][0]["changes"][0]["value"].get("messages", [])
+        for mensaje in mensajes:
+            numero = mensaje["from"]
+            tipo = mensaje.get("type")
+            paso = usuarios_flujo.get(numero)
+
+            # --- CHAT LIBRE ---
+            if paso == "chat_libre":
+                if tipo == "text":
+                    texto = mensaje["text"]["body"].strip()
+                    print(f"💬 Chat libre de {numero}: {texto}")
+                    guardar_mensaje(numero, texto, tipo="recibido", es_audio=False)
+                    enviar_mensaje(numero, "📨 Estás en chat libre. Puedes escribir o enviar audios.")
+
+                elif tipo == "audio":
+                    audio_id = mensaje.get("audio", {}).get("id")
+                    print(f"🎤 Audio recibido de {numero}: {audio_id}")
+                    url_cloudinary = descargar_audio(audio_id, TOKEN)  # tu función existente
+                    if url_cloudinary:
+                        guardar_mensaje(numero, url_cloudinary, tipo="recibido", es_audio=True)
+                        enviar_mensaje(numero, "🎧 Recibimos tu audio. Un asesor lo revisará pronto.")
+                    else:
+                        enviar_mensaje(numero, "⚠️ No se pudo procesar tu audio, inténtalo de nuevo.")
+
+                elif tipo == "button":
+                    boton_texto = mensaje["button"]["text"]
+                    print(f"👆 Botón en chat libre: {boton_texto}")
+                    guardar_mensaje(numero, boton_texto, tipo="recibido", es_audio=False)
+
+                return {"status": "ok"}  # ⬅️ Importante: cortar aquí para que no siga al cuestionario
+
+            # --- FLUJO NORMAL (no chat libre) ---
+            if tipo == "button":
+                boton_texto = mensaje["button"]["text"]
+                if boton_texto.lower() == "sí, continuar":
+                    usuarios_flujo[numero] = 1
+                    enviar_pregunta(numero, 1)
+
+            elif tipo == "text":
+                texto = mensaje["text"]["body"].strip().lower()
+                print(f"📥 Texto recibido de {numero}: {texto}")
+
+                # --- ACTIVAR CHAT LIBRE DESDE EL MENÚ ---
+                if texto in ["4", "chat libre"] and usuarios_roles.get(numero) == "aspirante":
+                    usuarios_flujo[numero] = "chat_libre"
+                    enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.")
+                    return {"status": "ok"}
+
+                if texto in ["7", "chat libre"] and usuarios_roles.get(numero) == "miembro":
+                    usuarios_flujo[numero] = "chat_libre"
+                    enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.")
+                    return {"status": "ok"}
+
+                if texto in ["5", "chat libre"] and usuarios_roles.get(numero) == "admin":
+                    usuarios_flujo[numero] = "chat_libre"
+                    enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.")
+                    return {"status": "ok"}
+
+
+                manejar_respuesta(numero, texto)
+
+    except Exception as e:
+        print("❌ Error procesando webhook:", e)
+        traceback.print_exc()
+
+    return {"status": "ok"}
+
+
+# @router.post("/webhook")
+# async def whatsapp_webhook(request: Request):
+#     data = await request.json()
+#     print("📩 Webhook recibido:", json.dumps(data, indent=2))
+#
+#     try:
+#         mensajes = data["entry"][0]["changes"][0]["value"].get("messages", [])
+#         for mensaje in mensajes:
+#             numero = mensaje["from"]
+#
+#             # Botón "continuar"
+#             if mensaje.get("type") == "button":
+#                 boton_texto = mensaje["button"]["text"]
+#                 if boton_texto.lower() == "sí, continuar":  # puedes comparar por texto
+#                     usuarios_flujo[numero] = 1  # iniciamos en paso 1
+#                     enviar_pregunta(numero, 1)
+#
+#             # Mensaje de texto
+#             elif "text" in mensaje:
+#                 texto = mensaje["text"]["body"].strip().lower()
+#                 print(f"📥 Texto recibido de {numero}: {texto}")
+#                 manejar_respuesta(numero, texto)
+#
+#     except Exception as e:
+#         print("❌ Error procesando webhook:", e)
+#         traceback.print_exc()
+#
+#     return {"status": "ok"}
