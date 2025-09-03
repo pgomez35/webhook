@@ -612,10 +612,12 @@ def evaluar_preferencias_habitos(
     # 6. Intención de trabajo (opcional)
     # ==============================
     it = {
-        "no estoy seguro": 1,
+        "trabajo principal": 3,
         "trabajo secundario": 2,
-        "trabajo principal": 3
-    }.get(str(intencion).lower(), 0)
+        "hobby, pero me gustaría profesionalizarlo": 2,
+        "diversión, sin intención profesional": 1,
+        "no estoy seguro": 0
+    }.get(str(intencion).strip().lower(), 0)
 
     # ==============================
     # Score final
@@ -1213,14 +1215,27 @@ def mejoras_sugeridas_preferencias_habitos(
     # Intención de trabajo
     if intencion is not None:
         intencion_str = str(intencion).strip().lower()
+
         if intencion_str == "no estoy seguro":
             sugerencias_habitos.append(
-                "Define tus metas (diversión, aprendizaje, trabajo, ingresos) para enfocar tu esfuerzo y medir tu progreso."
+                "🤔 Define tus metas (diversión, aprendizaje, trabajo, ingresos). Tener claridad te ayudará a enfocar tu esfuerzo y medir tu progreso."
             )
         elif intencion_str == "trabajo secundario":
-            sugerencias_habitos.append("💼 Saca el máximo provecho al tiempo disponible y evalúa su potencial como actividad principal.")
+            sugerencias_habitos.append(
+                "💼 Considera esta actividad como un complemento. Organiza tu tiempo, genera constancia y evalúa si en el futuro puede convertirse en un proyecto principal."
+            )
         elif intencion_str == "trabajo principal":
-            sugerencias_habitos.append("🏆 Mantén la disciplina y profesionalismo para consolidar tu presencia.")
+            sugerencias_habitos.append(
+                "🏆 Enfócate con disciplina y constancia. Crea rutinas profesionales, mide resultados y trabaja tu marca personal para consolidar tu presencia."
+            )
+        elif "hobby" in intencion_str:
+            sugerencias_habitos.append(
+                "🎨 Transforma tu hobby en una oportunidad: prueba distintos formatos, aprende de otros creadores y empieza a dar pasos hacia la profesionalización."
+            )
+        elif "diversión" in intencion_str:
+            sugerencias_habitos.append(
+                "😄 Disfruta el proceso y transmite tu autenticidad. Aunque lo veas como diversión, mantener cierta regularidad hará que conectes mejor con la audiencia."
+            )
 
     # Horario preferido
     if horario_preferido is not None:

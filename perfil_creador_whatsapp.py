@@ -16,7 +16,7 @@ load_dotenv()
 # Configuración
 TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_ID")
-DATABASE_URL = os.getenv("EXTERNAL_DATABASE_URL")  # 🔹 corregido nombre
+INTERNAL_DATABASE_URL = os.getenv("INTERNAL_DATABASE_URL")  # 🔹 corregido nombre
 
 router = APIRouter()
 
@@ -157,14 +157,19 @@ preguntas = {
        "1️⃣ Español\n"
        "2️⃣ Inglés\n"
        "3️⃣ Portugués\n"
-       "4️⃣ Otro",
+       "4️⃣ Francés\n"
+       "5️⃣ Italiano\n"
+       "6️⃣ Alemán\n"
+       "7️⃣ Otro",
     8: "📌 Actividad actual:\n"
        "1️⃣ Estudia tiempo completo\n"
-       "2️⃣ Trabaja medio tiempo\n"
+       "2️⃣ Estudia medio tiempo\n"
        "3️⃣ Trabaja tiempo completo\n"
-       "4️⃣ Crea contenido a tiempo completo\n"
-       "5️⃣ Otro",
-
+       "4️⃣ Trabaja medio tiempo\n"
+       "5️⃣ Buscando empleo\n"
+       "6️⃣ Emprendiendo\n"
+       "7️⃣ Disponible tiempo completo\n"
+       "8️⃣ Otro",
     # 🔹 Hábitos
     9: "📌 ¿Cuál es tu horario preferido para hacer lives?\n"
        "1️⃣ Mañana (6am–12pm)\n"
@@ -176,7 +181,9 @@ preguntas = {
     10: "📌 ¿Cuál es tu intención principal en la plataforma?\n"
         "1️⃣ Trabajo principal\n"
         "2️⃣ Trabajo secundario\n"
-        "3️⃣ No estoy seguro",
+        "3️⃣ Hobby, pero me gustaría profesionalizarlo\n"
+        "4️⃣ Diversión, sin intención profesional\n"
+        "5️⃣ No estoy seguro",
     11: "📌 ¿Cuántos lives puedes hacer por semana?",
     12: "📌 ¿Cuántas horas a la semana tienes disponibles para crear contenido?",
 
@@ -254,8 +261,6 @@ preguntas = {
     "2️⃣3️⃣ Otro"
 )
 
-
-
 }
 
 # ============================
@@ -316,6 +321,18 @@ def obtener_flujo(numero):
             usuarios_flujo.pop(numero, None)  # 🧹 expira por inactividad
     return None
 
+def obtener_rol_usuario(numero):
+    if numero in usuarios_roles:
+        rol, t = usuarios_roles[numero]
+        if time.time() - t < TTL:
+            return rol
+        else:
+            usuarios_roles.pop(numero, None)  # 🧹 expira por inactividad
+
+    rol = consultar_rol_bd(numero)
+    usuarios_roles[numero] = (rol, time.time())
+    return rol
+
 def consultar_rol_bd(numero):
 
     miembros_agencia = [
@@ -336,19 +353,6 @@ def consultar_rol_bd(numero):
         if a["telefono"] == numero:
             return "admin"
     return "aspirante"
-
-
-def obtener_rol_usuario(numero):
-    if numero in usuarios_roles:
-        rol, t = usuarios_roles[numero]
-        if time.time() - t < TTL:
-            return rol
-        else:
-            usuarios_roles.pop(numero, None)  # 🧹 expira por inactividad
-
-    rol = consultar_rol_bd(numero)
-    usuarios_roles[numero] = (rol, time.time())
-    return rol
 
 def enviar_menu_principal(numero):
     rol = obtener_rol_usuario(numero)
@@ -416,20 +420,18 @@ def validar_aceptar_ciudad(usuario_ciudad, ciudades=CIUDADES_LATAM, score_minimo
     else:
         return {"ciudad": usuario_ciudad.strip(), "corregida": False}
 
-# ============================
-# MANEJO RESPUESTAS
-# ============================
+
+
 def manejar_respuesta(numero, texto):
     # --- Volver al menú principal ---
-    if texto.strip().lower() in ["menu", "volver", "inicio", "brillar"]:
-        usuarios_flujo.pop(numero, None)   # 🧹 limpieza manual
-        usuarios_roles.pop(numero, None)   # 🧹 limpieza manual
+    if texto.strip().lower() in ["menu", "menú", "volver", "inicio", "brillar"]:
+        usuarios_flujo.pop(numero, None)   # 🧹 limpieza manual de flujo
         enviar_menu_principal(numero)
         return
-    
+
     paso = usuarios_flujo.get(numero)
 
-    # 🚫 IMPORTANTE: si el paso es "chat_libre", salimos y no hacemos nada aquí
+    # 🚫 Si está en chat libre, no procesar aquí
     if paso == "chat_libre":
         return
 
@@ -445,14 +447,19 @@ def manejar_respuesta(numero, texto):
             elif texto in ["2", "diagnóstico", "diagnostico"]:
                 usuarios_flujo[numero] = "diagnostico"
                 enviar_diagnostico(numero)
+                usuarios_flujo.pop(numero, None)
                 return
             elif texto in ["3", "requisitos"]:
                 usuarios_flujo[numero] = "requisitos"
                 enviar_requisitos(numero)
+                usuarios_flujo.pop(numero, None)
                 return
-                # 👇 Ya no manejamos el "4" aquí
+            elif texto in ["4", "chat libre"]:
+                usuarios_flujo[numero] = "chat_libre"
+                enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.")
+                return
             else:
-                enviar_menu_principal(numero)
+                enviar_mensaje(numero, "Opción no válida. Escribe 'menu' para ver las opciones.")
                 return
 
         elif rol == "miembro":
@@ -463,14 +470,17 @@ def manejar_respuesta(numero, texto):
             elif texto == "3":
                 usuarios_flujo[numero] = "asesoria"
                 enviar_mensaje(numero, "📌 Un asesor se pondrá en contacto contigo pronto.")
+                usuarios_flujo.pop(numero, None)
                 return
             elif texto == "4":
                 usuarios_flujo[numero] = "recursos"
                 enviar_recursos_exclusivos(numero)
+                usuarios_flujo.pop(numero, None)
                 return
             elif texto == "5":
                 usuarios_flujo[numero] = "eventos"
                 enviar_eventos(numero)
+                usuarios_flujo.pop(numero, None)
                 return
             elif texto == "6":
                 usuarios_flujo[numero] = "soporte"
@@ -479,13 +489,19 @@ def manejar_respuesta(numero, texto):
             elif texto == "8":
                 usuarios_flujo[numero] = "estadisticas"
                 enviar_estadisticas(numero)
+                usuarios_flujo.pop(numero, None)
                 return
             elif texto == "9":
                 usuarios_flujo[numero] = "baja"
                 solicitar_baja(numero)
+                usuarios_flujo.pop(numero, None)
+                return
+            elif texto in ["7", "chat libre"]:
+                usuarios_flujo[numero] = "chat_libre"
+                enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.")
                 return
             else:
-                enviar_menu_principal(numero)
+                enviar_mensaje(numero, "Opción no válida. Escribe 'menu' para ver las opciones.")
                 return
 
         elif rol == "admin":
@@ -496,6 +512,7 @@ def manejar_respuesta(numero, texto):
             elif texto == "2":
                 usuarios_flujo[numero] = "ver_perfiles"
                 enviar_perfiles(numero)
+                usuarios_flujo.pop(numero, None)
                 return
             elif texto == "3":
                 usuarios_flujo[numero] = "comunicado"
@@ -504,9 +521,14 @@ def manejar_respuesta(numero, texto):
             elif texto == "4":
                 usuarios_flujo[numero] = "recursos_admin"
                 gestionar_recursos(numero)
+                usuarios_flujo.pop(numero, None)
+                return
+            elif texto in ["5", "chat libre"]:
+                usuarios_flujo[numero] = "chat_libre"
+                enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.")
                 return
             else:
-                enviar_menu_principal(numero)
+                enviar_mensaje(numero, "Opción no válida. Escribe 'menu' para ver las opciones.")
                 return
 
         else:  # Rol desconocido -> menú básico
@@ -515,10 +537,10 @@ def manejar_respuesta(numero, texto):
                 enviar_info_general(numero)
                 return
             else:
-                enviar_menu_principal(numero)
+                enviar_mensaje(numero, "Opción no válida. Escribe 'menu' para ver las opciones.")
                 return
 
-    # --- VALIDACIONES ---
+    # --- VALIDACIONES DE FLUJO DE PREGUNTAS ---
 
     # 1: Nombre completo
     if paso == 1:
@@ -584,8 +606,8 @@ def manejar_respuesta(numero, texto):
 
     # 10: Intención principal en la plataforma
     if paso == 10:
-        if texto not in ["1", "2", "3"]:
-            enviar_mensaje(numero, "⚠️ Ingresa solo el número correspondiente (1 a 3).")
+        if texto not in ["1", "2", "3", "4", "5"]:
+            enviar_mensaje(numero, "⚠️ Ingresa solo el número correspondiente (1 a 5).")
             return
 
     # 11: ¿Cuántos lives por semana?
@@ -609,7 +631,7 @@ def manejar_respuesta(numero, texto):
             return
 
     # 13-15: Meses de experiencia en plataformas
-    if paso in range(13, 15):
+    if paso in range(13, 16):
         try:
             meses = int(texto)
             if not (0 <= meses <= 999):
@@ -618,14 +640,14 @@ def manejar_respuesta(numero, texto):
             enviar_mensaje(numero, "⚠️ Ingresa la cantidad de meses de experiencia (de 0 a 999).")
             return
 
-    # 19: Tipo de contenido (múltiple)
+    # 16: Tipo de contenido (múltiple)
     if paso == 16:
         seleccion = validar_opciones_multiples(texto, tiposContenido_opciones.keys())
         if not seleccion:
             enviar_mensaje(numero, "⚠️ Respuesta inválida. Ejemplo válido: 1,2,3")
             return
 
-    # 20: Intereses principales (múltiple)
+    # 17: Intereses principales (múltiple)
     if paso == 17:
         seleccion = validar_opciones_multiples(texto, interesesOpciones_opciones.keys())
         if not seleccion:
@@ -635,14 +657,16 @@ def manejar_respuesta(numero, texto):
     # Guardar respuesta y avanzar
     guardar_respuesta(numero, paso, texto)
 
+    # Avanza o termina flujo
     if isinstance(paso, int) and paso < len(preguntas):
         usuarios_flujo[numero] += 1
         enviar_pregunta(numero, usuarios_flujo[numero])
     else:
-        del usuarios_flujo[numero]
+        usuarios_flujo.pop(numero, None)
         enviar_mensaje(numero, "✅ Gracias, completaste todas las preguntas.")
         consolidar_perfil(numero)
         enviar_menu_principal(numero)  # <-- vuelve al menú según rol
+
 
 import psycopg2
 import json
@@ -651,7 +675,7 @@ from typing import Union, Any
 
 def guardar_respuesta(numero: str, paso: int, texto: str):
     try:
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
         cur = conn.cursor()
         cur.execute("""
             INSERT INTO perfil_creador_flujo_temp (telefono, paso, respuesta)
@@ -672,109 +696,40 @@ def guardar_respuesta(numero: str, paso: int, texto: str):
         except: pass
 
 
-def consolidar_perfil(numero: str):
+def enviar_diagnostico(numero: str):
+    """Envía el diagnóstico de un usuario tomando el campo observaciones de perfil_creador"""
     try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
+        with psycopg2.connect(INTERNAL_DATABASE_URL) as conn:
+            with conn.cursor() as cur:
 
-        cur.execute("""
-            SELECT paso, respuesta 
-            FROM perfil_creador_flujo_temp 
-            WHERE telefono = %s 
-            ORDER BY paso ASC
-        """, (numero,))
-        respuestas = cur.fetchall()
+                # 1️⃣ Buscar el creador por su número
+                cur.execute("SELECT id, usuario, nombre_real FROM creadores WHERE whatsapp = %s", (numero,))
+                creador = cur.fetchone()
+                if not creador:
+                    print(f"⚠️ No se encontró creador con whatsapp {numero}")
+                    enviar_mensaje(numero, "No encontramos tu perfil en el sistema. Verifica tu número.")
+                    return
 
-        datos = {paso: resp for paso, resp in respuestas}
+                creador_id, usuario, nombre_real = creador
 
-        # cur.execute("""
-        #     INSERT INTO perfil_creador (
-        #         nombre, edad, genero, pais, ciudad, estudios, idioma, actividad,
-        #         horario_preferido, intencion_trabajo, frecuencia_lives, tiempo_disponible,
-        #         plataformas, plataformas_detalle, tipo_contenido, intereses, telefono
-        #     )
-        #     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-        # """, (
-        #     datos.get(1),  # nombre
-        #     datos.get(2),  # edad
-        #     datos.get(3),  # genero
-        #     datos.get(4),  # pais
-        #     datos.get(5),  # ciudad
-        #     datos.get(6),  # estudios
-        #     datos.get(7),  # idioma
-        #     datos.get(8),  # actividad
-        #     datos.get(9),  # horario preferido
-        #     datos.get(10),  # intención
-        #     datos.get(11),  # frecuencia lives
-        #     datos.get(12),  # tiempo disponible
-        #     datos.get(13),  # plataformas (lista cruda)
-        #     datos.get(14),  # detalle de plataformas con años/horas
-        #     datos.get(15),  # tipo contenido
-        #     datos.get(16),  # intereses
-        #     numero
-        # ))
-        #
-        # cur.execute("DELETE FROM perfil_creador_flujo_temp WHERE telefono = %s", (numero,))
-        conn.commit()
+                # 2️⃣ Obtener observaciones desde perfil_creador
+                cur.execute("SELECT observaciones FROM perfil_creador WHERE creador_id = %s", (creador_id,))
+                fila = cur.fetchone()
 
-        cur.close()
-        conn.close()
-        print(f"✅ Perfil consolidado para {numero}")
+        nombre = nombre_real if nombre_real else usuario
+        if not fila or not fila[0]:
+            diagnostico = f"🔎 Diagnóstico para {nombre}:\nAún no se han registrado observaciones en tu perfil."
+        else:
+            diagnostico = f"🔎 Diagnóstico para {nombre}:\n\n{fila[0]}"
+
+        # 3️⃣ Enviar el diagnóstico
+        enviar_mensaje(numero, diagnostico)
+        print(f"✅ Diagnóstico enviado a {numero}")
+
     except Exception as e:
-        if 'conn' in locals():
-            conn.rollback()
-            conn.close()
-        print("❌ Error al consolidar perfil:", str(e))
-
-
-def enviar_diagnostico(numero):
-    # 1. Recupera respuestas previas del usuario (puede ser de la tabla definitiva o temporal)
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT paso, respuesta 
-            FROM perfil_creador_flujo_temp 
-            WHERE telefono = %s 
-            ORDER BY paso ASC
-        """, (numero,))
-        respuestas = dict(cur.fetchall())
-        cur.close()
-        conn.close()
-    except Exception as e:
-        print("❌ Error al obtener datos para diagnóstico:", e)
+        print(f"❌ Error al enviar diagnóstico a {numero}:", str(e))
         enviar_mensaje(numero, "Ocurrió un error al generar tu diagnóstico. Intenta más tarde.")
-        return
 
-    # 2. Analiza y genera diagnóstico (ejemplo simple, personalízalo según tus reglas)
-    nombre = respuestas.get(1, "usuario")
-    edad = respuestas.get(2, "")
-    plataformas = respuestas.get(13, "")
-    tipos_contenido = respuestas.get(15, "")
-    intereses = respuestas.get(16, "")
-
-    diagnostico = f"🔎 Diagnóstico para {nombre}:\n"
-    if edad and int(edad) < 18:
-        diagnostico += "• Eres menor de edad, asegúrate de tener permiso de tus padres/tutores.\n"
-    if plataformas:
-        diagnostico += f"• Estás presente en: {plataformas}\n"
-    if tipos_contenido:
-        diagnostico += f"• Tus tipos de contenido: {tipos_contenido}\n"
-    if intereses:
-        diagnostico += f"• Tus intereses principales: {intereses}\n"
-
-    # Ejemplo de recomendación simple
-    if "TikTok" in plataformas or "7" in plataformas:
-        diagnostico += "• ¡TikTok es excelente para crecer rápido! Asegúrate de publicar frecuentemente.\n"
-    if "ventas" in tipos_contenido or "12" in tipos_contenido:
-        diagnostico += "• El contenido de ventas en vivo es una gran oportunidad, ¡sigue capacitándote en esto!\n"
-    if not intereses:
-        diagnostico += "• Te sugerimos definir bien tus intereses para conectar mejor con tu audiencia.\n"
-
-    diagnostico += "\n¿Te gustaría recibir asesoría personalizada? Responde 'asesoría'."
-
-    # 3. Envía el diagnóstico
-    enviar_mensaje(numero, diagnostico)
 
 def enviar_requisitos(numero):
     requisitos = (
@@ -789,9 +744,6 @@ def enviar_requisitos(numero):
         "\n¿Tienes dudas? Responde este mensaje y te ayudamos. Puedes volver al *menú principal* escribiendo 'menu'."
     )
     enviar_mensaje(numero, requisitos)
-
-
-
 
 @router.post("/enviar_solicitud_informacion")
 async def api_enviar_solicitar_informacion(data: dict):
@@ -836,7 +788,13 @@ async def whatsapp_webhook(request: Request):
     print("📩 Webhook recibido:", json.dumps(data, indent=2))
 
     try:
+        # SOLO procesar eventos que contienen mensajes reales del usuario.
+        # Ignora webhooks de status ("sent", "delivered", "read") para evitar respuestas innecesarias.
         mensajes = data["entry"][0]["changes"][0]["value"].get("messages", [])
+        if not mensajes:
+            # Si no hay mensajes, ignora (es solo un status, NO actuar)
+            return {"status": "ok"}
+
         for mensaje in mensajes:
             numero = mensaje["from"]
             tipo = mensaje.get("type")
@@ -903,32 +861,172 @@ async def whatsapp_webhook(request: Request):
 
     return {"status": "ok"}
 
+# ================== ** ==================
+# ================== ACTUALIZAR PERFIL CREADOR ==================
+# ================== ** ==================
 
-# @router.post("/webhook")
-# async def whatsapp_webhook(request: Request):
-#     data = await request.json()
-#     print("📩 Webhook recibido:", json.dumps(data, indent=2))
-#
-#     try:
-#         mensajes = data["entry"][0]["changes"][0]["value"].get("messages", [])
-#         for mensaje in mensajes:
-#             numero = mensaje["from"]
-#
-#             # Botón "continuar"
-#             if mensaje.get("type") == "button":
-#                 boton_texto = mensaje["button"]["text"]
-#                 if boton_texto.lower() == "sí, continuar":  # puedes comparar por texto
-#                     usuarios_flujo[numero] = 1  # iniciamos en paso 1
-#                     enviar_pregunta(numero, 1)
-#
-#             # Mensaje de texto
-#             elif "text" in mensaje:
-#                 texto = mensaje["text"]["body"].strip().lower()
-#                 print(f"📥 Texto recibido de {numero}: {texto}")
-#                 manejar_respuesta(numero, texto)
-#
-#     except Exception as e:
-#         print("❌ Error procesando webhook:", e)
-#         traceback.print_exc()
-#
-#     return {"status": "ok"}
+import psycopg2
+import json
+from decimal import Decimal, ROUND_HALF_UP
+
+# ================== MAPEOS ==================
+map_genero = {
+    "1": "Masculino",
+    "2": "Femenino",
+    "3": "Otro",
+    "4": "Prefiero no decir"
+}
+
+map_paises = {
+    "1": "Argentina", "2": "Bolivia", "3": "Chile", "4": "Colombia",
+    "5": "Costa Rica", "6": "Cuba", "7": "Ecuador", "8": "El Salvador",
+    "9": "Guatemala", "10": "Honduras", "11": "México", "12": "Nicaragua",
+    "13": "Panamá", "14": "Paraguay", "15": "Perú", "16": "Puerto Rico",
+    "17": "República Dominicana", "18": "Uruguay", "19": "Venezuela",
+    "20": "Otro"
+}
+
+map_estudios = {
+    "1": "Ninguno", "2": "Primaria completa", "3": "Secundaria completa",
+    "4": "Técnico", "5": "Universitario", "6": "Posgrado", "7": "Otro"
+}
+
+map_idiomas = {
+    "1": "Español", "2": "Inglés", "3": "Portugués",
+    "4": "Francés", "5": "Italiano", "6": "Alemán", "7": "Otro"
+}
+
+map_actividad = {
+    "1": "Estudia tiempo completo",
+    "2": "Estudia medio tiempo",
+    "3": "Trabaja tiempo completo",
+    "4": "Trabaja medio tiempo",
+    "5": "Buscando empleo",
+    "6": "Emprendiendo",
+    "7": "Disponible tiempo completo",
+    "8": "Otro"
+}
+
+map_horario = {
+    "1": "Mañana (6am–12pm)",
+    "2": "Tarde (12pm–6pm)",
+    "3": "Noche (6pm–12am)",
+    "4": "Madrugada (12am–6am)",
+    "5": "Variable",
+    "6": "Otro"
+}
+
+map_intencion = {
+    "1": "trabajo principal",
+    "2": "trabajo secundario",
+    "3": "Hobby, pero me gustaría profesionalizarlo",
+    "4": "Diversión, sin intención profesional",
+    "5": "No estoy seguro"
+}
+
+map_tipo_contenido = {
+    "1": "bailes", "2": "charlas", "3": "gaming", "4": "tutoriales",
+    "5": "entretenimiento general", "6": "humor", "7": "música en vivo",
+    "8": "reaccion", "9": "religion", "10": "temas sociales",
+    "11": "estudios", "12": "ventas", "13": "otro"
+}
+
+map_intereses = {
+    "1": "deportes", "2": "moda", "3": "maquillaje", "4": "cocina",
+    "5": "fitness", "6": "música", "7": "bailes", "8": "gaming",
+    "9": "lectura", "10": "salud mental", "11": "comedia", "12": "religión",
+    "13": "política", "14": "emprendimiento", "15": "viajes", "16": "idiomas",
+    "17": "educación", "18": "noticias", "19": "relaciones",
+    "20": "arte", "21": "tecnología", "22": "fotografía", "23": "otro"
+}
+
+# ================== FUNCIONES ==================
+
+def redondear_a_un_decimal(valor):
+    return float(Decimal(valor).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+
+def procesar_respuestas(respuestas):
+    datos = {}
+
+    datos["nombre"] = respuestas.get(1)
+    datos["edad"] = int(respuestas.get(2)) if respuestas.get(2) else None
+    datos["genero"] = map_genero.get(respuestas.get(3))
+    datos["pais"] = map_paises.get(respuestas.get(4))
+    datos["ciudad"] = respuestas.get(5)
+    datos["estudios"] = map_estudios.get(respuestas.get(6))
+    datos["idioma"] = map_idiomas.get(respuestas.get(7))
+    datos["actividad_actual"] = map_actividad.get(respuestas.get(8))
+    datos["horario_preferido"] = map_horario.get(respuestas.get(9))
+    datos["intencion_trabajo"] = map_intencion.get(respuestas.get(10))
+    datos["frecuencia_lives"] = int(respuestas.get(11)) if respuestas.get(11) else None
+    datos["tiempo_disponible"] = int(respuestas.get(12)) if respuestas.get(12) else None
+
+    # Experiencia plataformas principales
+    experiencia = {
+        "TikTok": redondear_a_un_decimal(int(respuestas.get(13, 0)) / 12) if respuestas.get(13) else 0,
+        "YouTube": redondear_a_un_decimal(int(respuestas.get(14, 0)) / 12) if respuestas.get(14) else 0,
+        "Instagram": redondear_a_un_decimal(int(respuestas.get(15, 0)) / 12) if respuestas.get(15) else 0,
+        "Facebook": 0, "Twitch": 0, "LinkedIn": 0, "Twitter/X": 0, "Otro": 0
+    }
+    datos["experiencia_otras_plataformas"] = json.dumps(experiencia)
+
+    # Tipo de contenido (checkbox)
+    tipo_contenido = {v: False for v in map_tipo_contenido.values()}
+    for opcion in respuestas.get(16, "").split(","):
+        opcion = opcion.strip()
+        if opcion in map_tipo_contenido:
+            tipo_contenido[map_tipo_contenido[opcion]] = True
+    datos["tipo_contenido"] = json.dumps(tipo_contenido)
+
+    # Intereses (checkbox)
+    intereses = {v: False for v in map_intereses.values()}
+    for opcion in respuestas.get(17, "").split(","):
+        opcion = opcion.strip()
+        if opcion in map_intereses:
+            intereses[map_intereses[opcion]] = True
+    datos["intereses"] = json.dumps(intereses)
+
+    return datos
+
+def consolidar_perfil(telefono: str):
+    """Procesa y actualiza un solo número en perfil_creador con manejo de errores"""
+    try:
+        with psycopg2.connect(INTERNAL_DATABASE_URL) as conn:
+            with conn.cursor() as cur:
+                # Buscar creador por número
+                cur.execute("SELECT id, usuario, nombre_real, whatsapp FROM creadores WHERE whatsapp=%s", (telefono,))
+                creador = cur.fetchone()
+                if not creador:
+                    print(f"⚠️ No se encontró creador con whatsapp {telefono}")
+                    return
+
+                creador_id = creador[0]
+
+                # Obtener respuestas de flujo temporal
+                cur.execute("""
+                    SELECT paso, respuesta 
+                    FROM perfil_creador_flujo_temp 
+                    WHERE telefono=%s 
+                    ORDER BY paso ASC
+                """, (telefono,))
+                rows = cur.fetchall()
+                respuestas = {int(p): r for p, r in rows}
+
+                # Procesar respuestas
+                datos_update = procesar_respuestas(respuestas)
+
+                # Crear query dinámico UPDATE
+                set_clause = ", ".join([f"{k}=%s" for k in datos_update.keys()])
+                values = list(datos_update.values())
+                values.append(creador_id)
+
+                query = f"UPDATE perfil_creador SET {set_clause} WHERE creador_id=%s"
+                cur.execute(query, values)
+                conn.commit()
+
+                print(f"✅ Actualizado perfil_creador para creador_id={creador_id} ({telefono})")
+
+    except Exception as e:
+        print(f"❌ Error al procesar número {telefono}: {str(e)}")
+
+     return {"status": "ok"}
