@@ -1029,4 +1029,4 @@ def consolidar_perfil(telefono: str):
     except Exception as e:
         print(f"❌ Error al procesar número {telefono}: {str(e)}")
 
-     return {"status": "ok"}
+    return {"status": "ok"}
