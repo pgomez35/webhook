@@ -20,16 +20,9 @@ import os
 import cloudinary
 import cloudinary.uploader
 
-# ⚙️ Inicializar FastAPI
-app = FastAPI()
-
 # ✅ Crear carpeta persistente de audios si no existe
 AUDIO_DIR = "audios"
 os.makedirs(AUDIO_DIR, exist_ok=True)
-
-# ✅ Montar ruta para servir archivos estáticos desde /audios
-app.mount("/audios", StaticFiles(directory=AUDIO_DIR), name="audios")
-
 
 # Configuración (puedes usar variables de entorno)
 cloudinary.config(
