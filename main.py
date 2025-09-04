@@ -1603,7 +1603,7 @@ def actualizar_eval_cualitativa(
         data_dict["puntaje_manual_categoria"] = resultado["puntaje_manual_categoria"]
 
         potencial_creador=evaluar_potencial_creador(creador_id, resultado["puntaje_manual"])
-        nivel_estimado = potencial_creador.get("potencial_estimado")
+        nivel_estimado = potencial_creador.get("nivel")
 
         actualizar_datos_perfil_creador(creador_id, data_dict)
 

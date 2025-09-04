@@ -810,6 +810,12 @@ async def whatsapp_webhook(request: Request):
             if paso == "chat_libre":
                 if tipo == "text":
                     texto = mensaje["text"]["body"].strip()
+                    # --- PALABRA CLAVE PARA VOLVER AL MENÚ ---
+                    if texto.lower() in ["menu", "volver", "inicio"]:
+                        usuarios_flujo[numero] = 0
+                        enviar_mensaje(numero, "🔙 Volviste al menú inicial.")
+                        enviar_menu_principal(numero)
+                        return {"status": "ok"}
                     print(f"💬 Chat libre de {numero}: {texto}")
                     guardar_mensaje(numero, texto, tipo="recibido", es_audio=False)
                     # enviar_mensaje(numero, "📨 Estás en chat libre. Puedes escribir o enviar audios.")
