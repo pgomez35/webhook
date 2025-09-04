@@ -889,7 +889,7 @@ map_genero = {
     "4": "Prefiero no decir"
 }
 
-# Ejemplo con opcionesPaises = [{value: "argentina", label: "Argentina"}, ...]
+#  opcionesPaises = [{value: "argentina", label: "Argentina"}, ...]
 map_paises = {
     "1": "argentina",
     "2": "bolivia",
@@ -913,7 +913,7 @@ map_paises = {
     "20": "otro"
 }
 
-# Ejemplo con opcionesEstudios = [{value: "ninguno", label: "Ninguno"}, ...]
+#  opcionesEstudios = [{value: "ninguno", label: "Ninguno"}, ...]
 map_estudios = {
     "1": "ninguno",
     "2": "primaria",
@@ -926,7 +926,7 @@ map_estudios = {
     "9": "otro"
 }
 
-# Ejemplo con opcionesIdiomas = [{value: "espanol", label: "Español"}, ...]
+#  opcionesIdiomas = [{value: "espanol", label: "Español"}, ...]
 map_idiomas = {
     "1": "espanol",
     "2": "ingles",
@@ -937,7 +937,7 @@ map_idiomas = {
     "7": "otro"
 }
 
-# Ejemplo con opcionesActividadActual = [{value: "estudiante_tiempo_completo", label: ...}, ...]
+#  opcionesActividadActual = [{value: "estudiante_tiempo_completo", label: ...}, ...]
 map_actividad = {
     "1": "estudiante_tiempo_completo",
     "2": "estudiante_tiempo_parcial",
@@ -949,67 +949,67 @@ map_actividad = {
     "8": "otro"
 }
 
-# Ejemplo con opcionesHorarios = [{value: "manana", label: ...}, ...]
+#  opcionesHorarios = [{value: "manana", label: ...}, ...]
 map_horario = {
-    "1": "manana",
-    "2": "tarde",
-    "3": "noche",
-    "4": "madrugada",
-    "5": "variable",
-    "6": "otro"
+    "1": "Mañana (6am–12pm)",
+    "2": "Tarde (12pm–6pm)",
+    "3": "Noche (6pm–12am)",
+    "4": "Madrugada (12am–6am)",
+    "5": "Variable",
+    "6": "Otro"
 }
 
-# Ejemplo con opcionesIntencionTrabajo = [{value: "trabajo_principal", label: ...}, ...]
+#  opcionesIntencionTrabajo = [{value: "trabajo_principal", label: ...}, ...]
 map_intencion = {
-    "1": "trabajo_principal",
-    "2": "trabajo_secundario",
-    "3": "hobby_profesionalizar",
-    "4": "diversion",
-    "5": "no_seguro"
+    "1": "trabajo principal",
+    "2": "trabajo secundario",
+    "3": "Hobby, pero me gustaría profesionalizarlo",
+    "4": "diversión, sin intención profesional",
+    "5": "No estoy seguro"
 }
 
-# Ejemplo con tiposContenido = [{value: "bailes", label: ...}, ...]
+#  tiposContenido = [{value: "bailes", label: ...}, ...]
 map_tipo_contenido = {
     "1": "bailes",
     "2": "charlas",
     "3": "gaming",
     "4": "tutoriales",
-    "5": "entretenimiento_general",
+    "5": "entretenimiento general",
     "6": "humor",
-    "7": "musica_en_vivo",
-    "8": "reaccion",
-    "9": "religion",
-    "10": "temas_sociales",
-    "11": "estudios",
-    "12": "ventas",
-    "13": "otro"
+    "7": "música en vivo",
+    "8": "reacción a videos",
+    "9": "religión y espiritualidad",
+    "10": "temas sociales",
+    "11": "estudios / tareas",
+    "12": "ventas en vivo",
+    "13": "Otro"
 }
 
-# Ejemplo con interesesOpciones = [{value: "deportes", label: ...}, ...]
+#  interesesOpciones = [{value: "deportes", label: ...}, ...]
 map_intereses = {
     "1": "deportes",
     "2": "moda",
     "3": "maquillaje",
     "4": "cocina",
     "5": "fitness",
-    "6": "musica",
+    "6": "música",
     "7": "bailes",
     "8": "gaming",
     "9": "lectura",
-    "10": "salud_mental",
+    "10": "salud mental",
     "11": "comedia",
-    "12": "religion",
-    "13": "politica",
+    "12": "religión",
+    "13": "política",
     "14": "emprendimiento",
     "15": "viajes",
     "16": "idiomas",
-    "17": "educacion",
+    "17": "educación",
     "18": "noticias",
     "19": "relaciones",
     "20": "arte",
-    "21": "tecnologia",
-    "22": "fotografia",
-    "23": "otro"
+    "21": "tecnología",
+    "22": "fotografía",
+    "23": "Otro"
 }
 
 # ================== FUNCIONES ==================
