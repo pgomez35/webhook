@@ -29,22 +29,47 @@ respuestas = {}        # { numero: {campo: valor} }
 # OPCIONES
 # ============================
 tiposContenido_opciones = {
-    "1": ["Entretenimiento", "música en vivo", "bailes", "humor","shows en vivo"],
-    "2": ["Gaming", "streams de videojuegos"],
-    "3": ["tutoriales", "charlas", "clases", "estudios/tareas"],
-    "4": ["temas sociales","debates","foros", "religión"],
-    "5": ["Negocios", "ventas en vivo", "otros"],
-    "6": ["Otros"]
+    "1": ["Bailes"],
+    "2": ["Charlas"],
+    "3": ["Gaming", "streams de videojuegos"],
+    "4": ["Tutoriales"],
+    "5": ["Entretenimiento"],
+    "6": ["Humor"],
+    "7": ["Música en vivo"],
+    "8": ["Reacción a videos"],
+    "9": ["Religión"],
+    "10": ["Temas sociales", "debates", "foros"],
+    "11": ["Estudios/tareas"],
+    "12": ["Ventas en vivo"],
+    "13": ["Otro"]
 }
 
 interesesOpciones_opciones = {
-    "1": ["Estilo vida", "deporte", "moda", "cocina","fitness", "salud"],
-    "2": ["Arte y cultura", "música","baile","lectura", "fotografía"],
-    "3": ["religión", "política", "noticias", "relaciones", "psicología"],
-    "4": ["Educación", "idiomas", "emprendimiento"],
-    "5": ["Tecnología y gaming", "innovación"],
-    "6": ["Otros"]
+    "1": ["Deportes"],
+    "2": ["Moda"],
+    "3": ["Maquillaje"],
+    "4": ["Cocina"],
+    "5": ["Fitness"],
+    "6": ["Música"],
+    "7": ["Bailes"],
+    "8": ["Gaming"],
+    "9": ["Lectura"],
+    "10": ["Salud mental"],
+    "11": ["Comedia"],
+    "12": ["Religión"],
+    "13": ["Política"],
+    "14": ["Emprendimiento"],
+    "15": ["Viajes"],
+    "16": ["Idiomas"],
+    "17": ["Educación"],
+    "18": ["Noticias"],
+    "19": ["Relaciones"],
+    "20": ["Arte"],
+    "21": ["Tecnología"],
+    "22": ["Fotografía"],
+    "23": ["Otro"]
 }
+
 
 mapa_paises = {
     "1": "argentina",
@@ -149,10 +174,12 @@ preguntas = {
        "1️⃣ Ninguno\n"
        "2️⃣ Primaria completa\n"
        "3️⃣ Secundaria completa\n"
-       "4️⃣ Técnico\n"
-       "5️⃣ Universitario\n"
-       "6️⃣ Posgrado\n"
-       "7️⃣ Otro",
+       "4️⃣ Técnico o tecnólogo\n"
+       "5️⃣ Universitario incompleto\n"
+       "6️⃣ Universitario completo\n"
+       "7️⃣ Postgrado / Especialización\n"
+       "8️⃣ Autodidacta / Formación no formal\n"
+       "9️⃣ Otro (especificar)",
     7: "📌 Idioma principal:\n"
        "1️⃣ Español\n"
        "2️⃣ Inglés\n"
@@ -217,48 +244,24 @@ preguntas = {
 16: (
     "📌 ¿Qué tipo de contenido creas?\n"
     "Responde con los números, separados por coma.\n\n"
-    "1️⃣ Bailes\n"
-    "2️⃣ Charlas\n"
-    "3️⃣ Gaming\n"
-    "4️⃣ Tutoriales\n"
-    "5️⃣ Entretenimiento general\n"
-    "6️⃣ Humor\n"
-    "7️⃣ Música en vivo\n"
-    "8️⃣ Reacción a videos\n"
-    "9️⃣ Religión y espiritualidad\n"
-    "1️⃣0️⃣ Temas sociales\n"
-    "1️⃣1️⃣ Estudios / tareas\n"
-    "1️⃣2️⃣ Ventas en vivo\n"
+    "1️⃣ Bailes   |  2️⃣ Charlas   |  3️⃣ Gaming\n"
+    "4️⃣ Tutoriales   |  5️⃣ Entretenimiento   |  6️⃣ Humor\n"
+    "7️⃣ Música en vivo   |  8️⃣ Reacción a videos   |  9️⃣ Religión\n"
+    "1️⃣0️⃣ Temas sociales   |  1️⃣1️⃣ Estudios/tareas   |  1️⃣2️⃣ Ventas en vivo\n"
     "1️⃣3️⃣ Otro"
 ),
+
 
 # 🔹 Intereses
 17: (
     "📌 ¿Cuáles son tus intereses?\n"
     "Responde con los números, separados por coma.\n\n"
-    "1️⃣ Deportes\n"
-    "2️⃣ Moda\n"
-    "3️⃣ Maquillaje\n"
-    "4️⃣ Cocina\n"
-    "5️⃣ Fitness\n"
-    "6️⃣ Música\n"
-    "7️⃣ Bailes\n"
-    "8️⃣ Gaming\n"
-    "9️⃣ Lectura\n"
-    "1️⃣0️⃣ Salud mental\n"
-    "1️⃣1️⃣ Comedia\n"
-    "1️⃣2️⃣ Religión\n"
-    "1️⃣3️⃣ Política\n"
-    "1️⃣4️⃣ Emprendimiento\n"
-    "1️⃣5️⃣ Viajes\n"
-    "1️⃣6️⃣ Idiomas\n"
-    "1️⃣7️⃣ Educación\n"
-    "1️⃣8️⃣ Noticias\n"
-    "1️⃣9️⃣ Relaciones\n"
-    "2️⃣0️⃣ Arte\n"
-    "2️⃣1️⃣ Tecnología\n"
-    "2️⃣2️⃣ Fotografía\n"
-    "2️⃣3️⃣ Otro"
+    "1️⃣ Deportes   |  2️⃣ Moda   |  3️⃣ Maquillaje   |  4️⃣ Cocina\n"
+    "5️⃣ Fitness   |  6️⃣ Música   |  7️⃣ Bailes   |  8️⃣ Gaming\n"
+    "9️⃣ Lectura   |  1️⃣0️⃣ Salud mental   |  1️⃣1️⃣ Comedia   |  1️⃣2️⃣ Religión\n"
+    "1️⃣3️⃣ Política   |  1️⃣4️⃣ Emprendimiento   |  1️⃣5️⃣ Viajes   |  1️⃣6️⃣ Idiomas\n"
+    "1️⃣7️⃣ Educación   |  1️⃣8️⃣ Noticias   |  1️⃣9️⃣ Relaciones   |  2️⃣0️⃣ Arte\n"
+    "2️⃣1️⃣ Tecnología   |  2️⃣2️⃣ Fotografía   |  2️⃣3️⃣ Otro"
 )
 
 }
@@ -409,17 +412,19 @@ CIUDADES_LATAM = []
 for ciudades in ciudades_por_pais.values():
     CIUDADES_LATAM.extend(ciudades)
 
-def validar_aceptar_ciudad(usuario_ciudad, ciudades=CIUDADES_LATAM, score_minimo=85):
+def validar_aceptar_ciudad(usuario_ciudad, ciudades=CIUDADES_LATAM, score_minimo=75):
     usuario_norm = normalizar_texto(usuario_ciudad)
     ciudades_norm = [normalizar_texto(c) for c in ciudades]
-    matches = process.extract(usuario_norm, ciudades_norm, scorer=fuzz.ratio, limit=1)
+
+    # Usar partial_ratio para que "Bogo" matchee con "Bogotá"
+    matches = process.extract(usuario_norm, ciudades_norm, scorer=fuzz.partial_ratio, limit=1)
+
     if matches and matches[0][1] >= score_minimo:
         idx = ciudades_norm.index(matches[0][0])
         ciudad_oficial = ciudades[idx]
         return {"ciudad": ciudad_oficial, "corregida": True}
     else:
         return {"ciudad": usuario_ciudad.strip(), "corregida": False}
-
 
 
 def manejar_respuesta(numero, texto):
@@ -571,7 +576,7 @@ def manejar_respuesta(numero, texto):
             enviar_mensaje(numero, "⚠️ Ingresa el número de tu país o escríbelo si no está en la lista.")
             return
 
-    # 5: Ciudad principal (VALIDACIÓN ROBUSTA)
+    # 5: Ciudad principal
     if paso == 5:
         resultado = validar_aceptar_ciudad(texto)
         if resultado["corregida"]:
@@ -580,33 +585,33 @@ def manejar_respuesta(numero, texto):
         else:
             enviar_mensaje(numero, f"✅ Ciudad aceptada como la escribiste: {texto}")
 
-    # 6: Nivel de estudios
+    # 6: Nivel de estudios (1–7)
     if paso == 6:
-        if texto not in ["1", "2", "3", "4", "5", "6", "7"]:
+        if texto not in [str(i) for i in range(1, 8)]:
             enviar_mensaje(numero, "⚠️ Ingresa solo el número correspondiente (1 a 7).")
             return
 
-    # 7: Idioma principal
+    # 7: Idioma principal (1–7)
     if paso == 7:
-        if texto not in ["1", "2", "3", "4"]:
-            enviar_mensaje(numero, "⚠️ Ingresa solo el número correspondiente (1 a 4).")
+        if texto not in [str(i) for i in range(1, 8)]:
+            enviar_mensaje(numero, "⚠️ Ingresa solo el número correspondiente (1 a 7).")
             return
 
-    # 8: Actividad actual
+    # 8: Actividad actual (1–8)
     if paso == 8:
-        if texto not in ["1", "2", "3", "4", "5"]:
-            enviar_mensaje(numero, "⚠️ Ingresa solo el número correspondiente (1 a 5).")
+        if texto not in [str(i) for i in range(1, 9)]:
+            enviar_mensaje(numero, "⚠️ Ingresa solo el número correspondiente (1 a 8).")
             return
 
-    # 9: Horario preferido para lives
+    # 9: Horario preferido (1–6)
     if paso == 9:
-        if texto not in ["1", "2", "3", "4", "5", "6"]:
+        if texto not in [str(i) for i in range(1, 7)]:
             enviar_mensaje(numero, "⚠️ Ingresa solo el número correspondiente (1 a 6).")
             return
 
-    # 10: Intención principal en la plataforma
+    # 10: Intención principal (1–5)
     if paso == 10:
-        if texto not in ["1", "2", "3", "4", "5"]:
+        if texto not in [str(i) for i in range(1, 6)]:
             enviar_mensaje(numero, "⚠️ Ingresa solo el número correspondiente (1 a 5).")
             return
 
@@ -620,7 +625,7 @@ def manejar_respuesta(numero, texto):
             enviar_mensaje(numero, "⚠️ Ingresa un número válido de lives por semana (1 a 99).")
             return
 
-    # 12: ¿Cuántas horas a la semana para crear contenido?
+    # 12: ¿Cuántas horas a la semana?
     if paso == 12:
         try:
             horas = int(texto)
@@ -630,7 +635,7 @@ def manejar_respuesta(numero, texto):
             enviar_mensaje(numero, "⚠️ Ingresa un número válido de horas por semana (1 a 168).")
             return
 
-    # 13-15: Meses de experiencia en plataformas
+    # 13-15: Meses de experiencia (0–999)
     if paso in range(13, 16):
         try:
             meses = int(texto)
@@ -640,19 +645,20 @@ def manejar_respuesta(numero, texto):
             enviar_mensaje(numero, "⚠️ Ingresa la cantidad de meses de experiencia (de 0 a 999).")
             return
 
-    # 16: Tipo de contenido (múltiple)
+    # 16: Tipo de contenido (múltiple, 1–13)
     if paso == 16:
-        seleccion = validar_opciones_multiples(texto, tiposContenido_opciones.keys())
+        seleccion = validar_opciones_multiples(texto, [str(i) for i in range(1, 14)])
         if not seleccion:
             enviar_mensaje(numero, "⚠️ Respuesta inválida. Ejemplo válido: 1,2,3")
             return
 
-    # 17: Intereses principales (múltiple)
+    # 17: Intereses (múltiple, 1–23)
     if paso == 17:
-        seleccion = validar_opciones_multiples(texto, interesesOpciones_opciones.keys())
+        seleccion = validar_opciones_multiples(texto, [str(i) for i in range(1, 24)])
         if not seleccion:
             enviar_mensaje(numero, "⚠️ Respuesta inválida. Ejemplo válido: 1,3,5")
             return
+
 
     # Guardar respuesta y avanzar
     guardar_respuesta(numero, paso, texto)
@@ -806,7 +812,7 @@ async def whatsapp_webhook(request: Request):
                     texto = mensaje["text"]["body"].strip()
                     print(f"💬 Chat libre de {numero}: {texto}")
                     guardar_mensaje(numero, texto, tipo="recibido", es_audio=False)
-                    enviar_mensaje(numero, "📨 Estás en chat libre. Puedes escribir o enviar audios.")
+                    # enviar_mensaje(numero, "📨 Estás en chat libre. Puedes escribir o enviar audios.")
 
                 elif tipo == "audio":
                     audio_id = mensaje.get("audio", {}).get("id")
@@ -877,67 +883,127 @@ map_genero = {
     "4": "Prefiero no decir"
 }
 
+# Ejemplo con opcionesPaises = [{value: "argentina", label: "Argentina"}, ...]
 map_paises = {
-    "1": "Argentina", "2": "Bolivia", "3": "Chile", "4": "Colombia",
-    "5": "Costa Rica", "6": "Cuba", "7": "Ecuador", "8": "El Salvador",
-    "9": "Guatemala", "10": "Honduras", "11": "México", "12": "Nicaragua",
-    "13": "Panamá", "14": "Paraguay", "15": "Perú", "16": "Puerto Rico",
-    "17": "República Dominicana", "18": "Uruguay", "19": "Venezuela",
-    "20": "Otro"
+    "1": "argentina",
+    "2": "bolivia",
+    "3": "chile",
+    "4": "colombia",
+    "5": "costarica",
+    "6": "cuba",
+    "7": "ecuador",
+    "8": "elsalvador",
+    "9": "guatemala",
+    "10": "honduras",
+    "11": "mexico",
+    "12": "nicaragua",
+    "13": "panama",
+    "14": "paraguay",
+    "15": "peru",
+    "16": "puertorico",
+    "17": "dominicana",
+    "18": "uruguay",
+    "19": "venezuela",
+    "20": "otro"
 }
 
+# Ejemplo con opcionesEstudios = [{value: "ninguno", label: "Ninguno"}, ...]
 map_estudios = {
-    "1": "Ninguno", "2": "Primaria completa", "3": "Secundaria completa",
-    "4": "Técnico", "5": "Universitario", "6": "Posgrado", "7": "Otro"
+    "1": "ninguno",
+    "2": "primaria",
+    "3": "secundaria",
+    "4": "tecnico",
+    "5": "universitario_incompleto",
+    "6": "universitario",
+    "7": "postgrado",
+    "8": "autodidacta",
+    "9": "otro"
 }
 
+# Ejemplo con opcionesIdiomas = [{value: "espanol", label: "Español"}, ...]
 map_idiomas = {
-    "1": "Español", "2": "Inglés", "3": "Portugués",
-    "4": "Francés", "5": "Italiano", "6": "Alemán", "7": "Otro"
+    "1": "espanol",
+    "2": "ingles",
+    "3": "portugues",
+    "4": "frances",
+    "5": "italiano",
+    "6": "aleman",
+    "7": "otro"
 }
 
+# Ejemplo con opcionesActividadActual = [{value: "estudiante_tiempo_completo", label: ...}, ...]
 map_actividad = {
-    "1": "Estudia tiempo completo",
-    "2": "Estudia medio tiempo",
-    "3": "Trabaja tiempo completo",
-    "4": "Trabaja medio tiempo",
-    "5": "Buscando empleo",
-    "6": "Emprendiendo",
-    "7": "Disponible tiempo completo",
-    "8": "Otro"
+    "1": "estudiante_tiempo_completo",
+    "2": "estudiante_tiempo_parcial",
+    "3": "trabajo_tiempo_completo",
+    "4": "trabajo_medio_tiempo",
+    "5": "buscando_empleo",
+    "6": "emprendiendo",
+    "7": "disponible_total",
+    "8": "otro"
 }
 
+# Ejemplo con opcionesHorarios = [{value: "manana", label: ...}, ...]
 map_horario = {
-    "1": "Mañana (6am–12pm)",
-    "2": "Tarde (12pm–6pm)",
-    "3": "Noche (6pm–12am)",
-    "4": "Madrugada (12am–6am)",
-    "5": "Variable",
-    "6": "Otro"
+    "1": "manana",
+    "2": "tarde",
+    "3": "noche",
+    "4": "madrugada",
+    "5": "variable",
+    "6": "otro"
 }
 
+# Ejemplo con opcionesIntencionTrabajo = [{value: "trabajo_principal", label: ...}, ...]
 map_intencion = {
-    "1": "trabajo principal",
-    "2": "trabajo secundario",
-    "3": "Hobby, pero me gustaría profesionalizarlo",
-    "4": "Diversión, sin intención profesional",
-    "5": "No estoy seguro"
+    "1": "trabajo_principal",
+    "2": "trabajo_secundario",
+    "3": "hobby_profesionalizar",
+    "4": "diversion",
+    "5": "no_seguro"
 }
 
+# Ejemplo con tiposContenido = [{value: "bailes", label: ...}, ...]
 map_tipo_contenido = {
-    "1": "bailes", "2": "charlas", "3": "gaming", "4": "tutoriales",
-    "5": "entretenimiento general", "6": "humor", "7": "música en vivo",
-    "8": "reaccion", "9": "religion", "10": "temas sociales",
-    "11": "estudios", "12": "ventas", "13": "otro"
+    "1": "bailes",
+    "2": "charlas",
+    "3": "gaming",
+    "4": "tutoriales",
+    "5": "entretenimiento_general",
+    "6": "humor",
+    "7": "musica_en_vivo",
+    "8": "reaccion",
+    "9": "religion",
+    "10": "temas_sociales",
+    "11": "estudios",
+    "12": "ventas",
+    "13": "otro"
 }
 
+# Ejemplo con interesesOpciones = [{value: "deportes", label: ...}, ...]
 map_intereses = {
-    "1": "deportes", "2": "moda", "3": "maquillaje", "4": "cocina",
-    "5": "fitness", "6": "música", "7": "bailes", "8": "gaming",
-    "9": "lectura", "10": "salud mental", "11": "comedia", "12": "religión",
-    "13": "política", "14": "emprendimiento", "15": "viajes", "16": "idiomas",
-    "17": "educación", "18": "noticias", "19": "relaciones",
-    "20": "arte", "21": "tecnología", "22": "fotografía", "23": "otro"
+    "1": "deportes",
+    "2": "moda",
+    "3": "maquillaje",
+    "4": "cocina",
+    "5": "fitness",
+    "6": "musica",
+    "7": "bailes",
+    "8": "gaming",
+    "9": "lectura",
+    "10": "salud_mental",
+    "11": "comedia",
+    "12": "religion",
+    "13": "politica",
+    "14": "emprendimiento",
+    "15": "viajes",
+    "16": "idiomas",
+    "17": "educacion",
+    "18": "noticias",
+    "19": "relaciones",
+    "20": "arte",
+    "21": "tecnologia",
+    "22": "fotografia",
+    "23": "otro"
 }
 
 # ================== FUNCIONES ==================

@@ -731,8 +731,8 @@ def generar_mejoras_sugeridas_total(creador_id: int) -> str:
     sugerencias = {k: v for k, v in sugerencias.items() if v}
     if sugerencias:
         sugerencias["✨ Mensaje final"] = [
-            "🌟 ¡Vas por buen camino! Cada mejora te acerca más a tu objetivo.",
-            "Recuerda: El éxito en TikTok vive de la constancia, autenticidad y adaptación."
+            "🌟 En TikTok, el talento y la disciplina son la clave para crecer.",
+            "Cuando te comprometes y te esfuerzas, tu potencial no tiene límites. ¡Atrévete a llegar más lejos!"
         ]
 
     mensaje = []
@@ -975,7 +975,7 @@ def mejorar_biografia_sugerida(bio_salida: str, eval_biografia: int) -> str:
             if atributos["Consistente"]: lista_frases.append("consistente")
             if atributos["Estética"]: lista_frases.append("estéticamente cuidada")
             frase_atributos = f"Tu biografía es {' ,'.join(lista_frases[:-1]) + ' y ' + lista_frases[-1] if len(lista_frases)>1 else lista_frases[0]}."
-            markdown.append(f"**Biografía sugerida:**\n{frase_atributos}")
+            markdown.append(f"\n{frase_atributos}")
 
         if bio_texto_final:
             markdown.append("\n" + "\n".join(bio_texto_final))
@@ -1343,6 +1343,7 @@ def evaluacion_total(
 
 def evaluar_potencial_creador(creador_id, score_cualitativa: float):
     """
+    Evalúa el potencial de un creador y retorna el potencial estimado como entero.
     """
     try:
         # 1. Obtener métricas del creador
@@ -1359,17 +1360,17 @@ def evaluar_potencial_creador(creador_id, score_cualitativa: float):
             duracion=data_dict.get("duracion_emisiones")
         )
 
-        # 3. Calcular total ponderado
-        potencial_estimado = round(score_estadistica * 0.3 + score_cualitativa * 0.7, 2)
+        # 3. Calcular total ponderado y convertir a entero
+        potencial_estimado = int(round(score_estadistica * 0.3 + score_cualitativa * 00.7))
 
         # 4. Clasificación en texto
-        if potencial_estimado >= 4.0:
+        if potencial_estimado >= 4:
             nivel = "Alto potencial"
-        elif potencial_estimado >= 3.0:
+        elif potencial_estimado >= 3:
             nivel = "Potencial medio"
-        elif potencial_estimado >= 2.0:
+        elif potencial_estimado >= 2:
             nivel = "Potencial bajo"
-        elif potencial_estimado >= 1.0:
+        elif potencial_estimado >= 1:
             nivel = "Requiere desarrollo"
         else:
             nivel = "No recomendado"
@@ -1394,3 +1395,191 @@ def limpiar_biografia_ia(bio_ia: str) -> str:
     # (opcional) Borra espacios extra al inicio/final de cada línea
     bio_ia = "\n".join(line.strip() for line in bio_ia.splitlines())
     return bio_ia
+
+def mejoras_sugeridas_estadisticas_cortas(
+    seguidores=0,
+    siguiendo=0,
+    likes=0,
+    videos=0,
+    duracion=0
+):
+
+    sugerencias = []
+
+    seguidores = to_num(seguidores)
+    siguiendo = to_num(siguiendo)
+    likes = to_num(likes)
+    videos = to_num(videos)
+    duracion = to_num(duracion)
+
+    sugerencias.append(
+        f"📌 Estado actual → Seguidores: {seguidores}, Siguiendo: {siguiendo}, Likes: {likes}, Videos: {videos}, Días activo: {duracion}"
+    )
+
+    # Likes normalizados
+    if seguidores > 0 and videos > 0:
+        likes_normalizado = likes / (seguidores * videos)
+    elif seguidores > 0:
+        likes_normalizado = likes / seguidores
+    else:
+        likes_normalizado = 0
+
+    # Seguidores
+    if seguidores < 50:
+        sugerencias.append("❌ Actualmente no es apto para ingresar a la agencia. El requisito mínimo es superar los 50 seguidores.")
+        sugerencias.append("📌 Enfócate primero en superar los 50 seguidores antes de continuar con otros aspectos.")
+        sugerencias.append("🔍 Revisa qué tipo de videos generan más interacción y replica los formatos que funcionen mejor.")
+        sugerencias.append("🌐 Promociona tu perfil en otras redes sociales o grupos para atraer seguidores iniciales.")
+    elif seguidores < 300:
+        sugerencias.append("⏫ Prueba nuevas temáticas o formatos para atraer diferentes públicos.")
+        sugerencias.append("🎯 Haz colaboraciones con otros creadores para aumentar tu alcance.")
+
+    # Siguiendo
+    if siguiendo >= seguidores or (seguidores > 0 and siguiendo >= (0.9 * seguidores)):
+        sugerencias.append(
+            "🔄 Prioriza la creación de contenido interesante y útil para tu audiencia, en lugar de enfocarte únicamente en conseguir seguidores por intercambio.")
+    elif siguiendo < (0.3 * seguidores):
+        sugerencias.append("🤝 Interactúa con otros creadores y participa en tendencias para aumentar tu visibilidad.")
+
+    # Likes normalizados (engagement relativo)
+    if likes_normalizado == 0:
+        sugerencias.append(
+            "⚡ Según el número de likes tus videos aún no generan interacción. Enfócate en contenidos que inviten a comentar, compartir y dar 'me gusta'.")
+    elif likes_normalizado < 0.02:
+        sugerencias.append(
+            "📈 Según el número de likes el nivel de interacción es bajo en relación a tus seguidores y videos. Prueba diferentes formatos y fomenta la participación en tus publicaciones.")
+
+    # Videos
+    if videos < 10:
+        sugerencias.append("📅 Publica más videos de forma constante (mínimo 10) para mejorar tu presencia.")
+
+    return sugerencias
+
+def mejoras_sugeridas_cualitativa_cortas(
+    apariencia=0,
+    engagement=0,
+    calidad_contenido=0,
+    eval_foto=0,
+    eval_biografia=0,
+    metadata_videos=0,
+    biografia_sugerida=""
+):
+    def to_num(val):
+        try:
+            return int(round(float(val)))
+        except (TypeError, ValueError):
+            return 0
+
+    RECOMENDACIONES_USUARIO = {
+        1: "Tu nombre de usuario incluye números o símbolos poco profesionales. Considera elegir un nombre sencillo, memorable y sin cifras, que represente tu identidad y facilite que otros te recuerden y te encuentren.",
+        2: "El nombre de usuario es aceptable pero podría ser más profesional. Si es posible, elimina cifras o símbolos y utiliza tu nombre real o artístico para fortalecer tu marca personal.",
+    }
+
+    RECOMENDACIONES_BIOGRAFIA = {
+        1: "Tu biografía está incompleta o no comunica claramente quién eres y qué haces. Redáctala de forma auténtica, específica y orientada al tipo de contenido que realizas. Agrega una descripción personal que refleje tu esencia y motive a otros a seguirte.",
+        2: "La biografía es genérica o poco clara. Intenta ser más específico sobre tu perfil y el tipo de contenido que ofreces. Incluye detalles sobre tus intereses y lo que te hace diferente.",
+    }
+
+    RECOMENDACIONES_APARIENCIA = {
+        1: "Tu apariencia actualmente no consigue captar la atención ni transmitir autenticidad. Trabaja en tu imagen personal, elige vestimenta que te favorezca y cuida detalles como peinado e higiene. Mostrarte auténtico y natural frente a cámara genera confianza y conexión.",
+        2: "Imagen correcta pero neutra. Incorpora accesorios, colores y elementos que reflejen tu personalidad. Busca destacar con detalles propios y transmite autenticidad.",
+    }
+
+    RECOMENDACIONES_CALIDAD_CONTENIDO = {
+        1: "La calidad de tu contenido es baja y parece poco personal. Prioriza videos originales y propios, que comuniquen tu mensaje y estilo. Evita copiar contenido y enfócate en aportar valor auténtico a tu audiencia.",
+        2: "Tu contenido es genérico o carece de autenticidad. Define claramente tu objetivo y tipo de creador, y muestra tu voz personal en cada video. Cuida la producción y elige temas que te representen.",
+    }
+
+    RECOMENDACIONES_EMPATIA = {
+        1: "Tu nivel de empatía con la audiencia es bajo y cuesta generar conexión. Es fundamental interactuar más durante las transmisiones, responder comentarios y mostrarte cercano a tu público. Trabaja en tu lenguaje corporal y expresión para transmitir energía y autenticidad.",
+        2: "La interacción con tu audiencia es limitada y se refleja en una baja participación. Incorpora llamados a la acción, solicita opiniones y responde dudas en directo para que tus seguidores se sientan parte activa de tus contenidos. Mantén una comunicación constante y muestra interés genuino por su participación.",
+    }
+
+    RECOMENDACIONES_EVAL_FOTO = {
+        1: "Actualmente no tienes una foto personal en tu perfil. Es fundamental mostrar una imagen clara y auténtica, donde solo aparezcas tú, para que tu audiencia te identifique y confíe en tu perfil.",
+        2: "La foto de perfil es genérica o de baja calidad, lo que puede afectar la percepción de profesionalismo. Elige una foto donde se te vea bien, con buena iluminación y resolución. Evita imágenes borrosas, impersonales o en las que aparezcas acompañado.",
+    }
+
+    RECOMENDACIONES_METADATA_VIDEOS = {
+        1: "Los títulos, subtítulos y hashtags de tus videos actualmente son deficientes y no describen bien el contenido. Es fundamental que cada video tenga un título visible en la portada. Los títulos y subtitulos deben ser breves, claros y relacionados directamente con lo que muestras. Utiliza hashtags relevantes y específicos para facilitar que tu audiencia encuentre tus videos y mejorar tu alcance.",
+        2: "Tus títulos, subtítulos y hashtags no logran resaltar tu contenido y pueden pasar desapercibidos. Procura que sean específicos, atractivos y despierten curiosidad. Selecciona hashtags que realmente representen el tema central del video.",
+    }
+
+    apariencia_val = to_num(apariencia)
+    engagement_val = to_num(engagement)
+    calidad_contenido_val = to_num(calidad_contenido)
+    eval_foto_val = to_num(eval_foto)
+    eval_biografia_val = to_num(eval_biografia)
+    metadata_videos_val = to_num(metadata_videos)
+
+    sugerencias = []
+
+    # Apariencia
+    sugerencias.append(f"🧑‍🎤 Apariencia en cámara: {RECOMENDACIONES_APARIENCIA.get(apariencia_val, '')}")
+
+    # Engagement
+    sugerencias.append(f"🤝 Engagement: {RECOMENDACIONES_EMPATIA.get(engagement_val, '')}")
+
+    # Calidad de contenido
+    sugerencias.append(f"🎬 Calidad del contenido: {RECOMENDACIONES_CALIDAD_CONTENIDO.get(calidad_contenido_val, '')}")
+
+    # Foto de perfil
+    sugerencias.append(f"🖼️ Foto de perfil: {RECOMENDACIONES_EVAL_FOTO.get(eval_foto_val, '')}")
+
+    # Biografía (solo sugerencia mejorada)
+    bio_limpia = mejorar_biografia_sugerida(biografia_sugerida, eval_biografia_val)
+    if bio_limpia:
+        sugerencias.append(f"📝 Sugerencia de biografía:\n{bio_limpia}")
+
+    # Metadata videos
+    sugerencias.append(f"🏷️ Hastags y títulos de videos: {RECOMENDACIONES_METADATA_VIDEOS.get(metadata_videos_val, '')}")
+
+    # Limpia para no mostrar elementos vacíos
+    return [s for s in sugerencias if s.strip()]
+
+
+
+def mejoras_sugeridas_datos_generales_cortas(edad, genero, idiomas, estudios, pais=None, actividad_actual=None):
+
+    sugerencias = []
+
+    # ==== Edad ====
+    if edad is None:
+        sugerencias.append("🔎 Completa tu edad para mejorar tu perfil.")
+    elif edad < 18:
+        sugerencias.append("🚫 Debes ser mayor de edad para participar como creador de lives en Tiktok.")
+
+    # ==== Género ====
+    if genero is None or not str(genero).strip():
+        sugerencias.append("🔎 Completa el campo de género para personalizar mejor tus recomendaciones.")
+
+
+    # ==== Estudios ====
+    if estudios is None or not str(estudios).strip():
+        sugerencias.append("🎓 Completa tu nivel de estudios para adaptar mejor tus oportunidades.")
+    else:
+        estudios_l = str(estudios).strip().lower()
+        if estudios_l in ["ninguno", "primaria"]:
+            sugerencias.append("📚 Invierte en formación o aprendizaje autodidacta para ampliar tus oportunidades de colaboración.")
+        elif estudios_l in ["secundaria", "tecnico", "autodidacta", "universitario_incompleto"]:
+            sugerencias.append("💡 Refuerza tu perfil mostrando habilidades prácticas y proyectos personales.")
+
+    # ==== País ====
+    if pais is None or not str(pais).strip():
+        sugerencias.append("📍 Completa tu país para recibir oportunidades regionales.")
+    else:
+        pais_l = str(pais).strip().lower()
+        pais_bonus = ["mexico", "colombia", "argentina"]
+        if pais_l in pais_bonus:
+            sugerencias.append(f"🌟 Tu país ({pais_l.title()}) es estratégico en TikTok, aprovecha para colaborar y crecer.")
+        else:
+            sugerencias.append(f"🌍 Puedes diferenciar tu contenido mostrando aspectos únicos de {pais_l.title()}.")
+
+
+    # ==== Puntaje y categoría general ====
+    resultado = evaluar_datos_generales(edad, genero, idiomas, estudios, pais, actividad_actual)
+    puntaje = resultado["puntaje_general"]
+    categoria = resultado["puntaje_general_categoria"]
+
+
+    return "\n".join(sugerencias)
