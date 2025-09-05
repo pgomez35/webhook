@@ -1544,6 +1544,13 @@ def listar_creadores():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# === Listar todos los usuarios ===
+@app.get("/api/TodosUsuarios", tags=["TodosUsuarios"])
+def listar_TodosUsuarios():
+    try:
+        return obtener_todos_usuarios()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # === Obtener el perfil de un creador por ID ===
 @app.get("/api/perfil_creador/{creador_id}", tags=["Perfil"])

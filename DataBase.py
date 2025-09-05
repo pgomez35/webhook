@@ -6,6 +6,7 @@ import re
 import gspread
 from google.oauth2.service_account import Credentials
 from schemas import ActualizacionContactoInfo
+from psycopg2.extras import RealDictCursor
 # Para hash de contraseñas (instalar con: pip install bcrypt)
 try:
     import bcrypt
@@ -1055,6 +1056,58 @@ def obtener_creadores():
         return resultados
     except Exception as e:
         print("❌ Error al obtener creadores:", e)
+        return []
+
+
+def obtener_todos_usuarios():
+    try:
+        with psycopg2.connect(INTERNAL_DATABASE_URL) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT 
+                        c.id, 
+                        c.usuario AS username, 
+                        c.nickname, 
+                        c.nombre_real, 
+                        c.email,
+                        c.telefono,
+                        c.whatsapp,
+                        c.foto_url,
+                        c.verificado,
+                        c.activo,
+                        ec.nombre AS estado_nombre,
+                        c.creado_en,
+                        c.actualizado_en,
+                        'creador' AS tipo_usuario
+                    FROM creadores c
+                    LEFT JOIN estados_creador ec ON c.estado_id = ec.id
+                    WHERE c.activo = TRUE
+
+                    UNION ALL
+
+                    SELECT
+                        a.id,
+                        a.username,
+                        NULL AS nickname,
+                        a.nombre_completo AS nombre_real, 
+                        a.email,
+                        a.telefono,
+                        NULL AS whatsapp,
+                        NULL AS foto_url,
+                        NULL AS verificado,
+                        a.activo,
+                        NULL AS estado_nombre,
+                        a.creado_en,
+                        NULL AS actualizado_en,
+                        'administrativo' AS tipo_usuario
+                    FROM admin_usuario a
+                    WHERE a.activo = TRUE
+                    ORDER BY actualizado_en DESC NULLS LAST, creado_en DESC
+                """)
+                resultados = cur.fetchall()
+                return resultados
+    except Exception as e:
+        print("❌ Error al obtener usuarios:", e)
         return []
 
 def obtener_perfil_creador(creador_id):
