@@ -59,6 +59,7 @@ SERVICE_ACCOUNT_INFO = os.getenv("GOOGLE_CREDENTIALS_JSON")
 # CALENDAR_ID="primary"
 # CALENDAR_ID = "atavillamil.prestige@gmail.com"  # ID del calendario Prestige
 CALENDAR_ID = os.getenv("CALENDAR_ID")
+# CALENDAR_ID = "primary" # para que sea siempre primary, pero tambien puedo configurarlo en variables del backend
 
 from perfil_creador_whatsapp import router as perfil_creador_router
 
@@ -156,21 +157,41 @@ from google.oauth2 import service_account
 def get_calendar_service():
     try:
         SCOPES = ["https://www.googleapis.com/auth/calendar"]
-        # SERVICE_ACCOUNT_FILE = "credentials.json"
-        # CALENDAR_ID = "atavillamil.prestige@gmail.com"  # ID del calendario Prestige
-
-        creds_dict = json.loads(SERVICE_ACCOUNT_INFO)  # convierte string → dict
+        creds_dict = json.loads(SERVICE_ACCOUNT_INFO)  # string JSON desde env
         creds = service_account.Credentials.from_service_account_info(
             creds_dict, scopes=SCOPES
         )
 
-        service = build("calendar", "v3", credentials=creds)
-        logger.info("✅ Servicio de Google Calendar inicializado con cuenta de servicio.")
+        # 👉 Impersonar al usuario de Workspace
+        delegated_creds = creds.with_subject(os.getenv("CALENDAR_ID"))
+
+        service = build("calendar", "v3", credentials=delegated_creds)
+        logger.info(f"✅ Servicio de Google Calendar inicializado con impersonación como {os.getenv('CALENDAR_ID')}")
         return service
+
     except Exception as e:
         logger.error("❌ Error al inicializar el servicio de Google Calendar:")
         logger.error(traceback.format_exc())
         raise
+
+# def get_calendar_service():
+#     try:
+#         SCOPES = ["https://www.googleapis.com/auth/calendar"]
+#         # SERVICE_ACCOUNT_FILE = "credentials.json"
+#         # CALENDAR_ID = "atavillamil.prestige@gmail.com"  # ID del calendario Prestige
+#
+#         creds_dict = json.loads(SERVICE_ACCOUNT_INFO)  # convierte string → dict
+#         creds = service_account.Credentials.from_service_account_info(
+#             creds_dict, scopes=SCOPES
+#         )
+#
+#         service = build("calendar", "v3", credentials=creds)
+#         logger.info("✅ Servicio de Google Calendar inicializado con cuenta de servicio.")
+#         return service
+#     except Exception as e:
+#         logger.error("❌ Error al inicializar el servicio de Google Calendar:")
+#         logger.error(traceback.format_exc())
+#         raise
 
 def get_calendar_service_():
     try:
@@ -641,25 +662,7 @@ def crear_evento(evento: EventoIn, usuario_actual: dict = Depends(obtener_usuari
 def crear_evento_google(resumen, descripcion, fecha_inicio, fecha_fin):
     service = get_calendar_service()
 
-    # 1️⃣ Comprobar si el calendario permite crear Meet
-    try:
-        calendar_info = service.calendarList().get(calendarId=CALENDAR_ID).execute()
-        is_workspace = "primary" in calendar_info.get("id", "") or \
-                       "conferenceProperties" in calendar_info
-        allows_meet = False
-
-        if "conferenceProperties" in calendar_info:
-            allowed_types = calendar_info["conferenceProperties"].get("allowedConferenceSolutionTypes", [])
-            allows_meet = "hangoutsMeet" in allowed_types
-
-        logger.info(f"📝 Calendario detectado: {calendar_info.get('summary')}")
-        logger.info(f"Workspace: {is_workspace}, Permite Meet: {allows_meet}")
-
-    except Exception as e:
-        logger.warning(f"⚠️ No se pudo verificar si el calendario permite Meet: {e}")
-        allows_meet = False
-
-    # 2️⃣ Construir evento
+    # 1️⃣ Construir evento con Meet incluido
     evento = {
         'summary': resumen,
         'description': descripcion,
@@ -670,26 +673,79 @@ def crear_evento_google(resumen, descripcion, fecha_inicio, fecha_fin):
         'end': {
             'dateTime': fecha_fin.isoformat(),
             'timeZone': 'America/Bogota',
-        }
-    }
-
-    # Solo añadir conferencia si está permitido
-    if allows_meet:
-        evento['conferenceData'] = {
+        },
+        'conferenceData': {
             'createRequest': {
                 'requestId': str(uuid4()),
                 'conferenceSolutionKey': {'type': 'hangoutsMeet'},
             }
         }
+    }
 
-    # 3️⃣ Crear evento en Google Calendar
+    # 2️⃣ Crear evento en Google Calendar con Meet
     evento_creado = service.events().insert(
         calendarId=CALENDAR_ID,
         body=evento,
-        conferenceDataVersion=1 if allows_meet else 0
+        conferenceDataVersion=1
     ).execute()
 
+    logger.info(f"✅ Evento creado: {evento_creado.get('htmlLink')}")
+    logger.info(f"🔗 Meet: {evento_creado.get('hangoutLink')}")
+
     return evento_creado
+
+# def crear_evento_google(resumen, descripcion, fecha_inicio, fecha_fin):
+#     service = get_calendar_service()
+#
+#     # 1️⃣ Comprobar si el calendario permite crear Meet
+#     try:
+#         calendar_info = service.calendarList().get(calendarId=CALENDAR_ID).execute()
+#         is_workspace = "primary" in calendar_info.get("id", "") or \
+#                        "conferenceProperties" in calendar_info
+#         allows_meet = False
+#
+#         if "conferenceProperties" in calendar_info:
+#             allowed_types = calendar_info["conferenceProperties"].get("allowedConferenceSolutionTypes", [])
+#             allows_meet = "hangoutsMeet" in allowed_types
+#
+#         logger.info(f"📝 Calendario detectado: {calendar_info.get('summary')}")
+#         logger.info(f"Workspace: {is_workspace}, Permite Meet: {allows_meet}")
+#
+#     except Exception as e:
+#         logger.warning(f"⚠️ No se pudo verificar si el calendario permite Meet: {e}")
+#         allows_meet = False
+#
+#     # 2️⃣ Construir evento
+#     evento = {
+#         'summary': resumen,
+#         'description': descripcion,
+#         'start': {
+#             'dateTime': fecha_inicio.isoformat(),
+#             'timeZone': 'America/Bogota',
+#         },
+#         'end': {
+#             'dateTime': fecha_fin.isoformat(),
+#             'timeZone': 'America/Bogota',
+#         }
+#     }
+#
+#     # Solo añadir conferencia si está permitido
+#     if allows_meet:
+#         evento['conferenceData'] = {
+#             'createRequest': {
+#                 'requestId': str(uuid4()),
+#                 'conferenceSolutionKey': {'type': 'hangoutsMeet'},
+#             }
+#         }
+#
+#     # 3️⃣ Crear evento en Google Calendar
+#     evento_creado = service.events().insert(
+#         calendarId=CALENDAR_ID,
+#         body=evento,
+#         conferenceDataVersion=1 if allows_meet else 0
+#     ).execute()
+#
+#     return evento_creado
 
 
 def crear_evento_google_(resumen, descripcion, fecha_inicio, fecha_fin):
