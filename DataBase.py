@@ -5,6 +5,8 @@ from datetime import datetime
 import re
 import gspread
 from google.oauth2.service_account import Credentials
+from gspread.worksheet import JSONResponse
+
 from schemas import ActualizacionContactoInfo
 from psycopg2.extras import RealDictCursor
 # Para hash de contraseñas (instalar con: pip install bcrypt)
@@ -604,58 +606,118 @@ def obtener_todos_responsables_agendas():
         print("❌ Error al obtener usuarios administradores:", e)
         return []
 
-def crear_admin_usuario(datos):
-    """Crea un nuevo usuario administrador"""
+# def crear_admin_usuario(datos):
+#     """Crea un nuevo usuario administrador."""
+#
+#     # Validar campos requeridos antes de abrir la conexión
+#     requeridos = ["username", "nombre_completo", "email", "rol", "password_hash"]
+#     faltantes = [campo for campo in requeridos if not datos.get(campo)]
+#     if faltantes:
+#         return {"status": "error", "mensaje": f"Faltan campos obligatorios: {', '.join(faltantes)}"}
+#
+#     # Normalizar email y username
+#     username = datos["username"].strip().lower()
+#     email = datos["email"].strip().lower()
+#
+#     try:
+#         import psycopg2
+#         with psycopg2.connect(INTERNAL_DATABASE_URL) as conn:
+#             with conn.cursor() as cur:
+#                 # Verificar si el username ya existe
+#                 cur.execute("SELECT id FROM admin_usuario WHERE username = %s", (username,))
+#                 if cur.fetchone():
+#                     return {"status": "error", "mensaje": "El username ya existe"}
+#
+#                 # Verificar si el email ya existe
+#                 cur.execute("SELECT id FROM admin_usuario WHERE email = %s", (email,))
+#                 if cur.fetchone():
+#                     return {"status": "error", "mensaje": "El email ya existe"}
+#
+#                 # Hash de la contraseña (debe llegar como texto plano)
+#                 password = datos.get("password_hash", "")
+#                 if not password:
+#                     return {"status": "error", "mensaje": "La contraseña no puede estar vacía"}
+#                 password_hash = hash_password(password)
+#
+#                 # Insertar nuevo usuario
+#                 cur.execute("""
+#                     INSERT INTO admin_usuario (
+#                         username, nombre_completo, email, telefono, rol, grupo, activo,
+#                         password_hash, creado_en, actualizado_en
+#                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+#                     RETURNING id
+#                 """, (
+#                     username,
+#                     datos.get("nombre_completo").strip(),
+#                     email,
+#                     datos.get("telefono"),
+#                     datos.get("rol"),
+#                     datos.get("grupo"),
+#                     datos.get("activo", True),
+#                     password_hash
+#                 ))
+#                 usuario_id = cur.fetchone()[0]
+#                 conn.commit()
+#                 return {"status": "ok", "mensaje": "Usuario creado correctamente", "id": usuario_id}
+#
+#     except Exception as e:
+#         print("❌ Error al crear usuario administrador:", e)
+#         return {"status": "error", "mensaje": f"Error en la base de datos: {str(e)}"}
+def crear_admin_usuario(datos, db_url):
+    # Si datos es un modelo Pydantic, conviértelo a dict (opcional, pero recomendado para compatibilidad)
+    if hasattr(datos, "dict"):
+        datos = datos.dict()
+    username = datos["username"].strip().lower()
+    email = datos.get("email", "").strip().lower()
+    password = datos["password"]
+    nombre_completo = datos.get("nombre_completo")
+    telefono = datos.get("telefono")
+    rol = datos["rol"]
+    grupo = datos.get("grupo")
+    activo = datos.get("activo", True)
+
+    # Si tienes tu función hash_password importada
+    password_hash = hash_password(password)
+
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
-        cur = conn.cursor()
-        
-        # Verificar si el username ya existe
-        cur.execute("SELECT id FROM admin_usuario WHERE username = %s", (datos.get("username"),))
-        if cur.fetchone():
-            cur.close()
-            conn.close()
-            return {"status": "error", "mensaje": "El username ya existe"}
-        
-        # Verificar si el email ya existe
-        if datos.get("email"):
-            cur.execute("SELECT id FROM admin_usuario WHERE email = %s", (datos.get("email"),))
-            if cur.fetchone():
-                cur.close()
-                conn.close()
-                return {"status": "error", "mensaje": "El email ya existe"}
-        
-        # Hash de la contraseña
-        password_hash = hash_password(datos.get("password_hash", ""))
-        
-        cur.execute("""
-            INSERT INTO admin_usuario (
-                username, nombre_completo, email, telefono, rol, grupo, activo, 
-                password_hash, creado_en, actualizado_en
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
-            RETURNING id
-        """, (
-            datos.get("username"),
-            datos.get("nombre_completo"),
-            datos.get("email"),
-            datos.get("telefono"),
-            datos.get("rol"),
-            datos.get("grupo"),
-            datos.get("activo", True),
-            password_hash
-        ))
-        
-        usuario_id = cur.fetchone()[0]
-        conn.commit()
-        cur.close()
-        conn.close()
-        
-        return {"status": "ok", "mensaje": "Usuario creado correctamente", "id": usuario_id}
-        
+        with psycopg2.connect(db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM admin_usuario WHERE username=%s", (username,))
+                if cur.fetchone():
+                    return JSONResponse(status_code=409, content={"status": "error", "mensaje": "El username ya existe"})
+
+                cur.execute("SELECT 1 FROM admin_usuario WHERE email=%s", (email,))
+                if email and cur.fetchone():
+                    return JSONResponse(status_code=409, content={"status": "error", "mensaje": "El email ya existe"})
+
+                cur.execute("""
+                    INSERT INTO admin_usuario (
+                        username, nombre_completo, email, telefono, rol, grupo, activo,
+                        password_hash, creado_en, actualizado_en
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                    RETURNING id, creado_en, actualizado_en
+                """, (
+                    username, nombre_completo, email, telefono, rol, grupo, activo, password_hash
+                ))
+                result = cur.fetchone()
+                usuario_id, creado_en, actualizado_en = result
+                conn.commit()
+                # Respuesta según tu esquema de AdminUsuarioResponse
+                return {
+                    "id": usuario_id,
+                    "username": username,
+                    "nombre_completo": nombre_completo,
+                    "email": email,
+                    "telefono": telefono,
+                    "rol": rol,
+                    "grupo": grupo,
+                    "activo": activo,
+                    "creado_en": creado_en.isoformat() if creado_en else None,
+                    "actualizado_en": actualizado_en.isoformat() if actualizado_en else None,
+                }
     except Exception as e:
         print("❌ Error al crear usuario administrador:", e)
-        return {"status": "error", "mensaje": str(e)}
-
+        return JSONResponse(status_code=500, content={"status": "error", "mensaje": str(e)})
 
 def obtener_admin_usuario_por_id(usuario_id):
     """Obtiene un usuario administrador por ID"""
