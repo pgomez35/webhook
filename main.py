@@ -103,10 +103,18 @@ logger = logging.getLogger("calendar_sync")
 async def global_exception_handler(request, exc):
     logger.error(f"❌ Error no manejado: {str(exc)}")
     logger.error(traceback.format_exc())
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Error interno del servidor"}
-    )
+    try:
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Error interno del servidor"}
+        )
+    except Exception as e:
+        # fallback por si JSONResponse se rompe
+        return PlainTextResponse(
+            str(e),
+            status_code=500
+        )
+
 # ==================== FUNCIONES DE BD PARA TOKEN ===========================
 
 def guardar_token_en_bd(token_dict, nombre='calendar'):

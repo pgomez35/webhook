@@ -665,34 +665,117 @@ def obtener_todos_responsables_agendas():
 #         return {"status": "error", "mensaje": f"Error en la base de datos: {str(e)}"}
 
 
+# def crear_admin_usuario(datos):
+#     # Si datos es un modelo Pydantic, conviértelo a dict (opcional, pero recomendado para compatibilidad)
+#     if hasattr(datos, "dict"):
+#         datos = datos.dict()
+#
+#     username = datos["username"].strip().lower()
+#     email = datos.get("email", "").strip().lower()
+#     password = datos["password"]
+#     nombre_completo = datos.get("nombre_completo")
+#     telefono = datos.get("telefono")
+#     rol = datos["rol"]
+#     grupo = datos.get("grupo")
+#     activo = datos.get("activo", True)
+#
+#     # Si tienes tu función hash_password importada
+#     password_hash = hash_password(password)
+#
+#     try:
+#         with psycopg2.connect(INTERNAL_DATABASE_URL) as conn:
+#             with conn.cursor() as cur:
+#                 cur.execute("SELECT 1 FROM admin_usuario WHERE username=%s", (username,))
+#                 if cur.fetchone():
+#                     return JSONResponse(status_code=409, content={"status": "error", "mensaje": "El username ya existe"})
+#
+#                 cur.execute("SELECT 1 FROM admin_usuario WHERE email=%s", (email,))
+#                 if email and cur.fetchone():
+#                     return JSONResponse(status_code=409, content={"status": "error", "mensaje": "El email ya existe"})
+#
+#                 cur.execute("""
+#                     INSERT INTO admin_usuario (
+#                         username, nombre_completo, email, telefono, rol, grupo, activo,
+#                         password_hash, creado_en, actualizado_en
+#                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+#                     RETURNING id, creado_en, actualizado_en
+#                 """, (
+#                     username, nombre_completo, email, telefono, rol, grupo, activo, password_hash
+#                 ))
+#                 result = cur.fetchone()
+#                 usuario_id, creado_en, actualizado_en = result
+#                 conn.commit()
+#
+#                 # Respuesta según tu esquema de AdminUsuarioResponse
+#                 return {
+#                     "id": usuario_id,
+#                     "username": username,
+#                     "nombre_completo": nombre_completo,
+#                     "email": email,
+#                     "telefono": telefono,
+#                     "rol": rol,
+#                     "grupo": grupo,
+#                     "activo": activo,
+#                     "creado_en": creado_en.isoformat() if creado_en else None,
+#                     "actualizado_en": actualizado_en.isoformat() if actualizado_en else None,
+#                 }
+#     except Exception as e:
+#         print("❌ Error al crear usuario administrador:", e)
+#         return JSONResponse(status_code=500, content={"status": "error", "mensaje": str(e)})
+
+import secrets
+from fastapi.responses import JSONResponse
+
 def crear_admin_usuario(datos):
-    # Si datos es un modelo Pydantic, conviértelo a dict (opcional, pero recomendado para compatibilidad)
+    """Crea un nuevo usuario administrador."""
+
+    # Normalizar datos si vienen de un modelo Pydantic
     if hasattr(datos, "dict"):
         datos = datos.dict()
 
+    # Validar campos requeridos antes de abrir la conexión
+    requeridos = ["username", "nombre_completo", "email", "rol"]
+    faltantes = [campo for campo in requeridos if not datos.get(campo)]
+    if faltantes:
+        return {"status": "error", "mensaje": f"Faltan campos obligatorios: {', '.join(faltantes)}"}
+
+    # Normalizar email y username
     username = datos["username"].strip().lower()
-    email = datos.get("email", "").strip().lower()
-    password = datos["password"]
+    email = datos["email"].strip().lower()
     nombre_completo = datos.get("nombre_completo")
     telefono = datos.get("telefono")
     rol = datos["rol"]
     grupo = datos.get("grupo")
     activo = datos.get("activo", True)
 
-    # Si tienes tu función hash_password importada
+    # Generar contraseña fácil si no viene
+    password = datos.get("password")
+    if not password:
+        password = f"{username}123"  # 👈 fácil de recordar
+
+    # Hashear contraseña
     password_hash = hash_password(password)
 
     try:
+        import psycopg2
         with psycopg2.connect(INTERNAL_DATABASE_URL) as conn:
             with conn.cursor() as cur:
+                # Verificar duplicados
                 cur.execute("SELECT 1 FROM admin_usuario WHERE username=%s", (username,))
                 if cur.fetchone():
-                    return JSONResponse(status_code=409, content={"status": "error", "mensaje": "El username ya existe"})
+                    return JSONResponse(
+                        status_code=409,
+                        content={"status": "error", "mensaje": "El username ya existe"}
+                    )
 
                 cur.execute("SELECT 1 FROM admin_usuario WHERE email=%s", (email,))
                 if email and cur.fetchone():
-                    return JSONResponse(status_code=409, content={"status": "error", "mensaje": "El email ya existe"})
+                    return JSONResponse(
+                        status_code=409,
+                        content={"status": "error", "mensaje": "El email ya existe"}
+                    )
 
+                # Insertar usuario
                 cur.execute("""
                     INSERT INTO admin_usuario (
                         username, nombre_completo, email, telefono, rol, grupo, activo,
@@ -702,11 +785,10 @@ def crear_admin_usuario(datos):
                 """, (
                     username, nombre_completo, email, telefono, rol, grupo, activo, password_hash
                 ))
-                result = cur.fetchone()
-                usuario_id, creado_en, actualizado_en = result
+
+                usuario_id, creado_en, actualizado_en = cur.fetchone()
                 conn.commit()
 
-                # Respuesta según tu esquema de AdminUsuarioResponse
                 return {
                     "id": usuario_id,
                     "username": username,
@@ -718,10 +800,16 @@ def crear_admin_usuario(datos):
                     "activo": activo,
                     "creado_en": creado_en.isoformat() if creado_en else None,
                     "actualizado_en": actualizado_en.isoformat() if actualizado_en else None,
+                    "password_inicial": password  # 👈 se devuelve para el admin
                 }
+
     except Exception as e:
         print("❌ Error al crear usuario administrador:", e)
-        return JSONResponse(status_code=500, content={"status": "error", "mensaje": str(e)})
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "mensaje": str(e)}
+        )
+
 
 def obtener_admin_usuario_por_id(usuario_id):
     """Obtiene un usuario administrador por ID"""

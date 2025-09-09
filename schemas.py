@@ -43,8 +43,10 @@ class AdminUsuarioBase(BaseModel):
     grupo: Optional[str] = None
     activo: bool = True
 
+
 class AdminUsuarioCreate(AdminUsuarioBase):
-    password_hash: str
+    password: Optional[str] = None   # 👈 ahora acepta password en texto plano (o vacío si se genera automática)
+
 
 class AdminUsuarioUpdate(BaseModel):
     username: Optional[str] = None
@@ -54,18 +56,23 @@ class AdminUsuarioUpdate(BaseModel):
     rol: Optional[str] = None
     grupo: Optional[str] = None
     activo: Optional[bool] = None
+    password: Optional[str] = None   # 👈 opcional para permitir cambio de contraseña
+
 
 class AdminUsuarioResponse(AdminUsuarioBase):
     id: int
     creado_en: Optional[str] = None  # Como string ISO format
     actualizado_en: Optional[str] = None
-    
+    password_inicial: Optional[str] = None  # 👈 solo para mostrar al admin la contraseña asignada
+
     class Config:
         from_attributes = True
+
 
 class AdminUsuarioLogin(BaseModel):
     username: str
     password: str
+
 
 
 # ===============================
