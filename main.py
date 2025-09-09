@@ -1481,8 +1481,6 @@ async def obtener_usuarios():
     usuarios = obtener_todos_admin_usuarios()
     return usuarios
 
-
-
 @app.post("/api/admin-usuario", response_model=AdminUsuarioResponse)
 async def crear_usuario(usuario: AdminUsuarioCreate):
     """Crea un nuevo usuario administrador"""
@@ -1529,23 +1527,49 @@ async def obtener_usuario_por_username(username: str):
     
     return usuario
 
+# Endpoint de login usando tus funciones y devolviendo el JWT
 @app.post("/api/admin-usuario/login")
 async def login_usuario(credentials: dict = Body(...)):
-    """Autentica un usuario administrador"""
-    username = credentials.get("username")
-    password = credentials.get("password")
-    
+    username = credentials.get("username", "").strip().lower()
+    password = credentials.get("password", "")
     if not username or not password:
         raise HTTPException(status_code=400, detail="Username y password son requeridos")
-    
-    # Verificar credenciales
-    usuario = obtener_admin_usuario_por_username(username)
-    if not usuario or not verify_password(password, usuario["password_hash"]):
-        raise HTTPException(status_code=401, detail="Credenciales inválidas")
-    
-    # Retornar datos del usuario sin el password_hash
-    usuario_response = {k: v for k, v in usuario.items() if k != "password_hash"}
-    return {"usuario": usuario_response, "mensaje": "Login exitoso"}
+
+    resultado = autenticar_admin_usuario(username, password)
+    if resultado["status"] != "ok":
+        raise HTTPException(status_code=401, detail=resultado["mensaje"])
+
+    usuario = resultado["usuario"]
+    token = crear_token_jwt(usuario)
+    return {
+        "usuario": usuario,
+        "access_token": token,
+        "token_type": "bearer",
+        "mensaje": "Login exitoso"
+    }
+
+# Ejemplo de endpoint protegido
+@app.get("/api/perfil")
+async def perfil(usuario: dict = Depends(obtener_usuario_actual_)):
+    return {"usuario": usuario}
+
+# @app.post("/api/admin-usuario/login")
+# async def login_usuario(credentials: dict = Body(...)):
+#     """Autentica un usuario administrador"""
+#     username = credentials.get("username")
+#     password = credentials.get("password")
+#
+#     if not username or not password:
+#         raise HTTPException(status_code=400, detail="Username y password son requeridos")
+#
+#     # Verificar credenciales
+#     usuario = obtener_admin_usuario_por_username(username)
+#     if not usuario or not verify_password(password, usuario["password_hash"]):
+#         raise HTTPException(status_code=401, detail="Credenciales inválidas")
+#
+#     # Retornar datos del usuario sin el password_hash
+#     usuario_response = {k: v for k, v in usuario.items() if k != "password_hash"}
+#     return {"usuario": usuario_response, "mensaje": "Login exitoso"}
 
 #-------------------------
 #-------------------------

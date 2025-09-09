@@ -34,6 +34,7 @@ class EventoOut(EventoIn):
 # ESQUEMAS PARA ADMIN_USUARIO
 # ===============================
 
+
 class AdminUsuarioBase(BaseModel):
     username: str
     nombre_completo: Optional[str] = None

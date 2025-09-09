@@ -1,10 +1,27 @@
+from datetime import datetime, timedelta
+
 from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 
 SECRET_KEY = "CLAVE_SECRETA"
 ALGORITHM = "HS256"
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+ACCESS_TOKEN_EXPIRE_HOURS = 8
+# oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/admin-usuario/login")
+
+
+# Función para crear el JWT
+def crear_token_jwt(usuario: dict) -> str:
+    data = {
+        "sub": str(usuario["id"]),
+        "nombre": usuario["nombre_completo"],
+        "rol": usuario["rol"],
+        "exp": datetime.utcnow() + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
+    }
+    return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
+
+
 
 def get_usuario_actual_id_(token: str = Depends(oauth2_scheme)) -> int:
     try:
