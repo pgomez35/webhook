@@ -606,7 +606,7 @@ def obtener_todos_responsables_agendas():
         print("❌ Error al obtener usuarios administradores:", e)
         return []
 
-# def crear_admin_usuario(datos):
+# def crear_admin_usuario_V0(datos):
 #     """Crea un nuevo usuario administrador."""
 #
 #     # Validar campos requeridos antes de abrir la conexión
@@ -663,10 +663,13 @@ def obtener_todos_responsables_agendas():
 #     except Exception as e:
 #         print("❌ Error al crear usuario administrador:", e)
 #         return {"status": "error", "mensaje": f"Error en la base de datos: {str(e)}"}
-def crear_admin_usuario(datos, db_url):
+
+
+def crear_admin_usuario(datos):
     # Si datos es un modelo Pydantic, conviértelo a dict (opcional, pero recomendado para compatibilidad)
     if hasattr(datos, "dict"):
         datos = datos.dict()
+
     username = datos["username"].strip().lower()
     email = datos.get("email", "").strip().lower()
     password = datos["password"]
@@ -680,7 +683,7 @@ def crear_admin_usuario(datos, db_url):
     password_hash = hash_password(password)
 
     try:
-        with psycopg2.connect(db_url) as conn:
+        with psycopg2.connect(INTERNAL_DATABASE_URL) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1 FROM admin_usuario WHERE username=%s", (username,))
                 if cur.fetchone():
@@ -702,6 +705,7 @@ def crear_admin_usuario(datos, db_url):
                 result = cur.fetchone()
                 usuario_id, creado_en, actualizado_en = result
                 conn.commit()
+
                 # Respuesta según tu esquema de AdminUsuarioResponse
                 return {
                     "id": usuario_id,
