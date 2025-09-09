@@ -34,6 +34,9 @@ class EventoOut(EventoIn):
 # ESQUEMAS PARA ADMIN_USUARIO
 # ===============================
 
+class ChangePasswordRequest(BaseModel):
+    user_id: int
+    new_password: str
 
 class AdminUsuarioBase(BaseModel):
     username: str
