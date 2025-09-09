@@ -1495,11 +1495,15 @@ async def obtener_usuario(usuario_id: int):
 
 @app.put("/api/admin-usuario/{usuario_id}", response_model=AdminUsuarioResponse)
 async def actualizar_usuario(usuario_id: int, usuario: AdminUsuarioUpdate):
-    """Actualiza un usuario administrador"""
-    usuario_actualizado = actualizar_admin_usuario(usuario_id, usuario)
-    if not usuario_actualizado:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    return usuario_actualizado
+    try:
+        usuario_actualizado = actualizar_admin_usuario(usuario_id, usuario.dict())
+        if not usuario_actualizado:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        return usuario_actualizado
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 @app.delete("/api/admin-usuario/{usuario_id}")
 async def eliminar_usuario(usuario_id: int):

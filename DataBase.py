@@ -934,7 +934,7 @@ def actualizar_admin_usuario(usuario_id, datos):
         print("❌ Error al actualizar usuario administrador:", e)
         raise e
 
-    
+
 # def actualizar_admin_usuario(usuario_id, datos):
 #     """Actualiza un usuario administrador"""
 #     try:
