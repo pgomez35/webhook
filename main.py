@@ -1471,10 +1471,6 @@ async def test_conexion():
             "record_count": 0
         }
 
-
-
-
-
 @app.get("/api/admin-usuario", response_model=List[AdminUsuarioResponse])
 async def obtener_usuarios():
     """Obtiene todos los usuarios administradores"""
@@ -1547,6 +1543,26 @@ async def login_usuario(credentials: dict = Body(...)):
         "token_type": "bearer",
         "mensaje": "Login exitoso"
     }
+
+@app.put("/api/admin-usuario/cambiar-password")
+async def cambiar_password_admin(
+    datos: ChangePasswordRequest = Body(...),
+    usuario_actual: dict = Depends(obtener_usuario_actual_)
+):
+    if not es_admin(usuario_actual):
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    # Busca el usuario y actualiza la contraseña (hasheada)
+    usuario = obtener_admin_usuario_por_id(datos.user_id)
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    # Aquí deberías usar tu función de hash
+    nuevo_hash = hash_password(datos.new_password)
+    actualiza_password_usuario(datos.user_id, nuevo_hash)
+
+    return {"mensaje": "Contraseña actualizada correctamente."}
+
 
 # Ejemplo de endpoint protegido
 @app.get("/api/perfil")

@@ -30,8 +30,6 @@ import psycopg2
 from datetime import datetime, timedelta
 
 
-
-
 from datetime import datetime, timedelta
 
 
@@ -847,72 +845,161 @@ def obtener_admin_usuario_por_id(usuario_id):
         print("❌ Error al obtener usuario administrador:", e)
         return None
 
-
 def actualizar_admin_usuario(usuario_id, datos):
-    """Actualiza un usuario administrador"""
+    """Actualiza un usuario administrador y retorna los datos actualizados"""
     try:
         conn = psycopg2.connect(INTERNAL_DATABASE_URL)
         cur = conn.cursor()
-        
+
         # Verificar si el usuario existe
         cur.execute("SELECT id FROM admin_usuario WHERE id = %s", (usuario_id,))
         if not cur.fetchone():
             cur.close()
             conn.close()
-            return {"status": "error", "mensaje": "Usuario no encontrado"}
-        
+            # En vez de devolver dict, lanza excepción en el endpoint
+            return None
+
         # Verificar username único (excluyendo el usuario actual)
         if datos.get("username"):
             cur.execute(
-                "SELECT id FROM admin_usuario WHERE username = %s AND id != %s", 
+                "SELECT id FROM admin_usuario WHERE username = %s AND id != %s",
                 (datos.get("username"), usuario_id)
             )
             if cur.fetchone():
                 cur.close()
                 conn.close()
-                return {"status": "error", "mensaje": "El username ya existe"}
-        
+                raise ValueError("El username ya existe")
+
         # Verificar email único (excluyendo el usuario actual)
         if datos.get("email"):
             cur.execute(
-                "SELECT id FROM admin_usuario WHERE email = %s AND id != %s", 
+                "SELECT id FROM admin_usuario WHERE email = %s AND id != %s",
                 (datos.get("email"), usuario_id)
             )
             if cur.fetchone():
                 cur.close()
                 conn.close()
-                return {"status": "error", "mensaje": "El email ya existe"}
-        
+                raise ValueError("El email ya existe")
+
         # Construir query de actualización dinámicamente
         updates = []
         valores = []
-        
+
         campos_permitidos = ["username", "nombre_completo", "email", "telefono", "rol", "grupo", "activo"]
         for campo in campos_permitidos:
             if campo in datos:
                 updates.append(f"{campo} = %s")
                 valores.append(datos[campo])
-        
+
         if not updates:
             cur.close()
             conn.close()
-            return {"status": "error", "mensaje": "No se proporcionaron campos para actualizar"}
-        
+            raise ValueError("No se proporcionaron campos para actualizar")
+
         updates.append("actualizado_en = NOW()")
         valores.append(usuario_id)
-        
+
         query = f"UPDATE admin_usuario SET {', '.join(updates)} WHERE id = %s"
         cur.execute(query, tuple(valores))
-        
         conn.commit()
+
+        # Obtener los datos actualizados
+        cur.execute(
+            "SELECT id, username, rol, nombre_completo, email, telefono, grupo, activo FROM admin_usuario WHERE id = %s",
+            (usuario_id,)
+        )
+        row = cur.fetchone()
         cur.close()
         conn.close()
-        
-        return {"status": "ok", "mensaje": "Usuario actualizado correctamente"}
-        
+
+        if not row:
+            return None
+
+        # Arma el dict que espera tu modelo de respuesta
+        return {
+            "id": row[0],
+            "username": row[1],
+            "rol": row[2],
+            "nombre_completo": row[3],
+            "email": row[4],
+            "telefono": row[5],
+            "grupo": row[6],
+            "activo": row[7]
+        }
+
+    except ValueError as ve:
+        # Lanza errores de validación para el endpoint
+        raise ve
     except Exception as e:
         print("❌ Error al actualizar usuario administrador:", e)
-        return {"status": "error", "mensaje": str(e)}
+        raise e
+
+    
+# def actualizar_admin_usuario(usuario_id, datos):
+#     """Actualiza un usuario administrador"""
+#     try:
+#         conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+#         cur = conn.cursor()
+#
+#         # Verificar si el usuario existe
+#         cur.execute("SELECT id FROM admin_usuario WHERE id = %s", (usuario_id,))
+#         if not cur.fetchone():
+#             cur.close()
+#             conn.close()
+#             return {"status": "error", "mensaje": "Usuario no encontrado"}
+#
+#         # Verificar username único (excluyendo el usuario actual)
+#         if datos.get("username"):
+#             cur.execute(
+#                 "SELECT id FROM admin_usuario WHERE username = %s AND id != %s",
+#                 (datos.get("username"), usuario_id)
+#             )
+#             if cur.fetchone():
+#                 cur.close()
+#                 conn.close()
+#                 return {"status": "error", "mensaje": "El username ya existe"}
+#
+#         # Verificar email único (excluyendo el usuario actual)
+#         if datos.get("email"):
+#             cur.execute(
+#                 "SELECT id FROM admin_usuario WHERE email = %s AND id != %s",
+#                 (datos.get("email"), usuario_id)
+#             )
+#             if cur.fetchone():
+#                 cur.close()
+#                 conn.close()
+#                 return {"status": "error", "mensaje": "El email ya existe"}
+#
+#         # Construir query de actualización dinámicamente
+#         updates = []
+#         valores = []
+#
+#         campos_permitidos = ["username", "nombre_completo", "email", "telefono", "rol", "grupo", "activo"]
+#         for campo in campos_permitidos:
+#             if campo in datos:
+#                 updates.append(f"{campo} = %s")
+#                 valores.append(datos[campo])
+#
+#         if not updates:
+#             cur.close()
+#             conn.close()
+#             return {"status": "error", "mensaje": "No se proporcionaron campos para actualizar"}
+#
+#         updates.append("actualizado_en = NOW()")
+#         valores.append(usuario_id)
+#
+#         query = f"UPDATE admin_usuario SET {', '.join(updates)} WHERE id = %s"
+#         cur.execute(query, tuple(valores))
+#
+#         conn.commit()
+#         cur.close()
+#         conn.close()
+#
+#         return {"status": "ok", "mensaje": "Usuario actualizado correctamente"}
+#
+#     except Exception as e:
+#         print("❌ Error al actualizar usuario administrador:", e)
+#         return {"status": "error", "mensaje": str(e)}
 
 
 def eliminar_admin_usuario(usuario_id):
@@ -1007,6 +1094,29 @@ def obtener_admin_usuario_por_username(username):
     except Exception as e:
         print("❌ Error al obtener usuario por username:", e)
         return None
+
+def es_admin(usuario_actual: dict):
+    # Asegúrate de que 'rol' esté en el dict del usuario
+    return usuario_actual.get("rol") == "admin"
+
+def actualiza_password_usuario(user_id: int, nuevo_hash: str):
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+        # Siempre usa parámetros para evitar SQL Injection
+        cur.execute(
+            "UPDATE admin_usuario SET password_hash = %s WHERE id = %s",
+            (nuevo_hash, user_id)
+        )
+        conn.commit()
+        actualizado = cur.rowcount > 0  # True si se actualizó
+        cur.close()
+        conn.close()
+        return actualizado
+    except Exception as e:
+        print(f"Error al actualizar contraseña: {e}")
+        return False
+
 
 
 def autenticar_admin_usuario(username, password):
