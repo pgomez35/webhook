@@ -1469,6 +1469,13 @@ async def obtener_usuarios():
     usuarios = obtener_todos_admin_usuarios()
     return usuarios
 
+# filtrar responsables Agendas
+@app.get("/api/responsable-Agenda", response_model=List[AdminUsuarioResponse])
+async def obtener_responsables_agenda():
+    """Obtiene todos los usuarios administradores"""
+    usuarios = obtener_todos_responsables_agendas()
+    return usuarios
+
 @app.post("/api/admin-usuario", response_model=AdminUsuarioResponse)
 async def crear_usuario(usuario: AdminUsuarioCreate):
     """Crea un nuevo usuario administrador"""

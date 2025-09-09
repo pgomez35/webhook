@@ -568,6 +568,42 @@ def obtener_todos_admin_usuarios():
         return []
 
 
+def obtener_todos_responsables_agendas():
+    """Obtiene todos los usuarios responsables de agendas"""
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT id, username, nombre_completo, email, telefono, rol, grupo, activo, 
+                   creado_en, actualizado_en
+            FROM admin_usuario
+            ORDER BY creado_en DESC
+        """)
+
+        usuarios = []
+        for row in cur.fetchall():
+            usuarios.append({
+                "id": row[0],
+                "username": row[1],
+                "nombre_completo": row[2],
+                "email": row[3],
+                "telefono": row[4],
+                "rol": row[5],
+                "grupo": row[6],
+                "activo": row[7],
+                "creado_en": row[8].isoformat() if row[8] else None,
+                "actualizado_en": row[9].isoformat() if row[9] else None
+            })
+
+        cur.close()
+        conn.close()
+        return usuarios
+
+    except Exception as e:
+        print("❌ Error al obtener usuarios administradores:", e)
+        return []
+
 def crear_admin_usuario(datos):
     """Crea un nuevo usuario administrador"""
     try:
