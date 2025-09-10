@@ -1542,8 +1542,9 @@ async def cambiar_password_admin(
     datos: ChangePasswordRequest = Body(...),
     usuario_actual: dict = Depends(obtener_usuario_actual)
 ):
-    if not es_admin(usuario_actual):
-        raise HTTPException(status_code=403, detail="No autorizado")
+    # Si NO es admin y trata de cambiar la contraseña de otro → prohibido
+    if not es_admin(usuario_actual) and datos.user_id != usuario_actual["id"]:
+        raise HTTPException(status_code=403, detail="No puedes cambiar la contraseña de otro usuario.")
 
     print("Datos recibidos en endpoint:", datos)
     print("Tipo de user_id:", type(datos.user_id))
