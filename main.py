@@ -591,7 +591,7 @@ from dateutil.parser import isoparse
 logger = logging.getLogger(__name__)
 
 @app.post("/api/eventos", response_model=EventoOut)
-def crear_evento(evento: EventoIn, usuario_actual: dict = Depends(obtener_usuario_actual_)):
+def crear_evento(evento: EventoIn, usuario_actual: dict = Depends(obtener_usuario_actual)):
     conn, cur = get_connection()
     try:
         if evento.fin <= evento.inicio:
