@@ -24,9 +24,18 @@ def crear_token_jwt(usuario: dict) -> str:
 def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: str = payload.get("sub")
-        nombre: str = payload.get("nombre")
-        rol: str = payload.get("rol")
+        user_id = payload.get("sub")
+        nombre = payload.get("nombre")
+        rol = payload.get("rol")
+        if user_id is None or nombre is None or rol is None:
+            raise HTTPException(status_code=401, detail="Token inválido")
+        return {
+            "user_id": int(user_id),  # <--- lo convertimos a int
+            "nombre": nombre,
+            "rol": rol
+        }
+    except Exception:
+        raise HTTPException(status_code=401, detail="No se pudo validar las credenciales")
 
 
         if user_id is None:

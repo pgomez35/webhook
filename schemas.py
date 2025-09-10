@@ -35,8 +35,8 @@ class EventoOut(EventoIn):
 # ===============================
 
 class ChangePasswordRequest(BaseModel):
-    user_id: int
-    new_password: str
+    user_id: int = Field(..., gt=0, description="ID del usuario")
+    new_password: str = Field(..., min_length=6, description="Nueva contraseña (mínimo 6 caracteres)")
 
 class AdminUsuarioBase(BaseModel):
     username: str
