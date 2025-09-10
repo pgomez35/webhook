@@ -1556,6 +1556,9 @@ async def cambiar_password_admin(
     if not es_admin(usuario_actual):
         raise HTTPException(status_code=403, detail="No autorizado")
 
+    print("Datos recibidos en endpoint:", datos)
+    print("Tipo de user_id:", type(datos.user_id))
+
     # Busca el usuario y actualiza la contraseña (hasheada)
     usuario = obtener_admin_usuario_por_id(datos.user_id)
     if not usuario:
