@@ -21,20 +21,7 @@ def crear_token_jwt(usuario: dict) -> str:
     }
     return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
 
-
-
-def get_usuario_actual_id_(token: str = Depends(oauth2_scheme)) -> int:
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = int(payload.get("sub"))
-        return user_id
-    except:
-        raise HTTPException(status_code=401, detail="Token inválido")
-
-def get_usuario_actual_id() -> int:
-    return 1  # ID ficticio de prueba
-
-def obtener_usuario_actual_(token: str = Depends(oauth2_scheme)) -> dict:
+def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
@@ -55,7 +42,19 @@ def obtener_usuario_actual_(token: str = Depends(oauth2_scheme)) -> dict:
         raise HTTPException(status_code=401, detail="Token inválido")
 
 
-def obtener_usuario_actual() -> dict:
+def get_usuario_actual_id(token: str = Depends(oauth2_scheme)) -> int:
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = int(payload.get("sub"))
+        return user_id
+    except:
+        raise HTTPException(status_code=401, detail="Token inválido")
+
+
+def get_usuario_actual_idV0() -> int:
+    return 1  # ID ficticio de prueba
+
+def obtener_usuario_actualV1() -> dict:
     return {
         "id": 1,
         "nombre": "pablo gomez",

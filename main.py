@@ -591,7 +591,7 @@ from dateutil.parser import isoparse
 logger = logging.getLogger(__name__)
 
 @app.post("/api/eventos", response_model=EventoOut)
-def crear_evento(evento: EventoIn, usuario_actual: dict = Depends(obtener_usuario_actual)):
+def crear_evento(evento: EventoIn, usuario_actual: dict = Depends(obtener_usuario_actual_)):
     conn, cur = get_connection()
     try:
         if evento.fin <= evento.inicio:
@@ -1551,7 +1551,7 @@ async def login_usuario(credentials: dict = Body(...)):
 @app.put("/api/admin-usuario/cambiar-password")
 async def cambiar_password_admin(
     datos: ChangePasswordRequest = Body(...),
-    usuario_actual: dict = Depends(obtener_usuario_actual_)
+    usuario_actual: dict = Depends(obtener_usuario_actual)
 ):
     if not es_admin(usuario_actual):
         raise HTTPException(status_code=403, detail="No autorizado")
@@ -1570,7 +1570,7 @@ async def cambiar_password_admin(
 
 # Ejemplo de endpoint protegido
 @app.get("/api/perfil")
-async def perfil(usuario: dict = Depends(obtener_usuario_actual_)):
+async def perfil(usuario: dict = Depends(obtener_usuario_actual)):
     return {"usuario": usuario}
 
 # @app.post("/api/admin-usuario/login")
