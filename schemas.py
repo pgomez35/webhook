@@ -1,6 +1,7 @@
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, Union, Dict,List
-from datetime import datetime
+from datetime import datetime, date
+
 
 class ActualizacionContactoInfo(BaseModel):
     estado_whatsapp: Optional[str] = None
@@ -669,3 +670,8 @@ class AdminUsuarioManagerResponse(BaseModel):
     nombre_completo: str
     grupo: str
     activo: bool
+
+class CreadorActivoAutoCreate(BaseModel):
+    creador_id: int
+    fecha_incorporacion: Optional[date] = None
+    manager_id: Optional[int] = None

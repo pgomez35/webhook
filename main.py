@@ -2069,3 +2069,78 @@ async def obtener_usuarios_manager():
     """Obtiene todos los usuarios administradores"""
     usuarios = obtener_todos_admin_manager()
     return usuarios
+
+
+@app.post("/api/creadores_activos/auto", response_model=dict)
+def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+
+        # 1. Buscar datos del creador en la tabla creadores
+        cur.execute("""
+            SELECT
+                id,
+                usuario AS usuario_tiktok,
+                foto_url AS foto,
+                NULL AS categoria,
+                'activo' AS estado,
+                nickname AS nombre
+            FROM creadores
+            WHERE id = %s
+        """, (data.creador_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Creador no encontrado")
+
+        creador = dict(zip([desc[0] for desc in cur.description], row))
+
+        # 2. Preparar valores para insertar en creadores_activos
+        valores = {
+            "creador_id": creador["id"],
+            "usuario_tiktok": creador["usuario_tiktok"],
+            "foto": creador["foto"],
+            "categoria": creador["categoria"],
+            "estado": creador["estado"],
+            "nombre": creador["nombre"],
+            "manager_id": data.manager_id,  # puede ser None
+            "fecha_incorporacion": data.fecha_incorporacion or date.today(),
+            "horario_lives": None,
+            "tiempo_disponible": None,
+            "fecha_graduacion": None,
+            "seguidores": None,
+            "videos": None,
+            "me_gusta": None,
+            "diamantes": None,
+            "horas_live": None,
+            "numero_partidas": None,
+            "dias_emision": None
+        }
+
+        # 3. Insertar en creadores_activos
+        cur.execute("""
+            INSERT INTO creadores_activos (
+                creador_id, usuario_tiktok, foto, categoria, estado, nombre,
+                manager_id, horario_lives, tiempo_disponible, fecha_incorporacion, fecha_graduacion,
+                seguidores, videos, me_gusta, diamantes, horas_live, numero_partidas, dias_emision
+            ) VALUES (
+                %(creador_id)s, %(usuario_tiktok)s, %(foto)s, %(categoria)s, %(estado)s, %(nombre)s,
+                %(manager_id)s, %(horario_lives)s, %(tiempo_disponible)s, %(fecha_incorporacion)s, %(fecha_graduacion)s,
+                %(seguidores)s, %(videos)s, %(me_gusta)s, %(diamantes)s, %(horas_live)s, %(numero_partidas)s, %(dias_emision)s
+            )
+            RETURNING *;
+        """, valores)
+        new_row = cur.fetchone()
+        conn.commit()
+        columns = [desc[0] for desc in cur.description]
+        return dict(zip(columns, new_row))
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al crear creador activo: {e}")
+    finally:
+        if conn:
+            conn.close()
