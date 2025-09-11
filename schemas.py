@@ -627,3 +627,38 @@ class PerfilCreadorSchema(BaseModel):
     estadisticas: Optional[EstadisticasPerfilOutput] = None
     preferencias: Optional[PreferenciasHabitosOutput] = None
     resumen: Optional[ResumenEvaluacionOutput] = None
+
+
+# ===============================
+# ESQUEMAS PARA CREADORES ACTIVOS
+# ===============================
+
+# ==== Modelos Pydantic ====
+class CreadorActivoBase(BaseModel):
+    creador_id: Optional[int] = None
+    nombre: str
+    usuario_tiktok: str
+    foto: Optional[str] = None
+    categoria: Optional[str] = None
+    estado: Optional[str] = None
+    manager_id: Optional[int] = None
+    horario_lives: Optional[str] = None
+    tiempo_disponible: Optional[int] = None
+    fecha_incorporacion: Optional[str] = None
+    fecha_graduacion: Optional[str] = None
+    seguidores: Optional[int] = None
+    videos: Optional[int] = None
+    me_gusta: Optional[int] = None
+    diamantes: Optional[int] = None
+    horas_live: Optional[int] = None
+    numero_partidas: Optional[int] = None
+    dias_emision: Optional[int] = None
+
+class CreadorActivoCreate(CreadorActivoBase):
+    pass
+
+class CreadorActivoUpdate(CreadorActivoBase):
+    pass
+
+class CreadorActivoDB(CreadorActivoBase):
+    id: int

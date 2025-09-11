@@ -119,7 +119,7 @@ async def global_exception_handler(request, exc):
 
 def guardar_token_en_bd(token_dict, nombre='calendar'):
     try:
-        conn = psycopg2.connect(DB_URL)
+        conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
             INSERT INTO google_tokens (nombre, token_json, actualizado)
@@ -137,7 +137,7 @@ def guardar_token_en_bd(token_dict, nombre='calendar'):
 
 def leer_token_de_bd(nombre='calendar'):
     try:
-        conn = psycopg2.connect(DB_URL)
+        conn = get_connection()
         cur = conn.cursor()
         cur.execute(
             "SELECT token_json FROM google_tokens WHERE nombre = %s LIMIT 1;",
@@ -568,7 +568,7 @@ def eliminar_evento(evento_id: str):
         service = get_calendar_service()
         service.events().delete(calendarId=CALENDAR_ID, eventId=evento_id).execute()
 
-        conn = psycopg2.connect(DB_URL)
+        conn = get_connection()
         cur = conn.cursor()
         cur.execute("DELETE FROM agendamientos WHERE google_event_id = %s", (evento_id,))
         conn.commit()
@@ -791,7 +791,7 @@ from psycopg2.extras import RealDictCursor
 @app.get("/api/agendamientos")
 def listar_agendamientos():
     try:
-        conn = psycopg2.connect(DB_URL)
+        conn = get_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
         # Obtener agendamientos con nombre del responsable
@@ -1947,7 +1947,116 @@ async def obtener_responsables_agenda():
     usuarios = obtener_todos_responsables_agendas()
     return usuarios
 
-
 # if __name__ == "__main__":
 #     resultado = diagnostico_perfil_creador(27)  # id de prueba
 #     print(resultado)
+
+
+# CREADORES ACTIVOS
+
+# 1. Listar todos los creadores activos
+@app.get("/api/creadores_activos", response_model=List[CreadorActivoDB])
+def listar_creadores_activos():
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM creadores_activos")
+        rows = cur.fetchall()
+        columns = [desc[0] for desc in cur.description]
+        result = [dict(zip(columns, row)) for row in rows]
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+# 2. Obtener un creador activo por ID
+@app.get("/api/creadores_activos/{id}", response_model=CreadorActivoDB)
+def obtener_creador_activo(id: int):
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM creadores_activos WHERE id=%s", (id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Creador no encontrado")
+        columns = [desc[0] for desc in cur.description]
+        return dict(zip(columns, row))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+# 3. Agregar un nuevo creador activo
+@app.post("/api/creadores_activos", response_model=CreadorActivoDB, status_code=201)
+def agregar_creador_activo(creador: CreadorActivoCreate):
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO creadores_activos (
+                creador_id, nombre, usuario_tiktok, foto, categoria, estado, manager_id,
+                horario_lives, tiempo_disponible, fecha_incorporacion, fecha_graduacion,
+                seguidores, videos, me_gusta, diamantes, horas_live, numero_partidas, dias_emision
+            ) VALUES (
+                %(creador_id)s, %(nombre)s, %(usuario_tiktok)s, %(foto)s, %(categoria)s, %(estado)s, %(manager_id)s,
+                %(horario_lives)s, %(tiempo_disponible)s, %(fecha_incorporacion)s, %(fecha_graduacion)s,
+                %(seguidores)s, %(videos)s, %(me_gusta)s, %(diamantes)s, %(horas_live)s, %(numero_partidas)s, %(dias_emision)s
+            ) RETURNING *;
+        """, creador.dict())
+        row = cur.fetchone()
+        conn.commit()
+        columns = [desc[0] for desc in cur.description]
+        return dict(zip(columns, row))
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+# 4. Editar un creador activo existente
+@app.put("/api/creadores_activos/{id}", response_model=CreadorActivoDB)
+def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE creadores_activos SET
+                creador_id=%(creador_id)s,
+                nombre=%(nombre)s,
+                usuario_tiktok=%(usuario_tiktok)s,
+                foto=%(foto)s,
+                categoria=%(categoria)s,
+                estado=%(estado)s,
+                manager_id=%(manager_id)s,
+                horario_lives=%(horario_lives)s,
+                tiempo_disponible=%(tiempo_disponible)s,
+                fecha_incorporacion=%(fecha_incorporacion)s,
+                fecha_graduacion=%(fecha_graduacion)s,
+                seguidores=%(seguidores)s,
+                videos=%(videos)s,
+                me_gusta=%(me_gusta)s,
+                diamantes=%(diamantes)s,
+                horas_live=%(horas_live)s,
+                numero_partidas=%(numero_partidas)s,
+                dias_emision=%(dias_emision)s
+            WHERE id=%(id)s
+            RETURNING *;
+        """, {**creador.dict(), "id": id})
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Creador no encontrado")
+        conn.commit()
+        columns = [desc[0] for desc in cur.description]
+        return dict(zip(columns, row))
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
