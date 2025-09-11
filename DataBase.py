@@ -37,7 +37,6 @@ def get_connection():
     conn = psycopg2.connect(INTERNAL_DATABASE_URL)
     return conn
 
-
 def limpiar_telefono(telefono):
     telefono = telefono.strip().replace("+", "").replace(" ", "")
     # Si el teléfono comienza con 93, cambia a 57
@@ -1723,12 +1722,9 @@ def obtener_estadisticas_evaluacion():
         "promedioPuntuacion": float(promedio)
     }
 
-def get_connection():
-    conn = psycopg2.connect(INTERNAL_DATABASE_URL)
-    return conn, conn.cursor()
-
 def guardar_en_bd(agendamiento, meet_link, usuario_actual_id, creado):
-    conn, cur = get_connection()
+    conn = get_connection()
+    cur = conn.cursor()
     try:
         cur.execute("""
             INSERT INTO agendamientos (
