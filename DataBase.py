@@ -1792,6 +1792,39 @@ def eliminar_perfil_creador(perfil_id: int):
         return False
 
 
+def obtener_todos_admin_manager():
+    """Obtiene todos los usuarios administradores"""
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT id, username, nombre_completo,grupo, activo
+            FROM admin_usuario where rol='Manager' 
+            ORDER BY nombre_completo DESC
+        """)
+
+        usuarios = []
+        for row in cur.fetchall():
+            usuarios.append({
+                "id": row[0],
+                "username": row[1],
+                "nombre_completo": row[2],
+                "rol": row[3],
+                "grupo": row[4],
+                "activo": row[5],
+            })
+
+        cur.close()
+        conn.close()
+        return usuarios
+
+    except Exception as e:
+        print("❌ Error al obtener usuarios administradores:", e)
+        return []
+
+
+
 # if __name__ == "__main__":
 #     print("Probando diagnóstico...")
 #     # resultado = diagnostico_perfil_creador(27)  # Cambia el ID según quieras

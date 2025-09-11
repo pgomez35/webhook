@@ -662,3 +662,10 @@ class CreadorActivoUpdate(CreadorActivoBase):
 
 class CreadorActivoDB(CreadorActivoBase):
     id: int
+
+class AdminUsuarioManagerResponse(BaseModel):
+    id: int
+    username: str
+    nombre_completo: str
+    grupo: str
+    activo: bool
