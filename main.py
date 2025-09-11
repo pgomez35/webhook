@@ -268,7 +268,8 @@ def obtener_eventos() -> List[EventoOut]:
                         break
 
             # Obtener participantes desde la base de datos
-            conn, cur = get_connection()
+            conn = get_connection()
+            cur = conn.cursor()
             cur.execute("""
                 SELECT c.id, c.nombre_real as nombre, c.nickname
                 FROM agendamientos_participantes ap
@@ -315,7 +316,8 @@ from googleapiclient.errors import HttpError
 
 @app.get("/api/eventos/{evento_id}", response_model=EventoOut)
 def obtener_evento(evento_id: str):
-    conn, cur = get_connection()
+    conn = get_connection()
+    cur = conn.cursor()
     try:
         service = get_calendar_service()
 
@@ -421,7 +423,8 @@ def sincronizar():
 
 @app.put("/api/eventos/{evento_id}", response_model=EventoOut)
 def editar_evento(evento_id: str, evento: EventoIn):
-    conn, cur = get_connection()
+    conn = get_connection()
+    cur = conn.cursor()
     try:
         if evento.fin <= evento.inicio:
             raise HTTPException(status_code=400, detail="La fecha de fin debe ser posterior a la fecha de inicio.")
@@ -567,7 +570,6 @@ def eliminar_evento(evento_id: str):
     try:
         service = get_calendar_service()
         service.events().delete(calendarId=CALENDAR_ID, eventId=evento_id).execute()
-
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("DELETE FROM agendamientos WHERE google_event_id = %s", (evento_id,))
@@ -581,7 +583,6 @@ def eliminar_evento(evento_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 from fastapi import Depends,status
-from Agendamientos import get_connection
 from auth import *
 from schemas import EventoOut, EventoIn
 import traceback, logging
@@ -592,7 +593,8 @@ logger = logging.getLogger(__name__)
 
 @app.post("/api/eventos", response_model=EventoOut)
 def crear_evento(evento: EventoIn, usuario_actual: dict = Depends(obtener_usuario_actual)):
-    conn, cur = get_connection()
+    conn = get_connection()
+    cur = conn.cursor()
     try:
         if evento.fin <= evento.inicio:
             raise HTTPException(status_code=400, detail="La fecha de fin debe ser posterior a la fecha de inicio.")

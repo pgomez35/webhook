@@ -33,6 +33,11 @@ from datetime import datetime, timedelta
 from datetime import datetime, timedelta
 
 
+def get_connection():
+    conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+    return conn
+
+
 def limpiar_telefono(telefono):
     telefono = telefono.strip().replace("+", "").replace(" ", "")
     # Si el teléfono comienza con 93, cambia a 57

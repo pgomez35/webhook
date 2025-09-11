@@ -21,13 +21,12 @@ INTERNAL_DATABASE_URL = os.getenv("EXTERNAL_DATABASE_URL")
 
 EXTERNAL_DATABASE_URL = os.getenv("EXTERNAL_DATABASE_URL")
 
-def get_connection():
-    conn = psycopg2.connect(INTERNAL_DATABASE_URL)
-    return conn, conn.cursor()
+from DataBase import get_connection
 
 
 def crear_agendamiento(data):
-    conn, cur = get_connection()
+    conn = get_connection()
+    cur = conn.cursor()
     try:
         cur.execute("""
             INSERT INTO agendamientos (
@@ -59,7 +58,8 @@ def crear_agendamiento(data):
 
 
 def listar_agendamientos_filtros(estado=None, desde=None, hasta=None, responsable_id=None):
-    conn, cur = get_connection()
+    conn = get_connection()
+    cur = conn.cursor()
     try:
         query = """
             SELECT a.*, 
@@ -107,7 +107,8 @@ def listar_agendamientos_filtros(estado=None, desde=None, hasta=None, responsabl
 
 
 def listar_agendamientos():
-    conn, cur = get_connection()
+    conn = get_connection()
+    cur = conn.cursor()
     try:
         cur.execute("""
             SELECT a.*, c.nickname,d.nombre_completo as responsable 
@@ -126,7 +127,8 @@ def listar_agendamientos():
 
 
 def obtener_agendamiento(id):
-    conn, cur = get_connection()
+    conn = get_connection()
+    cur = conn.cursor()
     try:
         cur.execute("""
             SELECT * FROM agendamientos WHERE id = %s;
@@ -142,7 +144,8 @@ def obtener_agendamiento(id):
 
 
 def editar_agendamiento(id, data):
-    conn, cur = get_connection()
+    conn = get_connection()
+    cur = conn.cursor()
     try:
         cur.execute("""
             UPDATE agendamientos SET 
@@ -180,7 +183,8 @@ def editar_agendamiento(id, data):
 
 
 def eliminar_agendamiento(id):
-    conn, cur = get_connection()
+    conn = get_connection()
+    cur = conn.cursor()
     try:
         cur.execute("DELETE FROM agendamientos WHERE id = %s", (id,))
         conn.commit()
@@ -194,7 +198,8 @@ def eliminar_agendamiento(id):
 
 
 def listar_creadores():
-    conn, cur = get_connection()
+    conn = get_connection()
+    cur = conn.cursor()
     try:
         cur.execute("""
             SELECT id, nickname, usuario, telefono 
@@ -209,7 +214,8 @@ def listar_creadores():
 
 
 def crear_agendamiento_grupal(titulo, descripcion, fecha_inicio, fecha_fin, estado, responsable_id, lista_creadores):
-    conn, cur = get_connection()
+    conn = get_connection()
+    cur = conn.cursor()
     try:
         # Crear evento principal
         cur.execute("""
@@ -240,7 +246,8 @@ def crear_agendamiento_grupal(titulo, descripcion, fecha_inicio, fecha_fin, esta
         conn.close()
 
 def listar_agendamientos_grupales():
-    conn, cur = get_connection()
+    conn = get_connection()
+    cur = conn.cursor()
     try:
         cur.execute("""
             SELECT a.id as agendamiento_id, a.titulo, a.descripcion, a.fecha_inicio, a.fecha_fin, 
