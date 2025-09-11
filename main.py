@@ -1984,12 +1984,7 @@ def obtener_creador_activo(id: int):
         if not row:
             raise HTTPException(status_code=404, detail="Creador no encontrado")
         columns = [desc[0] for desc in cur.description]
-        result = dict(zip(columns, row))
-        # Solución: convertir fechas a string
-        for k, v in result.items():
-            if isinstance(v, (date, datetime)):
-                result[k] = v.isoformat()
-        return result  # O retorna tu modelo: CreadorActivoDB(**result)
+        return dict(zip(columns, row))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:

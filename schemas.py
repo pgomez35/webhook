@@ -645,8 +645,8 @@ class CreadorActivoBase(BaseModel):
     manager_id: Optional[int] = None
     horario_lives: Optional[str] = None
     tiempo_disponible: Optional[int] = None
-    fecha_incorporacion: Optional[str] = None
-    fecha_graduacion: Optional[str] = None
+    fecha_incorporacion: Optional[date] = None
+    fecha_graduacion: Optional[date] = None
     seguidores: Optional[int] = None
     videos: Optional[int] = None
     me_gusta: Optional[int] = None
