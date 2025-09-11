@@ -1979,7 +1979,7 @@ def obtener_creador_activo(id: int):
     try:
         conn = get_connection()
         cur = conn.cursor()
-        cur.execute("SELECT * FROM creadores_activos WHERE id=%s", (id,))
+        cur.execute("SELECT * FROM creadores_activos WHERE creador_id=%s", (id,))
         row = cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Creador no encontrado")
