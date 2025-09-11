@@ -605,7 +605,7 @@ def obtener_todos_responsables_agendas():
         return usuarios
 
     except Exception as e:
-        print("❌ Error al obtener usuarios administradores:", e)
+        print("❌ Error al obtener usuarios responsables agendas:", e)
         return []
 
 # def crear_admin_usuario_V0(datos):
@@ -1328,7 +1328,7 @@ def eliminar_perfil_creador(perfil_id: int):
 
 # -----------------------------------
 # -----------------------------------
-def obtener_creadores():
+def obtener_creadores_db():
     try:
         conn = get_connection()
         cur = conn.cursor()
@@ -1363,7 +1363,7 @@ def obtener_creadores():
         return []
 
 
-def obtener_todos_usuarios():
+def obtener_todos_usuarios_db():
     try:
         with psycopg2.connect(INTERNAL_DATABASE_URL) as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1793,17 +1793,15 @@ def eliminar_perfil_creador(perfil_id: int):
 
 
 def obtener_todos_manager():
-    """Obtiene todos los usuarios administradores con rol Manager"""
+    conn = None
     try:
         conn = get_connection()
         cur = conn.cursor()
-
         cur.execute("""
             SELECT id, username, nombre_completo, rol, grupo, activo
             FROM admin_usuario WHERE rol='Manager'
             ORDER BY nombre_completo DESC
         """)
-
         usuarios = []
         for row in cur.fetchall():
             usuarios.append({
@@ -1814,14 +1812,14 @@ def obtener_todos_manager():
                 "grupo": row[4],
                 "activo": row[5]
             })
-
         cur.close()
-        conn.close()
         return usuarios
-
     except Exception as e:
-        print("❌ Error al obtener usuarios administradores:", e)
+        print("❌ Error al obtener usuarios manager:", e)
         return []
+    finally:
+        if conn:
+            conn.close()
 
 
 # if __name__ == "__main__":

@@ -1603,7 +1603,7 @@ async def perfil(usuario: dict = Depends(obtener_usuario_actual)):
 @app.get("/api/creadores", tags=["Creadores"])
 def listar_creadores():
     try:
-        return obtener_creadores()
+        return obtener_creadores_db()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1611,7 +1611,7 @@ def listar_creadores():
 @app.get("/api/TodosUsuarios", tags=["TodosUsuarios"])
 def listar_TodosUsuarios():
     try:
-        return obtener_todos_usuarios()
+        return obtener_todos_usuarios_db()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -2066,10 +2066,9 @@ def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
 
 @app.get("/api/admin-usuario_manager", response_model=List[AdminUsuarioManagerResponse])
 async def obtener_usuarios_manager():
-    """Obtiene todos los usuarios administradores"""
+    """Obtiene todos los usuarios manager"""
     usuarios = obtener_todos_manager()
     return usuarios
-
 
 @app.post("/api/creadores_activos/auto", response_model=dict)
 def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
