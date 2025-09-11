@@ -34,7 +34,7 @@ from datetime import datetime, timedelta
 
 
 def get_connection():
-    conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+    conn = get_connection()
     return conn
 
 def limpiar_telefono(telefono):
@@ -51,7 +51,7 @@ def safe_int(val):
 
 def guardar_contactos(contactos, nombre_archivo=None, hoja_excel=None, lote_carga=None, procesado_por=None,
                       observaciones=None):
-    conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+    conn = get_connection()
     cur = conn.cursor()
     resultados = []
     filas_fallidas = []
@@ -221,7 +221,7 @@ def guardar_contactos(contactos, nombre_archivo=None, hoja_excel=None, lote_carg
 # ------------------------------
 def obtener_usuario_id_por_telefono(telefono: str):
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
 
         cur.execute("""
@@ -240,7 +240,7 @@ def obtener_usuario_id_por_telefono(telefono: str):
 
 def paso_limite_24h(usuario_id: int):
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
 
         cur.execute("""
@@ -269,7 +269,7 @@ def paso_limite_24h(usuario_id: int):
 
 def actualizar_contacto_info_db(telefono: str, datos: ActualizacionContactoInfo):
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
 
         updates = []
@@ -306,7 +306,7 @@ def actualizar_contacto_info_db(telefono: str, datos: ActualizacionContactoInfo)
 
 def obtener_contactos_db(estado: Optional[str] = None):
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
 
         if estado:
@@ -357,7 +357,7 @@ def guardar_mensaje(telefono, texto, tipo="recibido", es_audio=False):
             if match:
                 texto = match.group(1)  # Ej: "9998555913574750.ogg"
 
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
 
         # Buscar si ya existe el usuario
@@ -387,7 +387,7 @@ def guardar_mensaje(telefono, texto, tipo="recibido", es_audio=False):
 
 def actualizar_nombre_contacto(telefono, nuevo_nombre):
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
             UPDATE creadores
@@ -405,7 +405,7 @@ def actualizar_nombre_contacto(telefono, nuevo_nombre):
 
 def eliminar_mensajes(telefono):
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
             DELETE FROM mensajes
@@ -424,7 +424,7 @@ def eliminar_mensajes(telefono):
 
 def ver_mensajes(limit=10):
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
             SELECT id, telefono, contenido, tipo, es_audio, fecha
@@ -444,7 +444,7 @@ def ver_mensajes(limit=10):
 
 def obtener_contactos():
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
         cur.execute("SELECT telefono, nombre, creado_en FROM creadores ORDER BY creado_en DESC")
         contactos = cur.fetchall()
@@ -460,7 +460,7 @@ def obtener_contactos():
 
 def obtener_mensajes(telefono):
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
             SELECT m.contenido, m.tipo, m.fecha, m.es_audio
@@ -488,7 +488,7 @@ def obtener_mensajes(telefono):
 
 def obtener_ultimos_mensajes(limit=10):
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
             SELECT m.contenido, m.tipo, m.fecha, m.es_audio
@@ -538,7 +538,7 @@ def verify_password(password: str, hashed_password: str) -> bool:
 def obtener_todos_admin_usuarios():
     """Obtiene todos los usuarios administradores"""
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
         
         cur.execute("""
@@ -575,7 +575,7 @@ def obtener_todos_admin_usuarios():
 def obtener_todos_responsables_agendas():
     """Obtiene todos los usuarios responsables de agendas"""
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
 
         cur.execute("""
@@ -816,7 +816,7 @@ def crear_admin_usuario(datos):
 def obtener_admin_usuario_por_id(usuario_id):
     """Obtiene un usuario administrador por ID"""
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
         
         cur.execute("""
@@ -852,7 +852,7 @@ def obtener_admin_usuario_por_id(usuario_id):
 def actualizar_admin_usuario(usuario_id, datos):
     """Actualiza un usuario administrador y retorna los datos actualizados"""
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
 
         # Verificar si el usuario existe
@@ -942,7 +942,7 @@ def actualizar_admin_usuario(usuario_id, datos):
 # def actualizar_admin_usuario(usuario_id, datos):
 #     """Actualiza un usuario administrador"""
 #     try:
-#         conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+#         conn = get_connection()
 #         cur = conn.cursor()
 #
 #         # Verificar si el usuario existe
@@ -1009,7 +1009,7 @@ def actualizar_admin_usuario(usuario_id, datos):
 def eliminar_admin_usuario(usuario_id):
     """Elimina un usuario administrador"""
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
         
         # Verificar si el usuario existe
@@ -1034,7 +1034,7 @@ def eliminar_admin_usuario(usuario_id):
 def cambiar_estado_admin_usuario(usuario_id, activo):
     """Cambia el estado activo/inactivo de un usuario administrador"""
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
         
         # Verificar si el usuario existe
@@ -1065,7 +1065,7 @@ def cambiar_estado_admin_usuario(usuario_id, activo):
 def obtener_admin_usuario_por_username(username):
     """Obtiene un usuario administrador por username (útil para autenticación)"""
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
         
         cur.execute("""
@@ -1105,7 +1105,7 @@ def es_admin(usuario_actual: dict):
 
 def actualiza_password_usuario(user_id: int, nuevo_hash: str):
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
         # Siempre usa parámetros para evitar SQL Injection
         cur.execute(
@@ -1150,7 +1150,7 @@ def autenticar_admin_usuario(username, password):
 def obtener_todos_perfiles_creador():
     """Obtiene todos los perfiles de creadores"""
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
 
         cur.execute("""
@@ -1184,7 +1184,7 @@ def obtener_todos_perfiles_creador():
 def obtener_perfil_creador_por_id(perfil_id: int):
     """Obtiene un perfil de creador por ID"""
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
 
         cur.execute("""
@@ -1220,7 +1220,7 @@ def obtener_perfil_creador_por_id(perfil_id: int):
 def crear_perfil_creador(perfil_data):
     """Crea un nuevo perfil de creador"""
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
 
         cur.execute("""
@@ -1262,7 +1262,7 @@ def crear_perfil_creador(perfil_data):
 def actualizar_perfil_creador(perfil_id: int, perfil_data):
     """Actualiza un perfil de creador"""
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
 
         cur.execute("""
@@ -1310,7 +1310,7 @@ def actualizar_perfil_creador(perfil_id: int, perfil_data):
 def eliminar_perfil_creador(perfil_id: int):
     """Elimina un perfil de creador"""
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
 
         cur.execute("DELETE FROM perfil_creador WHERE id = %s", (perfil_id,))
@@ -1330,7 +1330,7 @@ def eliminar_perfil_creador(perfil_id: int):
 # -----------------------------------
 def obtener_creadores():
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
                   SELECT 
@@ -1418,7 +1418,7 @@ def obtener_todos_usuarios():
 
 def obtener_perfil_creador(creador_id):
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
             SELECT
@@ -1491,7 +1491,7 @@ def obtener_perfil_creador(creador_id):
 
 def obtener_datos_mejoras_perfil_creador(creador_id):
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
         SELECT  edad,genero,idioma,estudios,pais,actividad_actual,seguidores, siguiendo, likes, videos, duracion_emisiones,dias_emisiones,apariencia,engagement,calidad_contenido,estudios,actividad_actual,tiempo_disponible,frecuencia_lives,experiencia_otras_plataformas,intereses,tipo_contenido,intencion_trabajo,eval_foto,biografia,eval_biografia,biografia_sugerida,metadata_videos,potencial_estimado,
@@ -1522,7 +1522,7 @@ def obtener_datos_mejoras_perfil_creador(creador_id):
 
 def obtener_biografia_perfil_creador(creador_id):
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
            SELECT biografia
@@ -1543,7 +1543,7 @@ def obtener_biografia_perfil_creador(creador_id):
 
 def obtener_datos_estadisticas_perfil_creador(creador_id):
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
            SELECT 
@@ -1569,7 +1569,7 @@ def obtener_datos_estadisticas_perfil_creador(creador_id):
 
 def obtener_puntajes_perfil_creador(creador_id):
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
            SELECT puntaje_general, puntaje_estadistica, puntaje_manual, puntaje_habitos,puntaje_general_categoria, puntaje_estadistica_categoria, puntaje_manual_categoria, puntaje_habitos_categoria,puntaje_total,puntaje_total_categoria
@@ -1674,7 +1674,7 @@ def actualizar_perfil_creador_(creador_id, evaluacion_dict):
             WHERE creador_id = %s;
         """
 
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
         cur.execute(query, valores)
         conn.commit()
@@ -1686,7 +1686,7 @@ def actualizar_perfil_creador_(creador_id, evaluacion_dict):
         raise
 
 def obtener_estadisticas_evaluacion():
-    conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+    conn = get_connection()
     cur = conn.cursor()
 
     cur.execute("""
@@ -1757,7 +1757,7 @@ def guardar_en_bd(agendamiento, meet_link, usuario_actual_id, creado):
 def obtener_creador_id_por_usuario(usuario: str) -> Optional[int]:
     """Busca el creador_id en la base de datos por nombre de usuario"""
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
 
         cur.execute("SELECT id FROM creadores WHERE usuario = %s", (usuario,))
@@ -1776,7 +1776,7 @@ def obtener_creador_id_por_usuario(usuario: str) -> Optional[int]:
 def eliminar_perfil_creador(perfil_id: int):
     """Elimina un perfil de creador"""
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
 
         cur.execute("DELETE FROM perfil_creador WHERE id = %s", (perfil_id,))
@@ -1793,14 +1793,14 @@ def eliminar_perfil_creador(perfil_id: int):
 
 
 def obtener_todos_admin_manager():
-    """Obtiene todos los usuarios administradores"""
+    """Obtiene todos los usuarios administradores con rol Manager"""
     try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        conn = get_connection()
         cur = conn.cursor()
 
         cur.execute("""
-            SELECT id, username, nombre_completo,grupo, activo
-            FROM admin_usuario where rol='Manager' 
+            SELECT id, username, nombre_completo, rol, grupo, activo
+            FROM admin_usuario WHERE rol='Manager'
             ORDER BY nombre_completo DESC
         """)
 
@@ -1812,7 +1812,7 @@ def obtener_todos_admin_manager():
                 "nombre_completo": row[2],
                 "rol": row[3],
                 "grupo": row[4],
-                "activo": row[5],
+                "activo": row[5]
             })
 
         cur.close()
@@ -1822,7 +1822,6 @@ def obtener_todos_admin_manager():
     except Exception as e:
         print("❌ Error al obtener usuarios administradores:", e)
         return []
-
 
 
 # if __name__ == "__main__":
