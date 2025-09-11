@@ -2143,3 +2143,29 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
     finally:
         if conn:
             conn.close()
+
+# SEGUIMIENTO DE CREADORES
+@app.post("/api/seguimiento_creadores/", response_model=SeguimientoCreadorDB)
+def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO seguimiento_creadores (
+                creador_id, manager_id, fecha_seguimiento,
+                estrategias_mejora, compromisos
+            ) VALUES (%(creador_id)s, %(manager_id)s, %(fecha_seguimiento)s,
+                      %(estrategias_mejora)s, %(compromisos)s)
+            RETURNING *;
+        """, seg.dict())
+        row = cur.fetchone()
+        conn.commit()
+        columns = [desc[0] for desc in cur.description]
+        return dict(zip(columns, row))
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
