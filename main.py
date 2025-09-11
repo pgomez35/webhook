@@ -2067,7 +2067,7 @@ def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
 @app.get("/api/admin-usuario_manager", response_model=List[AdminUsuarioManagerResponse])
 async def obtener_usuarios_manager():
     """Obtiene todos los usuarios administradores"""
-    usuarios = obtener_todos_admin_manager()
+    usuarios = obtener_todos_manager()
     return usuarios
 
 

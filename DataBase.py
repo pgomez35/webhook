@@ -1792,7 +1792,7 @@ def eliminar_perfil_creador(perfil_id: int):
         return False
 
 
-def obtener_todos_admin_manager():
+def obtener_todos_manager():
     """Obtiene todos los usuarios administradores con rol Manager"""
     try:
         conn = get_connection()
