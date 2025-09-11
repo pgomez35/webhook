@@ -1424,13 +1424,13 @@ async def test_conexion():
         import psycopg2
         from dotenv import load_dotenv
         load_dotenv()
-        
+
         db_url = os.getenv("EXTERNAL_DATABASE_URL")
         print(f"🔗 Probando conexión a: {db_url}")
-        
+
         conn = psycopg2.connect(db_url)
         cur = conn.cursor()
-        
+
         # Verificar si la tabla existe
         cur.execute("""
             SELECT EXISTS (
@@ -1439,15 +1439,15 @@ async def test_conexion():
             )
         """)
         table_exists = cur.fetchone()[0]
-        
+
         if table_exists:
             # Contar registros
             cur.execute("SELECT COUNT(*) FROM admin_usuario")
             count = cur.fetchone()[0]
-            
+
             cur.close()
             conn.close()
-            
+
             return {
                 "status": "ok",
                 "message": "Conexión exitosa",
@@ -1457,14 +1457,14 @@ async def test_conexion():
         else:
             cur.close()
             conn.close()
-            
+
             return {
                 "status": "warning",
                 "message": "Conexión exitosa pero tabla no existe",
                 "table_exists": False,
                 "record_count": 0
             }
-            
+
     except Exception as e:
         return {
             "status": "error",
@@ -1489,10 +1489,10 @@ async def crear_usuario(usuario: AdminUsuarioCreate):
 async def obtener_usuario(usuario_id: int):
     """Obtiene un usuario administrador por ID"""
     usuario = obtener_admin_usuario_por_id(usuario_id)
-    
+
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
+
     return usuario
 
 
@@ -1512,10 +1512,10 @@ async def cambiar_estado_usuario(usuario_id: int, activo: bool = Body(...)):
 async def obtener_usuario_por_username(username: str):
     """Obtiene un usuario administrador por username (útil para autenticación)"""
     usuario = obtener_admin_usuario_por_username(username)
-    
+
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
+
     return usuario
 
 # Endpoint de login usando tus funciones y devolviendo el JWT
@@ -1984,7 +1984,12 @@ def obtener_creador_activo(id: int):
         if not row:
             raise HTTPException(status_code=404, detail="Creador no encontrado")
         columns = [desc[0] for desc in cur.description]
-        return dict(zip(columns, row))
+        result = dict(zip(columns, row))
+        # Solución: convertir fechas a string
+        for k, v in result.items():
+            if isinstance(v, (date, datetime)):
+                result[k] = v.isoformat()
+        return result  # O retorna tu modelo: CreadorActivoDB(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
