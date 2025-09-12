@@ -2199,7 +2199,7 @@ def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
             conn.close()
 
 
-from fastapi import HTTPException
+
 
 @app.get("/api/seguimiento_creadores/creador_activo/{creador_activo_id}", response_model=List[SeguimientoCreadorDB])
 def listar_seguimientos_por_creador_activo(creador_activo_id: int):
