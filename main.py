@@ -2301,13 +2301,16 @@ async def cargar_estadisticas_excel(file: UploadFile = File(...)):
         if 'conn' in locals() and conn:
             conn.close()
 
-@app.get("/estadisticas_creadores/", response_model=List[dict])
-def listar_estadisticas_creadores():
+@app.get("/estadisticas_creadores/{creador_activo_id}")
+def obtener_estadisticas_por_creador(creador_activo_id: int):
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM estadisticas_creadores")
+    cur.execute(
+        "SELECT * FROM estadisticas_creadores WHERE creador_activo_id = %s",
+        (creador_activo_id,)
+    )
     rows = cur.fetchall()
-    columns = [desc[0] for desc in cur.description]  # nombres de columnas
+    columns = [desc[0] for desc in cur.description]
     resultados = [dict(zip(columns, row)) for row in rows]
     cur.close()
     conn.close()
