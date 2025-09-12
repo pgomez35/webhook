@@ -2191,15 +2191,20 @@ def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
             conn.close()
 
 
+from fastapi import HTTPException
+
 @app.get("/api/seguimiento_creadores/creador_activo/{creador_activo_id}", response_model=List[SeguimientoCreadorDB])
 def listar_seguimientos_por_creador_activo(creador_activo_id: int):
+    conn = None
     try:
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
-            SELECT * FROM seguimiento_creadores
-            WHERE creador_activo_id = %s
-            ORDER BY fecha_seguimiento DESC
+            SELECT sc.*, au.nombre_completo AS manager_nombre
+            FROM seguimiento_creadores sc
+            LEFT JOIN admin_usuario au ON sc.manager_id = au.id
+            WHERE sc.creador_activo_id = %s
+            ORDER BY sc.fecha_seguimiento DESC
         """, (creador_activo_id,))
         rows = cur.fetchall()
         columns = [desc[0] for desc in cur.description]

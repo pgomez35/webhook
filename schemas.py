@@ -678,12 +678,19 @@ class CreadorActivoAutoCreate(BaseModel):
 
 
 # ESQUEMAS PARA SEGUIMIENTO
+# Modelo base: para creación y actualización (entrada)
 class SeguimientoCreadorBase(BaseModel):
     creador_id: int
     creador_activo_id: Optional[int] = None
     fecha_seguimiento: date
     estrategias_mejora: str
     compromisos: str
+
+# Modelo extendido: para respuesta (salida)
+class SeguimientoCreadorConManager(SeguimientoCreadorBase):
+    id: int
+    manager_id: int
+    manager_nombre: Optional[str] = None
 
 class SeguimientoCreadorCreate(SeguimientoCreadorBase):
     pass
