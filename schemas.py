@@ -681,7 +681,6 @@ class CreadorActivoAutoCreate(BaseModel):
 class SeguimientoCreadorBase(BaseModel):
     creador_id: int
     creador_activo_id: Optional[int] = None
-    manager_id: int
     fecha_seguimiento: date
     estrategias_mejora: str
     compromisos: str
@@ -690,6 +689,24 @@ class SeguimientoCreadorCreate(SeguimientoCreadorBase):
     pass
 
 class SeguimientoCreadorDB(SeguimientoCreadorBase):
+    id: int
+    class Config:
+        orm_mode = True
+
+# ESQUEMAS PARA ESTADISTICAS DE CREADOR ACTIVO
+class EstadisticaCreadorBase(BaseModel):
+    creador_id: int
+    creador_activo_id: Optional[int] = None
+    semana_inicio: date
+    semana_fin: date
+    numero_batallas: int
+    diamantes: int
+    tiempo_lives: int
+
+class EstadisticaCreadorCreate(EstadisticaCreadorBase):
+    pass
+
+class EstadisticaCreadorDB(EstadisticaCreadorBase):
     id: int
     class Config:
         orm_mode = True

@@ -2150,6 +2150,20 @@ def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
     try:
         conn = get_connection()
         cur = conn.cursor()
+
+        # 1. Obtener manager_id de creadores_activos
+        if not seg.creador_activo_id:
+            raise HTTPException(status_code=400, detail="creador_activo_id es requerido")
+
+        cur.execute("""
+            SELECT manager_id FROM creadores_activos WHERE id = %s
+        """, (seg.creador_activo_id,))
+        result = cur.fetchone()
+        if not result:
+            raise HTTPException(status_code=404, detail="No se encontró el creador activo")
+        manager_id = result[0]
+
+        # 2. Insertar seguimiento usando manager_id obtenido
         cur.execute("""
             INSERT INTO seguimiento_creadores (
                 creador_id, creador_activo_id, manager_id, fecha_seguimiento,
@@ -2159,7 +2173,10 @@ def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
                 %(estrategias_mejora)s, %(compromisos)s
             )
             RETURNING *;
-        """, seg.dict())
+        """, {
+            **seg.dict(),
+            "manager_id": manager_id
+        })
         row = cur.fetchone()
         conn.commit()
         columns = [desc[0] for desc in cur.description]
@@ -2182,6 +2199,51 @@ def listar_seguimientos_por_creador_activo(creador_activo_id: int):
             SELECT * FROM seguimiento_creadores
             WHERE creador_activo_id = %s
             ORDER BY fecha_seguimiento DESC
+        """, (creador_activo_id,))
+        rows = cur.fetchall()
+        columns = [desc[0] for desc in cur.description]
+        return [dict(zip(columns, row)) for row in rows]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+@app.post("/api/estadisticas_creadores/", response_model=EstadisticaCreadorDB)
+def crear_estadistica_creador(est: EstadisticaCreadorCreate):
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO estadisticas_creadores (
+                creador_id, creador_activo_id, semana_inicio, semana_fin,
+                numero_batallas, diamantes, tiempo_lives
+            ) VALUES (
+                %(creador_id)s, %(creador_activo_id)s, %(semana_inicio)s, %(semana_fin)s,
+                %(numero_batallas)s, %(diamantes)s, %(tiempo_lives)s
+            ) RETURNING *;
+        """, est.dict())
+        row = cur.fetchone()
+        conn.commit()
+        columns = [desc[0] for desc in cur.description]
+        return dict(zip(columns, row))
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/api/estadisticas_creadores/creador_activo/{creador_activo_id}", response_model=List[EstadisticaCreadorDB])
+def listar_estadisticas_por_creador_activo(creador_activo_id: int):
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT * FROM estadisticas_creadores
+            WHERE creador_activo_id = %s
+            ORDER BY semana_inicio DESC
         """, (creador_activo_id,))
         rows = cur.fetchall()
         columns = [desc[0] for desc in cur.description]
