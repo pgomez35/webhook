@@ -2182,6 +2182,7 @@ def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
         columns = [desc[0] for desc in cur.description]
         return dict(zip(columns, row))
     except Exception as e:
+        print("ERROR:", e)  # o usa logging
         if conn:
             conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
