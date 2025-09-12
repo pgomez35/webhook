@@ -2227,7 +2227,11 @@ def listar_seguimientos_por_creador_activo(creador_activo_id: int):
 async def cargar_estadisticas_excel(file: UploadFile = File(...)):
     try:
         contents = await file.read()
+        # Lee encabezados desde la segunda fila (índice 1)
         df = pd.read_excel(io.BytesIO(contents), header=1)
+
+        # Limpia los encabezados: remueve espacios y dos puntos
+        df.columns = [col.strip().replace(":", "") for col in df.columns]
 
         required_columns = [
             "ID de creador", "Nombre de usuario del creador", "Grupo",
@@ -2296,4 +2300,3 @@ async def cargar_estadisticas_excel(file: UploadFile = File(...)):
     finally:
         if 'conn' in locals() and conn:
             conn.close()
-
