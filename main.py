@@ -2152,10 +2152,12 @@ def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
         cur = conn.cursor()
         cur.execute("""
             INSERT INTO seguimiento_creadores (
-                creador_id, manager_id, fecha_seguimiento,
+                creador_id, creador_activo_id, manager_id, fecha_seguimiento,
                 estrategias_mejora, compromisos
-            ) VALUES (%(creador_id)s, %(manager_id)s, %(fecha_seguimiento)s,
-                      %(estrategias_mejora)s, %(compromisos)s)
+            ) VALUES (
+                %(creador_id)s, %(creador_activo_id)s, %(manager_id)s, %(fecha_seguimiento)s,
+                %(estrategias_mejora)s, %(compromisos)s
+            )
             RETURNING *;
         """, seg.dict())
         row = cur.fetchone()
@@ -2165,6 +2167,26 @@ def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
     except Exception as e:
         if conn:
             conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/api/seguimiento_creadores/creador_activo/{creador_activo_id}", response_model=List[SeguimientoCreadorDB])
+def listar_seguimientos_por_creador_activo(creador_activo_id: int):
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT * FROM seguimiento_creadores
+            WHERE creador_activo_id = %s
+            ORDER BY fecha_seguimiento DESC
+        """, (creador_activo_id,))
+        rows = cur.fetchall()
+        columns = [desc[0] for desc in cur.description]
+        return [dict(zip(columns, row)) for row in rows]
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         if conn:

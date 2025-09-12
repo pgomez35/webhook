@@ -680,6 +680,7 @@ class CreadorActivoAutoCreate(BaseModel):
 # ESQUEMAS PARA SEGUIMIENTO
 class SeguimientoCreadorBase(BaseModel):
     creador_id: int
+    creador_activo_id: Optional[int] = None
     manager_id: int
     fecha_seguimiento: date
     estrategias_mejora: str
@@ -690,7 +691,5 @@ class SeguimientoCreadorCreate(SeguimientoCreadorBase):
 
 class SeguimientoCreadorDB(SeguimientoCreadorBase):
     id: int
-
     class Config:
         orm_mode = True
-
