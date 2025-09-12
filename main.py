@@ -2300,3 +2300,15 @@ async def cargar_estadisticas_excel(file: UploadFile = File(...)):
     finally:
         if 'conn' in locals() and conn:
             conn.close()
+
+@app.get("/estadisticas_creadores/", response_model=List[dict])
+def listar_estadisticas_creadores():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM estadisticas_creadores")
+    rows = cur.fetchall()
+    columns = [desc[0] for desc in cur.description]  # nombres de columnas
+    resultados = [dict(zip(columns, row)) for row in rows]
+    cur.close()
+    conn.close()
+    return resultados
