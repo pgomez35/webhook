@@ -2315,3 +2315,44 @@ def obtener_estadisticas_por_creador(creador_activo_id: int):
     cur.close()
     conn.close()
     return resultados
+
+# 1. Subir foto y guardar URL en campo `foto`
+@app.post("/creadores_activos/{creador_activo_id}/foto")
+async def subir_foto_creador_activo(creador_activo_id: int, foto: UploadFile = File(...)):
+    try:
+        contents = await foto.read()
+        result = cloudinary.uploader.upload(
+            contents,
+            folder=f"creadores_activos/{creador_activo_id}",
+            public_id=f"foto_{creador_activo_id}",
+            overwrite=True,
+            resource_type="image"
+        )
+        url_foto = result["secure_url"]
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE creadores_activos SET foto = %s WHERE id = %s",
+            (url_foto, creador_activo_id)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"foto_url": url_foto}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al subir la foto: {e}")
+
+# 2. Consultar la URL de la foto
+@app.get("/creadores_activos/{creador_activo_id}/foto")
+def obtener_foto_creador_activo(creador_activo_id: int):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT foto FROM creadores_activos WHERE id = %s", (creador_activo_id,)
+    )
+    res = cur.fetchone()
+    cur.close()
+    conn.close()
+    if not res or not res[0]:
+        raise HTTPException(status_code=404, detail="Foto no encontrada")
+    return {"foto_url": res[0]}
