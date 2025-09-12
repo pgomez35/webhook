@@ -2227,7 +2227,7 @@ def listar_seguimientos_por_creador_activo(creador_activo_id: int):
 async def cargar_estadisticas_excel(file: UploadFile = File(...)):
     try:
         contents = await file.read()
-        df = pd.read_excel(io.BytesIO(contents))
+        df = pd.read_excel(io.BytesIO(contents), header=1)
 
         required_columns = [
             "ID de creador", "Nombre de usuario del creador", "Grupo",
@@ -2245,8 +2245,7 @@ async def cargar_estadisticas_excel(file: UploadFile = File(...)):
         actualizados = 0
 
         for _, row in df.iterrows():
-            creador_id = int(row["ID de creador"])
-            usuario_tiktok = str(row["Nombre de usuario del creador"])
+            usuario_tiktok = str(row["Nombre de usuario del creador"]).strip()
             grupo = str(row["Grupo"])
             seguidores = int(row["Seguidores"])
             videos = int(row["Vídeos"])
@@ -2254,33 +2253,35 @@ async def cargar_estadisticas_excel(file: UploadFile = File(...)):
             diamantes = int(row["Diamantes de los últimos 30 días"])
             duracion_lives = int(row["Duración de emisiones LIVE en los últimos 30 días"])
 
-            # Obtener el creador_activo_id por usuario_tiktok
-            cur.execute("SELECT id FROM creadores_activos WHERE usuario_tiktok = %s", (usuario_tiktok,))
+            # Buscar el registro en creadores_activos
+            cur.execute("""
+                SELECT id, creador_id FROM creadores_activos WHERE usuario_tiktok = %s
+            """, (usuario_tiktok,))
             res = cur.fetchone()
-            creador_activo_id = res[0] if res else None
+            if not res:
+                continue
 
-            # Insertar estadística solo si existe creador_activo_id
-            if creador_activo_id:
-                cur.execute("""
-                    INSERT INTO estadisticas_creadores (
-                        creador_id, creador_activo_id, fecha_reporte, grupo, diamantes_ult_30, duracion_emsiones_live_ult_30
-                    ) VALUES (%s, %s, CURRENT_DATE, %s, %s, %s)
-                """, (
-                    creador_id,
-                    creador_activo_id,
-                    grupo,
-                    diamantes,
-                    duracion_lives
-                ))
-                creados += 1
+            creador_activo_id, creador_id = res
 
-                # Actualizar campos en creadores_activos
-                cur.execute("""
-                    UPDATE creadores_activos
-                    SET seguidores = %s, me_gusta = %s, videos = %s
-                    WHERE id = %s
-                """, (seguidores, me_gusta, videos, creador_activo_id))
-                actualizados += 1
+            cur.execute("""
+                INSERT INTO estadisticas_creadores (
+                    creador_id, creador_activo_id, fecha_reporte, grupo, diamantes_ult_30, duracion_emsiones_live_ult_30
+                ) VALUES (%s, %s, CURRENT_DATE, %s, %s, %s)
+            """, (
+                creador_id,
+                creador_activo_id,
+                grupo,
+                diamantes,
+                duracion_lives
+            ))
+            creados += 1
+
+            cur.execute("""
+                UPDATE creadores_activos
+                SET seguidores = %s, me_gusta = %s, videos = %s
+                WHERE id = %s
+            """, (seguidores, me_gusta, videos, creador_activo_id))
+            actualizados += 1
 
         conn.commit()
         return {
