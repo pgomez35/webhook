@@ -706,17 +706,14 @@ class SeguimientoCreadorDB(SeguimientoCreadorBase):
 # ESQUEMAS PARA ESTADISTICAS DE CREADOR ACTIVO
 class EstadisticaCreadorBase(BaseModel):
     creador_id: int
-    creador_activo_id: Optional[int] = None
-    semana_inicio: date
-    semana_fin: date
-    numero_batallas: int
-    diamantes: int
-    tiempo_lives: int
+    creador_activo_id: int
+    fecha_reporte: date
+    grupo: str
+    diamantes_ult_30: int
+    duracion_emsiones_live_ult_30: int
 
 class EstadisticaCreadorCreate(EstadisticaCreadorBase):
     pass
 
 class EstadisticaCreadorDB(EstadisticaCreadorBase):
     id: int
-    class Config:
-        orm_mode = True

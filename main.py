@@ -1,7 +1,9 @@
 # ✅ main.py
-from fastapi import FastAPI, HTTPException, Path, Body, Request, UploadFile, Form
+from fastapi import FastAPI, HTTPException, Path, Body, Request, UploadFile, Form,File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+import pandas as pd
+import io
 
 # Respuestas personalizadas (usa solo si las necesitas)
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -2221,47 +2223,76 @@ def listar_seguimientos_por_creador_activo(creador_activo_id: int):
         if conn:
             conn.close()
 
-@app.post("/api/estadisticas_creadores/", response_model=EstadisticaCreadorDB)
-def crear_estadistica_creador(est: EstadisticaCreadorCreate):
+@app.post("/estadisticas_creadores/cargar_excel/")
+async def cargar_estadisticas_excel(file: UploadFile = File(...)):
     try:
+        contents = await file.read()
+        df = pd.read_excel(io.BytesIO(contents))
+
+        required_columns = [
+            "ID de creador", "Nombre de usuario del creador", "Grupo",
+            "Diamantes de los últimos 30 días",
+            "Duración de emisiones LIVE en los últimos 30 días",
+            "Seguidores", "Vídeos", "Me gusta"
+        ]
+        for col in required_columns:
+            if col not in df.columns:
+                raise HTTPException(status_code=400, detail=f"Falta columna: {col}")
+
         conn = get_connection()
         cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO estadisticas_creadores (
-                creador_id, creador_activo_id, semana_inicio, semana_fin,
-                numero_batallas, diamantes, tiempo_lives
-            ) VALUES (
-                %(creador_id)s, %(creador_activo_id)s, %(semana_inicio)s, %(semana_fin)s,
-                %(numero_batallas)s, %(diamantes)s, %(tiempo_lives)s
-            ) RETURNING *;
-        """, est.dict())
-        row = cur.fetchone()
+        creados = 0
+        actualizados = 0
+
+        for _, row in df.iterrows():
+            creador_id = int(row["ID de creador"])
+            usuario_tiktok = str(row["Nombre de usuario del creador"])
+            grupo = str(row["Grupo"])
+            seguidores = int(row["Seguidores"])
+            videos = int(row["Vídeos"])
+            me_gusta = int(row["Me gusta"])
+            diamantes = int(row["Diamantes de los últimos 30 días"])
+            duracion_lives = int(row["Duración de emisiones LIVE en los últimos 30 días"])
+
+            # Obtener el creador_activo_id por usuario_tiktok
+            cur.execute("SELECT id FROM creadores_activos WHERE usuario_tiktok = %s", (usuario_tiktok,))
+            res = cur.fetchone()
+            creador_activo_id = res[0] if res else None
+
+            # Insertar estadística solo si existe creador_activo_id
+            if creador_activo_id:
+                cur.execute("""
+                    INSERT INTO estadisticas_creadores (
+                        creador_id, creador_activo_id, fecha_reporte, grupo, diamantes_ult_30, duracion_emsiones_live_ult_30
+                    ) VALUES (%s, %s, CURRENT_DATE, %s, %s, %s)
+                """, (
+                    creador_id,
+                    creador_activo_id,
+                    grupo,
+                    diamantes,
+                    duracion_lives
+                ))
+                creados += 1
+
+                # Actualizar campos en creadores_activos
+                cur.execute("""
+                    UPDATE creadores_activos
+                    SET seguidores = %s, me_gusta = %s, videos = %s
+                    WHERE id = %s
+                """, (seguidores, me_gusta, videos, creador_activo_id))
+                actualizados += 1
+
         conn.commit()
-        columns = [desc[0] for desc in cur.description]
-        return dict(zip(columns, row))
+        return {
+            "ok": True,
+            "registros_creados": creados,
+            "registros_actualizados": actualizados
+        }
     except Exception as e:
-        if conn:
+        if 'conn' in locals() and conn:
             conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Error al procesar el archivo: {e}")
     finally:
-        if conn:
+        if 'conn' in locals() and conn:
             conn.close()
 
-@app.get("/api/estadisticas_creadores/creador_activo/{creador_activo_id}", response_model=List[EstadisticaCreadorDB])
-def listar_estadisticas_por_creador_activo(creador_activo_id: int):
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT * FROM estadisticas_creadores
-            WHERE creador_activo_id = %s
-            ORDER BY semana_inicio DESC
-        """, (creador_activo_id,))
-        rows = cur.fetchall()
-        columns = [desc[0] for desc in cur.description]
-        return [dict(zip(columns, row)) for row in rows]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if conn:
-            conn.close()
