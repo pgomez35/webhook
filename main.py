@@ -1974,12 +1974,18 @@ def listar_creadores_activos():
             conn.close()
 
 # 2. Obtener un creador activo por ID
-@app.get("/api/creadores_activos/{id}", response_model=CreadorActivoDB)
+@app.get("/api/creadores_activos/{id}", response_model=CreadorActivoConManager)
 def obtener_creador_activo(id: int):
+    conn = None
     try:
         conn = get_connection()
         cur = conn.cursor()
-        cur.execute("SELECT * FROM creadores_activos WHERE id=%s", (id,))
+        cur.execute("""
+            SELECT ca.*, au.nombre_completo AS manager_nombre
+            FROM creadores_activos ca
+            LEFT JOIN admin_usuario au ON ca.manager_id = au.id
+            WHERE ca.id = %s
+        """, (id,))
         row = cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Creador no encontrado")

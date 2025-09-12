@@ -664,6 +664,10 @@ class CreadorActivoUpdate(CreadorActivoBase):
 class CreadorActivoDB(CreadorActivoBase):
     id: int
 
+# Modelo extendido para la respuesta con el nombre del manager
+class CreadorActivoConManager(CreadorActivoDB):
+    manager_nombre: Optional[str] = None
+
 class AdminUsuarioManagerResponse(BaseModel):
     id: int
     username: str
@@ -675,7 +679,6 @@ class CreadorActivoAutoCreate(BaseModel):
     creador_id: int
     fecha_incorporacion: Optional[date] = None
     manager_id: Optional[int] = None
-
 
 # ESQUEMAS PARA SEGUIMIENTO
 # Modelo base: para creación y actualización (entrada)
