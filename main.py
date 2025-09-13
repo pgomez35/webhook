@@ -2198,10 +2198,7 @@ def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
         if conn:
             conn.close()
 
-
-
-
-@app.get("/api/seguimiento_creadores/creador_activo/{creador_activo_id}", response_model=List[SeguimientoCreadorDB])
+@app.get("/api/seguimiento_creadores/creador_activo/{creador_activo_id}", response_model=List[SeguimientoCreadorConManager])
 def listar_seguimientos_por_creador_activo(creador_activo_id: int):
     conn = None
     try:
