@@ -587,6 +587,7 @@ class PreferenciasHabitosOutput(PreferenciasHabitosInput):
     puntaje_habitos_categoria: Optional[str] = None
 
 
+
 # === Sección: Resumen ===
 class ResumenEvaluacionInput(BaseModel):
     estado: Optional[str] = None
@@ -594,6 +595,8 @@ class ResumenEvaluacionInput(BaseModel):
     mejoras_sugeridas: Optional[str] = None
     puntaje_total: Optional[float] = None
     puntaje_total_categoria: Optional[str] = None
+    fecha_entrevista: Optional[datetime] = None
+    entrevista: Optional[bool] = False  # 👈 agregado aquí
 
 class ResumenEvaluacionOutput(ResumenEvaluacionInput):
     status: Optional[str] = None
@@ -616,6 +619,8 @@ class ResumenEvaluacionOutput(ResumenEvaluacionInput):
 
     observaciones: Optional[str] = None
     mejoras_sugeridas: Optional[str] = None
+    fecha_entrevista: Optional[datetime] = None
+    entrevista: Optional[bool] = False  # 👈 agregado aquí
 
 
 class ResumenEvaluacionSchema(ResumenEvaluacionOutput):
