@@ -14,35 +14,28 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/admin-usuario/login")
 # Función para crear el JWT
 def crear_token_jwt(usuario: dict) -> str:
     data = {
-        "sub": str(usuario["id"]),
-        "nombre": usuario["nombre_completo"],
+        "sub": str(usuario["id"]),   # 👈 siempre será el ID del usuario
+        "nombre": usuario["nombre"], # 👈 consistente con obtener_usuario_actual
         "rol": usuario["rol"],
         "exp": datetime.utcnow() + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
     }
     return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
 
+
 def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        print("DEBUG payload:", payload)
+
         user_id = payload.get("sub")
         nombre = payload.get("nombre")
         rol = payload.get("rol")
+
         if user_id is None or nombre is None or rol is None:
             raise HTTPException(status_code=401, detail="Token inválido")
-        return {
-            "user_id": int(user_id),  # <--- lo convertimos a int
-            "nombre": nombre,
-            "rol": rol
-        }
-    except Exception:
-        raise HTTPException(status_code=401, detail="No se pudo validar las credenciales")
-
-
-        if user_id is None:
-            raise HTTPException(status_code=401, detail="Token inválido")
 
         return {
-            "id": user_id,
+            "id": int(user_id),
             "nombre": nombre,
             "rol": rol
         }
