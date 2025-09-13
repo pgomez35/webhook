@@ -666,7 +666,8 @@ def crear_evento(evento: EventoIn, usuario_actual: dict = Depends(obtener_usuari
     except Exception as e:
         conn.rollback()
         print("❌ Error creando evento:", e)
-        raise HTTPException(status_code=500, detail="Error creando evento")
+        # raise HTTPException(status_code=500, detail="Error creando evento")
+        raise HTTPException(status_code=500, detail=f"Error creando evento: {str(e)}")
     finally:
         cur.close()
         conn.close()
