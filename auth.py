@@ -15,7 +15,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/admin-usuario/login")
 def crear_token_jwt(usuario: dict) -> str:
     data = {
         "sub": str(usuario["id"]),   # 👈 siempre será el ID del usuario
-        "nombre": usuario["nombre"], # 👈 consistente con obtener_usuario_actual
+        "nombre": usuario["nombre_completo"], # 👈 consistente con obtener_usuario_actual
         "rol": usuario["rol"],
         "exp": datetime.utcnow() + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
     }
