@@ -594,7 +594,7 @@ from dateutil.parser import isoparse
 logger = logging.getLogger(__name__)
 
 @app.post("/api/eventos", response_model=EventoOut)
-def crear_evento(evento: EventoIn, usuario_actual: dict = Depends(obtener_usuario_actual)):
+def crear_evento(evento: EventoIn, usuario_actual: dict = Depends(obtener_usuario_actualV1)):
     conn = get_connection()
     cur = conn.cursor()
     try:
