@@ -1475,6 +1475,7 @@ def obtener_perfil_creador(creador_id):
                 observaciones,
                 mejoras_sugeridas,
                 fecha_entrevista,
+                entrevista
             FROM perfil_creador
             WHERE creador_id = %s;
         """, (creador_id,))
