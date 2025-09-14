@@ -1897,6 +1897,8 @@ def actualizar_resumen(creador_id: int, datos: ResumenEvaluacionInput):
             puntaje_total_categoria=score["puntaje_total_categoria"],
             observaciones = observaciones_totales,
             mejoras_sugeridas = mejoras,
+            fecha_entrevista=data_dict.get("fecha_entrevista"),
+            entrevista=data_dict.get("entrevista")
         )
 
     except Exception as e:
