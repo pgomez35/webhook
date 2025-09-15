@@ -2388,16 +2388,26 @@ def listar_creadores_invitacion():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.put("/perfil_creador/{creador_id}/evaluacion")
-async def actualizar_evaluacion(creador_id: int, request: Request):
-    raw = await request.body()
-    print("📥 RAW recibido:", raw)
+@app.put("/api/perfil_creador/{creador_id}/evaluacion",
+         tags=["Perfil"],
+         response_model=EvaluacionOutput)
+def actualizar_evaluacion(
+    creador_id: int,
+    datos: EvaluacionInput = Body(...)
+):
     try:
-        json_data = await request.json()
-        print("📥 JSON parseado:", json_data)
+        data_dict = datos.dict()
+        result = actualizar_evaluacion_creador(creador_id, data_dict)
+
+        return EvaluacionOutput(
+            status="ok",
+            mensaje="Evaluación actualizada correctamente",
+            **result
+        )
     except Exception as e:
-        print("❌ Error parseando JSON:", e)
-    return {"ok": True}
+        print(f"❌ Error al actualizar datos del perfil del creador {creador_id}:", e)
+        raise HTTPException(status_code=500, detail=str(e))
+    
 # endpoint
 # @app.put("/perfil_creador/{creador_id}/evaluacion", response_model=EvaluacionOutput)
 # async def actualizar_evaluacion(creador_id: int, datos: EvaluacionInput):
