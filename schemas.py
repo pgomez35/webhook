@@ -716,10 +716,8 @@ class PerfilCreadorUpdate(BaseModel):
     usuario_invita_tiktok: Optional[int] = None
 
 
-# schema
-
 class EvaluacionInput(BaseModel):
-    estado_evaluacion: str   # 👈 ya no incluimos usuario_evaluador_inicial
+    estado_evaluacion: str  # Solo se envía desde React
 
 class EvaluacionOutput(BaseModel):
     status: str

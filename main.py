@@ -2356,34 +2356,38 @@ def listar_creadores_invitacion():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-@app.put("/api/perfil_creador/{creador_id}/evaluacion",  # <-- nombre cambiado
+@app.put("/api/perfil_creador/{creador_id}/evaluacion_inicial",
          tags=["Perfil"],
          response_model=EvaluacionOutput)
 def actualizar_evaluacion_inicial(
     creador_id: int,
     datos: EvaluacionInput = Body(...),
-    usuario_actual: dict = Depends(obtener_usuario_actual)   # usuario sacado del token
+    usuario_actual: dict = Depends(obtener_usuario_actual)
 ):
     try:
-        # Forzar el usuario desde el token
-        usuario_id = usuario_actual["id"]
+        # Usuario desde el token
+        usuario_id = usuario_actual.get("id")
+        if not usuario_id:
+            raise HTTPException(status_code=401, detail="Usuario no autorizado")
 
+        # Preparar datos a actualizar
         data_dict = datos.dict()
-        data_dict["usuario_evaluador_inicial"] = usuario_id  # lo agregamos aquí
+        data_dict["usuario_evaluador_inicial"] = usuario_id
 
+        # Actualizar en DB
         result = actualizar_evaluacion_creador(creador_id, data_dict)
 
         return EvaluacionOutput(
             status="ok",
-            mensaje="Evaluación actualizada correctamente",
+            mensaje="Evaluación inicial actualizada correctamente",
             **result
         )
+
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        print(f"❌ Error al actualizar datos del perfil del creador {creador_id}:", e)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
+        logging.error(f"❌ Error al actualizar evaluación inicial del creador {creador_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error interno al actualizar la evaluación")
 
 
 
