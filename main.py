@@ -2388,20 +2388,15 @@ def listar_creadores_invitacion():
         raise HTTPException(status_code=500, detail=str(e))
 
 # endpoint
-@app.put("/api/perfil_creador/{creador_id}/evaluacion",
-         tags=["Perfil"],
-         response_model=EvaluacionOutput)
-def actualizar_evaluacion(creador_id: int, datos: EvaluacionInput):
+@app.put("/perfil_creador/{creador_id}/evaluacion", response_model=EvaluacionOutput)
+async def actualizar_evaluacion(creador_id: int, datos: EvaluacionInput):
+    print("📥 Datos recibidos:", datos.dict())  # 👈 para debug
     try:
-        resultado = actualizar_evaluacion_creador(creador_id, datos.dict())
-
-        return EvaluacionOutput(
-            status="ok",
-            mensaje="✅ Evaluación actualizada correctamente",
-            **resultado
-        )
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
+        result = actualizar_evaluacion_creador(creador_id, datos.dict())
+        return {
+            "status": "success",
+            "mensaje": f"✅ Perfil del creador {creador_id} actualizado correctamente",
+            **result
+        }
     except Exception as e:
-        print("❌ Error al actualizar evaluación:", e)
-        raise HTTPException(status_code=500, detail="Error interno en el servidor")
+        raise HTTPException(status_code=500, detail=f"❌ Error al actualizar datos del perfil del creador {creador_id}: {str(e)}")
