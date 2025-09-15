@@ -1944,13 +1944,15 @@ def actualizar_evaluacion_creador(creador_id: int, datos: dict):
 
         fecha_actual = datetime.now()
 
-        # Actualizar ambas tablas en transacción
+        # Actualizar tabla creadores
         cur.execute("""
             UPDATE creadores
             SET estado_id = %s
             WHERE id = %s
         """, (estado_id, creador_id))
+        print(f"✔️ Creadores actualizado, filas afectadas: {cur.rowcount}")
 
+        # Actualizar perfil_creador
         cur.execute("""
             UPDATE perfil_creador
             SET estado_evaluacion = %s,
@@ -1966,6 +1968,11 @@ def actualizar_evaluacion_creador(creador_id: int, datos: dict):
         ))
 
         row = cur.fetchone()
+        print(f"✔️ Perfil_creador actualizado, filas afectadas: {cur.rowcount}, resultado: {row}")
+
+        if not row:
+            raise ValueError(f"No se encontró perfil_creador con creador_id={creador_id}")
+
         conn.commit()
 
         return {
@@ -1975,13 +1982,13 @@ def actualizar_evaluacion_creador(creador_id: int, datos: dict):
             "usuario_evaluador_inicial": row[2]
         }
 
-    except Exception:
+    except Exception as e:
         conn.rollback()
+        print(f"❌ Error en actualizar_evaluacion_creador {creador_id}: {e}")
         raise
     finally:
         cur.close()
         conn.close()
-
 
 
 
