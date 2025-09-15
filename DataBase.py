@@ -1926,6 +1926,66 @@ def obtener_todos_manager():
         if conn:
             conn.close()
 
+from datetime import datetime
+
+def actualizar_evaluacion_creador(creador_id: int, datos: dict):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        # Mapear estado_evaluacion -> estado_id
+        estado_map = {
+            "ENTREVISTA": 2,
+            "NO APTO": 3,
+            "INVITACION TIKTOK": 4
+        }
+        estado_id = estado_map.get(datos["estado_evaluacion"].upper(), None)
+        if estado_id is None:
+            raise ValueError(f"Estado_evaluacion inválido: {datos['estado_evaluacion']}")
+
+        fecha_actual = datetime.now()
+
+        # Actualizar tabla creadores
+        cur.execute("""
+            UPDATE creadores
+            SET estado_id = %s
+            WHERE id = %s
+        """, (estado_id, creador_id))
+
+        # Actualizar tabla perfil_creador
+        cur.execute("""
+            UPDATE perfil_creador
+            SET estado_evaluacion = %s,
+                fecha_evaluacion_inicial = %s,
+                usuario_evaluador_inicial = %s
+            WHERE creador_id = %s
+        """, (
+            datos["estado_evaluacion"],
+            fecha_actual,
+            datos["usuario_evaluador_inicial"],
+            creador_id
+        ))
+
+        conn.commit()
+
+        # Retornar datos actualizados
+        return {
+            "estado_id": estado_id,
+            "estado_evaluacion": datos["estado_evaluacion"],
+            "fecha_evaluacion_inicial": fecha_actual,
+            "usuario_evaluador_inicial": datos["usuario_evaluador_inicial"]
+        }
+
+    except Exception as e:
+        conn.rollback()
+        print("❌ Error en actualizar_evaluacion_creador:", e)
+        raise e
+    finally:
+        cur.close()
+        conn.close()
+
+
+
 
 # if __name__ == "__main__":
 #     print("Probando diagnóstico...")

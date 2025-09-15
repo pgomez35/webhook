@@ -737,3 +737,16 @@ class PerfilCreadorUpdate(BaseModel):
     acepta_invitacion: Optional[bool] = None
     usuario_invita_tiktok: Optional[int] = None
 
+
+# === Input ===
+class EvaluacionInput(BaseModel):
+    estado_evaluacion: str
+    usuario_evaluador_inicial: int
+
+
+# === Output ===
+class EvaluacionOutput(BaseModel):
+    status: str
+    mensaje: str
+    estado_evaluacion: str
+    usuario_evaluador_inicial: int

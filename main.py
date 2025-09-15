@@ -2379,8 +2379,6 @@ def obtener_foto_creador_activo(creador_activo_id: int):
         raise HTTPException(status_code=404, detail="Foto no encontrada")
     return {"foto_url": res[0]}
 
-
-
 # === Listar todos los aspirantes en proceso de entrevista/invitación ===
 @app.get("/api/creadores/invitacion", tags=["Creadores"])
 def listar_creadores_invitacion():
@@ -2389,3 +2387,20 @@ def listar_creadores_invitacion():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.put("/api/perfil_creador/{creador_id}/evaluacion",
+         tags=["Perfil"],
+         response_model=EvaluacionOutput)
+def actualizar_evaluacion(creador_id: int, datos: EvaluacionInput):
+    try:
+        data_dict = datos.dict()
+        actualizar_evaluacion_creador(creador_id, data_dict)
+
+        return EvaluacionOutput(
+            status="ok",
+            mensaje="Evaluación actualizada correctamente",
+            **data_dict
+        )
+    except Exception as e:
+        print("Error al actualizar evaluación:", e)
+        raise HTTPException(status_code=500, detail=str(e))
