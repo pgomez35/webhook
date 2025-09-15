@@ -739,9 +739,9 @@ class PerfilCreadorUpdate(BaseModel):
 
 
 # schema
+
 class EvaluacionInput(BaseModel):
-    estado_evaluacion: str
-    usuario_evaluador_inicial: int
+    estado_evaluacion: str   # 👈 ya no incluimos usuario_evaluador_inicial
 
 class EvaluacionOutput(BaseModel):
     status: str

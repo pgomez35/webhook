@@ -1931,32 +1931,26 @@ from datetime import datetime
 def actualizar_evaluacion_creador(creador_id: int, datos: dict):
     conn = get_connection()
     cur = conn.cursor()
-
     try:
-        print(f"➡️ Actualizando creador {creador_id} con datos: {datos}")  # 👈 log
-
         estado_map = {
             "ENTREVISTA": 2,
             "NO APTO": 3,
             "INVITACION TIKTOK": 4
         }
-
-        # validar estado
-        estado_raw = datos.get("estado_evaluacion")
-        estado_id = estado_map.get(estado_raw.upper()) if estado_raw else None
+        estado_id = estado_map.get(datos["estado_evaluacion"].upper())
         if estado_id is None:
-            raise ValueError(f"Estado_evaluacion inválido: {estado_raw}")
+            raise ValueError(f"Estado_evaluacion inválido: {datos['estado_evaluacion']}")
 
         fecha_actual = datetime.now()
 
-        # actualizar creadores
+        # Actualizar creadores
         cur.execute("""
             UPDATE creadores
             SET estado_id = %s
             WHERE id = %s
         """, (estado_id, creador_id))
 
-        # actualizar perfil_creador
+        # Actualizar perfil_creador
         cur.execute("""
             UPDATE perfil_creador
             SET estado_evaluacion = %s,
@@ -1980,15 +1974,12 @@ def actualizar_evaluacion_creador(creador_id: int, datos: dict):
             "fecha_evaluacion_inicial": row[1],
             "usuario_evaluador_inicial": row[2]
         }
-
-    except Exception as e:
+    except Exception:
         conn.rollback()
-        print("❌ Error en actualizar_evaluacion_creador:", e)  # 👈 log
         raise
     finally:
         cur.close()
         conn.close()
-
 
 # if __name__ == "__main__":
 #     print("Probando diagnóstico...")

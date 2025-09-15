@@ -2393,10 +2393,16 @@ def listar_creadores_invitacion():
          response_model=EvaluacionOutput)
 def actualizar_evaluacion(
     creador_id: int,
-    datos: EvaluacionInput = Body(...)
+    datos: EvaluacionInput = Body(...),
+    usuario_actual: dict = Depends(obtener_usuario_actual)   # 👈 usuario sacado del token
 ):
     try:
+        # Forzar el usuario desde el token
+        usuario_id = usuario_actual["id"]
+
         data_dict = datos.dict()
+        data_dict["usuario_evaluador_inicial"] = usuario_id  # lo agregamos aquí
+
         result = actualizar_evaluacion_creador(creador_id, data_dict)
 
         return EvaluacionOutput(
@@ -2407,7 +2413,7 @@ def actualizar_evaluacion(
     except Exception as e:
         print(f"❌ Error al actualizar datos del perfil del creador {creador_id}:", e)
         raise HTTPException(status_code=500, detail=str(e))
-    
+
 # endpoint
 # @app.put("/perfil_creador/{creador_id}/evaluacion", response_model=EvaluacionOutput)
 # async def actualizar_evaluacion(creador_id: int, datos: EvaluacionInput):
