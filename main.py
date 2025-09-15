@@ -1628,37 +1628,6 @@ def perfil_creador(creador_id: int):
         raise HTTPException(status_code=404, detail="Perfil no encontrado")
     return perfil
 
-# === Obtener perfil resumido con datos de creadores ===
-@app.get("/api/perfil_creador_resumen/{creador_id}", tags=["Perfil"])
-def perfil_creador_resumen(creador_id: int):
-    perfil = obtener_perfil_creador_resumen(creador_id)
-    if not perfil:
-        raise HTTPException(status_code=404, detail="Perfil no encontrado")
-    return perfil
-
-# === Actualizar perfil resumido de un creador ===
-@app.put("/api/perfil_creador_resumen/{creador_id}", tags=["Perfil"])
-def update_perfil_creador(creador_id: int, perfil_data: PerfilCreadorUpdate):
-    data_dict = perfil_data.dict(exclude_none=True)  # solo campos enviados
-    if not data_dict:
-        raise HTTPException(status_code=400, detail="No se enviaron campos para actualizar")
-
-    perfil_actualizado = actualizar_perfil_creador_evalua(creador_id, data_dict)
-    if not perfil_actualizado:
-        raise HTTPException(status_code=404, detail="Perfil no encontrado o no se pudo actualizar")
-
-    return perfil_actualizado
-
-# === Actualizar evaluación inicial (solo algunos campos) ===
-@app.put("/api/perfil_creador/{creador_id}/evaluacion", tags=["Evaluación"])
-def evaluar_creador(creador_id: int, evaluacion: EvaluacionInicialSchema):
-    try:
-        actualizar_datos_perfil_creador(creador_id, evaluacion.dict(exclude_unset=True))
-        return {"status": "ok", "mensaje": "Evaluación actualizada"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 # === Actualizar el perfil completo del creador ===
 @app.put("/api/perfil_creador/{creador_id}", tags=["Perfil"])
 def actualizar_perfil_creador_endpoint(creador_id: int, evaluacion: PerfilCreadorSchema):
@@ -2388,13 +2357,13 @@ def listar_creadores_invitacion():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.put("/api/perfil_creador/{creador_id}/evaluacion",
+@app.put("/api/perfil_creador/{creador_id}/evaluacion",  # <-- nombre cambiado
          tags=["Perfil"],
          response_model=EvaluacionOutput)
-def actualizar_evaluacion(
+def actualizar_evaluacion_inicial(
     creador_id: int,
     datos: EvaluacionInput = Body(...),
-    usuario_actual: dict = Depends(obtener_usuario_actual)   # 👈 usuario sacado del token
+    usuario_actual: dict = Depends(obtener_usuario_actual)   # usuario sacado del token
 ):
     try:
         # Forzar el usuario desde el token
@@ -2413,6 +2382,10 @@ def actualizar_evaluacion(
     except Exception as e:
         print(f"❌ Error al actualizar datos del perfil del creador {creador_id}:", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
 
 # endpoint
 # @app.put("/perfil_creador/{creador_id}/evaluacion", response_model=EvaluacionOutput)

@@ -84,28 +84,6 @@ class AdminUsuarioLogin(BaseModel):
 # ESQUEMAS PARA PERFIL_CREADOR  
 # ===============================
 
-class EvaluacionInicialSchema(BaseModel):
-    apariencia: Optional[int] = Field(None, ge=1, le=10)
-    engagement: Optional[int] = Field(None, ge=1, le=10)
-    calidad_contenido: Optional[int] = Field(None, ge=1, le=10)
-    puntaje_total: Optional[float] = Field(None, ge=0, le=100)
-    potencial_estimado: Optional[str] = Field(None, example="Alto", description="Bajo, Medio, Alto, Excelente")
-    mejoras_sugeridas: Optional[str] = Field(None, max_length=1000)
-    usuario_evalua: Optional[str] = Field(None, max_length=100, description="Usuario que realiza la evaluación")
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "apariencia": 8,
-                "engagement": 7,
-                "calidad_contenido": 9,
-                "puntaje_total": 78.5,
-                "potencial_estimado": "Alto",
-                "mejoras_sugeridas": "Podría mejorar la iluminación de sus videos.",
-                "usuario_evalua": "admin_pedro"
-            }
-        }
-
 class PerfilCreadorSchema(BaseModel):
     # Datos personales
     nombre: Optional[str] = Field(None, max_length=100)
