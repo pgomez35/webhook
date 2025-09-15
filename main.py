@@ -2481,6 +2481,25 @@ def actualizar_evaluacion_inicial(
         raise HTTPException(status_code=500, detail="Error interno al actualizar la evaluación")
 
 
+# === Endpoint ===
+@app.get("/api/perfil_creador/{creador_id}/entrevista_invitacion",
+         tags=["Resumen"],
+         response_model=PerfilCreadorEntrevistaInvitacionOutput)
+def get_perfil_creador_entrevista_invitacion(creador_id: int):
+    try:
+        perfil = obtener_perfil_creador_entrevista_invitacion(creador_id)
+        if not perfil:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No se encontró perfil_creador con id {creador_id}"
+            )
+        return perfil
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"❌ Error en get_perfil_creador_entrevista_invitacion: {e}")
+        raise HTTPException(status_code=500, detail="Error interno al obtener datos de entrevista/invitación")
+
 
 # endpoint
 # @app.put("/perfil_creador/{creador_id}/evaluacion", response_model=EvaluacionOutput)

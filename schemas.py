@@ -723,3 +723,19 @@ class EvaluacionOutput(BaseModel):
     estado_evaluacion: str
     fecha_evaluacion_inicial: datetime
     usuario_evaluador_inicial: int
+
+
+# === Schema de salida ===
+class PerfilCreadorEntrevistaInvitacionOutput(BaseModel):
+    estado: Optional[str]
+    estado_evaluacion: Optional[str]
+    fecha_evaluacion_inicial: Optional[datetime]
+    usuario_evaluador_inicial: Optional[int]
+    entrevista: Optional[bool]
+    fecha_entrevista: Optional[datetime]
+    calificacion_entrevista: Optional[bool]
+    usuario_evalua_entrevista: Optional[int]
+    invitacion_tiktok: Optional[bool]
+    fecha_invitacion_tiktok: Optional[datetime]
+    acepta_invitacion: Optional[bool]
+    usuario_invita_tiktok: Optional[int]

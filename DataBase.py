@@ -1548,7 +1548,7 @@ def obtener_perfil_creador(creador_id):
         print("❌ Error al obtener perfil del creador:", e)
         return None
 
-def obtener_perfil_creador_resumen(creador_id):
+def obtener_perfil_creador_entrevista_invitacion(creador_id):
     try:
         conn = get_connection()
         cur = conn.cursor()
