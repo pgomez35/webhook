@@ -1932,6 +1932,7 @@ def actualizar_evaluacion_creador(creador_id: int, datos: dict):
     conn = get_connection()
     cur = conn.cursor()
     try:
+        # Mapear estado -> estado_id
         estado_map = {
             "ENTREVISTA": 2,
             "NO APTO": 3,
@@ -1943,43 +1944,63 @@ def actualizar_evaluacion_creador(creador_id: int, datos: dict):
 
         fecha_actual = datetime.now()
 
-        # Actualizar creadores
+        # 🔹 Actualizar tabla creadores (estado_id)
         cur.execute("""
             UPDATE creadores
             SET estado_id = %s
             WHERE id = %s
         """, (estado_id, creador_id))
 
-        # Actualizar perfil_creador
-        cur.execute("""
-            UPDATE perfil_creador
-            SET estado_evaluacion = %s,
-                fecha_evaluacion_inicial = %s,
-                usuario_evaluador_inicial = %s
-            WHERE creador_id = %s
-            RETURNING estado_evaluacion, fecha_evaluacion_inicial, usuario_evaluador_inicial
-        """, (
-            datos["estado_evaluacion"],
-            fecha_actual,
-            datos["usuario_evaluador_inicial"],
-            creador_id
-        ))
+        # 🔹 Verificar si viene de inicial o resumen
+        if "usuario_evaluador_inicial" in datos:
+            # Caso: Evaluación inicial
+            cur.execute("""
+                UPDATE perfil_creador
+                SET estado_evaluacion = %s,
+                    fecha_evaluacion_inicial = %s,
+                    usuario_evaluador_inicial = %s
+                WHERE creador_id = %s
+                RETURNING estado_evaluacion, fecha_evaluacion_inicial, usuario_evaluador_inicial
+            """, (
+                datos["estado_evaluacion"],
+                fecha_actual,
+                datos["usuario_evaluador_inicial"],
+                creador_id
+            ))
+        elif "usuario_evaluador_resumen" in datos:
+            # Caso: Resumen
+            cur.execute("""
+                UPDATE perfil_creador
+                SET estado_evaluacion = %s,
+                    puntaje_total = %s,
+                    puntaje_total_categoria = %s,
+                    usuario_evalua = %s,  -- campo string en BD
+                    actualizado_en = %s
+                WHERE creador_id = %s
+                RETURNING estado_evaluacion, puntaje_total, puntaje_total_categoria, usuario_evalua
+            """, (
+                datos["estado_evaluacion"],
+                datos.get("puntaje_total"),
+                datos.get("puntaje_total_categoria"),
+                str(datos["usuario_evaluador_resumen"]),  # guardar como string
+                fecha_actual,
+                creador_id
+            ))
+        else:
+            raise ValueError("Datos inválidos: faltan campos de evaluador")
 
         row = cur.fetchone()
         conn.commit()
 
-        return {
-            "estado_id": estado_id,
-            "estado_evaluacion": row[0],
-            "fecha_evaluacion_inicial": row[1],
-            "usuario_evaluador_inicial": row[2]
-        }
+        return dict(zip([desc[0] for desc in cur.description], row))
+
     except Exception:
         conn.rollback()
         raise
     finally:
         cur.close()
         conn.close()
+
 
 # if __name__ == "__main__":
 #     print("Probando diagnóstico...")

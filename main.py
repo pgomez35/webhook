@@ -1521,6 +1521,15 @@ async def obtener_usuario_por_username(username: str):
 
     return usuario
 
+@app.post("/api/admin-usuario/refresh")
+def refresh_token(usuario_actual: dict = Depends(obtener_usuario_actual)):
+    # Si el access_token aún no está expirado, se genera uno nuevo con el mismo usuario
+    new_token = crear_token_jwt(usuario_actual)
+    return {
+        "access_token": new_token,
+        "token_type": "bearer"
+    }
+
 # Endpoint de login usando tus funciones y devolviendo el JWT
 @app.post("/api/admin-usuario/login")
 async def login_usuario(credentials: dict = Body(...)):
@@ -1818,45 +1827,48 @@ def actualizar_preferencias(creador_id: int, datos: PreferenciasHabitosInput):
     except Exception as e:
         raise HTTPException(status_code=500, detail="Error al actualizar preferencias y hábitos del perfil.")
 
-
 @app.put("/api/perfil_creador/{creador_id}/resumen",
          tags=["Resumen"],
          response_model=ResumenEvaluacionOutput)
-def actualizar_resumen(creador_id: int, datos: ResumenEvaluacionInput):
+def actualizar_resumen(
+    creador_id: int,
+    datos: ResumenEvaluacionInput,
+    usuario_actual: dict = Depends(obtener_usuario_actual)
+):
     try:
-        # Depuración: ver datos recibidos
-        print("Datos recibidos del frontend:", datos)
-        data_dict = datos.dict(exclude_unset=True)
-        print("Datos recibidos como dict:", data_dict)
+        # Usuario desde el token
+        usuario_id = usuario_actual.get("id")
+        if not usuario_id:
+            raise HTTPException(status_code=401, detail="Usuario no autorizado")
 
+        # Perfil actual
         perfil = obtener_puntajes_perfil_creador(creador_id)
-        print("Puntajes del perfil recuperados:", perfil)
         if not perfil:
-            raise HTTPException(status_code=404, detail=f"No se encontró el perfil del creador con id {creador_id}.")
+            raise HTTPException(
+                status_code=404,
+                detail=f"No se encontró el perfil del creador con id {creador_id}."
+            )
 
-        # Calcular puntaje general y categoría
+        # Calcular puntaje total y categoría
         score = evaluacion_total(
-            cualitativa_score=perfil.get("puntaje_manual",0),
-            estadistica_score=perfil.get("puntaje_estadistica",0),
-            general_score=perfil.get("puntaje_general",0),
-            habitos_score=perfil.get("puntaje_habitos",0)
+            cualitativa_score=perfil.get("puntaje_manual", 0),
+            estadistica_score=perfil.get("puntaje_estadistica", 0),
+            general_score=perfil.get("puntaje_general", 0),
+            habitos_score=perfil.get("puntaje_habitos", 0)
         )
-        print("Resultado de evaluacion_total:", score)
 
-        # Generar diagnóstico y mejoras sugeridas, manejando errores
+        # Diagnóstico y mejoras sugeridas
         try:
             diagnostico = diagnostico_perfil_creador(creador_id)
-        except Exception as e:
-            print(f"Error generando diagnóstico: {e}")
+        except Exception:
             diagnostico = "-"
 
         try:
             mejoras = generar_mejoras_sugeridas_total(creador_id)
-        except Exception as e:
-            print(f"Error generando mejoras: {e}")
+        except Exception:
             mejoras = "-"
 
-        # Combinar observaciones de manera robusta
+        # Observaciones
         observaciones_totales = (
             f"📊 Evaluación Global:\n"
             f"Puntaje total: {score['puntaje_total']}\n"
@@ -1864,37 +1876,116 @@ def actualizar_resumen(creador_id: int, datos: ResumenEvaluacionInput):
             f"🩺 Diagnóstico Detallado:\n{diagnostico}\n"
         )
 
-        data_dict["estado"] = "Evaluado"
-        data_dict["observaciones"] = observaciones_totales
-        data_dict["mejoras_sugeridas"] = mejoras
-        data_dict["puntaje_total"] = score["puntaje_total"]
-        data_dict["puntaje_total_categoria"] = score["puntaje_total_categoria"]
+        # 🔹 Solo guardar en BD: estado + puntaje_total + puntaje_total_categoria
+        estado_dict = {
+            "estado_evaluacion": datos.estado or "Evaluado",
+            "puntaje_total": datos.puntaje_total or score["puntaje_total"],
+            "puntaje_total_categoria": datos.puntaje_total_categoria or score["puntaje_total_categoria"],
+            "usuario_evaluador_resumen": usuario_id
+        }
+        result = actualizar_evaluacion_creador(creador_id, estado_dict)
 
-
-        actualizar_datos_perfil_creador(creador_id, data_dict)
-
+        # 🔹 Retornar toda la info calculada
         return ResumenEvaluacionOutput(
             status="ok",
-            mensaje="Evaluación datos Resumen actualizada",
-            puntaje_manual = perfil.get("puntaje_manual", 0),
-            puntaje_manual_categoria = perfil.get("puntaje_manual_categoria"),
-            puntaje_estadistica = perfil.get("puntaje_estadistica", 0),
-            puntaje_estadistica_categoria= perfil.get("puntaje_estadistica_categoria"),
-            puntaje_general = perfil.get("puntaje_general", 0),
-            puntaje_general_categoria = perfil.get("puntaje_general_categoria"),
-            puntaje_habitos = perfil.get("puntaje_habitos", 0),
-            puntaje_habitos_categoria = perfil.get("puntaje_habitos_categoria"),
+            mensaje="Resumen generado y estado actualizado",
+            puntaje_manual=perfil.get("puntaje_manual", 0),
+            puntaje_manual_categoria=perfil.get("puntaje_manual_categoria"),
+            puntaje_estadistica=perfil.get("puntaje_estadistica", 0),
+            puntaje_estadistica_categoria=perfil.get("puntaje_estadistica_categoria"),
+            puntaje_general=perfil.get("puntaje_general", 0),
+            puntaje_general_categoria=perfil.get("puntaje_general_categoria"),
+            puntaje_habitos=perfil.get("puntaje_habitos", 0),
+            puntaje_habitos_categoria=perfil.get("puntaje_habitos_categoria"),
             puntaje_total=score["puntaje_total"],
             puntaje_total_categoria=score["puntaje_total_categoria"],
-            observaciones = observaciones_totales,
-            mejoras_sugeridas = mejoras,
-            fecha_entrevista=data_dict.get("fecha_entrevista"),
-            entrevista=data_dict.get("entrevista")
+            observaciones=observaciones_totales,
+            mejoras_sugeridas=mejoras
         )
 
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        print("Error al guardar el perfil:", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"❌ Error en actualizar_resumen: {e}")
+        raise HTTPException(status_code=500, detail="Error interno al generar el resumen")
+
+
+# @app.put("/api/perfil_creador/{creador_id}/resumen",
+#          tags=["Resumen"],
+#          response_model=ResumenEvaluacionOutput)
+# def actualizar_resumen(creador_id: int, datos: ResumenEvaluacionInput):
+#     try:
+#         # Depuración: ver datos recibidos
+#         print("Datos recibidos del frontend:", datos)
+#         data_dict = datos.dict(exclude_unset=True)
+#         print("Datos recibidos como dict:", data_dict)
+#
+#         perfil = obtener_puntajes_perfil_creador(creador_id)
+#         print("Puntajes del perfil recuperados:", perfil)
+#         if not perfil:
+#             raise HTTPException(status_code=404, detail=f"No se encontró el perfil del creador con id {creador_id}.")
+#
+#         # Calcular puntaje general y categoría
+#         score = evaluacion_total(
+#             cualitativa_score=perfil.get("puntaje_manual",0),
+#             estadistica_score=perfil.get("puntaje_estadistica",0),
+#             general_score=perfil.get("puntaje_general",0),
+#             habitos_score=perfil.get("puntaje_habitos",0)
+#         )
+#         print("Resultado de evaluacion_total:", score)
+#
+#         # Generar diagnóstico y mejoras sugeridas, manejando errores
+#         try:
+#             diagnostico = diagnostico_perfil_creador(creador_id)
+#         except Exception as e:
+#             print(f"Error generando diagnóstico: {e}")
+#             diagnostico = "-"
+#
+#         try:
+#             mejoras = generar_mejoras_sugeridas_total(creador_id)
+#         except Exception as e:
+#             print(f"Error generando mejoras: {e}")
+#             mejoras = "-"
+#
+#         # Combinar observaciones de manera robusta
+#         observaciones_totales = (
+#             f"📊 Evaluación Global:\n"
+#             f"Puntaje total: {score['puntaje_total']}\n"
+#             f"Categoría: {score['puntaje_total_categoria']}\n\n"
+#             f"🩺 Diagnóstico Detallado:\n{diagnostico}\n"
+#         )
+#
+#         data_dict["estado"] = "Evaluado"
+#         data_dict["observaciones"] = observaciones_totales
+#         data_dict["mejoras_sugeridas"] = mejoras
+#         data_dict["puntaje_total"] = score["puntaje_total"]
+#         data_dict["puntaje_total_categoria"] = score["puntaje_total_categoria"]
+#
+#
+#         actualizar_datos_perfil_creador(creador_id, data_dict)
+#
+#         return ResumenEvaluacionOutput(
+#             status="ok",
+#             mensaje="Evaluación datos Resumen actualizada",
+#             puntaje_manual = perfil.get("puntaje_manual", 0),
+#             puntaje_manual_categoria = perfil.get("puntaje_manual_categoria"),
+#             puntaje_estadistica = perfil.get("puntaje_estadistica", 0),
+#             puntaje_estadistica_categoria= perfil.get("puntaje_estadistica_categoria"),
+#             puntaje_general = perfil.get("puntaje_general", 0),
+#             puntaje_general_categoria = perfil.get("puntaje_general_categoria"),
+#             puntaje_habitos = perfil.get("puntaje_habitos", 0),
+#             puntaje_habitos_categoria = perfil.get("puntaje_habitos_categoria"),
+#             puntaje_total=score["puntaje_total"],
+#             puntaje_total_categoria=score["puntaje_total_categoria"],
+#             observaciones = observaciones_totales,
+#             mejoras_sugeridas = mejoras,
+#             fecha_entrevista=data_dict.get("fecha_entrevista"),
+#             entrevista=data_dict.get("entrevista")
+#         )
+#
+#     except Exception as e:
+#         print("Error al guardar el perfil:", e)
+#         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/perfil_creador/{creador_id}/biografia_ia",
          tags=["Biografía IA"])
