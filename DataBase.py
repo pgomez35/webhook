@@ -1933,32 +1933,31 @@ def actualizar_evaluacion_creador(creador_id: int, datos: dict):
     cur = conn.cursor()
 
     try:
-        # Mapear estado_evaluacion -> estado_id
         estado_map = {
             "ENTREVISTA": 2,
             "NO APTO": 3,
             "INVITACION TIKTOK": 4
         }
-        estado_id = estado_map.get(datos["estado_evaluacion"].upper(), None)
+        estado_id = estado_map.get(datos["estado_evaluacion"].upper())
         if estado_id is None:
             raise ValueError(f"Estado_evaluacion inválido: {datos['estado_evaluacion']}")
 
         fecha_actual = datetime.now()
 
-        # Actualizar tabla creadores
+        # Actualizar ambas tablas en transacción
         cur.execute("""
             UPDATE creadores
             SET estado_id = %s
             WHERE id = %s
         """, (estado_id, creador_id))
 
-        # Actualizar tabla perfil_creador
         cur.execute("""
             UPDATE perfil_creador
             SET estado_evaluacion = %s,
                 fecha_evaluacion_inicial = %s,
                 usuario_evaluador_inicial = %s
             WHERE creador_id = %s
+            RETURNING estado_evaluacion, fecha_evaluacion_inicial, usuario_evaluador_inicial
         """, (
             datos["estado_evaluacion"],
             fecha_actual,
@@ -1966,20 +1965,19 @@ def actualizar_evaluacion_creador(creador_id: int, datos: dict):
             creador_id
         ))
 
+        row = cur.fetchone()
         conn.commit()
 
-        # Retornar datos actualizados
         return {
             "estado_id": estado_id,
-            "estado_evaluacion": datos["estado_evaluacion"],
-            "fecha_evaluacion_inicial": fecha_actual,
-            "usuario_evaluador_inicial": datos["usuario_evaluador_inicial"]
+            "estado_evaluacion": row[0],
+            "fecha_evaluacion_inicial": row[1],
+            "usuario_evaluador_inicial": row[2]
         }
 
-    except Exception as e:
+    except Exception:
         conn.rollback()
-        print("❌ Error en actualizar_evaluacion_creador:", e)
-        raise e
+        raise
     finally:
         cur.close()
         conn.close()

@@ -2387,20 +2387,21 @@ def listar_creadores_invitacion():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
+# endpoint
 @app.put("/api/perfil_creador/{creador_id}/evaluacion",
          tags=["Perfil"],
          response_model=EvaluacionOutput)
 def actualizar_evaluacion(creador_id: int, datos: EvaluacionInput):
     try:
-        data_dict = datos.dict()
-        actualizar_evaluacion_creador(creador_id, data_dict)
+        resultado = actualizar_evaluacion_creador(creador_id, datos.dict())
 
         return EvaluacionOutput(
             status="ok",
-            mensaje="Evaluación actualizada correctamente",
-            **data_dict
+            mensaje="✅ Evaluación actualizada correctamente",
+            **resultado
         )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        print("Error al actualizar evaluación:", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        print("❌ Error al actualizar evaluación:", e)
+        raise HTTPException(status_code=500, detail="Error interno en el servidor")

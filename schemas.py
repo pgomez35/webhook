@@ -738,15 +738,15 @@ class PerfilCreadorUpdate(BaseModel):
     usuario_invita_tiktok: Optional[int] = None
 
 
-# === Input ===
+# schema
 class EvaluacionInput(BaseModel):
     estado_evaluacion: str
     usuario_evaluador_inicial: int
 
-
-# === Output ===
 class EvaluacionOutput(BaseModel):
     status: str
     mensaje: str
+    estado_id: int
     estado_evaluacion: str
+    fecha_evaluacion_inicial: datetime
     usuario_evaluador_inicial: int
