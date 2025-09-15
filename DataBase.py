@@ -1258,6 +1258,38 @@ def crear_perfil_creador(perfil_data):
         print("❌ Error al crear perfil de creador:", e)
         return None
 
+from typing import Dict
+def actualizar_perfil_creador_evalua(creador_id: int, data: Dict):
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+
+        # Generar dinámicamente el SET para los campos que vienen en el body
+        set_clause = ", ".join([f"{key} = %s" for key in data.keys()])
+        values = list(data.values())
+
+        query = f"""
+            UPDATE perfil_creador
+            SET {set_clause}
+            WHERE creador_id = %s
+            RETURNING *;
+        """
+
+        cur.execute(query, values + [creador_id])
+        updated_row = cur.fetchone()
+        columnas = [desc[0] for desc in cur.description]
+        conn.commit()
+
+        cur.close()
+        conn.close()
+
+        if updated_row:
+            return dict(zip(columnas, updated_row))
+        return None
+    except Exception as e:
+        print("❌ Error al actualizar perfil del creador:", e)
+        return None
+
 
 def actualizar_perfil_creador(perfil_id: int, perfil_data):
     """Actualiza un perfil de creador"""
@@ -1341,14 +1373,9 @@ def obtener_creadores_db():
                 c.email,
                 c.telefono,
                 c.whatsapp,
-                c.foto_url,
-                c.verificado,
-                c.activo,
-                ec.nombre as estado_nombre,
-                c.creado_en,
-                c.actualizado_en
+                ec.nombre as estado_nombre
             FROM creadores c
-            LEFT JOIN estados_creador ec ON c.estado_id = ec.id
+            INNER JOIN estados_creador ec ON c.estado_id = ec.id
             WHERE c.activo = TRUE
             ORDER BY c.actualizado_en DESC;
         """)
@@ -1361,6 +1388,36 @@ def obtener_creadores_db():
     except Exception as e:
         print("❌ Error al obtener creadores:", e)
         return []
+
+def obtener_creadores_invitacion():
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+                  SELECT 
+                c.id, 
+                c.usuario, 
+                c.nickname, 
+                c.nombre_real, 
+                c.email,
+                c.telefono,
+                c.whatsapp,
+                ec.nombre as estado_nombre
+            FROM creadores c
+            INNER JOIN estados_creador ec ON c.estado_id = ec.id
+            WHERE c.activo = TRUE AND c.estado_id IN (2,5)
+            ORDER BY c.usuario ASC;
+        """)
+        datos = cur.fetchall()
+        columnas = [desc[0] for desc in cur.description]
+        resultados = [dict(zip(columnas, fila)) for fila in datos]
+        cur.close()
+        conn.close()
+        return resultados
+    except Exception as e:
+        print("❌ Error al obtener creadores:", e)
+        return []
+
 
 
 def obtener_todos_usuarios_db():
@@ -1478,6 +1535,38 @@ def obtener_perfil_creador(creador_id):
                 entrevista
             FROM perfil_creador
             WHERE creador_id = %s;
+        """, (creador_id,))
+        fila = cur.fetchone()
+        columnas = [desc[0] for desc in cur.description]
+        cur.close()
+        conn.close()
+        if fila:
+            return dict(zip(columnas, fila))
+        return None
+    except Exception as e:
+        print("❌ Error al obtener perfil del creador:", e)
+        return None
+
+def obtener_perfil_creador_resumen(creador_id):
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT
+            pc.estado,  
+            pc.estado_evaluacion,
+            pc.fecha_evaluacion_inicial,
+            pc.usuario_evaluador_inicial,
+            pc.entrevista,
+            pc.fecha_entrevista,
+            pc.calificacion_entrevista,
+            pc.usuario_evalua_entrevista,
+            pc.invitacion_tiktok,
+            pc.fecha_invitacion_tiktok,
+            pc.acepta_invitacion,
+            pc.usuario_invita_tiktok
+        FROM perfil_creador pc
+        WHERE pc.creador_id = %s
         """, (creador_id,))
         fila = cur.fetchone()
         columnas = [desc[0] for desc in cur.description]

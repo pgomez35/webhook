@@ -722,3 +722,18 @@ class EstadisticaCreadorCreate(EstadisticaCreadorBase):
 
 class EstadisticaCreadorDB(EstadisticaCreadorBase):
     id: int
+
+class PerfilCreadorUpdate(BaseModel):
+    estado: Optional[str] = None
+    estado_evaluacion: Optional[str] = None
+    fecha_evaluacion_inicial: Optional[datetime] = None
+    usuario_evaluador_inicial: Optional[int] = None
+    entrevista: Optional[bool] = None
+    fecha_entrevista: Optional[datetime] = None
+    calificacion_entrevista: Optional[bool] = None
+    usuario_evalua_entrevista: Optional[str] = None
+    invitacion_tiktok: Optional[bool] = None
+    fecha_invitacion_tiktok: Optional[datetime] = None
+    acepta_invitacion: Optional[bool] = None
+    usuario_invita_tiktok: Optional[int] = None
+

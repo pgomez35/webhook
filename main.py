@@ -1610,6 +1610,8 @@ def listar_creadores():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
 # === Listar todos los usuarios ===
 @app.get("/api/TodosUsuarios", tags=["TodosUsuarios"])
 def listar_TodosUsuarios():
@@ -1626,6 +1628,26 @@ def perfil_creador(creador_id: int):
         raise HTTPException(status_code=404, detail="Perfil no encontrado")
     return perfil
 
+# === Obtener perfil resumido con datos de creadores ===
+@app.get("/api/perfil_creador_resumen/{creador_id}", tags=["Perfil"])
+def perfil_creador_resumen(creador_id: int):
+    perfil = obtener_perfil_creador_resumen(creador_id)
+    if not perfil:
+        raise HTTPException(status_code=404, detail="Perfil no encontrado")
+    return perfil
+
+# === Actualizar perfil resumido de un creador ===
+@app.put("/api/perfil_creador_resumen/{creador_id}", tags=["Perfil"])
+def update_perfil_creador(creador_id: int, perfil_data: PerfilCreadorUpdate):
+    data_dict = perfil_data.dict(exclude_none=True)  # solo campos enviados
+    if not data_dict:
+        raise HTTPException(status_code=400, detail="No se enviaron campos para actualizar")
+
+    perfil_actualizado = actualizar_perfil_creador_evalua(creador_id, data_dict)
+    if not perfil_actualizado:
+        raise HTTPException(status_code=404, detail="Perfil no encontrado o no se pudo actualizar")
+
+    return perfil_actualizado
 
 # === Actualizar evaluación inicial (solo algunos campos) ===
 @app.put("/api/perfil_creador/{creador_id}/evaluacion", tags=["Evaluación"])
@@ -2356,3 +2378,14 @@ def obtener_foto_creador_activo(creador_activo_id: int):
     if not res or not res[0]:
         raise HTTPException(status_code=404, detail="Foto no encontrada")
     return {"foto_url": res[0]}
+
+
+
+# === Listar todos los aspirantes en proceso de entrevista/invitación ===
+@app.get("/api/creadores/invitacion", tags=["Creadores"])
+def listar_creadores_invitacion():
+    try:
+        return obtener_creadores_invitacion()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
