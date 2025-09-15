@@ -569,12 +569,9 @@ class PreferenciasHabitosOutput(PreferenciasHabitosInput):
 # === Sección: Resumen ===
 class ResumenEvaluacionInput(BaseModel):
     estado: Optional[str] = None
-    observaciones: Optional[str] = None
-    mejoras_sugeridas: Optional[str] = None
     puntaje_total: Optional[float] = None
     puntaje_total_categoria: Optional[str] = None
-    fecha_entrevista: Optional[datetime] = None
-    entrevista: Optional[bool] = False  # 👈 agregado aquí
+
 
 class ResumenEvaluacionOutput(ResumenEvaluacionInput):
     status: Optional[str] = None
