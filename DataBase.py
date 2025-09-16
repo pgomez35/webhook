@@ -1551,34 +1551,33 @@ def obtener_perfil_creador(creador_id):
 def obtener_perfil_creador_entrevista_invitacion(creador_id):
     try:
         conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT
-            pc.estado,  
-            pc.estado_evaluacion,
-            pc.fecha_evaluacion_inicial,
-            pc.usuario_evaluador_inicial,
-            pc.entrevista,
-            pc.fecha_entrevista,
-            pc.calificacion_entrevista,
-            pc.usuario_evalua_entrevista,
-            pc.invitacion_tiktok,
-            pc.fecha_invitacion_tiktok,
-            pc.acepta_invitacion,
-            pc.usuario_invita_tiktok
-        FROM perfil_creador pc
-        WHERE pc.creador_id = %s
-        """, (creador_id,))
-        fila = cur.fetchone()
-        columnas = [desc[0] for desc in cur.description]
-        cur.close()
-        conn.close()
-        if fila:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    estado_evaluacion,
+                    fecha_evaluacion_inicial,
+                    usuario_evaluador_inicial,
+                    entrevista,
+                    fecha_entrevista,
+                    calificacion_entrevista,
+                    invitacion_tiktok,
+                    fecha_invitacion_tiktok,
+                    acepta_invitacion,
+                    fecha_incorporacion
+                FROM perfil_creador
+                WHERE creador_id = %s
+            """, (creador_id,))
+            fila = cur.fetchone()
+            if not fila:
+                return None
+            columnas = [desc[0] for desc in cur.description]
             return dict(zip(columnas, fila))
-        return None
     except Exception as e:
         print("❌ Error al obtener perfil del creador:", e)
         return None
+    finally:
+        conn.close()
+
 
 
 def obtener_datos_mejoras_perfil_creador(creador_id):
@@ -2087,6 +2086,35 @@ def actualizar_evaluacion_creador(creador_id: int, datos: dict):
         cur.close()
         conn.close()
 
+
+def actualizar_perfil_creador_entrevista(creador_id: int, datos: dict):
+    try:
+        conn = get_connection()
+        with conn.cursor() as cur:
+            # Generar dinámicamente SET de columnas según los datos recibidos
+            set_clauses = []
+            values = []
+            for key, value in datos.items():
+                set_clauses.append(f"{key} = %s")
+                values.append(value)
+
+            if not set_clauses:
+                return False  # No hay datos para actualizar
+
+            sql = f"""
+                UPDATE perfil_creador
+                SET {', '.join(set_clauses)}
+                WHERE creador_id = %s
+            """
+            values.append(creador_id)
+            cur.execute(sql, tuple(values))
+            conn.commit()
+        return True
+    except Exception as e:
+        print("❌ Error al actualizar perfil_creador:", e)
+        return False
+    finally:
+        conn.close()
 
 # if __name__ == "__main__":
 #     print("Probando diagnóstico...")

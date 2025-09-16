@@ -567,7 +567,7 @@ class PreferenciasHabitosOutput(PreferenciasHabitosInput):
 
 # === Sección: Resumen ===
 class ResumenEvaluacionInput(BaseModel):
-    estado: Optional[str] = None
+    estado: str
     puntaje_total: Optional[float] = None
     puntaje_total_categoria: Optional[str] = None
 
@@ -726,15 +726,19 @@ class EvaluacionOutput(BaseModel):
 
 # === Schema de salida ===
 class PerfilCreadorEntrevistaInvitacionOutput(BaseModel):
-    estado: Optional[str]
     estado_evaluacion: Optional[str]
     fecha_evaluacion_inicial: Optional[datetime]
-    usuario_evaluador_inicial: Optional[int]
-    entrevista: Optional[bool]
     fecha_entrevista: Optional[datetime]
     calificacion_entrevista: Optional[bool]
-    usuario_evalua_entrevista: Optional[int]
     invitacion_tiktok: Optional[bool]
-    fecha_invitacion_tiktok: Optional[datetime]
+    fecha_invitacion_tiktok: Optional[date]
     acepta_invitacion: Optional[bool]
-    usuario_invita_tiktok: Optional[int]
+    fecha_incorporacion: Optional[date]
+
+
+class PerfilCreadorEntrevistaUpdateInput(BaseModel):
+    calificacion_entrevista: Optional[bool] = None
+    invitacion_tiktok: Optional[bool] = None
+    fecha_invitacion_tiktok: Optional[date] = None
+    acepta_invitacion: Optional[bool] = None
+    fecha_incorporacion: Optional[date] = None

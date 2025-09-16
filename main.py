@@ -2535,6 +2535,24 @@ def get_perfil_creador_entrevista_invitacion(creador_id: int):
         print(f"❌ Error en get_perfil_creador_entrevista_invitacion: {e}")
         raise HTTPException(status_code=500, detail="Error interno al obtener datos de entrevista/invitación")
 
+@app.put(
+    "/api/perfil_creador/{creador_id}/entrevista",
+    tags=["Resumen"]
+)
+def put_perfil_creador_entrevista(
+    creador_id: int,
+    datos: PerfilCreadorEntrevistaUpdateInput
+):
+    data_dict = datos.dict(exclude_unset=True)
+    if not data_dict:
+        raise HTTPException(status_code=400, detail="No se enviaron datos para actualizar")
+
+    actualizado = actualizar_perfil_creador_entrevista(creador_id, data_dict)
+    if not actualizado:
+        raise HTTPException(status_code=500, detail="Error al actualizar los datos")
+
+    return {"status": "ok", "mensaje": "Datos de entrevista/invitación actualizados correctamente"}
+
 
 # endpoint
 # @app.put("/perfil_creador/{creador_id}/evaluacion", response_model=EvaluacionOutput)
