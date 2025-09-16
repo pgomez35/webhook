@@ -547,11 +547,10 @@ class EvaluacionCualitativaOutput(BaseModel):
     puntaje_manual_categoria: Optional[str] = None
     potencial_estimado: Optional[str] = None
 
-# === Sección: Contenido / Preferencias ===
 class PreferenciasHabitosInput(BaseModel):
     tiempo_disponible: Optional[int] = None
     frecuencia_lives: Optional[int] = None
-    experiencia_otras_plataformas: Optional[Dict[str, int]] = None
+    experiencia_otras_plataformas: Optional[Dict[str, float]] = None  # 👈 aquí el cambio
     experiencia_otras_plataformas_otro_nombre: Optional[str] = None
     intereses: Optional[Dict[str, bool]] = None
     tipo_contenido: Optional[Dict[str, bool]] = None

@@ -1859,7 +1859,8 @@ def actualizar_preferencias(creador_id: int, datos: PreferenciasHabitosInput):
             puntaje_habitos_categoria=score["puntaje_habitos_categoria"]
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Error al actualizar preferencias y hábitos del perfil.")
+        print("❌ Error al actualizar preferencias:", str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/perfil_creador/{creador_id}/resumen",
          tags=["Resumen"],

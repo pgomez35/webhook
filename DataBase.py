@@ -1685,41 +1685,28 @@ import json
 
 def actualizar_datos_perfil_creador(creador_id, datos_dict):
     try:
+        # Debug: ver lo que llega directo
+        print("📥 Datos recibidos en actualizar_datos_perfil_creador:", datos_dict)
+
         # Aplanar automáticamente si hay secciones anidadas (ej: "resumen", "estadisticas"...)
         flat_dict = {}
         for key, value in datos_dict.items():
             if isinstance(value, dict):
-                flat_dict.update(value)  # 🔑 Mueve todo al nivel raíz
+                # 🔎 Aquí está el punto clave:
+                # antes estabas haciendo flat_dict.update(value) → esto *desaparece* la clave padre
+                # ahora lo dejamos tal cual para jsonb
+                flat_dict[key] = value
             else:
                 flat_dict[key] = value
 
+        print("📦 Dict después de aplanar:", flat_dict)
+
         campos_validos = [
-            # Datos personales y generales
-            "nombre", "edad", "genero", "pais", "ciudad", "zona_horaria",
-            "idioma", "campo_estudios", "estudios", "actividad_actual",
-            "puntaje_general", "puntaje_general_categoria",
-
-            # Evaluación manual/cualitativa
-            "biografia", "apariencia", "engagement", "calidad_contenido",
-            "potencial_estimado", "usuario_evalua", "biografia_sugerida",
-            "eval_biografia", "eval_foto", "metadata_videos",
-            "puntaje_manual", "puntaje_manual_categoria",
-
-            # Estadísticas del perfil
-            "seguidores", "siguiendo", "videos", "likes",
-            "duracion_emisiones", "dias_emisiones",
-            "puntaje_estadistica", "puntaje_estadistica_categoria",
-
-            # Preferencias y hábitos
-            "tiempo_disponible", "frecuencia_lives",
+            # ...
             "experiencia_otras_plataformas", "experiencia_otras_plataformas_otro_nombre",
             "intereses", "tipo_contenido", "horario_preferido", "intencion_trabajo",
             "puntaje_habitos", "puntaje_habitos_categoria",
-
-            # Resumen
-            "estado", "observaciones", "mejoras_sugeridas",
-            "puntaje_total", "puntaje_total_categoria",
-            "fecha_entrevista","entrevista"  # ✅ agregado aquí
+            # ...
         ]
 
         campos = []
@@ -1729,7 +1716,8 @@ def actualizar_datos_perfil_creador(creador_id, datos_dict):
             if campo in flat_dict:  # 👈 ahora busca en el dict aplanado
                 valor = flat_dict[campo]
                 if isinstance(valor, dict):
-                    valor = json.dumps(valor)  # 🔑 serializa si es jsonb
+                    print(f"📝 Serializando {campo} →", valor)
+                    valor = json.dumps(valor)  # 🔑 serializa si es dict/jsonb
                 campos.append(f"{campo} = %s")
                 valores.append(valor)
 
@@ -1745,6 +1733,9 @@ def actualizar_datos_perfil_creador(creador_id, datos_dict):
             WHERE creador_id = %s;
         """
 
+        print("📤 Query generada:", query)
+        print("📤 Valores:", valores)
+
         with psycopg2.connect(INTERNAL_DATABASE_URL) as conn:
             with conn.cursor() as cur:
                 cur.execute(query, valores)
@@ -1754,6 +1745,79 @@ def actualizar_datos_perfil_creador(creador_id, datos_dict):
     except Exception as e:
         print(f"❌ Error al actualizar datos del perfil del creador {creador_id}: {e}")
         raise
+
+
+# def actualizar_datos_perfil_creador(creador_id, datos_dict):
+#     try:
+#         # Aplanar automáticamente si hay secciones anidadas (ej: "resumen", "estadisticas"...)
+#         flat_dict = {}
+#         for key, value in datos_dict.items():
+#             if isinstance(value, dict):
+#                 flat_dict.update(value)  # 🔑 Mueve todo al nivel raíz
+#             else:
+#                 flat_dict[key] = value
+#
+#         campos_validos = [
+#             # Datos personales y generales
+#             "nombre", "edad", "genero", "pais", "ciudad", "zona_horaria",
+#             "idioma", "campo_estudios", "estudios", "actividad_actual",
+#             "puntaje_general", "puntaje_general_categoria",
+#
+#             # Evaluación manual/cualitativa
+#             "biografia", "apariencia", "engagement", "calidad_contenido",
+#             "potencial_estimado", "usuario_evalua", "biografia_sugerida",
+#             "eval_biografia", "eval_foto", "metadata_videos",
+#             "puntaje_manual", "puntaje_manual_categoria",
+#
+#             # Estadísticas del perfil
+#             "seguidores", "siguiendo", "videos", "likes",
+#             "duracion_emisiones", "dias_emisiones",
+#             "puntaje_estadistica", "puntaje_estadistica_categoria",
+#
+#             # Preferencias y hábitos
+#             "tiempo_disponible", "frecuencia_lives",
+#             "experiencia_otras_plataformas", "experiencia_otras_plataformas_otro_nombre",
+#             "intereses", "tipo_contenido", "horario_preferido", "intencion_trabajo",
+#             "puntaje_habitos", "puntaje_habitos_categoria",
+#
+#             # Resumen
+#             "estado", "observaciones", "mejoras_sugeridas",
+#             "puntaje_total", "puntaje_total_categoria",
+#             "fecha_entrevista","entrevista"  # ✅ agregado aquí
+#         ]
+#
+#         campos = []
+#         valores = []
+#
+#         for campo in campos_validos:
+#             if campo in flat_dict:  # 👈 ahora busca en el dict aplanado
+#                 valor = flat_dict[campo]
+#                 if isinstance(valor, dict):
+#                     valor = json.dumps(valor)  # 🔑 serializa si es jsonb
+#                 campos.append(f"{campo} = %s")
+#                 valores.append(valor)
+#
+#         if not campos:
+#             raise ValueError("⚠️ No se enviaron campos válidos para actualizar")
+#
+#         campos.append("actualizado_en = NOW()")
+#         valores.append(creador_id)
+#
+#         query = f"""
+#             UPDATE perfil_creador
+#             SET {', '.join(campos)}
+#             WHERE creador_id = %s;
+#         """
+#
+#         with psycopg2.connect(INTERNAL_DATABASE_URL) as conn:
+#             with conn.cursor() as cur:
+#                 cur.execute(query, valores)
+#                 conn.commit()
+#                 print(f"✅ Datos del perfil del creador {creador_id} actualizados.")
+#
+#     except Exception as e:
+#         print(f"❌ Error al actualizar datos del perfil del creador {creador_id}: {e}")
+#         raise
 
 
 def actualizar_perfil_creador_(creador_id, evaluacion_dict):
