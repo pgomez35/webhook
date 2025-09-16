@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
+from DataBase import get_connection
 
 SECRET_KEY = "CLAVE_SECRETA"
 ALGORITHM = "HS256"
@@ -25,23 +26,54 @@ def crear_token_jwt(usuario: dict) -> str:
 def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        print("DEBUG payload:", payload)
-
         user_id = payload.get("sub")
-        nombre = payload.get("nombre")
-        rol = payload.get("rol")
-
-        if user_id is None or nombre is None or rol is None:
+        if not user_id:
             raise HTTPException(status_code=401, detail="Token inválido")
 
+        # Conexión a la base
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, nombre_completo, rol, activo FROM admin_usuario WHERE id = %s",
+            (user_id,)
+        )
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if not row or not row[3]:  # activo = False
+            raise HTTPException(status_code=401, detail="Usuario no encontrado o inactivo")
+
         return {
-            "id": int(user_id),
-            "nombre": nombre,
-            "rol": rol
+            "id": row[0],
+            "nombre": row[1],
+            "rol": row[2]
         }
 
     except JWTError:
         raise HTTPException(status_code=401, detail="Token inválido")
+
+
+# def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
+#     try:
+#         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+#         print("DEBUG payload:", payload)
+#
+#         user_id = payload.get("sub")
+#         nombre = payload.get("nombre")
+#         rol = payload.get("rol")
+#
+#         if user_id is None or nombre is None or rol is None:
+#             raise HTTPException(status_code=401, detail="Token inválido")
+#
+#         return {
+#             "id": int(user_id),
+#             "nombre": nombre,
+#             "rol": rol
+#         }
+#
+#     except JWTError:
+#         raise HTTPException(status_code=401, detail="Token inválido")
 
 
 def get_usuario_actual_id(token: str = Depends(oauth2_scheme)) -> int:
