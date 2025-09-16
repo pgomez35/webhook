@@ -1702,11 +1702,32 @@ def actualizar_datos_perfil_creador(creador_id, datos_dict):
         print("📦 Dict después de aplanar:", flat_dict)
 
         campos_validos = [
-            # ...
+            # Datos personales y generales
+            "nombre", "edad", "genero", "pais", "ciudad", "zona_horaria",
+            "idioma", "campo_estudios", "estudios", "actividad_actual",
+            "puntaje_general", "puntaje_general_categoria",
+
+            # Evaluación manual/cualitativa
+            "biografia", "apariencia", "engagement", "calidad_contenido",
+            "potencial_estimado", "usuario_evalua", "biografia_sugerida",
+            "eval_biografia", "eval_foto", "metadata_videos",
+            "puntaje_manual", "puntaje_manual_categoria",
+
+            # Estadísticas del perfil
+            "seguidores", "siguiendo", "videos", "likes",
+            "duracion_emisiones", "dias_emisiones",
+            "puntaje_estadistica", "puntaje_estadistica_categoria",
+
+            # Preferencias y hábitos
+            "tiempo_disponible", "frecuencia_lives",
             "experiencia_otras_plataformas", "experiencia_otras_plataformas_otro_nombre",
             "intereses", "tipo_contenido", "horario_preferido", "intencion_trabajo",
             "puntaje_habitos", "puntaje_habitos_categoria",
-            # ...
+
+            # Resumen
+            "estado", "observaciones", "mejoras_sugeridas",
+            "puntaje_total", "puntaje_total_categoria",
+            "fecha_entrevista","entrevista"  # ✅ agregado aquí
         ]
 
         campos = []
