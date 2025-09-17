@@ -726,19 +726,22 @@ class EvaluacionOutput(BaseModel):
 
 # === Schema de salida ===
 class PerfilCreadorEntrevistaInvitacionOutput(BaseModel):
-    estado_evaluacion: Optional[str]
-    fecha_evaluacion_inicial: Optional[datetime]
+    apto: bool
+    entrevista: Optional[bool]
     fecha_entrevista: Optional[datetime]
     calificacion_entrevista: Optional[bool]
     invitacion_tiktok: Optional[bool]
-    fecha_invitacion_tiktok: Optional[date]
     acepta_invitacion: Optional[bool]
     fecha_incorporacion: Optional[date]
+    observaciones_finales: Optional[str] = None  # 🔹 corregido
 
 
 class PerfilCreadorEntrevistaUpdateInput(BaseModel):
+    apto: bool
+    entrevista: Optional[bool]
+    fecha_entrevista: Optional[datetime]
     calificacion_entrevista: Optional[bool] = None
     invitacion_tiktok: Optional[bool] = None
-    fecha_invitacion_tiktok: Optional[date] = None
     acepta_invitacion: Optional[bool] = None
     fecha_incorporacion: Optional[date] = None
+    observaciones_finales: Optional[str] = None  # 🔹 corregido

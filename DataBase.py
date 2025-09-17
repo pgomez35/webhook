@@ -1554,16 +1554,14 @@ def obtener_perfil_creador_entrevista_invitacion(creador_id):
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT
-                    estado_evaluacion,
-                    fecha_evaluacion_inicial,
-                    usuario_evaluador_inicial,
+                    apto,
                     entrevista,
                     fecha_entrevista,
                     calificacion_entrevista,
                     invitacion_tiktok,
-                    fecha_invitacion_tiktok,
                     acepta_invitacion,
-                    fecha_incorporacion
+                    fecha_incorporacion,
+                    observaciones_finales   -- 🔹 agregado
                 FROM perfil_creador
                 WHERE creador_id = %s
             """, (creador_id,))
