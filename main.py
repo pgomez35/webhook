@@ -1521,6 +1521,73 @@ async def obtener_usuario_por_username(username: str):
 
     return usuario
 
+@app.post("/login")
+async def login_usuario(credentials: dict = Body(...)):
+    username = credentials.get("username", "").strip().lower()
+    password = credentials.get("password", "")
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Username y password son requeridos")
+
+    # validar usuario
+    resultado = autenticar_admin_usuario(username, password)  # tu función existente
+    if resultado["status"] != "ok":
+        raise HTTPException(status_code=401, detail=resultado["mensaje"])
+
+    usuario = resultado["usuario"]
+
+    # generar tokens
+    access_token = crear_access_token(usuario)
+    refresh_token = crear_refresh_token(usuario)
+
+    return {
+        "usuario": usuario,
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "mensaje": "Login exitoso"
+    }
+
+
+@app.post("/refresh")
+async def refresh_token(data: dict = Body(...)):
+    token = data.get("refresh_token")
+    if not token:
+        raise HTTPException(status_code=400, detail="refresh_token requerido")
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("tipo") != "refresh":
+            raise HTTPException(status_code=401, detail="Token inválido")
+
+        user_id = payload.get("sub")
+
+        # validar usuario en DB
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, nombre_completo, rol, activo FROM admin_usuario WHERE id = %s",
+            (user_id,)
+        )
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if not row or not row[3]:
+            raise HTTPException(status_code=401, detail="Usuario no encontrado o inactivo")
+
+        usuario = {"id": row[0], "nombre_completo": row[1], "rol": row[2]}
+        new_access_token = crear_access_token(usuario)
+
+        return {
+            "access_token": new_access_token,
+            "token_type": "bearer"
+        }
+
+    except JWTError:
+        raise HTTPException(status_code=401, detail="refresh_token inválido")
+
+
+
 # @app.post("/api/admin-usuario/refresh")
 # def refresh_token(usuario_actual: dict = Depends(obtener_usuario_actual)):
 #     # Si el access_token aún no está expirado, se genera uno nuevo con el mismo usuario
@@ -1530,60 +1597,60 @@ async def obtener_usuario_por_username(username: str):
 #         "token_type": "bearer"
 #     }
 
-@app.post("/api/admin-usuario/refresh")
-def refresh_token(usuario_actual: dict = Depends(obtener_usuario_actual)):
-    user_id = usuario_actual.get("id")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Token inválido")
+# @app.post("/api/admin-usuario/refresh")
+# def refresh_token(usuario_actual: dict = Depends(obtener_usuario_actual)):
+#     user_id = usuario_actual.get("id")
+#     if not user_id:
+#         raise HTTPException(status_code=401, detail="Token inválido")
+#
+#     conn = get_connection()
+#     cursor = conn.cursor()
+#     cursor.execute(
+#         "SELECT id, nombre_completo, rol, activo FROM admin_usuario WHERE id = %s",
+#         (user_id,)
+#     )
+#     row = cursor.fetchone()
+#     cursor.close()
+#     conn.close()
+#
+#     # Validar usuario activo
+#     if not row or not row[3]:  # row[3] = activo
+#         raise HTTPException(status_code=401, detail="Usuario no encontrado o inactivo")
+#
+#     usuario = {
+#         "id": row[0],
+#         "nombre_completo": row[1],
+#         "rol": row[2]
+#     }
+#
+#     new_token = crear_token_jwt(usuario)
+#
+#     return {
+#         "access_token": new_token,
+#         "token_type": "bearer"
+#     }
 
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT id, nombre_completo, rol, activo FROM admin_usuario WHERE id = %s",
-        (user_id,)
-    )
-    row = cursor.fetchone()
-    cursor.close()
-    conn.close()
 
-    # Validar usuario activo
-    if not row or not row[3]:  # row[3] = activo
-        raise HTTPException(status_code=401, detail="Usuario no encontrado o inactivo")
-
-    usuario = {
-        "id": row[0],
-        "nombre_completo": row[1],
-        "rol": row[2]
-    }
-
-    new_token = crear_token_jwt(usuario)
-
-    return {
-        "access_token": new_token,
-        "token_type": "bearer"
-    }
-
-
-# Endpoint de login usando tus funciones y devolviendo el JWT
-@app.post("/api/admin-usuario/login")
-async def login_usuario(credentials: dict = Body(...)):
-    username = credentials.get("username", "").strip().lower()
-    password = credentials.get("password", "")
-    if not username or not password:
-        raise HTTPException(status_code=400, detail="Username y password son requeridos")
-
-    resultado = autenticar_admin_usuario(username, password)
-    if resultado["status"] != "ok":
-        raise HTTPException(status_code=401, detail=resultado["mensaje"])
-
-    usuario = resultado["usuario"]
-    token = crear_token_jwt(usuario)
-    return {
-        "usuario": usuario,
-        "access_token": token,
-        "token_type": "bearer",
-        "mensaje": "Login exitoso"
-    }
+# # Endpoint de login usando tus funciones y devolviendo el JWT
+# @app.post("/api/admin-usuario/login")
+# async def login_usuario(credentials: dict = Body(...)):
+#     username = credentials.get("username", "").strip().lower()
+#     password = credentials.get("password", "")
+#     if not username or not password:
+#         raise HTTPException(status_code=400, detail="Username y password son requeridos")
+#
+#     resultado = autenticar_admin_usuario(username, password)
+#     if resultado["status"] != "ok":
+#         raise HTTPException(status_code=401, detail=resultado["mensaje"])
+#
+#     usuario = resultado["usuario"]
+#     token = crear_token_jwt(usuario)
+#     return {
+#         "usuario": usuario,
+#         "access_token": token,
+#         "token_type": "bearer",
+#         "mensaje": "Login exitoso"
+#     }
 
 @app.put("/api/admin-usuario/cambiar-password")
 async def cambiar_password_admin(
