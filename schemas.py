@@ -491,7 +491,6 @@ class PerfilCreadorSchema(BaseModel):
 #     preferencias: PreferenciasHabitosOutput
 #     resumen: ResumenEvaluacionOutput
 
-
 # === Schema de ENTRADA (lo que envía el cliente) ===
 class DatosPersonalesInput(BaseModel):
     nombre: Optional[str] = None
@@ -505,10 +504,11 @@ class DatosPersonalesInput(BaseModel):
     estudios: Optional[str] = None
     actividad_actual: Optional[str] = None
 
+
 # === Schema de SALIDA (lo que devuelve la API) ===
 class DatosPersonalesOutput(DatosPersonalesInput):
-    status: str
-    mensaje: str
+    status: Optional[str] = None
+    mensaje: Optional[str] = None
     puntaje_general: Optional[float] = None
     puntaje_general_categoria: Optional[str] = None
 
@@ -567,12 +567,13 @@ class PreferenciasHabitosOutput(PreferenciasHabitosInput):
 
 # === Sección: Resumen ===
 class ResumenEvaluacionInput(BaseModel):
-    estado: str
+    estado: Optional[str] = None  # 👈 para que no sea requerido
     puntaje_total: Optional[float] = None
     puntaje_total_categoria: Optional[str] = None
 
 
 class ResumenEvaluacionOutput(ResumenEvaluacionInput):
+    estado: Optional[str] = None  # 👈 para que no sea requerido
     status: Optional[str] = None
     mensaje: Optional[str] = None
 
