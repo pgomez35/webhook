@@ -1521,7 +1521,7 @@ async def obtener_usuario_por_username(username: str):
 
     return usuario
 
-@app.post("/login")
+@app.post("/api/admin-usuario/login")
 async def login_usuario(credentials: dict = Body(...)):
     username = credentials.get("username", "").strip().lower()
     password = credentials.get("password", "")
@@ -1547,8 +1547,7 @@ async def login_usuario(credentials: dict = Body(...)):
         "mensaje": "Login exitoso"
     }
 
-
-@app.post("/refresh")
+@app.post("/api/admin-usuario/refresh")
 async def refresh_token(data: dict = Body(...)):
     token = data.get("refresh_token")
     if not token:
