@@ -725,24 +725,45 @@ class EvaluacionOutput(BaseModel):
     usuario_evaluador_inicial: int
 
 
-# === Schema de salida ===
-class PerfilCreadorEntrevistaInvitacionOutput(BaseModel):
-    apto: bool
-    entrevista: Optional[bool]
-    fecha_entrevista: Optional[datetime]
-    calificacion_entrevista: Optional[bool]
-    invitacion_tiktok: Optional[bool]
+# INVITACIONES
+class InvitacionBase(BaseModel):
+    fecha_invitacion: Optional[date]
+    usuario_invita: Optional[int]
+    estado: Optional[str]
     acepta_invitacion: Optional[bool]
     fecha_incorporacion: Optional[date]
-    observaciones_finales: Optional[str] = None  # 🔹 corregido
+    observaciones: Optional[str]
+
+class InvitacionCreate(InvitacionBase):
+    creador_id: int
+
+class InvitacionUpdate(InvitacionBase):
+    pass
+
+class InvitacionOut(InvitacionBase):
+    id: int
+    creador_id: int
+    creado_en: datetime
 
 
-class PerfilCreadorEntrevistaUpdateInput(BaseModel):
-    apto: bool
-    entrevista: Optional[bool]
-    fecha_entrevista: Optional[datetime]
-    calificacion_entrevista: Optional[bool] = None
-    invitacion_tiktok: Optional[bool] = None
-    acepta_invitacion: Optional[bool] = None
-    fecha_incorporacion: Optional[date] = None
-    observaciones_finales: Optional[str] = None  # 🔹 corregido
+
+# ENTREVISTAS
+class EntrevistaBase(BaseModel):
+    fecha_programada: Optional[datetime]
+    usuario_programa: Optional[int]
+    realizada: Optional[bool] = False
+    fecha_realizada: Optional[datetime]
+    usuario_evalua: Optional[int]
+    resultado: Optional[str]
+    observaciones: Optional[str]
+
+class EntrevistaCreate(EntrevistaBase):
+    creador_id: int
+
+class EntrevistaUpdate(EntrevistaBase):
+    pass
+
+class EntrevistaOut(EntrevistaBase):
+    id: int
+    creador_id: int
+    creado_en: datetime

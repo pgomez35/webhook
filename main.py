@@ -2582,43 +2582,114 @@ def actualizar_evaluacion_inicial(
         raise HTTPException(status_code=500, detail="Error interno al actualizar la evaluación")
 
 
-# === Endpoint ===
-@app.get("/api/perfil_creador/{creador_id}/entrevista_invitacion",
-         tags=["Resumen"],
-         response_model=PerfilCreadorEntrevistaInvitacionOutput)
-def get_perfil_creador_entrevista_invitacion(creador_id: int):
-    try:
-        perfil = obtener_perfil_creador_entrevista_invitacion(creador_id)
-        if not perfil:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No se encontró perfil_creador con id {creador_id}"
-            )
-        return perfil
-    except HTTPException as he:
-        raise he
-    except Exception as e:
-        print(f"❌ Error en get_perfil_creador_entrevista_invitacion: {e}")
-        raise HTTPException(status_code=500, detail="Error interno al obtener datos de entrevista/invitación")
+# # === Endpoint ===
+# @app.get("/api/perfil_creador/{creador_id}/entrevista_invitacion",
+#          tags=["Resumen"],
+#          response_model=PerfilCreadorEntrevistaInvitacionOutput)
+# def get_perfil_creador_entrevista_invitacion(creador_id: int):
+#     try:
+#         perfil = obtener_perfil_creador_entrevista_invitacion(creador_id)
+#         if not perfil:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail=f"No se encontró perfil_creador con id {creador_id}"
+#             )
+#         return perfil
+#     except HTTPException as he:
+#         raise he
+#     except Exception as e:
+#         print(f"❌ Error en get_perfil_creador_entrevista_invitacion: {e}")
+#         raise HTTPException(status_code=500, detail="Error interno al obtener datos de entrevista/invitación")
+#
+# @app.put(
+#     "/api/perfil_creador/{creador_id}/entrevista",
+#     tags=["Resumen"]
+# )
+# def put_perfil_creador_entrevista(
+#     creador_id: int,
+#     datos: PerfilCreadorEntrevistaUpdateInput
+# ):
+#     data_dict = datos.dict(exclude_unset=True)
+#     if not data_dict:
+#         raise HTTPException(status_code=400, detail="No se enviaron datos para actualizar")
+#
+#     actualizado = actualizar_perfil_creador_entrevista(creador_id, data_dict)
+#     if not actualizado:
+#         raise HTTPException(status_code=500, detail="Error al actualizar los datos")
+#
+#     return {"status": "ok", "mensaje": "Datos de entrevista/invitación actualizados correctamente"}
 
-@app.put(
-    "/api/perfil_creador/{creador_id}/entrevista",
-    tags=["Resumen"]
-)
-def put_perfil_creador_entrevista(
-    creador_id: int,
-    datos: PerfilCreadorEntrevistaUpdateInput
-):
+
+# Endpoint POST
+@app.post("/api/entrevistas/", response_model=EntrevistaOut, tags=["Entrevistas"])
+def crear_entrevista(datos: EntrevistaCreate):
+    data_dict = datos.dict(exclude_unset=True)
+    if not data_dict:
+        raise HTTPException(status_code=400, detail="No se enviaron datos para crear la entrevista")
+
+    resultado = insertar_entrevista(data_dict)
+    if not resultado:
+        raise HTTPException(status_code=500, detail="Error al crear la entrevista")
+
+    # Devolver todos los datos, incluyendo el id y creado_en
+    return EntrevistaOut(**data_dict, **resultado)
+
+# Endpoint GET
+@app.get("/api/entrevistas/{creador_id}", response_model=List[EntrevistaOut], tags=["Entrevistas"])
+def listar_entrevistas(creador_id: int):
+    entrevistas = obtener_entrevistas_por_creador(creador_id)
+    if entrevistas is None:
+        raise HTTPException(status_code=500, detail="Error al obtener entrevistas")
+    return entrevistas
+
+# Endpoint PUT
+@app.put("/api/entrevistas/{entrevista_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
+def actualizar_entrevista(entrevista_id: int, datos: EntrevistaUpdate):
     data_dict = datos.dict(exclude_unset=True)
     if not data_dict:
         raise HTTPException(status_code=400, detail="No se enviaron datos para actualizar")
 
-    actualizado = actualizar_perfil_creador_entrevista(creador_id, data_dict)
-    if not actualizado:
-        raise HTTPException(status_code=500, detail="Error al actualizar los datos")
+    resultado = actualizar_entrevista_por_id(entrevista_id, data_dict)
+    if not resultado:
+        raise HTTPException(status_code=404, detail="No se encontró la entrevista o no se pudo actualizar")
 
-    return {"status": "ok", "mensaje": "Datos de entrevista/invitación actualizados correctamente"}
+    return resultado
 
+
+# Endpoint POST
+@app.post("/api/invitaciones/", response_model=InvitacionOut, tags=["Invitaciones"])
+def crear_invitacion(datos: InvitacionCreate):
+    data_dict = datos.dict(exclude_unset=True)
+    if not data_dict:
+        raise HTTPException(status_code=400, detail="No se enviaron datos para crear la invitación")
+
+    resultado = insertar_invitacion(data_dict)
+    if not resultado:
+        raise HTTPException(status_code=500, detail="Error al crear la invitación")
+
+    return InvitacionOut(**data_dict, **resultado)
+
+
+# Endpoint GET
+@app.get("/api/invitaciones/{creador_id}", response_model=List[InvitacionOut], tags=["Invitaciones"])
+def listar_invitaciones(creador_id: int):
+    invitaciones = obtener_invitaciones_por_creador(creador_id)
+    if invitaciones is None:
+        raise HTTPException(status_code=500, detail="Error al obtener invitaciones")
+    return invitaciones
+
+# Endpoint PUT
+@app.put("/api/invitaciones/{invitacion_id}", response_model=InvitacionOut, tags=["Invitaciones"])
+def actualizar_invitacion(invitacion_id: int, datos: InvitacionUpdate):
+    data_dict = datos.dict(exclude_unset=True)
+    if not data_dict:
+        raise HTTPException(status_code=400, detail="No se enviaron datos para actualizar")
+
+    resultado = actualizar_invitacion_por_id(invitacion_id, data_dict)
+    if not resultado:
+        raise HTTPException(status_code=404, detail="No se encontró la invitación o no se pudo actualizar")
+
+    return resultado
 
 # endpoint
 # @app.put("/perfil_creador/{creador_id}/evaluacion", response_model=EvaluacionOutput)
