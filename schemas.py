@@ -745,17 +745,15 @@ class InvitacionOut(InvitacionBase):
     creador_id: int
     creado_en: datetime
 
-
-
 # ENTREVISTAS
 class EntrevistaBase(BaseModel):
-    fecha_programada: Optional[datetime]
-    usuario_programa: Optional[int]
+    fecha_programada: Optional[datetime] = None
+    usuario_programa: Optional[int] = None
     realizada: Optional[bool] = False
-    fecha_realizada: Optional[datetime]
-    usuario_evalua: Optional[int]
-    resultado: Optional[str]
-    observaciones: Optional[str]
+    fecha_realizada: Optional[datetime] = None
+    usuario_evalua: Optional[int] = None
+    resultado: Optional[str] = None
+    observaciones: Optional[str] = None
 
 class EntrevistaCreate(EntrevistaBase):
     creador_id: int
