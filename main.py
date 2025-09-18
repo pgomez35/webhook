@@ -2634,8 +2634,15 @@ def actualizar_evaluacion_inicial(
     # # Devolver todos los datos, incluyendo el id y creado_en
     # return EntrevistaOut(**data_dict, **resultado)
 
+# Endpoint GET
+@app.get("/api/entrevistas/{creador_id}", response_model=List[EntrevistaOut], tags=["Entrevistas"])
+def listar_entrevistas(creador_id: int):
+    entrevistas = obtener_entrevistas_por_creador(creador_id)
+    if entrevistas is None:
+        raise HTTPException(status_code=500, detail="Error al obtener entrevistas")
+    return entrevistas
 
-# Endpoint POST (FIX)
+
 @app.post("/entrevistas/", response_model=EntrevistaOut)
 def crear_entrevista(
     datos: EntrevistaCreate,
@@ -2645,40 +2652,30 @@ def crear_entrevista(
     if not usuario_id:
         raise HTTPException(status_code=401, detail="Usuario no autorizado")
 
-    # ✅ Convertir el modelo Pydantic a dict (solo campos enviados)
+    # ✅ convertir a dict (solo campos enviados)
     payload = datos.dict(exclude_unset=True)
 
-    # ✅ Asignar automáticamente quién programa la entrevista
+    # ✅ setear quién programa automáticamente
     payload["usuario_programa"] = usuario_id
 
-    # ✅ Defaults seguros (evitan 422/valores nulos molestos)
+    # ✅ defaults coherentes
     payload.setdefault("realizada", False)
     payload.setdefault("resultado", "sin evaluar")
-    payload.setdefault("observaciones", "")
-    # fecha_realizada/usuario_evalua solo si realizada=True
-    if not payload.get("realizada"):
-        payload.pop("fecha_realizada", None)
-        payload.pop("usuario_evalua", None)
+    payload.setdefault("observaciones", None)
 
-    # ⬇️ insertar_entrevista espera dict
+    # Si no está realizada, garantizamos None en campos “de realizada”
+    if not payload.get("realizada"):
+        payload["fecha_realizada"] = None
+        payload["usuario_evalua"] = None
+
+    # ⬇ insertar_entrevista espera dict
     resultado = insertar_entrevista(payload)
     if not resultado:
         raise HTTPException(status_code=500, detail="Error al crear la entrevista")
 
-    # ✅ Unir lo enviado con lo retornado por la DB (id, creado_en)
-    return EntrevistaOut(**payload, **resultado)
-
-
-
-
-# Endpoint GET
-@app.get("/api/entrevistas/{creador_id}", response_model=List[EntrevistaOut], tags=["Entrevistas"])
-def listar_entrevistas(creador_id: int):
-    entrevistas = obtener_entrevistas_por_creador(creador_id)
-    if entrevistas is None:
-        raise HTTPException(status_code=500, detail="Error al obtener entrevistas")
-    return entrevistas
-
+    # ✅ devolver unión (id, creado_en vienen en resultado)
+    # Pydantic v2:
+    return EntrevistaOut.model_validate({**payload, **resultado})
 
 @app.put("/entrevistas/{entrevista_id}", response_model=EntrevistaOut)
 def actualizar_entrevista(
@@ -2692,7 +2689,6 @@ def actualizar_entrevista(
 
     data_dict = datos.dict(exclude_unset=True)
 
-    # Si marcan realizada=True y no viene evaluador/fecha_realizada, los seteo aquí
     if data_dict.get("realizada"):
         data_dict.setdefault("usuario_evalua", usuario_id)
         data_dict.setdefault("fecha_realizada", datetime.utcnow())
@@ -2701,7 +2697,7 @@ def actualizar_entrevista(
     if not actualizado:
         raise HTTPException(status_code=404, detail="Entrevista no encontrada")
 
-    return EntrevistaOut(**actualizado)
+    return EntrevistaOut.model_validate(actualizado)
 
 
 @app.post("/invitaciones/", response_model=InvitacionOut)
