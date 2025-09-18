@@ -2620,19 +2620,41 @@ def actualizar_evaluacion_inicial(
 #     return {"status": "ok", "mensaje": "Datos de entrevista/invitación actualizados correctamente"}
 
 
-# Endpoint POST
-@app.post("/api/entrevistas/", response_model=EntrevistaOut, tags=["Entrevistas"])
-def crear_entrevista(datos: EntrevistaCreate):
-    data_dict = datos.dict(exclude_unset=True)
-    if not data_dict:
-        raise HTTPException(status_code=400, detail="No se enviaron datos para crear la entrevista")
+# # Endpoint POST
+# @app.post("/api/entrevistas/", response_model=EntrevistaOut, tags=["Entrevistas"])
+# def crear_entrevista(datos: EntrevistaCreate):
+#     data_dict = datos.dict(exclude_unset=True)
+#     if not data_dict:
+#         raise HTTPException(status_code=400, detail="No se enviaron datos para crear la entrevista")
+#
+    # resultado = insertar_entrevista(data_dict)
+    # if not resultado:
+    #     raise HTTPException(status_code=500, detail="Error al crear la entrevista")
+    #
+    # # Devolver todos los datos, incluyendo el id y creado_en
+    # return EntrevistaOut(**data_dict, **resultado)
 
-    resultado = insertar_entrevista(data_dict)
+
+@app.post("/entrevistas/", response_model=EntrevistaOut)
+def crear_entrevista(
+    datos: EntrevistaCreate,
+    usuario_actual: dict = Depends(obtener_usuario_actual)
+):
+    usuario_id = usuario_actual.get("id")
+    if not usuario_id:
+        raise HTTPException(status_code=401, detail="Usuario no autorizado")
+
+    # Asignar automáticamente el usuario que programa la entrevista
+    datos.usuario_programa = usuario_id
+
+    resultado = insertar_entrevista(datos)
     if not resultado:
         raise HTTPException(status_code=500, detail="Error al crear la entrevista")
 
-    # Devolver todos los datos, incluyendo el id y creado_en
-    return EntrevistaOut(**data_dict, **resultado)
+    # Unir los campos originales con lo que devolvió la DB (id, creado_en, etc.)
+    return EntrevistaOut(**datos.dict(), **resultado)
+
+
 
 # Endpoint GET
 @app.get("/api/entrevistas/{creador_id}", response_model=List[EntrevistaOut], tags=["Entrevistas"])
@@ -2642,32 +2664,74 @@ def listar_entrevistas(creador_id: int):
         raise HTTPException(status_code=500, detail="Error al obtener entrevistas")
     return entrevistas
 
-# Endpoint PUT
-@app.put("/api/entrevistas/{entrevista_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
-def actualizar_entrevista(entrevista_id: int, datos: EntrevistaUpdate):
+# # Endpoint PUT
+# @app.put("/api/entrevistas/{entrevista_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
+# def actualizar_entrevista(entrevista_id: int, datos: EntrevistaUpdate):
+#     data_dict = datos.dict(exclude_unset=True)
+#     if not data_dict:
+#         raise HTTPException(status_code=400, detail="No se enviaron datos para actualizar")
+#
+#     resultado = actualizar_entrevista_por_id(entrevista_id, data_dict)
+#     if not resultado:
+#         raise HTTPException(status_code=404, detail="No se encontró la entrevista o no se pudo actualizar")
+#
+#     return resultado
+@app.put("/entrevistas/{entrevista_id}", response_model=EntrevistaOut)
+def actualizar_entrevista(
+    entrevista_id: int,
+    datos: EntrevistaUpdate,
+    usuario_actual: dict = Depends(obtener_usuario_actual)
+):
+    usuario_id = usuario_actual.get("id")
+    if not usuario_id:
+        raise HTTPException(status_code=401, detail="Usuario no autorizado")
+
     data_dict = datos.dict(exclude_unset=True)
-    if not data_dict:
-        raise HTTPException(status_code=400, detail="No se enviaron datos para actualizar")
 
-    resultado = actualizar_entrevista_por_id(entrevista_id, data_dict)
-    if not resultado:
-        raise HTTPException(status_code=404, detail="No se encontró la entrevista o no se pudo actualizar")
+    # Si el update incluye que se realizó la entrevista, asignamos evaluador automáticamente
+    if data_dict.get("realizada") and not data_dict.get("usuario_evalua"):
+        data_dict["usuario_evalua"] = usuario_id
 
-    return resultado
+    actualizado = actualizar_entrevista_por_id(entrevista_id, data_dict)
+    if not actualizado:
+        raise HTTPException(status_code=404, detail="Entrevista no encontrada")
+
+    # `actualizado` debe contener todos los campos necesarios para EntrevistaOut
+    return EntrevistaOut(**actualizado)
 
 
-# Endpoint POST
-@app.post("/api/invitaciones/", response_model=InvitacionOut, tags=["Invitaciones"])
-def crear_invitacion(datos: InvitacionCreate):
-    data_dict = datos.dict(exclude_unset=True)
-    if not data_dict:
-        raise HTTPException(status_code=400, detail="No se enviaron datos para crear la invitación")
+# # Endpoint POST
+# @app.post("/api/invitaciones/", response_model=InvitacionOut, tags=["Invitaciones"])
+# def crear_invitacion(datos: InvitacionCreate):
+#     data_dict = datos.dict(exclude_unset=True)
+#     if not data_dict:
+#         raise HTTPException(status_code=400, detail="No se enviaron datos para crear la invitación")
+#
+    # resultado = insertar_invitacion(data_dict)
+    # if not resultado:
+    #     raise HTTPException(status_code=500, detail="Error al crear la invitación")
+    #
+    # return InvitacionOut(**data_dict, **resultado)
 
-    resultado = insertar_invitacion(data_dict)
+@app.post("/invitaciones/", response_model=InvitacionOut)
+def crear_invitacion(
+    datos: InvitacionCreate,
+    usuario_actual: dict = Depends(obtener_usuario_actual)
+):
+    usuario_id = usuario_actual.get("id")
+    if not usuario_id:
+        raise HTTPException(status_code=401, detail="Usuario no autorizado")
+
+    # Construir payload con el usuario que invita
+    invitacion_data = datos.dict()
+    invitacion_data["usuario_invita"] = usuario_id
+
+    resultado = insertar_invitacion(invitacion_data)
     if not resultado:
         raise HTTPException(status_code=500, detail="Error al crear la invitación")
 
-    return InvitacionOut(**data_dict, **resultado)
+    # Combinar datos originales con los retornados (ej. id, timestamps, etc.)
+    return InvitacionOut(**resultado)
 
 
 # Endpoint GET
@@ -2678,18 +2742,44 @@ def listar_invitaciones(creador_id: int):
         raise HTTPException(status_code=500, detail="Error al obtener invitaciones")
     return invitaciones
 
-# Endpoint PUT
-@app.put("/api/invitaciones/{invitacion_id}", response_model=InvitacionOut, tags=["Invitaciones"])
-def actualizar_invitacion(invitacion_id: int, datos: InvitacionUpdate):
-    data_dict = datos.dict(exclude_unset=True)
-    if not data_dict:
-        raise HTTPException(status_code=400, detail="No se enviaron datos para actualizar")
+# # Endpoint PUT
+# @app.put("/api/invitaciones/{invitacion_id}", response_model=InvitacionOut, tags=["Invitaciones"])
+# def actualizar_invitacion(invitacion_id: int, datos: InvitacionUpdate):
+#     data_dict = datos.dict(exclude_unset=True)
+#     if not data_dict:
+#         raise HTTPException(status_code=400, detail="No se enviaron datos para actualizar")
+#
+    # resultado = actualizar_invitacion_por_id(invitacion_id, data_dict)
+    # if not resultado:
+    #     raise HTTPException(status_code=404, detail="No se encontró la invitación o no se pudo actualizar")
+    #
+    # return resultado
 
-    resultado = actualizar_invitacion_por_id(invitacion_id, data_dict)
+@app.put("/invitaciones/{invitacion_id}", response_model=InvitacionOut)
+def actualizar_invitacion(
+    invitacion_id: int,
+    datos: InvitacionUpdate,
+    usuario_actual: dict = Depends(obtener_usuario_actual)
+):
+    usuario_id = usuario_actual.get("id")
+    if not usuario_id:
+        raise HTTPException(status_code=401, detail="Usuario no autorizado")
+
+    # Convertir a dict para manipular sin mutar el modelo Pydantic
+    update_data = datos.dict(exclude_unset=True)
+
+    # Si cambia el estado, registramos el usuario que hizo la acción
+    if "estado" in update_data:
+        update_data["usuario_accion"] = usuario_id  # 👈 más claro que usuario_invita
+
+    resultado = actualizar_invitacion_por_id(invitacion_id, update_data)
     if not resultado:
-        raise HTTPException(status_code=404, detail="No se encontró la invitación o no se pudo actualizar")
+        raise HTTPException(
+            status_code=404,
+            detail="No se encontró la invitación o no se pudo actualizar"
+        )
 
-    return resultado
+    return InvitacionOut(**resultado)
 
 # endpoint
 # @app.put("/perfil_creador/{creador_id}/evaluacion", response_model=EvaluacionOutput)
