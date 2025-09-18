@@ -2021,9 +2021,15 @@ def actualizar_evaluacion_creador(creador_id: int, datos: dict):
             "NO APTO": 3,
             "INVITACION TIKTOK": 4
         }
-        estado_id = estado_map.get(datos["estado_evaluacion"].upper())
-        if estado_id is None:
-            raise ValueError(f"Estado_evaluacion inválido: {datos['estado_evaluacion']}")
+
+        # Tomar el valor de forma segura
+        estado_raw = datos.get("estado_evaluacion")
+
+        # Normalizar (quita espacios y mayúsculas)
+        estado_str = estado_raw.strip().upper() if estado_raw else None
+
+        # Si no encuentra el estado, usa un número por defecto (ejemplo: 99)
+        estado_id = estado_map.get(estado_str, 99)
 
         fecha_actual = datetime.now()
 
@@ -2317,6 +2323,40 @@ def actualizar_invitacion_por_id(invitacion_id: int, datos: dict):
         return None
     finally:
         conn.close()
+
+ESTADO_MAP = {
+    "ENTREVISTA": 2,
+    "NO APTO": 3,
+    "INVITACION TIKTOK": 4,
+}
+ESTADO_DEFAULT = 99  # si te mandan algo desconocido
+
+def actualizar_estado_creador(creador_id: int, estado_id: int):
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            UPDATE creadores
+               SET estado_id = %s
+             WHERE id = %s
+         RETURNING id, estado_id
+        """, (estado_id, creador_id))
+        row = cur.fetchone()
+        conn.commit()
+        if not row:
+            return None
+        return {"id": row[0], "estado_id": row[1]}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+
+
+
 
 
 

@@ -2582,58 +2582,6 @@ def actualizar_evaluacion_inicial(
         raise HTTPException(status_code=500, detail="Error interno al actualizar la evaluación")
 
 
-# # === Endpoint ===
-# @app.get("/api/perfil_creador/{creador_id}/entrevista_invitacion",
-#          tags=["Resumen"],
-#          response_model=PerfilCreadorEntrevistaInvitacionOutput)
-# def get_perfil_creador_entrevista_invitacion(creador_id: int):
-#     try:
-#         perfil = obtener_perfil_creador_entrevista_invitacion(creador_id)
-#         if not perfil:
-#             raise HTTPException(
-#                 status_code=404,
-#                 detail=f"No se encontró perfil_creador con id {creador_id}"
-#             )
-#         return perfil
-#     except HTTPException as he:
-#         raise he
-#     except Exception as e:
-#         print(f"❌ Error en get_perfil_creador_entrevista_invitacion: {e}")
-#         raise HTTPException(status_code=500, detail="Error interno al obtener datos de entrevista/invitación")
-#
-# @app.put(
-#     "/api/perfil_creador/{creador_id}/entrevista",
-#     tags=["Resumen"]
-# )
-# def put_perfil_creador_entrevista(
-#     creador_id: int,
-#     datos: PerfilCreadorEntrevistaUpdateInput
-# ):
-#     data_dict = datos.dict(exclude_unset=True)
-#     if not data_dict:
-#         raise HTTPException(status_code=400, detail="No se enviaron datos para actualizar")
-#
-#     actualizado = actualizar_perfil_creador_entrevista(creador_id, data_dict)
-#     if not actualizado:
-#         raise HTTPException(status_code=500, detail="Error al actualizar los datos")
-#
-#     return {"status": "ok", "mensaje": "Datos de entrevista/invitación actualizados correctamente"}
-
-
-# # Endpoint POST
-# @app.post("/api/entrevistas/", response_model=EntrevistaOut, tags=["Entrevistas"])
-# def crear_entrevista(datos: EntrevistaCreate):
-#     data_dict = datos.dict(exclude_unset=True)
-#     if not data_dict:
-#         raise HTTPException(status_code=400, detail="No se enviaron datos para crear la entrevista")
-#
-    # resultado = insertar_entrevista(data_dict)
-    # if not resultado:
-    #     raise HTTPException(status_code=500, detail="Error al crear la entrevista")
-    #
-    # # Devolver todos los datos, incluyendo el id y creado_en
-    # return EntrevistaOut(**data_dict, **resultado)
-
 # Endpoint GET
 @app.get("/api/entrevistas/{creador_id}", response_model=List[EntrevistaOut], tags=["Entrevistas"])
 def listar_entrevistas(creador_id: int):
@@ -2756,3 +2704,41 @@ def actualizar_invitacion(
 
     return InvitacionOut(**resultado)
 
+
+@app.put("/api/creadores/{creador_id}/estado",
+         tags=["Creadores"],
+         response_model=EstadoCreadorOut)
+def actualizar_estado_creador_endpoint(
+    creador_id: int,
+    datos: EstadoCreadorIn = Body(...),
+    usuario_actual: dict = Depends(obtener_usuario_actual)
+):
+    # Auth básica
+    if not usuario_actual or not usuario_actual.get("id"):
+        raise HTTPException(status_code=401, detail="Usuario no autorizado")
+
+    # Resolver estado_id
+    estado_id: Optional[int] = None
+
+    if datos.estado_id is not None:
+        estado_id = int(datos.estado_id)
+
+    elif datos.estado_evaluacion:
+        estado_id = ESTADO_MAP.get(datos.estado_evaluacion, ESTADO_DEFAULT)
+
+    else:
+        # nada enviado
+        raise HTTPException(
+            status_code=400,
+            detail="Debes enviar 'estado_id' o 'estado_evaluacion'."
+        )
+
+    # Actualizar en DB
+    res = actualizar_estado_creador(creador_id, estado_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="Creador no encontrado")
+
+    return EstadoCreadorOut(
+        **res,
+        mensaje="Estado del creador actualizado correctamente"
+    )

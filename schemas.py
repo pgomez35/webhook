@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field,field_validator
 from typing import Optional, Union, Dict,List
 from datetime import datetime, date
 
@@ -765,3 +765,22 @@ class EntrevistaOut(EntrevistaBase):
     id: int
     creador_id: int
     creado_en: datetime
+
+
+class EstadoCreadorIn(BaseModel):
+    # Puedes enviar UNO de los dos:
+    estado_id: Optional[int] = None
+    estado_evaluacion: Optional[str] = None  # "ENTREVISTA" | "NO APTO" | "INVITACION TIKTOK"
+
+    @field_validator("estado_evaluacion")
+    @classmethod
+    def norm_estado(cls, v):
+        if v is None:
+            return v
+        v = v.strip()
+        return v.upper()
+
+class EstadoCreadorOut(BaseModel):
+    id: int
+    estado_id: int
+    mensaje: str
