@@ -2002,7 +2002,7 @@ def actualizar_resumen(
             puntaje_habitos_categoria=perfil.get("puntaje_habitos_categoria"),
             puntaje_total=score["puntaje_total"],
             puntaje_total_categoria=score["puntaje_total_categoria"],
-            observaciones=observaciones_totales,
+            diagnostico=observaciones_totales,
             mejoras_sugeridas=mejoras
         )
 
