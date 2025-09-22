@@ -729,6 +729,7 @@ class EvaluacionOutput(BaseModel):
 class InvitacionBase(BaseModel):
     fecha_invitacion: Optional[date]
     usuario_invita: Optional[int]
+    manager_id: Optional[int]
     estado: Optional[str]
     acepta_invitacion: Optional[bool]
     fecha_incorporacion: Optional[date]

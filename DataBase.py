@@ -2298,7 +2298,7 @@ def actualizar_invitacion_por_id(invitacion_id: int, datos: dict):
                 SET {', '.join(set_clauses)}
                 WHERE id = %s
                 RETURNING id, creador_id, fecha_revision, usuario_revision, estado,
-                          acepta_invitacion, observaciones, creado_en
+                          acepta_invitacion,manager_id, observaciones, creado_en
             """
             values.append(invitacion_id)
             cur.execute(sql, tuple(values))
