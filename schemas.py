@@ -130,7 +130,7 @@ class PerfilCreadorSchema(BaseModel):
 
     puntaje_total: Optional[float] = Field(None, ge=0, le=100)
     puntaje_total_categoria: Optional[str] = Field(None, max_length=20)
-    observaciones: Optional[str] = Field(None, max_length=500)
+    diagnostico: Optional[str] = Field(None, max_length=500)
 
     class Config:
         schema_extra = {
@@ -169,7 +169,7 @@ class PerfilCreadorSchema(BaseModel):
                 "mejoras_sugeridas_perfil": "Definir una línea temática clara.",
                 "puntaje_total": 83.0,
                 "puntaje_total_categoria": "Alto",
-                "observaciones": "Perfil con gran potencial de crecimiento."
+                "diagnostico": "Perfil con gran potencial de crecimiento."
             }
         }
 # # === Schema de ENTRADA (lo que envía el cliente) ===
@@ -592,7 +592,7 @@ class ResumenEvaluacionOutput(ResumenEvaluacionInput):
     puntaje_total: Optional[float] = None
     puntaje_total_categoria: Optional[str] = None
 
-    observaciones: Optional[str] = None
+    diagnostico: Optional[str] = None
     mejoras_sugeridas: Optional[str] = None
     fecha_entrevista: Optional[datetime] = None
     entrevista: Optional[bool] = False  # 👈 agregado aquí
