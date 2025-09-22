@@ -1529,7 +1529,7 @@ def obtener_perfil_creador(creador_id):
                 actividad_actual,
                 puntaje_general_categoria,
                 idioma,
-                observaciones,
+                diagnostico,
                 mejoras_sugeridas,
                 fecha_entrevista,
                 entrevista,
@@ -1722,7 +1722,7 @@ def actualizar_datos_perfil_creador(creador_id, datos_dict):
             "puntaje_habitos", "puntaje_habitos_categoria",
 
             # Resumen
-            "estado", "observaciones", "mejoras_sugeridas",
+            "estado", "diagnostico", "mejoras_sugeridas",
             "puntaje_total", "puntaje_total_categoria",
             "fecha_entrevista","entrevista"  # ✅ agregado aquí
         ]

@@ -64,6 +64,7 @@ CALENDAR_ID = os.getenv("CALENDAR_ID")
 # CALENDAR_ID = "primary" # para que sea siempre primary, pero tambien puedo configurarlo en variables del backend
 
 from perfil_creador_whatsapp import router as perfil_creador_router
+from aspirantes import router as aspirantes_router  # 👈 importar módulo nuevo
 
 # ⚙️ Inicializar FastAPI
 app = FastAPI()
@@ -71,6 +72,7 @@ app = FastAPI()
 
 # Incluir las rutas del módulo perfil_creador_whatsapp
 app.include_router(perfil_creador_router, tags=["Perfil Creador WhatsApp"])
+app.include_router(aspirantes_router, tags=["Aspirantes"])  # 👈 añadir aquí
 
 # ✅ Crear carpeta persistente de audios si no existe
 AUDIO_DIR = "audios"
