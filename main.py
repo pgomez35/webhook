@@ -1543,9 +1543,10 @@ async def login_usuario(credentials: dict = Body(...)):
     refresh_token = crear_refresh_token(usuario)
 
     return TokenResponse(
-        usuario=UsuarioOut(id=usuario["id"], nombre=usuario["nombre_completo"], rol=usuario["rol"]),
+        usuario=UsuarioOut(id=usuario["id"], nombre=usuario["nombre"], rol=usuario["rol"]),
         access_token=access_token,
         refresh_token=refresh_token,
+        token_type="bearer",
         mensaje="Login exitoso"
     )
 
@@ -1568,7 +1569,7 @@ async def refresh_token(data: dict = Body(...)):
         with get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, nombre_completo, rol, activo FROM admin_usuario WHERE id = %s",
+                "SELECT id, nombre_completo AS nombre, rol, activo FROM admin_usuario WHERE id = %s",
                 (user_id,),
             )
             row = cursor.fetchone()
@@ -1576,14 +1577,15 @@ async def refresh_token(data: dict = Body(...)):
         if not row or not row[3]:
             raise HTTPException(status_code=401, detail="Usuario no encontrado o inactivo")
 
-        usuario = {"id": row[0], "nombre_completo": row[1], "rol": row[2]}
+        usuario = {"id": row[0], "nombre": row[1], "rol": row[2]}
         new_access_token = crear_access_token(usuario)
 
         # 🔹 Ahora solo devuelvo tokens
-        return {
-            "access_token": new_access_token,
-            "token_type": "bearer",
-        }
+        return TokenResponse(
+            access_token=new_access_token,
+            token_type="bearer",
+            mensaje="Access token renovado"
+        )
 
     except ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="refresh_token expirado")
@@ -1599,7 +1601,7 @@ async def get_me(usuario_actual: dict = Depends(obtener_usuario_actual)):
 
     return UsuarioOut(
         id=usuario_actual["id"],
-        nombre=usuario_actual["nombre_completo"],
+        nombre=usuario_actual["nombre"],
         rol=usuario_actual["rol"],
     )
 

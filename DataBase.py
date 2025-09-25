@@ -1069,7 +1069,7 @@ def obtener_admin_usuario_por_username(username):
         cur = conn.cursor()
         
         cur.execute("""
-            SELECT id, username, nombre_completo, email, telefono, rol, grupo, activo,
+            SELECT id, username, nombre_completo AS nombre, email, telefono, rol, grupo, activo,
                    password_hash, creado_en, actualizado_en
             FROM admin_usuario
             WHERE username = %s
@@ -1083,7 +1083,7 @@ def obtener_admin_usuario_por_username(username):
             return {
                 "id": row[0],
                 "username": row[1],
-                "nombre_completo": row[2],
+                "nombre": row[2],
                 "email": row[3],
                 "telefono": row[4],
                 "rol": row[5],
