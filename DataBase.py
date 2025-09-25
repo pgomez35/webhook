@@ -2251,8 +2251,9 @@ def obtener_invitaciones_por_creador(creador_id: int):
         conn = get_connection()
         with conn.cursor() as cur:
             sql = """
-                SELECT id, creador_id, fecha_revision, usuario_revision, estado,
-                       acepta_invitacion, observaciones, creado_en
+-- obtener_invitaciones_por_creador
+                SELECT id, creador_id, fecha_invitacion, usuario_invita, estado,
+                       acepta_invitacion, manager_id, fecha_incorporacion, observaciones, creado_en
                 FROM invitaciones
                 WHERE creador_id = %s
                 ORDER BY creado_en DESC
@@ -2294,11 +2295,12 @@ def actualizar_invitacion_por_id(invitacion_id: int, datos: dict):
                 return None  # No hay datos para actualizar
 
             sql = f"""
+                -- actualizar_invitacion_por_id
                 UPDATE invitaciones
                 SET {', '.join(set_clauses)}
                 WHERE id = %s
-                RETURNING id, creador_id, fecha_revision, usuario_revision, estado,
-                          acepta_invitacion,manager_id, observaciones, creado_en
+                RETURNING id, creador_id, fecha_invitacion, usuario_invita, estado,
+          acepta_invitacion, manager_id, fecha_incorporacion, observaciones, creado_en
             """
             values.append(invitacion_id)
             cur.execute(sql, tuple(values))
