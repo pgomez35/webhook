@@ -1523,7 +1523,8 @@ async def obtener_usuario_por_username(username: str):
 
     return usuario
 
-@app.post("/api/admin-usuario/login")
+# === LOGIN ===
+@app.post("/login", response_model=TokenResponse)
 async def login_usuario(credentials: dict = Body(...)):
     username = credentials.get("username", "").strip().lower()
     password = credentials.get("password", "")
@@ -1541,15 +1542,16 @@ async def login_usuario(credentials: dict = Body(...)):
     access_token = crear_access_token(usuario)
     refresh_token = crear_refresh_token(usuario)
 
-    return {
-        "usuario": usuario,
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer",
-        "mensaje": "Login exitoso"
-    }
+    return TokenResponse(
+        usuario=UsuarioOut(id=usuario["id"], nombre=usuario["nombre_completo"], rol=usuario["rol"]),
+        access_token=access_token,
+        refresh_token=refresh_token,
+        mensaje="Login exitoso"
+    )
 
-@app.post("/api/admin-usuario/refresh")
+
+# === REFRESH ===
+@app.post("/refresh", response_model=TokenResponse)
 async def refresh_token(data: dict = Body(...)):
     token = data.get("refresh_token")
     if not token:
@@ -1563,15 +1565,13 @@ async def refresh_token(data: dict = Body(...)):
         user_id = payload.get("sub")
 
         # validar usuario en DB
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT id, nombre_completo, rol, activo FROM admin_usuario WHERE id = %s",
-            (user_id,)
-        )
-        row = cursor.fetchone()
-        cursor.close()
-        conn.close()
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, nombre_completo, rol, activo FROM admin_usuario WHERE id = %s",
+                (user_id,)
+            )
+            row = cursor.fetchone()
 
         if not row or not row[3]:
             raise HTTPException(status_code=401, detail="Usuario no encontrado o inactivo")
@@ -1579,13 +1579,79 @@ async def refresh_token(data: dict = Body(...)):
         usuario = {"id": row[0], "nombre_completo": row[1], "rol": row[2]}
         new_access_token = crear_access_token(usuario)
 
-        return {
-            "access_token": new_access_token,
-            "token_type": "bearer"
-        }
+        return TokenResponse(
+            access_token=new_access_token,
+            token_type="bearer"
+        )
 
+    except ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="refresh_token expirado")
     except JWTError:
         raise HTTPException(status_code=401, detail="refresh_token inválido")
+
+# @app.post("/api/admin-usuario/login")
+# async def login_usuario(credentials: dict = Body(...)):
+#     username = credentials.get("username", "").strip().lower()
+#     password = credentials.get("password", "")
+#     if not username or not password:
+#         raise HTTPException(status_code=400, detail="Username y password son requeridos")
+#
+#     # validar usuario
+#     resultado = autenticar_admin_usuario(username, password)  # tu función existente
+#     if resultado["status"] != "ok":
+#         raise HTTPException(status_code=401, detail=resultado["mensaje"])
+#
+#     usuario = resultado["usuario"]
+#
+#     # generar tokens
+#     access_token = crear_access_token(usuario)
+#     refresh_token = crear_refresh_token(usuario)
+#
+#     return {
+#         "usuario": usuario,
+#         "access_token": access_token,
+#         "refresh_token": refresh_token,
+#         "token_type": "bearer",
+#         "mensaje": "Login exitoso"
+#     }
+#
+# @app.post("/api/admin-usuario/refresh")
+# async def refresh_token(data: dict = Body(...)):
+#     token = data.get("refresh_token")
+#     if not token:
+#         raise HTTPException(status_code=400, detail="refresh_token requerido")
+#
+#     try:
+#         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+#         if payload.get("tipo") != "refresh":
+#             raise HTTPException(status_code=401, detail="Token inválido")
+#
+#         user_id = payload.get("sub")
+#
+#         # validar usuario en DB
+#         conn = get_connection()
+#         cursor = conn.cursor()
+#         cursor.execute(
+#             "SELECT id, nombre_completo, rol, activo FROM admin_usuario WHERE id = %s",
+#             (user_id,)
+#         )
+#         row = cursor.fetchone()
+#         cursor.close()
+#         conn.close()
+#
+#         if not row or not row[3]:
+#             raise HTTPException(status_code=401, detail="Usuario no encontrado o inactivo")
+#
+#         usuario = {"id": row[0], "nombre_completo": row[1], "rol": row[2]}
+#         new_access_token = crear_access_token(usuario)
+#
+#         return {
+#             "access_token": new_access_token,
+#             "token_type": "bearer"
+#         }
+#
+#     except JWTError:
+#         raise HTTPException(status_code=401, detail="refresh_token inválido")
 
 
 
