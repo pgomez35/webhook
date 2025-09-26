@@ -2743,6 +2743,24 @@ def obtener_entrevista(creador_id: int):
         raise HTTPException(status_code=404, detail="No existe entrevista para este creador")
     return entrevista
 
+# temporal
+@app.post("/api/entrevistas/261/debug")
+async def debug_entrevista(request: Request):
+    # Headers completos
+    headers = dict(request.headers)
+    print("DEBUG: Headers recibidos:", headers)
+
+    # Obtener token directamente
+    token = headers.get("authorization")
+    print("DEBUG: Authorization header:", token)
+
+    # Body de la petición
+    body = await request.json()
+    print("DEBUG: Body recibido:", body)
+
+    return {"message": "Debug recibido, revisa logs del backend"}
+
+
 # POST crear
 @app.post("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
 def crear_entrevista(
