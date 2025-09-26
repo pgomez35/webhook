@@ -2744,21 +2744,37 @@ def obtener_entrevista(creador_id: int):
     return entrevista
 
 # temporal
-@app.post("/api/entrevistas/261/debug")
+
+@app.post("/api/entrevistas/debug")
 async def debug_entrevista(request: Request):
+    """Endpoint temporal para debuggear headers y token"""
     # Headers completos
     headers = dict(request.headers)
-    print("DEBUG: Headers recibidos:", headers)
+    print("🔍 DEBUG: Headers recibidos:", headers)
 
     # Obtener token directamente
     token = headers.get("authorization")
-    print("DEBUG: Authorization header:", token)
+    print("🔑 DEBUG: Authorization header:", token)
 
     # Body de la petición
-    body = await request.json()
-    print("DEBUG: Body recibido:", body)
+    try:
+        body = await request.json()
+        print("📦 DEBUG: Body recibado:", body)
+    except Exception as e:
+        print("❌ DEBUG: Error al leer body:", str(e))
+        body = None
 
-    return {"message": "Debug recibido, revisa logs del backend"}
+    # Información adicional útil
+    print("🌐 DEBUG: Method:", request.method)
+    print("🛣️ DEBUG: URL:", str(request.url))
+    print("🖥️ DEBUG: Client:", request.client)
+
+    return {
+        "message": "Debug recibido, revisa logs del backend",
+        "headers_count": len(headers),
+        "has_auth": "authorization" in headers,
+        "token_preview": token[:20] + "..." if token else None
+    }
 
 
 # POST crear
