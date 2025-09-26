@@ -2140,27 +2140,33 @@ def insertar_entrevista(datos: dict):
     finally:
         conn.close()
 
+
 def obtener_entrevista_por_creador(creador_id: int):
     try:
         conn = get_connection()
         with conn.cursor() as cur:
             sql = """
-                SELECT id, creador_id, fecha_programada, usuario_programa, realizada,
-                       fecha_realizada, usuario_evalua, resultado, observaciones, creado_en,
-                       evento_id
-                FROM entrevistas
-                WHERE creador_id = %s
-                ORDER BY fecha_programada ASC
+                SELECT e.id, e.creador_id, 
+                       COALESCE(a.fecha_inicio, e.fecha_programada) AS fecha_programada,
+                       e.usuario_programa, e.realizada, e.fecha_realizada, 
+                       e.usuario_evalua, e.resultado, e.observaciones, e.creado_en,
+                       e.evento_id
+                FROM entrevistas e
+                LEFT JOIN agendamientos a
+                    ON e.evento_id = a.google_event_id
+                WHERE e.creador_id = %s
+                ORDER BY e.fecha_programada ASC
                 LIMIT 1
             """
             cur.execute(sql, (creador_id,))
-            row = cur.fetchone()  # <-- Solo un registro
+            row = cur.fetchone()
             if not row:
                 return None
+
             return {
                 "id": row[0],
                 "creador_id": row[1],
-                "fecha_programada": row[2],
+                "fecha_programada": row[2],  # ya viene la fecha del evento si existe
                 "usuario_programa": row[3],
                 "realizada": row[4],
                 "fecha_realizada": row[5],
@@ -2168,14 +2174,13 @@ def obtener_entrevista_por_creador(creador_id: int):
                 "resultado": row[7],
                 "observaciones": row[8],
                 "creado_en": row[9],
-                "evento_id": row[10],  # <-- Nuevo campo
+                "evento_id": row[10],
             }
     except Exception as e:
         print("❌ Error al obtener entrevistas:", e)
         return None
     finally:
         conn.close()
-
 
 
 # Función para actualizar entrevista

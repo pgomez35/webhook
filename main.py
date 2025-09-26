@@ -2817,7 +2817,6 @@ def crear_entrevista(
     if not usuario_id:
         raise HTTPException(status_code=401, detail="Usuario no autorizado")
 
-    # 1️⃣ Preparar payload de entrevista
     payload = datos.dict(exclude_unset=True)
     payload["creador_id"] = creador_id
     payload["usuario_programa"] = usuario_id
@@ -2828,76 +2827,64 @@ def crear_entrevista(
         payload["fecha_realizada"] = None
         payload["usuario_evalua"] = None
 
-    # 2️⃣ Crear entrevista en DB
+    # === Crear evento en calendario ===
+    try:
+        evento_payload = EventoIn(
+            titulo=f"Entrevista",
+            descripcion=payload.get("observaciones"),
+            inicio=payload["fecha_programada"],
+            fin=payload["fecha_programada"],  # Ajustar duración si quieres
+            participantes_ids=[creador_id],
+        )
+        evento_creado = crear_evento(evento_payload, usuario_actual)
+        payload["evento_id"] = evento_creado.id  # <-- guardar evento_id
+    except Exception as e:
+        print(f"⚠️ Error al crear evento: {e}")
+        payload["evento_id"] = None
+
+    # === Insertar entrevista en DB ===
     resultado = insertar_entrevista(payload)
     if not resultado:
         raise HTTPException(status_code=500, detail="Error al crear la entrevista")
 
-    # 3️⃣ Crear evento en calendario
-
-    evento_payload = EventoIn(
-        titulo=f"Entrevista {creador_id}",
-        descripcion=payload.get("observaciones", ""),
-        inicio=payload["fecha_programada"],
-        fin=payload["fecha_programada"] + timedelta(hours=1),
-        participantes_ids=[creador_id]
-    )
-
-    try:
-        # Llamada interna al endpoint de eventos
-        evento_creado = crear_evento(evento=evento_payload, usuario_actual=usuario_actual)
-        payload["evento_id"] = evento_creado.id  # guardar evento_id en entrevista
-        # Actualizar DB con evento_id
-        actualizar_entrevista(creador_id, {"evento_id": evento_creado.id})
-    except Exception as e:
-        print("⚠️ No se pudo crear el evento:", e)
-
     return EntrevistaOut.model_validate({**payload, **resultado})
-
 
 @app.put("/api/entrevistas/reprogramar/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
 def reprogramar_entrevista(
-    creador_id: int = Path(..., description="ID del creador cuya entrevista se va a reprogramar"),
+    creador_id: int = Path(..., description="ID del creador cuya entrevista se reprograma"),
     datos: EntrevistaUpdate = None,
     usuario_actual: dict = Depends(obtener_usuario_actual)
 ):
-    # === Verificar usuario ===
     usuario_id = usuario_actual.get("id")
     if not usuario_id:
         raise HTTPException(status_code=401, detail="Usuario no autorizado")
 
-    # === Obtener entrevista actual ===
+    # Obtener entrevista actual
     entrevista = obtener_entrevista_por_creador(creador_id)
     if not entrevista:
         raise HTTPException(status_code=404, detail="Entrevista no encontrada")
 
-    # === Actualizar entrevista en DB ===
+    # Actualizar datos en DB
     payload = datos.dict(exclude_unset=True)
-    if "fecha_programada" in payload:
-        entrevista["fecha_programada"] = payload["fecha_programada"]
-    if "observaciones" in payload:
-        entrevista["observaciones"] = payload["observaciones"]
-
-    # Usar la función de actualización por creador
-    resultado = actualizar_entrevista_por_creador(creador_id, payload)
-    if not resultado:
+    entrevista_actualizada = actualizar_entrevista_por_creador(creador_id, payload)
+    if not entrevista_actualizada:
         raise HTTPException(status_code=500, detail="Error al actualizar la entrevista")
 
-    # === Reprogramar evento en calendario si existe ===
-    if "fecha_programada" in payload and entrevista.get("evento_id"):
+    # Actualizar evento en calendario si existe evento_id
+    if payload.get("fecha_programada") and entrevista.get("evento_id"):
         try:
             evento_payload = EventoIn(
-                titulo=f"Entrevista ",
-                descripcion=entrevista.get("observaciones"),
-                inicio=entrevista["fecha_programada"],
-                fin=entrevista["fecha_programada"],  # ajustar duración si quieres
-                participantes_ids=[entrevista["creador_id"]],
+                titulo=f"Entrevista",
+                descripcion=payload.get("observaciones") or entrevista.get("observaciones"),
+                inicio=payload["fecha_programada"],
+                fin=payload["fecha_programada"],
+                participantes_ids=[creador_id],
             )
             editar_evento(entrevista["evento_id"], evento_payload)
         except Exception as e:
             print(f"⚠️ Error al actualizar evento de calendario: {e}")
 
-    return EntrevistaOut.model_validate({**entrevista, **resultado})
+    return EntrevistaOut.model_validate({**entrevista, **entrevista_actualizada})
 
 
 
