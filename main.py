@@ -64,7 +64,7 @@ CALENDAR_ID = os.getenv("CALENDAR_ID")
 # CALENDAR_ID = "primary" # para que sea siempre primary, pero tambien puedo configurarlo en variables del backend
 
 from perfil_creador_whatsapp import router as perfil_creador_router
-from aspirantes import router as aspirantes_router  # 👈 importar módulo nuevo
+# from aspirantes import router as aspirantes_router  # 👈 importar módulo nuevo
 
 # ⚙️ Inicializar FastAPI
 app = FastAPI()
@@ -72,7 +72,7 @@ app = FastAPI()
 
 # Incluir las rutas del módulo perfil_creador_whatsapp
 app.include_router(perfil_creador_router, tags=["Perfil Creador WhatsApp"])
-app.include_router(aspirantes_router, tags=["Aspirantes"])  # 👈 añadir aquí
+# app.include_router(aspirantes_router, tags=["Aspirantes"])  # 👈 añadir aquí
 
 # ✅ Crear carpeta persistente de audios si no existe
 AUDIO_DIR = "audios"
@@ -2736,7 +2736,7 @@ def actualizar_evaluacion_inicial(
         raise HTTPException(status_code=500, detail="Error interno al actualizar la evaluación")
 
 # Endpoint GET por creador
-@router.get("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
+@app.get("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
 def obtener_entrevista(creador_id: int):
     entrevista = obtener_entrevista_por_creador(creador_id)
     if not entrevista:
