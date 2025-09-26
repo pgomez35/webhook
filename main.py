@@ -2735,8 +2735,8 @@ def actualizar_evaluacion_inicial(
         logging.error(f"❌ Error al actualizar evaluación inicial del creador {creador_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Error interno al actualizar la evaluación")
 
-# GET por creador
-@app.get("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
+# Endpoint GET por creador
+@router.get("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
 def obtener_entrevista(creador_id: int):
     entrevista = obtener_entrevista_por_creador(creador_id)
     if not entrevista:

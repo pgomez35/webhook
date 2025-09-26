@@ -2140,7 +2140,6 @@ def insertar_entrevista(datos: dict):
     finally:
         conn.close()
 
-# Función para obtener entrevistas por creador_id
 def obtener_entrevista_por_creador(creador_id: int):
     try:
         conn = get_connection()
@@ -2151,29 +2150,30 @@ def obtener_entrevista_por_creador(creador_id: int):
                 FROM entrevistas
                 WHERE creador_id = %s
                 ORDER BY fecha_programada ASC
+                LIMIT 1
             """
             cur.execute(sql, (creador_id,))
-            rows = cur.fetchall()
-            entrevistas = []
-            for row in rows:
-                entrevistas.append({
-                    "id": row[0],
-                    "creador_id": row[1],
-                    "fecha_programada": row[2],
-                    "usuario_programa": row[3],
-                    "realizada": row[4],
-                    "fecha_realizada": row[5],
-                    "usuario_evalua": row[6],
-                    "resultado": row[7],
-                    "observaciones": row[8],
-                    "creado_en": row[9],
-                })
-            return entrevistas
+            row = cur.fetchone()  # <-- Solo un registro
+            if not row:
+                return None
+            return {
+                "id": row[0],
+                "creador_id": row[1],
+                "fecha_programada": row[2],
+                "usuario_programa": row[3],
+                "realizada": row[4],
+                "fecha_realizada": row[5],
+                "usuario_evalua": row[6],
+                "resultado": row[7],
+                "observaciones": row[8],
+                "creado_en": row[9],
+            }
     except Exception as e:
         print("❌ Error al obtener entrevistas:", e)
         return None
     finally:
         conn.close()
+
 
 # Función para actualizar entrevista
 def actualizar_entrevista_por_creador(creador_id: int, datos: dict):
