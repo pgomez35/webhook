@@ -753,8 +753,9 @@ class EntrevistaBase(BaseModel):
     realizada: Optional[bool] = False
     fecha_realizada: Optional[datetime] = None
     usuario_evalua: Optional[int] = None
-    resultado: Optional[str] = None  # si quieres, podrías default "sin evaluar"
+    resultado: Optional[str] = None  # "sin evaluar" por defecto
     observaciones: Optional[str] = None
+    evento_id: Optional[str] = None  # ← nuevo campo
 
 class EntrevistaCreate(EntrevistaBase):
     creador_id: int
@@ -766,7 +767,6 @@ class EntrevistaOut(EntrevistaBase):
     id: int
     creador_id: int
     creado_en: datetime
-
 
 class EstadoCreadorIn(BaseModel):
     # Puedes enviar UNO de los dos:

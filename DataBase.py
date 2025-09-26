@@ -2146,7 +2146,8 @@ def obtener_entrevista_por_creador(creador_id: int):
         with conn.cursor() as cur:
             sql = """
                 SELECT id, creador_id, fecha_programada, usuario_programa, realizada,
-                       fecha_realizada, usuario_evalua, resultado, observaciones, creado_en
+                       fecha_realizada, usuario_evalua, resultado, observaciones, creado_en,
+                       evento_id
                 FROM entrevistas
                 WHERE creador_id = %s
                 ORDER BY fecha_programada ASC
@@ -2167,12 +2168,14 @@ def obtener_entrevista_por_creador(creador_id: int):
                 "resultado": row[7],
                 "observaciones": row[8],
                 "creado_en": row[9],
+                "evento_id": row[10],  # <-- Nuevo campo
             }
     except Exception as e:
         print("❌ Error al obtener entrevistas:", e)
         return None
     finally:
         conn.close()
+
 
 
 # Función para actualizar entrevista
