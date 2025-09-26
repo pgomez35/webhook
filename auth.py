@@ -51,13 +51,14 @@ def crear_refresh_token(usuario: dict) -> str:
     }
     return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
 
+import logging
+logger = logging.getLogger("uvicorn.error")
 
-# === DEPENDENCIA: USUARIO ACTUAL ===
 def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
     try:
-        print("DEBUG: Token recibido:", token)  # log
+        logger.info(f"DEBUG: Token recibido: {token}")
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        print("DEBUG: Payload decodificado:", payload)
+        logger.info(f"DEBUG: Payload decodificado: {payload}")
         user_id = payload.get("sub")
         if not user_id:
             raise HTTPException(status_code=401, detail="Token inválido")
@@ -70,18 +71,49 @@ def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
             )
             row = cursor.fetchone()
 
-        print("DEBUG: Usuario DB:", row)
+        logger.info(f"DEBUG: Usuario DB: {row}")
         if not row or not row[3]:
             raise HTTPException(status_code=401, detail="Usuario no encontrado o inactivo")
 
         return {"id": row[0], "nombre": row[1], "rol": row[2]}
 
     except ExpiredSignatureError:
-        print("DEBUG: Token expirado")
+        logger.warning("DEBUG: Token expirado")
         raise HTTPException(status_code=401, detail="Token expirado")
     except JWTError:
-        print("DEBUG: Token inválido")
+        logger.warning("DEBUG: Token inválido")
         raise HTTPException(status_code=401, detail="Token inválido")
+
+# # === DEPENDENCIA: USUARIO ACTUAL ===
+# def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
+#     try:
+#         print("DEBUG: Token recibido:", token)  # log
+#         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+#         print("DEBUG: Payload decodificado:", payload)
+#         user_id = payload.get("sub")
+#         if not user_id:
+#             raise HTTPException(status_code=401, detail="Token inválido")
+#
+#         with get_connection() as conn:
+#             cursor = conn.cursor()
+#             cursor.execute(
+#                 "SELECT id, nombre_completo, rol, activo FROM admin_usuario WHERE id = %s",
+#                 (user_id,)
+#             )
+#             row = cursor.fetchone()
+#
+#         print("DEBUG: Usuario DB:", row)
+#         if not row or not row[3]:
+#             raise HTTPException(status_code=401, detail="Usuario no encontrado o inactivo")
+#
+#         return {"id": row[0], "nombre": row[1], "rol": row[2]}
+#
+#     except ExpiredSignatureError:
+#         print("DEBUG: Token expirado")
+#         raise HTTPException(status_code=401, detail="Token expirado")
+#     except JWTError:
+#         print("DEBUG: Token inválido")
+#         raise HTTPException(status_code=401, detail="Token inválido")
 
 
 
