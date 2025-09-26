@@ -2829,6 +2829,9 @@ def crear_entrevista(
 
     # === Crear evento en calendario ===
     try:
+        fecha_inicio = payload["fecha_programada"]
+        # si es datetime válido, le sumamos 1 hora
+        fecha_fin = fecha_inicio + timedelta(hours=1)
         evento_payload = EventoIn(
             titulo=f"Entrevista",
             descripcion=payload.get("observaciones"),
@@ -2848,6 +2851,9 @@ def crear_entrevista(
         raise HTTPException(status_code=500, detail="Error al crear la entrevista")
 
     return EntrevistaOut.model_validate({**payload, **resultado})
+
+from datetime import timedelta
+from fastapi import Path, Depends, HTTPException
 
 @app.put("/api/entrevistas/reprogramar/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
 def reprogramar_entrevista(
@@ -2873,11 +2879,14 @@ def reprogramar_entrevista(
     # Actualizar evento en calendario si existe evento_id
     if payload.get("fecha_programada") and entrevista.get("evento_id"):
         try:
+            fecha_inicio = payload["fecha_programada"]
+            fecha_fin = fecha_inicio + timedelta(hours=1)  # duración fija 1h
+
             evento_payload = EventoIn(
-                titulo=f"Entrevista",
-                descripcion=payload.get("observaciones") or entrevista.get("observaciones"),
-                inicio=payload["fecha_programada"],
-                fin=payload["fecha_programada"],
+                titulo="Entrevista",
+                descripcion=payload.get("observaciones") or entrevista.get("observaciones") or "Entrevista programada",
+                inicio=fecha_inicio,
+                fin=fecha_fin,
                 participantes_ids=[creador_id],
             )
             editar_evento(entrevista["evento_id"], evento_payload)
@@ -2885,7 +2894,6 @@ def reprogramar_entrevista(
             print(f"⚠️ Error al actualizar evento de calendario: {e}")
 
     return EntrevistaOut.model_validate({**entrevista, **entrevista_actualizada})
-
 
 
 # PUT actualizar (por creador_id)
