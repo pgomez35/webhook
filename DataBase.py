@@ -2140,8 +2140,10 @@ def insertar_entrevista(datos: dict):
     finally:
         conn.close()
 
+import pytz
 
 def obtener_entrevista_por_creador(creador_id: int):
+    bogota = pytz.timezone("America/Bogota")
     try:
         conn = get_connection()
         with conn.cursor() as cur:
@@ -2163,25 +2165,39 @@ def obtener_entrevista_por_creador(creador_id: int):
             if not row:
                 return None
 
-            return {
+            # Conversión UTC → America/Bogota
+            fecha_programada = row[2]
+            if fecha_programada and fecha_programada.tzinfo is None:
+                fecha_programada = fecha_programada.replace(tzinfo=pytz.utc)
+            if fecha_programada:
+                fecha_programada = fecha_programada.astimezone(bogota)
+
+            fecha_realizada = row[5]
+            if fecha_realizada and fecha_realizada.tzinfo is None:
+                fecha_realizada = fecha_realizada.replace(tzinfo=pytz.utc)
+            if fecha_realizada:
+                fecha_realizada = fecha_realizada.astimezone(bogota)
+
+            resultado = {
                 "id": row[0],
                 "creador_id": row[1],
-                "fecha_programada": row[2],  # ya viene la fecha del evento si existe
+                "fecha_programada": fecha_programada,
                 "usuario_programa": row[3],
                 "realizada": row[4],
-                "fecha_realizada": row[5],
+                "fecha_realizada": fecha_realizada,
                 "usuario_evalua": row[6],
                 "resultado": row[7],
                 "observaciones": row[8],
                 "creado_en": row[9],
                 "evento_id": row[10],
             }
+            return resultado
     except Exception as e:
-        print("❌ Error al obtener entrevistas:", e)
+        print(f"Error al obtener entrevista por creador: {e}")
         return None
     finally:
-        conn.close()
-
+        if conn:
+            conn.close()
 
 # Función para actualizar entrevista
 def actualizar_entrevista_por_creador(creador_id: int, datos: dict):
