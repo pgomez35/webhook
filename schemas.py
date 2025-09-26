@@ -725,15 +725,15 @@ class EvaluacionOutput(BaseModel):
     usuario_evaluador_inicial: int
 
 
-# INVITACIONES
+# ========== INVITACIONES ==========
 class InvitacionBase(BaseModel):
-    fecha_invitacion: Optional[date]
-    usuario_invita: Optional[int]
-    manager_id: Optional[int]
-    estado: Optional[str]
-    acepta_invitacion: Optional[bool]
-    fecha_incorporacion: Optional[date]
-    observaciones: Optional[str]
+    fecha_invitacion: Optional[date] = None
+    usuario_invita: Optional[int] = None
+    manager_id: Optional[int] = None
+    estado: Optional[str] = None
+    acepta_invitacion: Optional[bool] = None
+    fecha_incorporacion: Optional[date] = None
+    observaciones: Optional[str] = None
 
 class InvitacionCreate(InvitacionBase):
     creador_id: int
@@ -746,14 +746,14 @@ class InvitacionOut(InvitacionBase):
     creador_id: int
     creado_en: datetime
 
-# ENTREVISTAS
+# ========== ENTREVISTAS ==========
 class EntrevistaBase(BaseModel):
     fecha_programada: Optional[datetime] = None
     usuario_programa: Optional[int] = None
     realizada: Optional[bool] = False
     fecha_realizada: Optional[datetime] = None
     usuario_evalua: Optional[int] = None
-    resultado: Optional[str] = None
+    resultado: Optional[str] = None  # si quieres, podrías default "sin evaluar"
     observaciones: Optional[str] = None
 
 class EntrevistaCreate(EntrevistaBase):

@@ -2141,7 +2141,7 @@ def insertar_entrevista(datos: dict):
         conn.close()
 
 # Función para obtener entrevistas por creador_id
-def obtener_entrevistas_por_creador(creador_id: int):
+def obtener_entrevista_por_creador(creador_id: int):
     try:
         conn = get_connection()
         with conn.cursor() as cur:
@@ -2176,52 +2176,47 @@ def obtener_entrevistas_por_creador(creador_id: int):
         conn.close()
 
 # Función para actualizar entrevista
-def actualizar_entrevista_por_id(entrevista_id: int, datos: dict):
+def actualizar_entrevista_por_creador(creador_id: int, datos: dict):
+    if not datos:
+        return None  # Nada que actualizar
+
     try:
-        conn = get_connection()
-        with conn.cursor() as cur:
-            # Generar SET dinámico según los campos enviados
-            set_clauses = []
-            values = []
-            for key, value in datos.items():
-                set_clauses.append(f"{key} = %s")
-                values.append(value)
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                # Construir SET dinámico
+                set_clauses = [f"{key} = %s" for key in datos.keys()]
+                values = list(datos.values())
 
-            if not set_clauses:
-                return None  # No hay datos para actualizar
+                sql = f"""
+                    UPDATE entrevistas
+                    SET {', '.join(set_clauses)}
+                    WHERE creador_id = %s
+                    RETURNING id, creador_id, fecha_programada, usuario_programa, realizada,
+                              fecha_realizada, usuario_evalua, resultado, observaciones, creado_en
+                """
+                values.append(creador_id)
+                cur.execute(sql, tuple(values))
+                row = cur.fetchone()
+                conn.commit()
 
-            sql = f"""
-                UPDATE entrevistas
-                SET {', '.join(set_clauses)}
-                WHERE id = %s
-                RETURNING id, creador_id, fecha_programada, usuario_programa, realizada,
-                          fecha_realizada, usuario_evalua, resultado, observaciones, creado_en
-            """
-            values.append(entrevista_id)
-            cur.execute(sql, tuple(values))
-            row = cur.fetchone()
-            conn.commit()
+                if not row:
+                    return None
 
-            if not row:
-                return None
-
-            return {
-                "id": row[0],
-                "creador_id": row[1],
-                "fecha_programada": row[2],
-                "usuario_programa": row[3],
-                "realizada": row[4],
-                "fecha_realizada": row[5],
-                "usuario_evalua": row[6],
-                "resultado": row[7],
-                "observaciones": row[8],
-                "creado_en": row[9]
-            }
+                return {
+                    "id": row[0],
+                    "creador_id": row[1],
+                    "fecha_programada": row[2],
+                    "usuario_programa": row[3],
+                    "realizada": row[4],
+                    "fecha_realizada": row[5],
+                    "usuario_evalua": row[6],
+                    "resultado": row[7],
+                    "observaciones": row[8],
+                    "creado_en": row[9],
+                }
     except Exception as e:
         print("❌ Error al actualizar entrevista:", e)
         return None
-    finally:
-        conn.close()
 
 # Función para insertar invitación
 def insertar_invitacion(datos: dict):
@@ -2246,7 +2241,7 @@ def insertar_invitacion(datos: dict):
         conn.close()
 
 # Función para obtener invitaciones por creador_id
-def obtener_invitaciones_por_creador(creador_id: int):
+def obtener_invitacion_por_creador(creador_id: int):
     try:
         conn = get_connection()
         with conn.cursor() as cur:
@@ -2279,52 +2274,56 @@ def obtener_invitaciones_por_creador(creador_id: int):
     finally:
         conn.close()
 
-# Función para actualizar invitación por ID
-def actualizar_invitacion_por_id(invitacion_id: int, datos: dict):
+def actualizar_invitacion_por_creador(creador_id: int, datos: dict):
+    if not datos:
+        return None  # Nada que actualizar
+
     try:
-        conn = get_connection()
-        with conn.cursor() as cur:
-            # Construir SET dinámico
-            set_clauses = []
-            values = []
-            for key, value in datos.items():
-                set_clauses.append(f"{key} = %s")
-                values.append(value)
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                set_clauses = [f"{k} = %s" for k in datos.keys()]
+                values = list(datos.values())
 
-            if not set_clauses:
-                return None  # No hay datos para actualizar
+                sql = f"""
+                    UPDATE invitaciones
+                       SET {', '.join(set_clauses)}
+                     WHERE creador_id = %s
+                 RETURNING
+                        id,
+                        creador_id,
+                        fecha_invitacion,
+                        usuario_invita,
+                        estado,
+                        acepta_invitacion,
+                        manager_id,
+                        fecha_incorporacion,
+                        observaciones,
+                        creado_en
+                """
+                values.append(creador_id)
+                cur.execute(sql, tuple(values))
+                row = cur.fetchone()
+                conn.commit()
 
-            sql = f"""
-                -- actualizar_invitacion_por_id
-                UPDATE invitaciones
-                SET {', '.join(set_clauses)}
-                WHERE id = %s
-                RETURNING id, creador_id, fecha_invitacion, usuario_invita, estado,
-          acepta_invitacion, manager_id, fecha_incorporacion, observaciones, creado_en
-            """
-            values.append(invitacion_id)
-            cur.execute(sql, tuple(values))
-            row = cur.fetchone()
-            conn.commit()
+                if not row:
+                    return None
 
-            if not row:
-                return None
-
-            return {
-                "id": row[0],
-                "creador_id": row[1],
-                "fecha_revision": row[2],
-                "usuario_revision": row[3],
-                "estado": row[4],
-                "acepta_invitacion": row[5],
-                "observaciones": row[6],
-                "creado_en": row[7]
-            }
+                return {
+                    "id": row[0],
+                    "creador_id": row[1],
+                    "fecha_invitacion": row[2],
+                    "usuario_invita": row[3],
+                    "estado": row[4],
+                    "acepta_invitacion": row[5],
+                    "manager_id": row[6],
+                    "fecha_incorporacion": row[7],
+                    "observaciones": row[8],
+                    "creado_en": row[9],
+                }
     except Exception as e:
         print("❌ Error al actualizar invitación:", e)
         return None
-    finally:
-        conn.close()
+
 
 ESTADO_MAP = {
     "ENTREVISTA": 2,

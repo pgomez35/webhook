@@ -2735,18 +2735,18 @@ def actualizar_evaluacion_inicial(
         logging.error(f"❌ Error al actualizar evaluación inicial del creador {creador_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Error interno al actualizar la evaluación")
 
+# GET por creador
+@app.get("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
+def obtener_entrevista(creador_id: int):
+    entrevista = obtener_entrevista_por_creador(creador_id)
+    if not entrevista:
+        raise HTTPException(status_code=404, detail="No existe entrevista para este creador")
+    return entrevista
 
-# Endpoint GET
-@app.get("/api/entrevistas/{creador_id}", response_model=List[EntrevistaOut], tags=["Entrevistas"])
-def listar_entrevistas(creador_id: int):
-    entrevistas = obtener_entrevistas_por_creador(creador_id)
-    if entrevistas is None:
-        raise HTTPException(status_code=500, detail="Error al obtener entrevistas")
-    return entrevistas
-
-
-@app.post("/entrevistas/", response_model=EntrevistaOut)
+# POST crear
+@app.post("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
 def crear_entrevista(
+    creador_id: int,
     datos: EntrevistaCreate,
     usuario_actual: dict = Depends(obtener_usuario_actual)
 ):
@@ -2754,34 +2754,26 @@ def crear_entrevista(
     if not usuario_id:
         raise HTTPException(status_code=401, detail="Usuario no autorizado")
 
-    # ✅ convertir a dict (solo campos enviados)
     payload = datos.dict(exclude_unset=True)
-
-    # ✅ setear quién programa automáticamente
+    payload["creador_id"] = creador_id
     payload["usuario_programa"] = usuario_id
-
-    # ✅ defaults coherentes
     payload.setdefault("realizada", False)
     payload.setdefault("resultado", "sin evaluar")
-    payload.setdefault("observaciones", None)
 
-    # Si no está realizada, garantizamos None en campos “de realizada”
     if not payload.get("realizada"):
         payload["fecha_realizada"] = None
         payload["usuario_evalua"] = None
 
-    # ⬇ insertar_entrevista espera dict
     resultado = insertar_entrevista(payload)
     if not resultado:
         raise HTTPException(status_code=500, detail="Error al crear la entrevista")
 
-    # ✅ devolver unión (id, creado_en vienen en resultado)
-    # Pydantic v2:
     return EntrevistaOut.model_validate({**payload, **resultado})
 
-@app.put("/entrevistas/{entrevista_id}", response_model=EntrevistaOut)
+# PUT actualizar (por creador_id)
+@app.put("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
 def actualizar_entrevista(
-    entrevista_id: int,
+    creador_id: int,
     datos: EntrevistaUpdate,
     usuario_actual: dict = Depends(obtener_usuario_actual)
 ):
@@ -2790,20 +2782,29 @@ def actualizar_entrevista(
         raise HTTPException(status_code=401, detail="Usuario no autorizado")
 
     data_dict = datos.dict(exclude_unset=True)
-
     if data_dict.get("realizada"):
         data_dict.setdefault("usuario_evalua", usuario_id)
         data_dict.setdefault("fecha_realizada", datetime.utcnow())
 
-    actualizado = actualizar_entrevista_por_id(entrevista_id, data_dict)
+    actualizado = actualizar_entrevista_por_creador(creador_id, data_dict)
     if not actualizado:
-        raise HTTPException(status_code=404, detail="Entrevista no encontrada")
+        raise HTTPException(status_code=404, detail="No existe entrevista para este creador")
 
     return EntrevistaOut.model_validate(actualizado)
 
 
-@app.post("/invitaciones/", response_model=InvitacionOut)
+# GET por creador
+@app.get("/api/invitaciones/{creador_id}", response_model=InvitacionOut, tags=["Invitaciones"])
+def obtener_invitacion(creador_id: int):
+    invitacion = obtener_invitacion_por_creador(creador_id)
+    if not invitacion:
+        raise HTTPException(status_code=404, detail="No existe invitación para este creador")
+    return invitacion
+
+# POST crear
+@app.post("/api/invitaciones/{creador_id}", response_model=InvitacionOut, tags=["Invitaciones"])
 def crear_invitacion(
+    creador_id: int,
     datos: InvitacionCreate,
     usuario_actual: dict = Depends(obtener_usuario_actual)
 ):
@@ -2811,30 +2812,20 @@ def crear_invitacion(
     if not usuario_id:
         raise HTTPException(status_code=401, detail="Usuario no autorizado")
 
-    # Construir payload con el usuario que invita
-    invitacion_data = datos.dict()
-    invitacion_data["usuario_invita"] = usuario_id
+    payload = datos.dict(exclude_unset=True)
+    payload["creador_id"] = creador_id
+    payload["usuario_invita"] = usuario_id
 
-    resultado = insertar_invitacion(invitacion_data)
+    resultado = insertar_invitacion(payload)
     if not resultado:
         raise HTTPException(status_code=500, detail="Error al crear la invitación")
 
-    # Combinar datos originales con los retornados (ej. id, timestamps, etc.)
-    return InvitacionOut(**resultado)
+    return InvitacionOut.model_validate({**payload, **resultado})
 
-
-# Endpoint GET
-@app.get("/api/invitaciones/{creador_id}", response_model=List[InvitacionOut], tags=["Invitaciones"])
-def listar_invitaciones(creador_id: int):
-    invitaciones = obtener_invitaciones_por_creador(creador_id)
-    if invitaciones is None:
-        raise HTTPException(status_code=500, detail="Error al obtener invitaciones")
-    return invitaciones
-
-
-@app.put("/invitaciones/{invitacion_id}", response_model=InvitacionOut)
+# PUT actualizar (por creador_id)
+@app.put("/api/invitaciones/{creador_id}", response_model=InvitacionOut, tags=["Invitaciones"])
 def actualizar_invitacion(
-    invitacion_id: int,
+    creador_id: int,
     datos: InvitacionUpdate,
     usuario_actual: dict = Depends(obtener_usuario_actual)
 ):
@@ -2842,21 +2833,14 @@ def actualizar_invitacion(
     if not usuario_id:
         raise HTTPException(status_code=401, detail="Usuario no autorizado")
 
-    # Convertir a dict para manipular sin mutar el modelo Pydantic
     update_data = datos.dict(exclude_unset=True)
 
-    # Si cambia el estado, registramos el usuario que hizo la acción
-    if "estado" in update_data:
-        update_data["usuario_accion"] = usuario_id  # 👈 más claro que usuario_invita
+    actualizado = actualizar_invitacion_por_creador(creador_id, update_data)
+    if not actualizado:
+        raise HTTPException(status_code=404, detail="No existe invitación para este creador")
 
-    resultado = actualizar_invitacion_por_id(invitacion_id, update_data)
-    if not resultado:
-        raise HTTPException(
-            status_code=404,
-            detail="No se encontró la invitación o no se pudo actualizar"
-        )
+    return InvitacionOut.model_validate(actualizado)
 
-    return InvitacionOut(**resultado)
 
 
 @app.put("/api/creadores/{creador_id}/estado",
