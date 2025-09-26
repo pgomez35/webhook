@@ -55,12 +55,13 @@ def crear_refresh_token(usuario: dict) -> str:
 # === DEPENDENCIA: USUARIO ACTUAL ===
 def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
     try:
+        print("DEBUG: Token recibido:", token)  # log
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        print("DEBUG: Payload decodificado:", payload)
         user_id = payload.get("sub")
         if not user_id:
             raise HTTPException(status_code=401, detail="Token inválido")
 
-        # validar en DB
         with get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -69,15 +70,19 @@ def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
             )
             row = cursor.fetchone()
 
+        print("DEBUG: Usuario DB:", row)
         if not row or not row[3]:
             raise HTTPException(status_code=401, detail="Usuario no encontrado o inactivo")
 
         return {"id": row[0], "nombre": row[1], "rol": row[2]}
 
     except ExpiredSignatureError:
+        print("DEBUG: Token expirado")
         raise HTTPException(status_code=401, detail="Token expirado")
     except JWTError:
+        print("DEBUG: Token inválido")
         raise HTTPException(status_code=401, detail="Token inválido")
+
 
 
 # from datetime import datetime, timedelta
