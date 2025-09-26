@@ -2083,87 +2083,163 @@ def actualizar_preferencias(creador_id: int, datos: PreferenciasHabitosInput):
         print("❌ Error al actualizar preferencias:", str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.put("/api/perfil_creador/{creador_id}/resumen",
+
+@app.get("/api/perfil_creador/{creador_id}/resumen",
          tags=["Resumen"],
          response_model=ResumenEvaluacionOutput)
-def actualizar_resumen(
+def obtener_resumen(creador_id: int, usuario_actual: dict = Depends(obtener_usuario_actual)):
+    perfil = obtener_puntajes_perfil_creador(creador_id)
+    if not perfil:
+        raise HTTPException(status_code=404, detail="Perfil no encontrado")
+
+    score = evaluacion_total(
+        cualitativa_score=perfil.get("puntaje_manual", 0),
+        estadistica_score=perfil.get("puntaje_estadistica", 0),
+        general_score=perfil.get("puntaje_general", 0),
+        habitos_score=perfil.get("puntaje_habitos", 0)
+    )
+
+    diagnostico = "-"
+    mejoras = "-"
+    try:
+        diagnostico = diagnostico_perfil_creador(creador_id)
+    except Exception:
+        pass
+    try:
+        mejoras = generar_mejoras_sugeridas_total(creador_id)
+    except Exception:
+        pass
+
+    # 📝 Observaciones globales (texto descriptivo que combina puntajes y diagnóstico)
+    observaciones_totales = (
+        f"📊 Evaluación Global:\n"
+        f"Puntaje total: {score['puntaje_total']}\n"
+        f"Categoría: {score['puntaje_total_categoria']}\n\n"
+        f"🩺 Diagnóstico Detallado:\n{diagnostico}\n"
+    )
+
+    return ResumenEvaluacionOutput(
+        status="ok",
+        mensaje="Resumen calculado",
+        puntaje_manual=perfil.get("puntaje_manual"),
+        puntaje_manual_categoria=perfil.get("puntaje_manual_categoria"),
+        puntaje_estadistica=perfil.get("puntaje_estadistica"),
+        puntaje_estadistica_categoria=perfil.get("puntaje_estadistica_categoria"),
+        puntaje_general=perfil.get("puntaje_general"),
+        puntaje_general_categoria=perfil.get("puntaje_general_categoria"),
+        puntaje_habitos=perfil.get("puntaje_habitos"),
+        puntaje_habitos_categoria=perfil.get("puntaje_habitos_categoria"),
+        puntaje_total=score["puntaje_total"],
+        puntaje_total_categoria=score["puntaje_total_categoria"],
+        diagnostico=observaciones_totales,  # 👈 Se devuelve el texto armado
+        mejoras_sugeridas=mejoras
+    )
+
+@app.put("/api/perfil_creador/{creador_id}/resumen",
+         tags=["Resumen"])
+def guardar_resumen_final(
     creador_id: int,
     datos: ResumenEvaluacionInput,
     usuario_actual: dict = Depends(obtener_usuario_actual)
 ):
-    try:
-        # Usuario desde el token
-        usuario_id = usuario_actual.get("id")
-        if not usuario_id:
-            raise HTTPException(status_code=401, detail="Usuario no autorizado")
+    usuario_id = usuario_actual.get("id")
+    if not usuario_id:
+        raise HTTPException(status_code=401, detail="Usuario no autorizado")
 
-        # Perfil actual
-        perfil = obtener_puntajes_perfil_creador(creador_id)
-        if not perfil:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No se encontró el perfil del creador con id {creador_id}."
-            )
+    # Solo se guarda lo que el evaluador decide
+    estado_dict = {
+        "estado_evaluacion": datos.estado or "Evaluado",
+        "diagnostico": datos.diagnostico,
+        "mejoras_sugeridas": datos.mejoras_sugeridas,
+        "usuario_evaluador_resumen": usuario_id
+    }
 
-        # Calcular puntaje total y categoría
-        score = evaluacion_total(
-            cualitativa_score=perfil.get("puntaje_manual", 0),
-            estadistica_score=perfil.get("puntaje_estadistica", 0),
-            general_score=perfil.get("puntaje_general", 0),
-            habitos_score=perfil.get("puntaje_habitos", 0)
-        )
+    actualizar_evaluacion_creador(creador_id, estado_dict)
 
-        # Diagnóstico y mejoras sugeridas
-        try:
-            diagnostico = diagnostico_perfil_creador(creador_id)
-        except Exception:
-            diagnostico = "-"
+    return {"status": "ok", "mensaje": "Resumen final guardado"}
 
-        try:
-            mejoras = generar_mejoras_sugeridas_total(creador_id)
-        except Exception:
-            mejoras = "-"
 
-        # Observaciones
-        observaciones_totales = (
-            f"📊 Evaluación Global:\n"
-            f"Puntaje total: {score['puntaje_total']}\n"
-            f"Categoría: {score['puntaje_total_categoria']}\n\n"
-            f"🩺 Diagnóstico Detallado:\n{diagnostico}\n"
-        )
-
-        # 🔹 Solo guardar en BD: estado + puntaje_total + puntaje_total_categoria
-        estado_dict = {
-            "estado_evaluacion": datos.estado or "Evaluado",
-            "puntaje_total": datos.puntaje_total or score["puntaje_total"],
-            "puntaje_total_categoria": datos.puntaje_total_categoria or score["puntaje_total_categoria"],
-            "usuario_evaluador_resumen": usuario_id
-        }
-        result = actualizar_evaluacion_creador(creador_id, estado_dict)
-
-        # 🔹 Retornar toda la info calculada
-        return ResumenEvaluacionOutput(
-            status="ok",
-            mensaje="Resumen generado y estado actualizado",
-            puntaje_manual=perfil.get("puntaje_manual", 0),
-            puntaje_manual_categoria=perfil.get("puntaje_manual_categoria"),
-            puntaje_estadistica=perfil.get("puntaje_estadistica", 0),
-            puntaje_estadistica_categoria=perfil.get("puntaje_estadistica_categoria"),
-            puntaje_general=perfil.get("puntaje_general", 0),
-            puntaje_general_categoria=perfil.get("puntaje_general_categoria"),
-            puntaje_habitos=perfil.get("puntaje_habitos", 0),
-            puntaje_habitos_categoria=perfil.get("puntaje_habitos_categoria"),
-            puntaje_total=score["puntaje_total"],
-            puntaje_total_categoria=score["puntaje_total_categoria"],
-            diagnostico=observaciones_totales,
-            mejoras_sugeridas=mejoras
-        )
-
-    except HTTPException as he:
-        raise he
-    except Exception as e:
-        print(f"❌ Error en actualizar_resumen: {e}")
-        raise HTTPException(status_code=500, detail="Error interno al generar el resumen")
+# @app.put("/api/perfil_creador/{creador_id}/resumen",
+#          tags=["Resumen"],
+#          response_model=ResumenEvaluacionOutput)
+# def actualizar_resumen(
+#     creador_id: int,
+#     datos: ResumenEvaluacionInput,
+#     usuario_actual: dict = Depends(obtener_usuario_actual)
+# ):
+#     try:
+#         # Usuario desde el token
+#         usuario_id = usuario_actual.get("id")
+#         if not usuario_id:
+#             raise HTTPException(status_code=401, detail="Usuario no autorizado")
+#
+#         # Perfil actual
+#         perfil = obtener_puntajes_perfil_creador(creador_id)
+#         if not perfil:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail=f"No se encontró el perfil del creador con id {creador_id}."
+#             )
+#
+#         # Calcular puntaje total y categoría
+#         score = evaluacion_total(
+#             cualitativa_score=perfil.get("puntaje_manual", 0),
+#             estadistica_score=perfil.get("puntaje_estadistica", 0),
+#             general_score=perfil.get("puntaje_general", 0),
+#             habitos_score=perfil.get("puntaje_habitos", 0)
+#         )
+#
+#         # Diagnóstico y mejoras sugeridas
+#         try:
+#             diagnostico = diagnostico_perfil_creador(creador_id)
+#         except Exception:
+#             diagnostico = "-"
+#
+#         try:
+#             mejoras = generar_mejoras_sugeridas_total(creador_id)
+#         except Exception:
+#             mejoras = "-"
+#
+#         # Observaciones
+#         observaciones_totales = (
+#             f"📊 Evaluación Global:\n"
+#             f"Puntaje total: {score['puntaje_total']}\n"
+#             f"Categoría: {score['puntaje_total_categoria']}\n\n"
+#             f"🩺 Diagnóstico Detallado:\n{diagnostico}\n"
+#         )
+#
+#         # 🔹 Solo guardar en BD: estado + puntaje_total + puntaje_total_categoria
+#         estado_dict = {
+#             "estado_evaluacion": datos.estado or "Evaluado",
+#             "puntaje_total": datos.puntaje_total or score["puntaje_total"],
+#             "puntaje_total_categoria": datos.puntaje_total_categoria or score["puntaje_total_categoria"],
+#             "usuario_evaluador_resumen": usuario_id
+#         }
+#         result = actualizar_evaluacion_creador(creador_id, estado_dict)
+#
+#         # 🔹 Retornar toda la info calculada
+#         return ResumenEvaluacionOutput(
+#             status="ok",
+#             mensaje="Resumen generado y estado actualizado",
+#             puntaje_manual=perfil.get("puntaje_manual", 0),
+#             puntaje_manual_categoria=perfil.get("puntaje_manual_categoria"),
+#             puntaje_estadistica=perfil.get("puntaje_estadistica", 0),
+#             puntaje_estadistica_categoria=perfil.get("puntaje_estadistica_categoria"),
+#             puntaje_general=perfil.get("puntaje_general", 0),
+#             puntaje_general_categoria=perfil.get("puntaje_general_categoria"),
+#             puntaje_habitos=perfil.get("puntaje_habitos", 0),
+#             puntaje_habitos_categoria=perfil.get("puntaje_habitos_categoria"),
+#             puntaje_total=score["puntaje_total"],
+#             puntaje_total_categoria=score["puntaje_total_categoria"],
+#             diagnostico=observaciones_totales,
+#             mejoras_sugeridas=mejoras
+#         )
+#
+#     except HTTPException as he:
+#         raise he
+#     except Exception as e:
+#         print(f"❌ Error en actualizar_resumen: {e}")
+#         raise HTTPException(status_code=500, detail="Error interno al generar el resumen")
 
 
 # @app.put("/api/perfil_creador/{creador_id}/resumen",
