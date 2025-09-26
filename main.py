@@ -1552,7 +1552,7 @@ async def login_usuario(credentials: dict = Body(...)):
 
 
 # === REFRESH ===
-@app.post("/refresh", response_model=dict)
+@app.post("/refresh", response_model=TokenResponse)
 async def refresh_token(data: dict = Body(...)):
     token = data.get("refresh_token")
     if not token:
@@ -1580,11 +1580,12 @@ async def refresh_token(data: dict = Body(...)):
         usuario = {"id": row[0], "nombre": row[1], "rol": row[2]}
         new_access_token = crear_access_token(usuario)
 
-        # 🔹 Ahora solo devuelvo tokens
         return TokenResponse(
             access_token=new_access_token,
+            refresh_token=token,  # opcional: devolver el mismo refresh token
             token_type="bearer",
-            mensaje="Access token renovado"
+            mensaje="Access token renovado",
+            usuario=UsuarioOut(**usuario)
         )
 
     except ExpiredSignatureError:
