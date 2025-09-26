@@ -2806,6 +2806,9 @@ async def debug_entrevista(request: Request):
 #     return EntrevistaOut.model_validate({**payload, **resultado})
 
 
+from datetime import timedelta
+from fastapi import Depends, HTTPException
+
 # POST crear entrevista + evento
 @app.post("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
 def crear_entrevista(
@@ -2830,13 +2833,13 @@ def crear_entrevista(
     # === Crear evento en calendario ===
     try:
         fecha_inicio = payload["fecha_programada"]
-        # si es datetime válido, le sumamos 1 hora
-        fecha_fin = fecha_inicio + timedelta(hours=1)
+        fecha_fin = fecha_inicio + timedelta(hours=1)  # duración por defecto = 1h
+
         evento_payload = EventoIn(
-            titulo=f"Entrevista",
-            descripcion=payload.get("observaciones"),
-            inicio=payload["fecha_programada"],
-            fin=payload["fecha_programada"],  # Ajustar duración si quieres
+            titulo="Entrevista",
+            descripcion=payload.get("observaciones") or "Entrevista programada",
+            inicio=fecha_inicio,
+            fin=fecha_fin,
             participantes_ids=[creador_id],
         )
         evento_creado = crear_evento(evento_payload, usuario_actual)
@@ -2851,6 +2854,7 @@ def crear_entrevista(
         raise HTTPException(status_code=500, detail="Error al crear la entrevista")
 
     return EntrevistaOut.model_validate({**payload, **resultado})
+
 
 from datetime import timedelta
 from fastapi import Path, Depends, HTTPException
