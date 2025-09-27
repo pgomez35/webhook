@@ -1405,7 +1405,7 @@ def obtener_creadores_invitacion():
                 ec.nombre as estado_nombre
             FROM creadores c
             INNER JOIN estados_creador ec ON c.estado_id = ec.id
-            WHERE c.activo = TRUE AND c.estado_id IN (2,5)
+            WHERE c.activo = TRUE AND c.estado_id IN (4,5)
             ORDER BY c.usuario ASC;
         """)
         datos = cur.fetchall()
