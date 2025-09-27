@@ -1360,34 +1360,45 @@ def eliminar_perfil_creador(perfil_id: int):
 
 # -----------------------------------
 # -----------------------------------
-def obtener_creadores_db():
+def obtener_creadores_db(estado_id: Optional[int] = None):
     try:
         conn = get_connection()
         cur = conn.cursor()
-        cur.execute("""
-                  SELECT 
+
+        base_sql = """
+            SELECT 
                 c.id, 
                 c.usuario, 
                 c.nickname, 
                 c.nombre_real, 
-                c.email,
                 c.telefono,
-                c.whatsapp,
-                ec.nombre as estado_nombre
+                ec.nombre AS estado_nombre,
+                c.creado_en
             FROM creadores c
             INNER JOIN estados_creador ec ON c.estado_id = ec.id
             WHERE c.activo = TRUE
-            ORDER BY c.actualizado_en DESC;
-        """)
+        """
+
+        valores = []
+        if estado_id is not None:
+            base_sql += " AND c.estado_id = %s"
+            valores.append(estado_id)
+
+        base_sql += " ORDER BY c.actualizado_en DESC"
+
+        cur.execute(base_sql, tuple(valores))
         datos = cur.fetchall()
         columnas = [desc[0] for desc in cur.description]
         resultados = [dict(zip(columnas, fila)) for fila in datos]
-        cur.close()
-        conn.close()
+
         return resultados
     except Exception as e:
         print("❌ Error al obtener creadores:", e)
         return []
+    finally:
+        cur.close()
+        conn.close()
+
 
 def obtener_creadores_invitacion():
     try:

@@ -1866,14 +1866,16 @@ async def perfil(usuario: dict = Depends(obtener_usuario_actual)):
 #-------------------------
 #-------------------------
 
-# === Listar todos los creadores ===
+from typing import Optional
+from fastapi import Query
+
+# === Listar todos los creadores (con filtro opcional por estado_id) ===
 @app.get("/api/creadores", tags=["Creadores"])
-def listar_creadores():
+def listar_creadores(estado_id: Optional[int] = Query(None, description="Filtrar por estado_id")):
     try:
-        return obtener_creadores_db()
+        return obtener_creadores_db(estado_id=estado_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 
 # === Listar todos los usuarios ===
