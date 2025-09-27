@@ -2994,26 +2994,61 @@ def reprogramar_entrevista(
     return EntrevistaOut.model_validate({**entrevista, **entrevista_actualizada})
 
 
-# PUT actualizar (por creador_id)
+import unicodedata
+
+# Mapa de estado_id según el resultado de la entrevista
+# Ajusta los IDs si en tu catálogo son distintos
+RESULTADO_TO_ESTADO_ID = {
+    "PROGRAMADA": 4,
+    "ENTREVISTA": 4,
+    "INVITACION": 5,  # "Invitación"
+    "RECHAZADO": 7,
+}
+
+def _normalize_text(s: Optional[str]) -> Optional[str]:
+    if s is None:
+        return None
+    # quita acentos, pasa a mayúsculas y trimea
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    return s.strip().upper()
+
 @app.put("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
 def actualizar_entrevista(
     creador_id: int,
     datos: EntrevistaUpdate,
-    usuario_actual: dict = Depends(obtener_usuario_actual)
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     usuario_id = usuario_actual.get("id")
     if not usuario_id:
         raise HTTPException(status_code=401, detail="Usuario no autorizado")
 
     data_dict = datos.dict(exclude_unset=True)
+
+    # Si se marca como realizada, completa evaluador/fecha si no vienen
     if data_dict.get("realizada"):
         data_dict.setdefault("usuario_evalua", usuario_id)
         data_dict.setdefault("fecha_realizada", datetime.utcnow())
 
+    # 1) Actualiza la entrevista
     actualizado = actualizar_entrevista_por_creador(creador_id, data_dict)
     if not actualizado:
         raise HTTPException(status_code=404, detail="No existe entrevista para este creador")
 
+    # 2) Derivar estado_id a partir de `resultado`
+    #    - usa el que vino en el payload si está, si no el que quedó en DB
+    resultado_raw = data_dict.get("resultado") or actualizado.get("resultado")
+    resultado_norm = _normalize_text(resultado_raw)  # ENTREVISTA | INVITACION | RECHAZADO
+
+    estado_id = RESULTADO_TO_ESTADO_ID.get(resultado_norm)
+    if estado_id is not None:
+        try:
+            actualizar_estado_creador(creador_id, estado_id)
+        except Exception:
+            # Opcional: loggear si quieres, pero no romper la respuesta.
+            pass
+
+    # 3) Responder
     return EntrevistaOut.model_validate(actualizado)
 
 

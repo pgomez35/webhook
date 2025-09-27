@@ -2035,9 +2035,9 @@ def actualizar_evaluacion_creador(creador_id: int, datos: dict):
     try:
         # Mapear estado -> estado_id
         estado_map = {
-            "ENTREVISTA": 2,
-            "NO APTO": 3,
-            "INVITACION TIKTOK": 4
+            "ENTREVISTA": 4,
+            "NO APTO": 7,
+            "INVITACION TIKTOK": 5
         }
 
         # Tomar el valor de forma segura
