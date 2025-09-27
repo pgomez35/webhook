@@ -1405,17 +1405,18 @@ def obtener_creadores_invitacion():
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
-                  SELECT 
+	                  SELECT 
                 c.id, 
                 c.usuario, 
                 c.nickname, 
                 c.nombre_real, 
-                c.email,
                 c.telefono,
-                c.whatsapp,
-                ec.nombre as estado_nombre
+                ec.nombre AS estado_nombre,
+                c.creado_en,
+				d.puntaje_total_categoria
             FROM creadores c
             INNER JOIN estados_creador ec ON c.estado_id = ec.id
+			INNER JOIN perfil_creador d ON d.creador_id=c.id
             WHERE c.activo = TRUE AND c.estado_id IN (4,5)
             ORDER BY c.usuario ASC;
         """)
