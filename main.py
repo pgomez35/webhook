@@ -2135,28 +2135,35 @@ def obtener_resumen(creador_id: int, usuario_actual: dict = Depends(obtener_usua
         mejoras_sugeridas=mejoras
     )
 
-@app.put("/api/perfil_creador/{creador_id}/resumen",
-         tags=["Resumen"])
-def guardar_resumen_final(
-    creador_id: int,
-    datos: ResumenEvaluacionInput,
-    usuario_actual: dict = Depends(obtener_usuario_actual)
-):
-    usuario_id = usuario_actual.get("id")
-    if not usuario_id:
-        raise HTTPException(status_code=401, detail="Usuario no autorizado")
+ESTADO_MAP = {
+    "Entrevista": 4,
+    "Invitación": 5,
+    "Rechazado": 7,
+}
+ESTADO_DEFAULT = 99  # si no coincide
 
-    # Solo se guarda lo que el evaluador decide
-    estado_dict = {
-        "estado_evaluacion": datos.estado or "Evaluado",
-        "diagnostico": datos.diagnostico,
-        "mejoras_sugeridas": datos.mejoras_sugeridas,
-        "usuario_evaluador_resumen": usuario_id
-    }
+@app.put("/api/perfil_creador/{creador_id}/resumen")
+def guardar_resumen_final(creador_id: int, datos: GuardarResumenInput):
+    try:
+        payload = {
+            "diagnostico": datos.diagnostico,
+            "mejoras_sugeridas": datos.mejoras_sugeridas,
+            "observaciones_finales": datos.observaciones_finales,
+            "usuario_evalua": datos.usuario_evalua,
+            "estado_evaluacion": datos.estado_evaluacion,
+        }
 
-    actualizar_evaluacion_creador(creador_id, estado_dict)
+        # 1️⃣ Actualiza perfil_creador
+        actualizar_datos_perfil_creador(creador_id, payload)
 
-    return {"status": "ok", "mensaje": "Resumen final guardado"}
+        # 2️⃣ Si viene un estado, actualiza también creadores.estado_id
+        if datos.estado_evaluacion:
+            estado_id = ESTADO_MAP.get(datos.estado_evaluacion, ESTADO_DEFAULT)
+            actualizar_estado_creador(creador_id, estado_id)
+
+        return {"status": "ok", "mensaje": "Resumen actualizado correctamente"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # @app.put("/api/perfil_creador/{creador_id}/resumen",

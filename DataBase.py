@@ -1724,7 +1724,9 @@ def actualizar_datos_perfil_creador(creador_id, datos_dict):
             # Resumen
             "estado", "diagnostico", "mejoras_sugeridas",
             "puntaje_total", "puntaje_total_categoria",
-            "fecha_entrevista","entrevista"  # ✅ agregado aquí
+            "fecha_entrevista", "entrevista",
+            "observaciones_finales", "estado_evaluacion"
+
         ]
 
         campos = []
@@ -2350,9 +2352,9 @@ def actualizar_invitacion_por_creador(creador_id: int, datos: dict):
 
 
 ESTADO_MAP = {
-    "ENTREVISTA": 2,
-    "NO APTO": 3,
-    "INVITACION TIKTOK": 4,
+    "Entrevista": 4,
+    "Invitación": 5,
+    "Rechazado": 7,
 }
 ESTADO_DEFAULT = 99  # si te mandan algo desconocido
 

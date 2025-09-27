@@ -769,6 +769,13 @@ class EntrevistaOut(EntrevistaBase):
     creado_en: datetime
 
 
+class GuardarResumenInput(BaseModel):
+    diagnostico: Optional[str] = None
+    mejoras_sugeridas: Optional[str] = None
+    observaciones_finales: Optional[str] = None  # 👈 nuevo campo
+    usuario_evalua: Optional[int] = None
+    estado_evaluacion: Optional[str] = None
+
 
 class EstadoCreadorIn(BaseModel):
     # Puedes enviar UNO de los dos:
@@ -787,3 +794,5 @@ class EstadoCreadorOut(BaseModel):
     id: int
     estado_id: int
     mensaje: str
+
+
