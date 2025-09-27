@@ -1360,7 +1360,9 @@ def eliminar_perfil_creador(perfil_id: int):
 
 # -----------------------------------
 # -----------------------------------
-def obtener_creadores_db(estado_id: Optional[int] = None):
+from typing import Optional, List
+
+def obtener_creadores_db(estado_ids: Optional[List[int]] = None):
     try:
         conn = get_connection()
         cur = conn.cursor()
@@ -1380,11 +1382,12 @@ def obtener_creadores_db(estado_id: Optional[int] = None):
         """
 
         valores = []
-        if estado_id is not None:
-            base_sql += " AND c.estado_id = %s"
-            valores.append(estado_id)
+        if estado_ids:
+            placeholders = ", ".join(["%s"] * len(estado_ids))
+            base_sql += f" AND c.estado_id IN ({placeholders})"
+            valores.extend(estado_ids)
 
-        base_sql += " ORDER BY c.actualizado_en DESC"
+        base_sql += " ORDER BY c.creado_en ASC"
 
         cur.execute(base_sql, tuple(valores))
         datos = cur.fetchall()
@@ -1398,6 +1401,7 @@ def obtener_creadores_db(estado_id: Optional[int] = None):
     finally:
         cur.close()
         conn.close()
+
 
 
 def obtener_creadores_invitacion():

@@ -1877,6 +1877,14 @@ def listar_creadores(estado_id: Optional[int] = Query(None, description="Filtrar
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# === Endpoint para estados 3, 4 y 5 ===
+@app.get("/api/creadores/en_proceso", tags=["Creadores"])
+def listar_creadores_en_proceso():
+    try:
+        return obtener_creadores_db([3, 4, 5])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # === Listar todos los usuarios ===
 @app.get("/api/TodosUsuarios", tags=["TodosUsuarios"])
