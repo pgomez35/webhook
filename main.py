@@ -2136,6 +2136,7 @@ def obtener_resumen(creador_id: int, usuario_actual: dict = Depends(obtener_usua
     )
 
 ESTADO_MAP = {
+    "Evaluación": 3,
     "Entrevista": 4,
     "Invitación": 5,
     "Rechazado": 7,
