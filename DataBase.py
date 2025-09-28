@@ -2391,12 +2391,70 @@ def actualizar_estado_creador(creador_id: int, estado_id: int):
         cur.close()
         conn.close()
 
+def buscar_aspirante_por_usuario_tiktok(usuario_tiktok: str):
+    """Busca un creador en la tabla creadores por el usuario de TikTok usando with para cerrar la conexión."""
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id,nickname FROM creadores WHERE usuario = %s LIMIT 1",
+                    (usuario_tiktok,)
+                )
+                row = cur.fetchone()
+                if row:
+                    columns = [desc[0] for desc in cur.description]
+                    return dict(zip(columns, row))
+                else:
+                    return None
+    except Exception as e:
+        print("❌ Error al buscar creador por usuario de TikTok:", e)
+        return None
 
+def buscar_usuario_por_telefono(numero: str):
+    """Busca un usuario en la tabla creadores por teléfono o whatsapp"""
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id FROM creadores WHERE telefono = %s OR whatsapp = %s LIMIT 1",
+                    (numero, numero)
+                )
+                row = cur.fetchone()
+                if row:
+                    columns = [desc[0] for desc in cur.description]
+                    return dict(zip(columns, row))
+                else:
+                    return None
+    except Exception as e:
+        print("❌ Error al buscar usuario por teléfono:", e)
+        return None
 
+def formatear_numero(numero: str) -> str:
+    # Quita espacios, guiones y paréntesis
+    numero = re.sub(r"[^\d+]", "", numero)
+    # Quita el '+' si lo tiene
+    if numero.startswith('+'):
+        numero = numero[1:]
+    return numero
 
-
-
-
+def actualizar_telefono_aspirante(aspirante_id: int, numero: str):
+    try:
+        numero_formateado = formatear_numero(numero)
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE creadores
+                    SET telefono = %s, whatsapp = %s, actualizado_en = now()
+                    WHERE id = %s
+                    """,
+                    (numero_formateado, numero_formateado, aspirante_id)
+                )
+                conn.commit()
+                return cur.rowcount > 0  # True si se actualizó alguna fila
+    except Exception as e:
+        print("❌ Error al actualizar teléfono de aspirante:", e)
+        return False
 
 # if __name__ == "__main__":
 #     print("Probando diagnóstico...")

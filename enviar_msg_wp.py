@@ -196,3 +196,50 @@ def enviar_plantilla_generica(token: str, phone_number_id: str, numero_destino: 
 
     print("📡 Respuesta de la API:", respuesta_json)
     return response.status_code, respuesta_json
+
+import requests
+import json
+
+def enviar_boton_iniciar_Completa(token: str, numero_id: str, telefono_destino: str, texto: str):
+    url = f"https://graph.facebook.com/v19.0/{numero_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    mensaje = {
+        "messaging_product": "whatsapp",
+        "to": telefono_destino,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {
+                "text": texto
+            },
+            "action": {
+                "buttons": [
+                    {
+                        "type": "reply",
+                        "reply": {
+                            "id": "iniciar_encuesta",
+                            "title": "Iniciar"
+                        }
+                    }
+                ]
+            }
+        }
+    }
+
+    print("📤 Enviando botón a:", telefono_destino)
+    print("📝 Contenido:", mensaje)
+
+    response = requests.post(url, headers=headers, json=mensaje)
+    print("✅ Código de estado:", response.status_code)
+
+    try:
+        respuesta_json = response.json()
+    except json.JSONDecodeError:
+        respuesta_json = {"error": "Respuesta no válida en formato JSON", "contenido": response.text}
+
+    print("📡 Respuesta de la API:", respuesta_json)
+    return response.status_code, respuesta_json

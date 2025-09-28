@@ -2,7 +2,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 import os, json
 from dotenv import load_dotenv
-from enviar_msg_wp import enviar_plantilla_generica, enviar_mensaje_texto_simple
+from enviar_msg_wp import enviar_plantilla_generica, enviar_mensaje_texto_simple,enviar_boton_iniciar_Completa
 from main import guardar_mensaje
 from utils import *
 from rapidfuzz import process, fuzz
@@ -23,7 +23,7 @@ router = APIRouter()
 # Estado del flujo en memoria
 usuarios_flujo = {}    # { numero: paso_actual }
 respuestas = {}        # { numero: {campo: valor} }
-
+usuarios_temp = {}
 
 # ============================
 # OPCIONES
@@ -294,6 +294,14 @@ def enviar_pregunta(numero: str, paso: int):
 
 def enviar_mensaje(numero: str, texto: str):
     return enviar_mensaje_texto_simple(
+        token=TOKEN,
+        numero_id=PHONE_NUMBER_ID,
+        telefono_destino=numero,
+        texto=texto
+    )
+
+def enviar_boton_iniciar(numero: str, texto: str):
+    return enviar_boton_iniciar_Completa(
         token=TOKEN,
         numero_id=PHONE_NUMBER_ID,
         telefono_destino=numero,
@@ -788,17 +796,17 @@ async def api_enviar_solicitar_informacion(data: dict):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
+
+from DataBase import *
+
 @router.post("/webhook")
 async def whatsapp_webhook(request: Request):
     data = await request.json()
     print("📩 Webhook recibido:", json.dumps(data, indent=2))
 
     try:
-        # SOLO procesar eventos que contienen mensajes reales del usuario.
-        # Ignora webhooks de status ("sent", "delivered", "read") para evitar respuestas innecesarias.
         mensajes = data["entry"][0]["changes"][0]["value"].get("messages", [])
         if not mensajes:
-            # Si no hay mensajes, ignora (es solo un status, NO actuar)
             return {"status": "ok"}
 
         for mensaje in mensajes:
@@ -806,11 +814,56 @@ async def whatsapp_webhook(request: Request):
             tipo = mensaje.get("type")
             paso = usuarios_flujo.get(numero)
 
-            # --- CHAT LIBRE ---
+            usuario_bd = buscar_usuario_por_telefono(numero)
+
+            # 1. FLUJO DE NUEVO USUARIO (Onboarding)
+            if not usuario_bd and paso is None:
+                enviar_mensaje(numero, "Hola, bienvenido a la Agencia XXX 👋")
+                enviar_mensaje(numero, "¿Me puede dar su usuario de TikTok?")
+                usuarios_flujo[numero] = "esperando_usuario_tiktok"
+                return {"status": "ok"}
+
+            # 2. Esperando usuario TikTok
+            if paso == "esperando_usuario_tiktok" and tipo == "text":
+                usuario_tiktok = mensaje["text"]["body"].strip()
+                aspirante = buscar_aspirante_por_usuario_tiktok(usuario_tiktok)
+                if aspirante:
+                    enviar_mensaje(numero, f"¿Tu nombre o nickname es: {aspirante['nombre_real']}?")
+                    usuarios_flujo[numero] = "confirmando_nombre"
+                    usuarios_temp[numero] = aspirante
+                else:
+                    enviar_mensaje(numero, "No encontramos ese usuario de TikTok en nuestra base de aspirantes. ¿Puedes verificarlo?")
+                return {"status": "ok"}
+
+            # 3. Confirmando nombre
+            if paso == "confirmando_nombre" and tipo == "text":
+                texto = mensaje["text"]["body"].strip().lower()
+                if texto in ["sí", "si", "correcto"]:
+                    aspirante = usuarios_temp.get(numero)
+                    actualizar_telefono_aspirante(aspirante["id"], numero)
+                    enviar_boton_iniciar(numero, "¡Perfecto! Ahora necesitamos que llenes una breve encuesta de datos personales.")
+                    usuarios_flujo[numero] = "esperando_inicio_encuesta"
+                else:
+                    enviar_mensaje(numero, "Por favor escribe el nombre correcto o verifica tu usuario de TikTok.")
+                return {"status": "ok"}
+
+            # 4. Proceso del botón "Iniciar"
+            if paso == "esperando_inicio_encuesta" and tipo == "button":
+                boton_texto = mensaje["button"]["text"]
+                if boton_texto.lower() == "iniciar":
+                    usuarios_flujo[numero] = 1  # Empieza la encuesta
+                    enviar_pregunta(numero, 1)
+                    usuarios_temp.pop(numero, None)
+                    return {"status": "ok"}
+
+            # 5. ASIGNAR ROL SI USUARIO EXISTE
+            if usuario_bd:
+                usuarios_roles[numero] = usuario_bd["rol"]
+
+            # 6. CHAT LIBRE - SIEMPRE ANTES DEL FLUJO NORMAL
             if paso == "chat_libre":
                 if tipo == "text":
                     texto = mensaje["text"]["body"].strip()
-                    # --- PALABRA CLAVE PARA VOLVER AL MENÚ ---
                     if texto.lower() in ["menu", "volver", "inicio"]:
                         usuarios_flujo[numero] = 0
                         enviar_mensaje(numero, "🔙 Volviste al menú inicial.")
@@ -818,26 +871,22 @@ async def whatsapp_webhook(request: Request):
                         return {"status": "ok"}
                     print(f"💬 Chat libre de {numero}: {texto}")
                     guardar_mensaje(numero, texto, tipo="recibido", es_audio=False)
-                    # enviar_mensaje(numero, "📨 Estás en chat libre. Puedes escribir o enviar audios.")
-
                 elif tipo == "audio":
                     audio_id = mensaje.get("audio", {}).get("id")
                     print(f"🎤 Audio recibido de {numero}: {audio_id}")
-                    url_cloudinary = descargar_audio(audio_id, TOKEN)  # tu función existente
+                    url_cloudinary = descargar_audio(audio_id, TOKEN)
                     if url_cloudinary:
                         guardar_mensaje(numero, url_cloudinary, tipo="recibido", es_audio=True)
                         enviar_mensaje(numero, "🎧 Recibimos tu audio. Un asesor lo revisará pronto.")
                     else:
                         enviar_mensaje(numero, "⚠️ No se pudo procesar tu audio, inténtalo de nuevo.")
-
                 elif tipo == "button":
                     boton_texto = mensaje["button"]["text"]
                     print(f"👆 Botón en chat libre: {boton_texto}")
                     guardar_mensaje(numero, boton_texto, tipo="recibido", es_audio=False)
+                return {"status": "ok"}  # <-- IMPORTANTE: Cortar aquí
 
-                return {"status": "ok"}  # ⬅️ Importante: cortar aquí para que no siga al cuestionario
-
-            # --- FLUJO NORMAL (no chat libre) ---
+            # 7. FLUJO NORMAL (MENÚ/ENCUESTA)
             if tipo == "button":
                 boton_texto = mensaje["button"]["text"]
                 if boton_texto.lower() == "sí, continuar":
@@ -848,23 +897,21 @@ async def whatsapp_webhook(request: Request):
                 texto = mensaje["text"]["body"].strip().lower()
                 print(f"📥 Texto recibido de {numero}: {texto}")
 
-                # --- ACTIVAR CHAT LIBRE DESDE EL MENÚ ---
+                # ACTIVAR CHAT LIBRE DESDE EL MENÚ
                 if texto in ["4", "chat libre"] and usuarios_roles.get(numero) == "aspirante":
                     usuarios_flujo[numero] = "chat_libre"
                     enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.")
                     return {"status": "ok"}
-
                 if texto in ["7", "chat libre"] and usuarios_roles.get(numero) == "miembro":
                     usuarios_flujo[numero] = "chat_libre"
                     enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.")
                     return {"status": "ok"}
-
                 if texto in ["5", "chat libre"] and usuarios_roles.get(numero) == "admin":
                     usuarios_flujo[numero] = "chat_libre"
                     enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.")
                     return {"status": "ok"}
 
-
+                # FLUJO NORMAL (MENÚ, ENCUESTA, ETC.)
                 manejar_respuesta(numero, texto)
 
     except Exception as e:
