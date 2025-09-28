@@ -360,8 +360,9 @@ def consultar_rol_bd(numero):
         return usuario.get("rol", "aspirante")
     return "aspirante"
 
-def enviar_menu_principal(numero):
-    rol = obtener_rol_usuario(numero)
+def enviar_menu_principal(numero, rol=None):
+    if rol is None:
+        rol = obtener_rol_usuario(numero)
 
     if rol == "aspirante":
         mensaje = (
@@ -431,13 +432,42 @@ def validar_aceptar_ciudad(usuario_ciudad, ciudades=CIUDADES_LATAM, score_minimo
 
 
 def manejar_respuesta(numero, texto):
-    # --- Volver al menú principal ---
-    if texto.strip().lower() in ["menu", "menú", "volver", "inicio", "brillar"]:
-        usuarios_flujo.pop(numero, None)   # 🧹 limpieza manual de flujo
-        enviar_menu_principal(numero)
+    # # --- Volver al menú principal ---
+    # if texto.strip().lower() in ["menu", "menú", "volver", "inicio", "brillar"]:
+    #     usuarios_flujo.pop(numero, None)   # 🧹 limpieza manual de flujo
+    #     enviar_menu_principal(numero)
+    #     return
+    #
+    # paso = usuarios_flujo.get(numero)
+    texto_normalizado = texto.strip().lower()
+    paso = usuarios_flujo.get(numero)
+    rol = obtener_rol_usuario(numero)
+
+    # --- Detectar saludos ---
+    if texto_normalizado in ["hola", "buenas", "saludos"]:
+        usuario_bd = buscar_usuario_por_telefono(numero)
+        if usuario_bd:
+            # Está en la base de datos, saluda y muestra menú según rol
+            enviar_mensaje(numero, f"👋 Hola, bienvenido a la Agencia .")
+            enviar_menu_principal(numero, rol)
+            return
+        # Si NO está en la BD, inicia onboarding
+        enviar_mensaje(numero, f"👋 Hola, bienvenido a la Agencia .")
+        enviar_mensaje(numero, "¿Me puede dar su usuario de TikTok?")
+        usuarios_flujo[numero] = "esperando_usuario_tiktok"
         return
 
-    paso = usuarios_flujo.get(numero)
+    # --- Volver al menú principal ---
+    if texto_normalizado in ["menu", "menú", "volver", "inicio", "brillar"]:
+        usuarios_flujo.pop(numero, None)
+        enviar_menu_principal(numero, rol)
+        return
+
+    # --- Volver al menú principal ---
+    if texto_normalizado in ["menu", "menú", "volver", "inicio", "brillar"]:
+        usuarios_flujo.pop(numero, None)   # 🧹 limpieza manual de flujo
+        enviar_menu_principal(numero, rol)
+        return
 
     # 🚫 Si está en chat libre, no procesar aquí
     if paso == "chat_libre":
@@ -813,7 +843,7 @@ async def whatsapp_webhook(request: Request):
 
             # 1. FLUJO DE NUEVO USUARIO (Onboarding)
             if not usuario_bd and paso is None:
-                enviar_mensaje(numero, "Hola, bienvenido a la Agencia XXX 👋")
+                enviar_mensaje(numero, "Hola, bienvenido a la Agencia 👋")
                 enviar_mensaje(numero, "¿Me puede dar su usuario de TikTok?")
                 usuarios_flujo[numero] = "esperando_usuario_tiktok"
                 return {"status": "ok"}
@@ -823,7 +853,7 @@ async def whatsapp_webhook(request: Request):
                 usuario_tiktok = mensaje["text"]["body"].strip()
                 aspirante = buscar_aspirante_por_usuario_tiktok(usuario_tiktok)
                 if aspirante:
-                    enviar_mensaje(numero, f"¿Tu nombre o nickname es: {aspirante['nombre_real']}?")
+                    enviar_mensaje(numero, f"¿Tu nombre o nickname es: {aspirante['nickname']}?")
                     usuarios_flujo[numero] = "confirmando_nombre"
                     usuarios_temp[numero] = aspirante
                 else:
