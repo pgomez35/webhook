@@ -176,14 +176,14 @@ preguntas = {
        "7️⃣ Postgrado / Especialización\n"
        "8️⃣ Autodidacta / Formación no formal\n"
        "9️⃣ Otro (especificar)",
-    7: "📌 ¿Hablas algún otro idioma además del Español?\n"
-        "1️⃣ Inglés\n"
-        "2️⃣ Portugués\n"
-        "3️⃣ Francés\n"
-        "4️⃣ Italiano\n"
-        "5️⃣ Alemán\n"
-        "6️⃣ Otro (escribe cuál)\n"
-        "7️⃣ Ninguno",
+    7: "📌 ¿Idioma Principal?\n"
+       "1️⃣ Español\n"
+       "2️⃣ Inglés\n"
+       "3️⃣ Portugués\n"
+       "4️⃣ Francés\n"
+       "5️⃣ Italiano\n"
+       "6️⃣ Alemán\n"
+       "7️⃣ Otro\n",
     8: "📌 Actividad actual:\n"
        "1️⃣ Estudia tiempo completo\n"
        "2️⃣ Estudia medio tiempo\n"
