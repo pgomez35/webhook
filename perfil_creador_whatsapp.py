@@ -149,26 +149,22 @@ preguntas = {
        "3️⃣ Otro\n"
        "4️⃣ Prefiero no decir",
     4: "📌 País (elige de la lista o escribe el tuyo si no aparece):\n"
-       "1️⃣ Argentina\n"
-       "2️⃣ Bolivia\n"
-       "3️⃣ Chile\n"
-       "4️⃣ Colombia\n"
-       "5️⃣ Costa Rica\n"
-       "6️⃣ Cuba\n"
-       "7️⃣ Ecuador\n"
-       "8️⃣ El Salvador\n"
-       "9️⃣ Guatemala\n"
-       "🔟 Honduras\n"
-       "1️⃣1️⃣ México\n"
-       "1️⃣2️⃣ Nicaragua\n"
-       "1️⃣3️⃣ Panamá\n"
-       "1️⃣4️⃣ Paraguay\n"
-       "1️⃣5️⃣ Perú\n"
-       "1️⃣6️⃣ Puerto Rico\n"
-       "1️⃣7️⃣ República Dominicana\n"
-       "1️⃣8️⃣ Uruguay\n"
-       "1️⃣9️⃣ Venezuela\n"
-       "2️⃣0️⃣ Otro (escribe tu país)",
+        "1️⃣ Argentina 2️⃣ Bolivia\n"
+        "3️⃣ Chile   4️⃣ Colombia\n"
+        "5️⃣ Costa Rica 6️⃣ Cuba\n"
+        "7️⃣ Ecuador 8️⃣ El Salvador\n"
+        "9️⃣ Guatemala\n"
+        "🔟 Honduras\n"
+        "1️⃣1️⃣ México\n"
+        "1️⃣2️⃣ Nicaragua\n"
+        "1️⃣3️⃣ Panamá\n"
+        "1️⃣4️⃣ Paraguay\n"
+        "1️⃣5️⃣ Perú\n"
+        "1️⃣6️⃣ Puerto Rico\n"
+        "1️⃣7️⃣ República Dominicana\n"
+        "1️⃣8️⃣ Uruguay\n"
+        "1️⃣9️⃣ Venezuela\n"
+        "2️⃣0️⃣ Otro (escribe tu país)",
     5: "📌 Ciudad principal (escríbela en texto)",
     6: "📌 Nivel de estudios:\n"
        "1️⃣ Ninguno\n"
@@ -180,14 +176,14 @@ preguntas = {
        "7️⃣ Postgrado / Especialización\n"
        "8️⃣ Autodidacta / Formación no formal\n"
        "9️⃣ Otro (especificar)",
-    7: "📌 Idioma principal:\n"
-       "1️⃣ Español\n"
-       "2️⃣ Inglés\n"
-       "3️⃣ Portugués\n"
-       "4️⃣ Francés\n"
-       "5️⃣ Italiano\n"
-       "6️⃣ Alemán\n"
-       "7️⃣ Otro",
+    7: "📌 ¿Hablas algún otro idioma además del Español?\n"
+        "1️⃣ Inglés\n"
+        "2️⃣ Portugués\n"
+        "3️⃣ Francés\n"
+        "4️⃣ Italiano\n"
+        "5️⃣ Alemán\n"
+        "6️⃣ Otro (escribe cuál)\n"
+        "7️⃣ Ninguno",
     8: "📌 Actividad actual:\n"
        "1️⃣ Estudia tiempo completo\n"
        "2️⃣ Estudia medio tiempo\n"
@@ -901,7 +897,7 @@ def manejar_respuesta(numero, texto):
                 enviar_mensaje(numero, "⚠️ Ingresa solo el número correspondiente (1 a 7).")
                 return
 
-        # 7: Idioma principal (1–7)
+        # 7: Idioma secundario (1–7)
         if paso == 7:
             if texto not in [str(i) for i in range(1, 8)]:
                 enviar_mensaje(numero, "⚠️ Ingresa solo el número correspondiente (1 a 7).")
