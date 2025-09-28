@@ -1090,9 +1090,6 @@ async def api_enviar_solicitar_informacion(data: dict):
 
 from DataBase import *
 
-
-from cache_utils import obtener_flujo, actualizar_flujo
-
 @router.post("/webhook")
 async def whatsapp_webhook(request: Request):
     data = await request.json()
