@@ -215,9 +215,10 @@ preguntas = {
     12: "📌 ¿Cuántas horas a la semana tienes disponibles para crear contenido?",
 
     # 🔹 Experiencia en plataformas
-    13: "📌 ¿Cuántos meses de experiencia tienes en TikTok?",
-    14: "📌 ¿Cuántos meses de experiencia tienes en YouTube?",
-    15: "📌 ¿Cuántos meses de experiencia tienes en Instagram?",
+    13: "📌 ¿Cuántos meses de experiencia tienes en TikTok Live?",
+    14: "📌 ¿Cuántos meses de experiencia tienes en Bigo Live?",
+    15: "📌 ¿Cuántos meses de experiencia tienes en NimoTV?",
+    16: "📌 ¿Cuántos meses de experiencia tienes en Twitch?",
 
     # 16: "📌 ¿Qué tipo de contenido creas?\n"
     #     "Responde con los números, separados por coma.\n\n"
@@ -241,27 +242,44 @@ preguntas = {
     # )
 
 # 🔹 Tipo de Contenido
-16: (
+17: (
     "📌 ¿Qué tipo de contenido creas?\n"
     "Responde con los números, separados por coma.\n\n"
-    "1️⃣ Bailes   |  2️⃣ Charlas   |  3️⃣ Gaming\n"
-    "4️⃣ Tutoriales   |  5️⃣ Entretenimiento   |  6️⃣ Humor\n"
-    "7️⃣ Música en vivo   |  8️⃣ Reacción a videos   |  9️⃣ Religión\n"
-    "1️⃣0️⃣ Temas sociales   |  1️⃣1️⃣ Estudios/tareas   |  1️⃣2️⃣ Ventas en vivo\n"
+    "1️⃣ Bailes 2️⃣ Charlas\n"
+    "3️⃣ Gaming 4️⃣ Tutoriales\n"
+    "5️⃣ Entretenimiento\n"
+    "6️⃣ Humor\n"
+    "7️⃣ Música en vivo\n"
+    "8️⃣ Reacción a videos\n"
+    "9️⃣ Religión\n"
+    "🔟 Temas sociales\n"
+    "1️⃣1️⃣ Estudios/tareas\n"
+    "1️⃣2️⃣ Ventas en vivo\n"
     "1️⃣3️⃣ Otro"
 ),
 
 
+
 # 🔹 Intereses
-17: (
+18: (
     "📌 ¿Cuáles son tus intereses?\n"
     "Responde con los números, separados por coma.\n\n"
-    "1️⃣ Deportes   |  2️⃣ Moda   |  3️⃣ Maquillaje   |  4️⃣ Cocina\n"
-    "5️⃣ Fitness   |  6️⃣ Música   |  7️⃣ Bailes   |  8️⃣ Gaming\n"
-    "9️⃣ Lectura   |  1️⃣0️⃣ Salud mental   |  1️⃣1️⃣ Comedia   |  1️⃣2️⃣ Religión\n"
-    "1️⃣3️⃣ Política   |  1️⃣4️⃣ Emprendimiento   |  1️⃣5️⃣ Viajes   |  1️⃣6️⃣ Idiomas\n"
-    "1️⃣7️⃣ Educación   |  1️⃣8️⃣ Noticias   |  1️⃣9️⃣ Relaciones   |  2️⃣0️⃣ Arte\n"
-    "2️⃣1️⃣ Tecnología   |  2️⃣2️⃣ Fotografía   |  2️⃣3️⃣ Otro"
+    "1️⃣ Deportes 2️⃣ Moda\n"
+    "3️⃣ Maquillaje\n"
+    "4️⃣ Cocina 5️⃣ Fitness\n"
+    "6️⃣ Música 7️⃣ Bailes\n"
+    "8️⃣ Gaming 9️⃣ Lectura\n"
+    "🔟 Salud mental\n"
+    "1️⃣1️⃣ Comedia\n"
+    "1️⃣2️⃣ Religión\n"
+    "1️⃣3️⃣ Política\n"
+    "1️⃣4️⃣ Emprendimiento\n"
+    "1️⃣5️⃣ Viajes 1️⃣6️⃣ Idiomas\n"
+    "1️⃣7️⃣ Educación 1️⃣8️⃣ Noticias\n"
+    "1️⃣9️⃣ Relaciones\n"
+    "2️⃣0️⃣ Arte 2️⃣1️⃣ Tecnología\n"
+    "2️⃣2️⃣ Fotografía\n"
+    "2️⃣3️⃣ Otro"
 )
 
 }
@@ -938,14 +956,14 @@ def manejar_respuesta(numero, texto):
                 return
 
         # 16: Tipo de contenido (múltiple, 1–13)
-        if paso == 16:
+        if paso == 17:
             seleccion = validar_opciones_multiples(texto, [str(i) for i in range(1, 14)])
             if not seleccion:
                 enviar_mensaje(numero, "⚠️ Respuesta inválida. Ejemplo válido: 1,2,3")
                 return
 
         # 17: Intereses (múltiple, 1–23)
-        if paso == 17:
+        if paso == 18:
             seleccion = validar_opciones_multiples(texto, [str(i) for i in range(1, 24)])
             if not seleccion:
                 enviar_mensaje(numero, "⚠️ Respuesta inválida. Ejemplo válido: 1,3,5")
@@ -1118,11 +1136,11 @@ async def whatsapp_webhook(request: Request):
             # 2. Saludos en cualquier momento
             if tipo == "text" and texto in ["hola", "buenas", "saludos"]:
                 if usuario_bd:
-                    enviar_mensaje(numero, f"👋 Hola, bienvenido a la Agencia XXX.")
+                    enviar_mensaje(numero, f"👋 Hola, bienvenido a la Agencia .")
                     enviar_menu_principal(numero, rol)
                     return {"status": "ok"}
                 else:
-                    enviar_mensaje(numero, f"👋 Hola, bienvenido a la Agencia XXX.")
+                    enviar_mensaje(numero, f"👋 Hola, bienvenido a la Agencia .")
                     enviar_mensaje(numero, "¿Me puede dar su usuario de TikTok?")
                     actualizar_flujo(numero, "esperando_usuario_tiktok")
                     return {"status": "ok"}
@@ -1263,11 +1281,11 @@ async def whatsapp_webhook(request: Request):
 #                 texto = mensaje["text"]["body"].strip().lower()
 #                 if texto in ["hola", "buenas", "saludos"]:
 #                     if usuario_bd:
-#                         enviar_mensaje(numero, f"👋 Hola, bienvenido a la Agencia XXX.")
+#                         enviar_mensaje(numero, f"👋 Hola, bienvenido a la Agencia .")
 #                         enviar_menu_principal(numero, rol)
 #                         return {"status": "ok"}
 #                     else:
-#                         enviar_mensaje(numero, f"👋 Hola, bienvenido a la Agencia XXX.")
+#                         enviar_mensaje(numero, f"👋 Hola, bienvenido a la Agencia .")
 #                         enviar_mensaje(numero, "¿Me puede dar su usuario de TikTok?")
 #                         usuarios_flujo[numero] = "esperando_usuario_tiktok"
 #                         return {"status": "ok"}
@@ -1539,10 +1557,11 @@ def procesar_respuestas(respuestas):
 
     # Experiencia plataformas principales
     experiencia = {
-        "TikTok": redondear_a_un_decimal(int(respuestas.get(13, 0)) / 12) if respuestas.get(13) else 0,
-        "YouTube": redondear_a_un_decimal(int(respuestas.get(14, 0)) / 12) if respuestas.get(14) else 0,
-        "Instagram": redondear_a_un_decimal(int(respuestas.get(15, 0)) / 12) if respuestas.get(15) else 0,
-        "Facebook": 0, "Twitch": 0, "LinkedIn": 0, "Twitter/X": 0, "Otro": 0
+        "TikTok Live": redondear_a_un_decimal(int(respuestas.get(13, 0)) / 12) if respuestas.get(13) else 0,
+        "Bigo Live": redondear_a_un_decimal(int(respuestas.get(14, 0)) / 12) if respuestas.get(14) else 0,
+        "NimoTV": redondear_a_un_decimal(int(respuestas.get(15, 0)) / 12) if respuestas.get(15) else 0,
+        "Twitch": redondear_a_un_decimal(int(respuestas.get(15, 0)) / 12) if respuestas.get(16) else 0,
+        "Otro": 0
     }
     datos["experiencia_otras_plataformas"] = json.dumps(experiencia)
 
