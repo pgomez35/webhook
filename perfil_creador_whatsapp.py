@@ -345,24 +345,9 @@ def obtener_rol_usuario(numero):
     return rol
 
 def consultar_rol_bd(numero):
-
-    miembros_agencia = [
-        {"telefono": "+573001234567", "nombre": "Pedro", "rol": "miembro"},
-        {"telefono": "+5491133344455", "nombre": "Lucía", "rol": "miembro"},
-        {"telefono": "+34666111222", "nombre": "Carlos", "rol": "miembro"},
-    ]
-    admins = [
-        {"telefono": "+573005551234", "nombre": "Admin Juan"},
-        {"telefono": "+5491177788899", "nombre": "Admin Paula"},
-        {"telefono": "+34666111223", "nombre": "Admin Sergio"}
-    ]
-
-    for m in miembros_agencia:
-        if m["telefono"] == numero:
-            return m.get("rol", "miembro")
-    for a in admins:
-        if a["telefono"] == numero:
-            return "admin"
+    usuario = buscar_usuario_por_telefono(numero)
+    if usuario:
+        return usuario.get("rol", "aspirante")
     return "aspirante"
 
 def enviar_menu_principal(numero):
@@ -378,9 +363,9 @@ def enviar_menu_principal(numero):
             "4️⃣ Chat libre con un asesor\n"
             "Por favor responde con el número de la opción."
         )
-    elif rol == "miembro":
+    elif rol == "creador":
         mensaje = (
-            "👋 ¡Hola, miembro de la Agencia!\n"
+            "👋 ¡Hola, creador de la Agencia!\n"
             "¿Qué deseas hacer hoy?\n"
             "1️⃣ Actualizar mi información de perfil\n"
             "3️⃣ Solicitar asesoría personalizada\n"
@@ -397,7 +382,7 @@ def enviar_menu_principal(numero):
             "¿Qué deseas hacer hoy?\n"
             "1️⃣ Ver panel de control\n"
             "2️⃣ Ver todos los perfiles\n"
-            "3️⃣ Enviar comunicado a miembros/aspirantes\n"
+            "3️⃣ Enviar comunicado a creadores/aspirantes\n"
             "4️⃣ Gestión de recursos\n"
             "5️⃣ Chat libre con el equipo"
         )
@@ -475,7 +460,7 @@ def manejar_respuesta(numero, texto):
                 enviar_mensaje(numero, "Opción no válida. Escribe 'menu' para ver las opciones.")
                 return
 
-        elif rol == "miembro":
+        elif rol == "creador":
             if texto == "1":
                 usuarios_flujo[numero] = 1
                 enviar_pregunta(numero, 1)
@@ -529,7 +514,7 @@ def manejar_respuesta(numero, texto):
                 return
             elif texto == "3":
                 usuarios_flujo[numero] = "comunicado"
-                enviar_mensaje(numero, "✉️ Escribe el comunicado a enviar a miembros/aspirantes:")
+                enviar_mensaje(numero, "✉️ Escribe el comunicado a enviar a creadores/aspirantes:")
                 return
             elif texto == "4":
                 usuarios_flujo[numero] = "recursos_admin"
@@ -902,7 +887,7 @@ async def whatsapp_webhook(request: Request):
                     usuarios_flujo[numero] = "chat_libre"
                     enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.")
                     return {"status": "ok"}
-                if texto in ["7", "chat libre"] and usuarios_roles.get(numero) == "miembro":
+                if texto in ["7", "chat libre"] and usuarios_roles.get(numero) == "creador":
                     usuarios_flujo[numero] = "chat_libre"
                     enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.")
                     return {"status": "ok"}

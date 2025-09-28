@@ -2411,20 +2411,40 @@ def buscar_aspirante_por_usuario_tiktok(usuario_tiktok: str):
         return None
 
 def buscar_usuario_por_telefono(numero: str):
-    """Busca un usuario en la tabla creadores por teléfono o whatsapp"""
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
+                # Buscar en creadores con JOIN roles
                 cur.execute(
-                    "SELECT id FROM creadores WHERE telefono = %s OR whatsapp = %s LIMIT 1",
+                    """
+                    SELECT c.id, c.nickname,
+                           COALESCE(r.nombre, 'aspirante') AS rol
+                    FROM creadores c
+                    LEFT JOIN roles r ON c.rol_id = r.id
+                    WHERE c.telefono = %s OR c.whatsapp = %s
+                    LIMIT 1
+                    """,
                     (numero, numero)
                 )
                 row = cur.fetchone()
                 if row:
                     columns = [desc[0] for desc in cur.description]
                     return dict(zip(columns, row))
-                else:
-                    return None
+                # Si no está, buscar en admin_usuario
+                cur.execute(
+                    """
+                    SELECT id, nickname, 'admin' AS rol
+                    FROM admin_usuario
+                    WHERE telefono = %s
+                    LIMIT 1
+                    """,
+                    (numero,)
+                )
+                row = cur.fetchone()
+                if row:
+                    columns = [desc[0] for desc in cur.description]
+                    return dict(zip(columns, row))
+                return None
     except Exception as e:
         print("❌ Error al buscar usuario por teléfono:", e)
         return None
