@@ -318,7 +318,6 @@ usuarios_roles = {}   # {numero: (rol, timestamp)}
 # Tiempo de vida en segundos (1 hora = 3600)
 TTL = 3600
 
-
 # --- Funciones de cache ---
 def actualizar_flujo(numero, paso):
     usuarios_flujo[numero] = (paso, time.time())
@@ -333,15 +332,26 @@ def obtener_flujo(numero):
     return None
 
 def obtener_rol_usuario(numero):
-    if numero in usuarios_roles:
-        rol, t = usuarios_roles[numero]
-        if time.time() - t < TTL:
+    cache = usuarios_roles.get(numero)
+    now = time.time()
+    # Verifica que el cache sea una tupla (rol, tiempo) y esté vigente
+    if cache and isinstance(cache, tuple) and len(cache) == 2:
+        rol, cached_at = cache
+        if now - cached_at < TTL:
             return rol
         else:
-            usuarios_roles.pop(numero, None)  # 🧹 expira por inactividad
+            usuarios_roles.pop(numero, None)  # Expira por tiempo
+    else:
+        usuarios_roles.pop(numero, None)  # Limpia formatos incorrectos
 
-    rol = consultar_rol_bd(numero)
-    usuarios_roles[numero] = (rol, time.time())
+    # Consulta en la base de datos si no hay cache válido
+    usuario = buscar_usuario_por_telefono(numero)
+    if usuario:
+        rol = usuario.get("rol", "aspirante")
+    else:
+        rol = "aspirante"
+
+    usuarios_roles[numero] = (rol, now)
     return rol
 
 def consultar_rol_bd(numero):
