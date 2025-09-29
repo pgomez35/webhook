@@ -64,6 +64,7 @@ CALENDAR_ID = os.getenv("CALENDAR_ID")
 # CALENDAR_ID = "primary" # para que sea siempre primary, pero tambien puedo configurarlo en variables del backend
 
 from perfil_creador_whatsapp import router as perfil_creador_router
+from mainCargarAspirantes import router as mainCargarAspirantes
 # from aspirantes import router as aspirantes_router  # 👈 importar módulo nuevo
 
 # ⚙️ Inicializar FastAPI
@@ -72,6 +73,7 @@ app = FastAPI()
 
 # Incluir las rutas del módulo perfil_creador_whatsapp
 app.include_router(perfil_creador_router, tags=["Perfil Creador WhatsApp"])
+app.include_router(perfil_creador_router, tags=["mainCargarAspirantes"])
 # app.include_router(aspirantes_router, tags=["Aspirantes"])  # 👈 añadir aquí
 
 # ✅ Crear carpeta persistente de audios si no existe
@@ -1039,17 +1041,6 @@ def actualizar_contacto_info(telefono: str = Path(...), datos: ActualizacionCont
 @app.get("/contactos")
 def listar_contactos(estado: Optional[str] = None):
     return obtener_contactos_db(estado)
-
-@app.post("/cargar_contactos")
-def cargar_contactos_desde_excel(nombre_hoja: str = Body(..., embed=True)):
-    try:
-        contactos = obtener_contactos_desde_hoja(nombre_hoja)
-        if not contactos:
-            return {"status": "error", "mensaje": "No se encontraron contactos en la hoja"}
-        guardar_contactos(contactos)
-        return {"status": "ok", "mensaje": f"{len(contactos)} contactos cargados y guardados correctamente"}
-    except Exception as e:
-        return {"status": "error", "mensaje": f"Error al cargar contactos: {str(e)}"}
 
 # ✅ VERIFICACIÓN DEL WEBHOOK (Facebook Developers)
 @app.get("/webhook")
@@ -2829,13 +2820,7 @@ def actualizar_evaluacion_inicial(
         logging.error(f"❌ Error al actualizar evaluación inicial del creador {creador_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Error interno al actualizar la evaluación")
 
-# Endpoint GET por creador
-@app.get("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
-def obtener_entrevista(creador_id: int):
-    entrevista = obtener_entrevista_por_creador(creador_id)
-    if not entrevista:
-        raise HTTPException(status_code=404, detail="No existe entrevista para este creador")
-    return entrevista
+
 
 # temporal
 
@@ -2901,6 +2886,14 @@ async def debug_entrevista(request: Request):
 
 from datetime import timedelta
 from fastapi import Depends, HTTPException
+
+# Endpoint GET por creador
+@app.get("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
+def obtener_entrevista(creador_id: int):
+    entrevista = obtener_entrevista_por_creador(creador_id)
+    if not entrevista:
+        raise HTTPException(status_code=404, detail="No existe entrevista para este creador")
+    return entrevista
 
 # POST crear entrevista + evento
 @app.post("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
