@@ -7,6 +7,221 @@ import pandas as pd
 
 router = APIRouter()
 
+
+import re
+from pathlib import Path
+
+# --- Parser del archivo de texto (respeta los valores tal cual) ---
+def _keep(s: str) -> str:
+    return (s or "").strip()
+
+# def parsear_bloques_desde_txt(ruta_txt: str | Path) -> dict:
+#
+#     texto = Path(ruta_txt).read_text(encoding="utf-8", errors="ignore")
+#     lineas = [ln.rstrip("\n\r") for ln in texto.splitlines()]
+#     i, n = 0, len(lineas)
+#     out = {}
+#
+#     while i < n:
+#         linea = lineas[i].strip()
+#         i += 1
+#         if not linea:
+#             continue
+#
+#         usuario = linea
+#
+#         # "Nombre"
+#         while i < n and lineas[i].strip() == "":
+#             i += 1
+#         if i < n and lineas[i].strip().lower() == "nombre":
+#             i += 1
+#
+#         while i < n and lineas[i].strip() == "":
+#             i += 1
+#         nombre = _keep(lineas[i]) if i < n else ""
+#         i += 1
+#
+#         # métricas por tabs
+#         while i < n and lineas[i].strip() == "":
+#             i += 1
+#         metrica_line = lineas[i].strip() if i < n else ""
+#         i += 1
+#
+#         m = re.match(r"([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)", metrica_line)
+#         if m:
+#             s_seg, s_vid, s_like, s_dur, s_dias = m.groups()
+#         else:
+#             partes = metrica_line.split("\t") if metrica_line else []
+#             while len(partes) < 5:
+#                 partes += [""]
+#             s_seg, s_vid, s_like, s_dur, s_dias = partes[:5]
+#
+#         seguidores = _keep(s_seg)      # <- texto tal cual
+#         videos = _keep(s_vid)          # <- texto tal cual
+#         likes = _keep(s_like)          # <- texto tal cual (ej: "47 237")
+#         duracion = _keep(s_dur)
+#         dias_validos = _keep(s_dias)
+#
+#         # caducidad
+#         while i < n and lineas[i].strip() == "":
+#             i += 1
+#         caducidad = _keep(lineas[i]) if i < n else ""
+#         i += 1
+#
+#         # email agente
+#         while i < n and lineas[i].strip() == "":
+#             i += 1
+#         agente = _keep(lineas[i]) if i < n else ""
+#         i += 1
+#
+#         # etiqueta + fecha
+#         while i < n and lineas[i].strip() == "":
+#             i += 1
+#         fecha_sol = ""
+#         if i < n:
+#             ult = lineas[i].strip()
+#             i += 1
+#             partes = ult.split("\t")
+#             if len(partes) >= 2:
+#                 fecha_sol = _keep(partes[1])
+#             else:
+#                 mm = re.search(r"\b\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}:\d{2}\b", ult)
+#                 if mm:
+#                     fecha_sol = mm.group(0)
+#
+#         out[usuario] = {
+#             "usuario": usuario,
+#             "nombre": nombre,
+#             "seguidores": seguidores,
+#             "videos": videos,
+#             "likes": likes,
+#             # Nota: tu código usa estas claves con guion bajo y mayúscula:
+#             "Duracion_Emisiones": duracion,
+#             "Dias_Emisiones": dias_validos,
+#             "caducidad_solicitud": caducidad,
+#             "agente_recluta": agente,
+#             "fecha_solcitud": fecha_sol,  # se respeta la grafía pedida
+#         }
+#
+#         while i < n and lineas[i].strip() == "":
+#             i += 1
+#
+#     return out
+
+
+import re
+from pathlib import Path
+
+def _keep(s: str) -> str:
+    """Conserva el texto tal cual, recortando solo espacios al inicio/fin."""
+    return (s or "").strip()
+
+def parsear_bloques_desde_txt(ruta_txt: str | Path) -> dict:
+    texto = Path(ruta_txt).read_text(encoding="utf-8", errors="ignore")
+    lineas = [ln.rstrip("\n\r") for ln in texto.splitlines()]
+    i, n = 0, len(lineas)
+    out = {}
+
+    while i < n:
+        # Posible inicio de bloque: línea con el usuario
+        linea = lineas[i].strip()
+        i += 1
+        if not linea:
+            continue
+
+        usuario = linea  # <-- aquí empieza el bloque del usuario
+
+        # "Nombre" o "Name"
+        while i < n and lineas[i].strip() == "":
+            i += 1
+        if i < n and lineas[i].strip().lower() in ("nombre", "name"):
+            i += 1
+
+        # Nombre real
+        while i < n and lineas[i].strip() == "":
+            i += 1
+        nombre = _keep(lineas[i]) if i < n else ""
+        i += 1
+
+        # Métricas por tabs: seguidores, videos, likes, duración, días
+        while i < n and lineas[i].strip() == "":
+            i += 1
+        metrica_line = lineas[i].strip() if i < n else ""
+        i += 1
+
+        m = re.match(r"([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)", metrica_line)
+        if m:
+            s_seg, s_vid, s_like, s_dur, s_dias = m.groups()
+        else:
+            partes = metrica_line.split("\t") if metrica_line else []
+            while len(partes) < 5:
+                partes += [""]
+            s_seg, s_vid, s_like, s_dur, s_dias = partes[:5]
+
+        seguidores = _keep(s_seg)    # texto tal cual
+        videos     = _keep(s_vid)    # texto tal cual
+        likes      = _keep(s_like)   # texto tal cual (ej. "47 237")
+        duracion   = _keep(s_dur)
+        dias_validos = _keep(s_dias)
+
+        # Caducidad
+        while i < n and lineas[i].strip() == "":
+            i += 1
+        caducidad = _keep(lineas[i]) if i < n else ""
+        i += 1
+
+        # Email agente recluta
+        while i < n and lineas[i].strip() == "":
+            i += 1
+        agente = _keep(lineas[i]) if i < n else ""
+        i += 1
+
+        # Etiqueta de canal (LIVE / Código QR / QR code) + fecha
+        while i < n and lineas[i].strip() == "":
+            i += 1
+        fecha_sol = ""
+        canal = ""
+        if i < n:
+            ult = lineas[i].strip()
+            i += 1
+
+            # Caso típico: "<CANAL>\t<FECHA>"
+            partes = ult.split("\t")
+            if len(partes) >= 2:
+                canal = _keep(partes[0])  # conserva exactamente lo que venga (LIVE, Código QR, QR code)
+                fecha_sol = _keep(partes[1])
+            else:
+                # Intento flexible: extraer fecha dd/mm/yyyy hh:mm:ss en cualquier parte de la línea
+                mm = re.search(r"\b\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}:\d{2}\b", ult)
+                if mm:
+                    fecha_sol = mm.group(0)
+                # Extraer canal si la línea inicia con LIVE / Código QR / QR code (u otra etiqueta)
+                # Guardamos el token inicial, que suele ser el canal.
+                canal_match = re.match(r"^\s*([A-Za-zÁÉÍÓÚáéíóúÑñÜü\s]+)", ult)
+                if canal_match:
+                    canal = _keep(canal_match.group(1))
+
+        out[usuario] = {
+            "usuario": usuario,
+            "nombre": nombre,
+            "seguidores": seguidores,
+            "videos": videos,
+            "likes": likes,
+            "Duracion_Emisiones": duracion,     # se mantiene la misma clave que usas en tu código
+            "Dias_Emisiones": dias_validos,     # idem
+            "caducidad_solicitud": caducidad,
+            "agente_recluta": agente,
+            "fecha_solcitud": fecha_sol,        # se respeta la grafía pedida
+            "canal": canal,                     # NUEVO: LIVE / Código QR / QR code (texto tal cual)
+        }
+
+        # Saltar blancos entre bloques
+        while i < n and lineas[i].strip() == "":
+            i += 1
+
+    return out
+
+
 def get_gspread_client():
     scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     cred_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
@@ -14,11 +229,14 @@ def get_gspread_client():
     creds = Credentials.from_service_account_info(cred_dict, scopes=scope)
     return gspread.authorize(creds)
 
+import logging
+
+logger = logging.getLogger("uvicorn.error")
+
 @router.get("/listar_hojas")
 def listar_hojas(str_key: str):
     """
     Devuelve la lista de hojas disponibles en el documento Google Sheets.
-    Ahora recibe el str_key como parámetro (query param) desde el frontend.
     """
     try:
         gc = get_gspread_client()
@@ -26,45 +244,79 @@ def listar_hojas(str_key: str):
         hojas = [ws.title for ws in spreadsheet.worksheets()]
         return {"status": "ok", "hojas": hojas}
     except Exception as e:
+        logger.error(f"❌ Error en listar_hojas con str_key={str_key}: {e}", exc_info=True)
         return {"status": "error", "mensaje": f"Error al listar hojas: {str(e)}"}
 
 @router.post("/cargar_aspirantes")
 def cargar_aspirantes_desde_workspace(
     nombre_hoja: str = Body(..., embed=True),
-    str_key: str = Body(..., embed=True)
+    str_key: str = Body(..., embed=True),
+    ruta_txt: str = Body(..., embed=True)
 ):
-    """
-    Carga aspirantes desde una hoja específica de Google Sheets.
-    Ahora recibe el str_key como parámetro desde el frontend.
-    """
     try:
-        aspirantes = obtener_aspirantes_desde_hoja(str_key, nombre_hoja)
+        logger.info(f"📥 Iniciando carga de aspirantes: hoja={nombre_hoja}, str_key={str_key}")
+        aspirantes = obtener_aspirantes_desde_hoja(str_key, nombre_hoja, ruta_txt)
         if not aspirantes:
-            return {"status": "error", "mensaje": "No se encontraron aspirantes en la hoja"}
+            logger.warning(f"⚠️ No se encontraron aspirantes en la hoja {nombre_hoja}")
+            return {
+                "status": "error",
+                "mensaje": "No se encontraron aspirantes en la hoja"
+            }
         guardar_aspirantes(aspirantes)
-        return {"status": "ok", "mensaje": f"{len(aspirantes)} aspirantes cargados y guardados correctamente"}
+        logger.info(f"✅ {len(aspirantes)} aspirantes cargados y guardados correctamente")
+        return {
+            "status": "ok",
+            "mensaje": f"{len(aspirantes)} aspirantes cargados y guardados correctamente"
+        }
     except Exception as e:
-        return {"status": "error", "mensaje": f"Error al cargar aspirantes: {str(e)}"}
+        logger.error(
+            f"❌ Error en cargar_aspirantes con hoja={nombre_hoja}, str_key={str_key}: {e}",
+            exc_info=True
+        )
+        return {
+            "status": "error",
+            "mensaje": f"Error al cargar aspirantes: {str(e)}"
+        }
 
-def obtener_aspirantes_desde_hoja(str_key, nombre_hoja):
+
+def obtener_aspirantes_desde_hoja(str_key, nombre_hoja, ruta_txt):
+    """
+    Lee la hoja de Google Sheets (gspread) y mezcla los datos base con
+    los obtenidos desde el archivo de texto vertical para cada 'usuario'.
+    """
     try:
+        logger.info(f"📥 Iniciando lectura de aspirantes: hoja={nombre_hoja}, str_key={str_key}, txt={ruta_txt}")
+
+        # 1) Parsear archivo de texto
+        info_por_usuario = parsear_bloques_desde_txt(ruta_txt)
+        logger.info(f"✅ TXT parseado, usuarios encontrados: {len(info_por_usuario)}")
+
+        # 2) Leer la hoja
         gc = get_gspread_client()
+        logger.info("✅ Cliente gspread obtenido")
+
         spreadsheet = gc.open_by_key(str_key)
+        logger.info(f"✅ Spreadsheet abierto: {spreadsheet.title}")
+
         worksheet = spreadsheet.worksheet(nombre_hoja)
+        logger.info(f"✅ Worksheet abierto: {worksheet.title}")
+
+        # Detectar rango
         columna_B = worksheet.col_values(2)[3:]
         ultima_fila = 3 + len([c for c in columna_B if c.strip() != ""])
         rango = f"A4:X{ultima_fila}"
-        filas = worksheet.get(rango)
+        logger.info(f"📊 Rango calculado: {rango}")
 
-        def to_int(val):
-            try: return int(val)
-            except: return None
+        filas = worksheet.get(rango)
+        logger.info(f"✅ Filas obtenidas: {len(filas)}")
 
         aspirantes = []
         for i, fila in enumerate(filas):
-            fila += [''] * (25 - len(fila))
+            fila += [''] * (25 - len(fila))  # normaliza tamaño
+            usuario = fila[1].strip()
+
             aspirante = {
-                "usuario": fila[1].strip(),
+                "usuario": usuario,
                 "telefono": fila[2].strip().replace(" ", "").replace("+", ""),
                 "disponibilidad": fila[3].strip(),
                 "motivo_no_apto": fila[4].strip().upper(),
@@ -76,18 +328,73 @@ def obtener_aspirantes_desde_hoja(str_key, nombre_hoja):
                 "email": fila[16].strip(),
                 "nickname": fila[17].strip(),
                 "razon_no_contacto": fila[18].strip().upper(),
-                "seguidores": to_int(fila[19].strip()),
-                "videos": to_int(fila[20].strip()),
-                "likes": to_int(fila[21].strip()),
-                "Duracion_Emisiones": to_int(fila[22].strip()),
-                "Dias_Emisiones": to_int(fila[23].strip()),
                 "fila_excel": i + 4
             }
+
+            # Mezclar datos del TXT
+            txt = info_por_usuario.get(usuario, {})
+            aspirante["seguidores"] = txt.get("seguidores", "")
+            aspirante["videos"] = txt.get("videos", "")
+            aspirante["likes"] = txt.get("likes", "")
+            aspirante["Duracion_Emisiones"] = txt.get("Duracion_Emisiones", "")
+            aspirante["Dias_Emisiones"] = txt.get("Dias_Emisiones", "")
+            aspirante["caducidad_solicitud"] = txt.get("caducidad_solicitud", "")
+            aspirante["agente_recluta"] = txt.get("agente_recluta", "")
+            aspirante["fecha_solcitud"] = txt.get("fecha_solcitud", "")
+
             aspirantes.append(aspirante)
+
+        logger.info(f"✅ Aspirantes procesados: {len(aspirantes)}")
         return aspirantes
+
     except Exception as e:
-        print(f"❌ Error leyendo hoja de cálculo: {e}")
+        logger.error(f"❌ Error leyendo hoja de cálculo: {e}", exc_info=True)
         return []
+
+
+
+# def obtener_aspirantes_desde_hoja(str_key, nombre_hoja):
+#     try:
+#         gc = get_gspread_client()
+#         spreadsheet = gc.open_by_key(str_key)
+#         worksheet = spreadsheet.worksheet(nombre_hoja)
+#         columna_B = worksheet.col_values(2)[3:]
+#         ultima_fila = 3 + len([c for c in columna_B if c.strip() != ""])
+#         rango = f"A4:X{ultima_fila}"
+#         filas = worksheet.get(rango)
+#
+#         def to_int(val):
+#             try: return int(val)
+#             except: return None
+#
+#         aspirantes = []
+#         for i, fila in enumerate(filas):
+#             fila += [''] * (25 - len(fila))
+#             aspirante = {
+#                 "usuario": fila[1].strip(),
+#                 "telefono": fila[2].strip().replace(" ", "").replace("+", ""),
+#                 "disponibilidad": fila[3].strip(),
+#                 "motivo_no_apto": fila[4].strip().upper(),
+#                 "perfil": fila[5].strip(),
+#                 "contacto": fila[8].strip(),
+#                 "respuesta_creador": fila[9].strip(),
+#                 "entrevista": fila[11].strip(),
+#                 "tipo_solicitud": fila[15].strip(),
+#                 "email": fila[16].strip(),
+#                 "nickname": fila[17].strip(),
+#                 "razon_no_contacto": fila[18].strip().upper(),
+#                 "seguidores": to_int(fila[19].strip()),
+#                 "videos": to_int(fila[20].strip()),
+#                 "likes": to_int(fila[21].strip()),
+#                 "Duracion_Emisiones": to_int(fila[22].strip()),
+#                 "Dias_Emisiones": to_int(fila[23].strip()),
+#                 "fila_excel": i + 4
+#             }
+#             aspirantes.append(aspirante)
+#         return aspirantes
+#     except Exception as e:
+#         print(f"❌ Error leyendo hoja de cálculo: {e}")
+#         return []
 
 @router.post("/cargar_aspirantes_local")
 async def cargar_aspirantes_desde_archivo(file: UploadFile):
