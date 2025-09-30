@@ -1,9 +1,13 @@
-from fastapi import APIRouter, Body, UploadFile
+from fastapi import APIRouter, Body, UploadFile, File
 import os
 import json
 import gspread
 from google.oauth2.service_account import Credentials
 import pandas as pd
+
+import logging
+from pathlib import Path
+import uuid
 
 router = APIRouter()
 
@@ -229,9 +233,26 @@ def get_gspread_client():
     creds = Credentials.from_service_account_info(cred_dict, scopes=scope)
     return gspread.authorize(creds)
 
-import logging
 
 logger = logging.getLogger("uvicorn.error")
+
+@router.post("/upload_txt")  # ruta será /api/upload_txt
+async def upload_txt(file: UploadFile = File(...)):
+    filename = file.filename or "datos.txt"
+    if not filename.lower().endswith(".txt"):
+        return {"status": "error", "mensaje": "El archivo debe ser .txt"}
+
+    base_dir = Path("uploads/txt")
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    unique_name = f"{uuid.uuid4().hex}_{filename}"
+    destino = base_dir / unique_name
+
+    contenido = await file.read()
+    destino.write_bytes(contenido)
+
+    return {"status": "ok", "ruta_txt": str(destino)}
+
 
 @router.get("/listar_hojas")
 def listar_hojas(str_key: str):
