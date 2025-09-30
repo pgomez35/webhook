@@ -439,8 +439,455 @@ async def cargar_aspirantes_desde_archivo(file: UploadFile):
 from DataBase import get_connection,limpiar_telefono,safe_int
 
 
-def guardar_aspirantes(aspirantes, nombre_archivo=None, hoja_excel=None, lote_carga=None, procesado_por=None,
-                      observaciones=None):
+# def guardar_aspirantes(aspirantes, nombre_archivo=None, hoja_excel=None, lote_carga=None, procesado_por=None,
+#                       observaciones=None):
+#     conn = get_connection()
+#     cur = conn.cursor()
+#     resultados = []
+#     filas_fallidas = []
+#
+#     for c in aspirantes:
+#         try:
+#             usuario = c.get("usuario", "")
+#             nickname = c.get("nickname", "")
+#             email = c.get("email", "")
+#             telefono = limpiar_telefono(c.get("telefono", ""))
+#             disponibilidad = c.get("disponibilidad", "")
+#             perfil = c.get("perfil", "")
+#             motivo_no_apto = c.get("motivo_no_apto", "")
+#             contacto = c.get("contacto", "")
+#             respuesta_creador = c.get("respuesta_creador", "")
+#             entrevista = c.get("entrevista", "")
+#             tipo_solicitud = c.get("tipo_solicitud", "")
+#             razon_no_contacto = c.get("razon_no_contacto", "")
+#             seguidores = safe_int(c.get("seguidores", ""))
+#             cantidad_videos = safe_int(c.get("videos", ""))
+#             likes_totales = safe_int(c.get("likes", ""))
+#             duracion_emisiones = safe_int(c.get("Duracion_Emisiones", ""))
+#             dias_emisiones = safe_int(c.get("Dias_Emisiones", ""))
+#             fila_excel = c.get("fila_excel")
+#             apto = not bool(str(motivo_no_apto).strip())
+#
+#             # 1. creadores
+#             cur.execute("SELECT id FROM creadores WHERE usuario = %s", (usuario,))
+#             creador_row = cur.fetchone()
+#             if creador_row:
+#                 creador_id = creador_row[0]
+#                 cur.execute("""
+#                     UPDATE creadores SET
+#                         nickname = %s,
+#                         email = %s,
+#                         telefono = %s,
+#                         actualizado_en = NOW()
+#                     WHERE id = %s
+#                 """, (nickname, email, telefono, creador_id))
+#             else:
+#                 cur.execute("""
+#                     INSERT INTO creadores (usuario, nickname, email, telefono, activo, creado_en, actualizado_en)
+#                     VALUES (%s, %s, %s, %s, TRUE, NOW(), NOW())
+#                     RETURNING id
+#                 """, (usuario, nickname, email, telefono))
+#                 creador_id = cur.fetchone()[0]
+#
+#             # 2. perfil_creador
+#
+#             # Elimina cualquier referencia a perfil en perfil_creador:
+#             cur.execute("SELECT id FROM perfil_creador WHERE creador_id = %s", (creador_id,))
+#             perfil_row = cur.fetchone()
+#             if perfil_row:
+#                 cur.execute("""
+#                     UPDATE perfil_creador SET
+#                         seguidores = %s,
+#                         cantidad_videos = %s,
+#                         likes_totales = %s,
+#                         duracion_emisiones = %s,
+#                         dias_emisiones = %s,
+#                         actualizado_en = NOW()
+#                     WHERE creador_id = %s
+#                 """, (
+#                     seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones, creador_id
+#                 ))
+#             else:
+#                 cur.execute("""
+#                     INSERT INTO perfil_creador (
+#                         creador_id,
+#                         seguidores, cantidad_videos, likes_totales,
+#                         duracion_emisiones, dias_emisiones,
+#                         creado_en, actualizado_en
+#                     ) VALUES (
+#                         %s, %s, %s, %s, %s, %s, NOW(), NOW()
+#                     )
+#                 """, (
+#                     creador_id, seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones
+#                 ))
+#
+#             # 3. cargue_creadores
+#             cur.execute("SELECT id FROM cargue_creadores WHERE usuario = %s AND hoja_excel = %s", (usuario, hoja_excel))
+#             cargue_row = cur.fetchone()
+#             if cargue_row:
+#                 cargue_id = cargue_row[0]
+#                 cur.execute("""
+#                     UPDATE cargue_creadores SET
+#                         nickname = %s,
+#                         email = %s,
+#                         telefono = %s,
+#                         disponibilidad = %s,
+#                         perfil = %s,
+#                         motivo_no_apto = %s,
+#                         contacto = %s,
+#                         respuesta_creador = %s,
+#                         entrevista = %s,
+#                         tipo_solicitud = %s,
+#                         razon_no_contacto = %s,
+#                         seguidores = %s,
+#                         cantidad_videos = %s,
+#                         likes_totales = %s,
+#                         duracion_emisiones = %s,
+#                         dias_emisiones = %s,
+#                         nombre_archivo = %s,
+#                         fila_excel = %s,
+#                         lote_carga = %s,
+#                         estado = %s,
+#                         procesado = %s,
+#                         procesado_por = %s,
+#                         creador_id = %s,
+#                         apto = %s,
+#                         observaciones = %s,
+#                         actualizado_en = NOW()
+#                     WHERE id = %s
+#                 """, (
+#                     nickname, email, telefono, disponibilidad, perfil, motivo_no_apto,
+#                     contacto, respuesta_creador, entrevista, tipo_solicitud, razon_no_contacto,
+#                     seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones,
+#                     nombre_archivo, fila_excel, lote_carga, "Procesando", False, procesado_por,
+#                     creador_id, apto, observaciones, cargue_id
+#                 ))
+#             else:
+#                 cur.execute("""
+#                     INSERT INTO cargue_creadores (
+#                         usuario, nickname, email, telefono, disponibilidad, perfil, motivo_no_apto,
+#                         contacto, respuesta_creador, entrevista, tipo_solicitud, razon_no_contacto,
+#                         seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones,
+#                         nombre_archivo, hoja_excel, fila_excel, lote_carga,
+#                         estado, procesado, procesado_por, creador_id,
+#                         apto, observaciones, activo, creado_en, actualizado_en
+#                     ) VALUES (
+#                         %s, %s, %s, %s, %s, %s, %s,
+#                         %s, %s, %s, %s, %s,
+#                         %s, %s, %s, %s, %s,
+#                         %s, %s, %s, %s,
+#                         %s, %s, %s, %s,
+#                         %s, %s, TRUE, NOW(), NOW()
+#                     )
+#                 """, (
+#                     usuario, nickname, email, telefono, disponibilidad, perfil, motivo_no_apto,
+#                     contacto, respuesta_creador, entrevista, tipo_solicitud, razon_no_contacto,
+#                     seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones,
+#                     nombre_archivo, hoja_excel, fila_excel, lote_carga,
+#                     "Procesando", False, procesado_por, creador_id,
+#                     apto, observaciones
+#                 ))
+#
+#             resultados.append({
+#                 "fila": fila_excel,
+#                 "usuario": usuario,
+#                 "creador_id": creador_id
+#             })
+#         except Exception as e:
+#             logger.error("Error al guardar aspirante", exc_info=True)
+#             return {
+#                 "status": "error",
+#                 "mensaje": "Error guardando aspirantes",
+#                 "error": str(e),  # <- usa e, no err
+#             }
+#
+#     conn.commit()
+#     cur.close()
+#     conn.close()
+#     print(f"✅ Contactos procesados. Filas exitosas: {len(resultados)}. Filas fallidas: {len(filas_fallidas)}")
+#     return {
+#         "exitosos": resultados,
+#         "fallidos": filas_fallidas
+#     }
+def get_text(val):
+    # Preserva tal cual, solo recorta espacios
+    return "" if val is None else str(val).strip()
+
+# def guardar_aspirantes(
+#     aspirantes, nombre_archivo=None, hoja_excel=None, lote_carga=None, procesado_por=None,
+#     observaciones=None
+# ):
+#     conn = get_connection()
+#     cur = conn.cursor()
+#     resultados = []
+#     filas_fallidas = []
+#
+#     for c in aspirantes:
+#         try:
+#             usuario = get_text(c.get("usuario"))
+#             nickname = get_text(c.get("nickname"))
+#             email = get_text(c.get("email"))
+#             telefono = limpiar_telefono(get_text(c.get("telefono")))
+#             disponibilidad = get_text(c.get("disponibilidad"))
+#             perfil = get_text(c.get("perfil"))
+#             motivo_no_apto = get_text(c.get("motivo_no_apto"))
+#             contacto = get_text(c.get("contacto"))
+#             respuesta_creador = get_text(c.get("respuesta_creador"))
+#             entrevista = get_text(c.get("entrevista"))
+#             tipo_solicitud = get_text(c.get("tipo_solicitud"))
+#             razon_no_contacto = get_text(c.get("razon_no_contacto"))
+#
+#             # ⬇️ AHORA TODO TEXTO (sin safe_int)
+#             seguidores = get_text(c.get("seguidores"))
+#             cantidad_videos = get_text(c.get("videos"))
+#             likes_totales = get_text(c.get("likes"))
+#             duracion_emisiones = get_text(c.get("Duracion_Emisiones"))
+#             dias_emisiones = get_text(c.get("Dias_Emisiones"))
+#
+#             fila_excel = c.get("fila_excel")
+#             apto = not bool(motivo_no_apto)
+#
+#             # 1) creadores
+#             cur.execute("SELECT id FROM creadores WHERE usuario = %s", (usuario,))
+#             creador_row = cur.fetchone()
+#             if creador_row:
+#                 creador_id = creador_row[0]
+#                 cur.execute("""
+#                     UPDATE creadores SET
+#                         nickname = %s,
+#                         email = %s,
+#                         telefono = %s,
+#                         actualizado_en = NOW()
+#                     WHERE id = %s
+#                 """, (nickname, email, telefono, creador_id))
+#             else:
+#                 cur.execute("""
+#                     INSERT INTO creadores (usuario, nickname, email, telefono, activo, creado_en, actualizado_en)
+#                     VALUES (%s, %s, %s, %s, TRUE, NOW(), NOW())
+#                     RETURNING id
+#                 """, (usuario, nickname, email, telefono))
+#                 creador_id = cur.fetchone()[0]
+#
+#             # 2) perfil_creador (valores como TEXT)
+#             cur.execute("SELECT id FROM perfil_creador WHERE creador_id = %s", (creador_id,))
+#             perfil_row = cur.fetchone()
+#             if perfil_row:
+#                 cur.execute("""
+#                     UPDATE perfil_creador SET
+#                         seguidores = %s,
+#                         cantidad_videos = %s,
+#                         likes_totales = %s,
+#                         duracion_emisiones = %s,
+#                         dias_emisiones = %s,
+#                         actualizado_en = NOW()
+#                     WHERE creador_id = %s
+#                 """, (
+#                     seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones, creador_id
+#                 ))
+#             else:
+#                 cur.execute("""
+#                     INSERT INTO perfil_creador (
+#                         creador_id,
+#                         seguidores, cantidad_videos, likes_totales,
+#                         duracion_emisiones, dias_emisiones,
+#                         creado_en, actualizado_en
+#                     ) VALUES (
+#                         %s, %s, %s, %s, %s, %s, NOW(), NOW()
+#                     )
+#                 """, (
+#                     creador_id, seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones
+#                 ))
+#
+#             # 3) cargue_creadores (también como TEXT)
+#             cur.execute("SELECT id FROM cargue_creadores WHERE usuario = %s AND hoja_excel = %s", (usuario, hoja_excel))
+#             cargue_row = cur.fetchone()
+#             if cargue_row:
+#                 cargue_id = cargue_row[0]
+#                 cur.execute("""
+#                     UPDATE cargue_creadores SET
+#                         nickname = %s,
+#                         email = %s,
+#                         telefono = %s,
+#                         disponibilidad = %s,
+#                         perfil = %s,
+#                         motivo_no_apto = %s,
+#                         contacto = %s,
+#                         respuesta_creador = %s,
+#                         entrevista = %s,
+#                         tipo_solicitud = %s,
+#                         razon_no_contacto = %s,
+#                         seguidores = %s,
+#                         cantidad_videos = %s,
+#                         likes_totales = %s,
+#                         duracion_emisiones = %s,
+#                         dias_emisiones = %s,
+#                         nombre_archivo = %s,
+#                         fila_excel = %s,
+#                         lote_carga = %s,
+#                         estado = %s,
+#                         procesado = %s,
+#                         procesado_por = %s,
+#                         creador_id = %s,
+#                         apto = %s,
+#                         observaciones = %s,
+#                         actualizado_en = NOW()
+#                     WHERE id = %s
+#                 """, (
+#                     nickname, email, telefono, disponibilidad, perfil, motivo_no_apto,
+#                     contacto, respuesta_creador, entrevista, tipo_solicitud, razon_no_contacto,
+#                     seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones,
+#                     nombre_archivo, fila_excel, lote_carga, "Procesando", False, procesado_por,
+#                     creador_id, apto, observaciones, cargue_id
+#                 ))
+#             else:
+#                 cur.execute("""
+#                     INSERT INTO cargue_creadores (
+#                         usuario, nickname, email, telefono, disponibilidad, perfil, motivo_no_apto,
+#                         contacto, respuesta_creador, entrevista, tipo_solicitud, razon_no_contacto,
+#                         seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones,
+#                         nombre_archivo, hoja_excel, fila_excel, lote_carga,
+#                         estado, procesado, procesado_por, creador_id,
+#                         apto, observaciones, activo, creado_en, actualizado_en
+#                     ) VALUES (
+#                         %s, %s, %s, %s, %s, %s, %s,
+#                         %s, %s, %s, %s, %s,
+#                         %s, %s, %s, %s, %s,
+#                         %s, %s, %s, %s,
+#                         %s, %s, %s, %s,
+#                         %s, %s, TRUE, NOW(), NOW()
+#                     )
+#                 """, (
+#                     usuario, nickname, email, telefono, disponibilidad, perfil, motivo_no_apto,
+#                     contacto, respuesta_creador, entrevista, tipo_solicitud, razon_no_contacto,
+#                     seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones,
+#                     nombre_archivo, hoja_excel, fila_excel, lote_carga,
+#                     "Procesando", False, procesado_por, creador_id,
+#                     apto, observaciones
+#                 ))
+#
+#             resultados.append({
+#                 "fila": fila_excel,
+#                 "usuario": usuario,
+#                 "creador_id": creador_id
+#             })
+#
+#         except Exception as e:
+#             logger.error(f"Error al guardar aspirante (fila={c.get('fila_excel')}, usuario={c.get('usuario')})", exc_info=True)
+#             filas_fallidas.append({
+#                 "fila": c.get("fila_excel"),
+#                 "usuario": c.get("usuario"),
+#                 "error": str(e),
+#             })
+#             # continuar con el siguiente registro
+#
+#     conn.commit()
+#     cur.close()
+#     conn.close()
+#
+#     print(f"✅ Contactos procesados. Filas exitosas: {len(resultados)}. Filas fallidas: {len(filas_fallidas)}")
+#     return {
+#         "status": "ok",
+#         "exitosos": resultados,
+#         "fallidos": filas_fallidas
+#     }
+import re
+
+# -------------------- Helpers de parsing --------------------
+
+def get_text(val):
+    """Texto limpio (str) o cadena vacía si viene None."""
+    return "" if val is None else str(val).strip()
+
+def to_int_relaxed(val, default=0):
+    """
+    Convierte '1,151' o '47 237' -> 1151 / 47237.
+    - Elimina espacios y comas.
+    - Si no se puede convertir, devuelve 'default' (por defecto 0).
+    """
+    if val is None:
+        return default
+    s = str(val).strip()
+    if not s:
+        return default
+    s = s.replace(" ", "").replace(",", "")
+    return int(s) if s.isdigit() else default
+
+def parse_days_to_int(val, default=0):
+    """
+    Convierte '24d' -> 24, '1d' -> 1, '0d' -> 0, '15' -> 15.
+    Si no se puede convertir, devuelve 'default' (por defecto 0).
+    """
+    if val is None:
+        return default
+    s = str(val).strip().lower()
+    if not s:
+        return default
+    if s.endswith("d"):
+        s = s[:-1]
+    try:
+        return int(s)
+    except ValueError:
+        # último intento: limpiar como número relajado
+        return to_int_relaxed(s, default=default)
+
+def parse_duration_to_hours_int(text, default=0):
+    """
+    Convierte una duración tipo '3d 2h 54m 10s', '2h 54m 21s', '23m 42s'
+    a HORAS (int) usando **redondeo**.
+      - '2h 54m 21s' -> 3
+      - '3d 2h 54m 10s' -> 75
+      - '23m 42s' -> 0
+      - '59m' -> 1
+    Si no se puede convertir, devuelve 'default' (por defecto 0).
+    """
+    if text is None:
+        return default
+    s = str(text).strip().lower()
+    if not s:
+        return default
+
+    # Unificar 'min' -> 'm'
+    s = s.replace("min", "m")
+
+    days = hours = mins = secs = 0
+    md = re.search(r"(\d+)\s*d", s)
+    mh = re.search(r"(\d+)\s*h", s)
+    mm = re.search(r"(\d+)\s*m(?![a-z])", s)  # evita 'ms'
+    ms = re.search(r"(\d+)\s*s", s)
+
+    if md: days = int(md.group(1))
+    if mh: hours = int(mh.group(1))
+    if mm: mins = int(mm.group(1))
+    if ms: secs = int(ms.group(1))
+
+    # Si no hay ningún match pero es número simple, interpretarlo como horas
+    if not (md or mh or mm or ms):
+        try:
+            return int(round(float(s)))
+        except ValueError:
+            return default
+
+    total_hours = days * 24 + hours + mins / 60.0 + secs / 3600.0
+    return int(round(total_hours))
+
+
+# -------------------- guardar_aspirantes (ajustada) --------------------
+
+def guardar_aspirantes(
+    aspirantes, nombre_archivo=None, hoja_excel=None, lote_carga=None, procesado_por=None,
+    observaciones=None
+):
+    """
+    Guarda aspirantes mapeando los campos del TXT a los tipos de la tabla:
+
+      perfil_creador.seguidores            -> integer
+      perfil_creador.videos                -> integer
+      perfil_creador.likes                 -> bigint
+      perfil_creador.duracion_emisiones    -> integer (HORAS redondeadas)
+      perfil_creador.dias_emisiones        -> integer (quita 'd')
+
+    NOTA: Se asume que get_connection(), limpiar_telefono() y logger existen en tu entorno.
+    """
     conn = get_connection()
     cur = conn.cursor()
     resultados = []
@@ -448,27 +895,30 @@ def guardar_aspirantes(aspirantes, nombre_archivo=None, hoja_excel=None, lote_ca
 
     for c in aspirantes:
         try:
-            usuario = c.get("usuario", "")
-            nickname = c.get("nickname", "")
-            email = c.get("email", "")
-            telefono = limpiar_telefono(c.get("telefono", ""))
-            disponibilidad = c.get("disponibilidad", "")
-            perfil = c.get("perfil", "")
-            motivo_no_apto = c.get("motivo_no_apto", "")
-            contacto = c.get("contacto", "")
-            respuesta_creador = c.get("respuesta_creador", "")
-            entrevista = c.get("entrevista", "")
-            tipo_solicitud = c.get("tipo_solicitud", "")
-            razon_no_contacto = c.get("razon_no_contacto", "")
-            seguidores = safe_int(c.get("seguidores", ""))
-            cantidad_videos = safe_int(c.get("videos", ""))
-            likes_totales = safe_int(c.get("likes", ""))
-            duracion_emisiones = safe_int(c.get("Duracion_Emisiones", ""))
-            dias_emisiones = safe_int(c.get("Dias_Emisiones", ""))
-            fila_excel = c.get("fila_excel")
-            apto = not bool(str(motivo_no_apto).strip())
+            usuario = get_text(c.get("usuario"))
+            nickname = get_text(c.get("nickname"))
+            email = get_text(c.get("email"))
+            telefono = limpiar_telefono(get_text(c.get("telefono")))
+            disponibilidad = get_text(c.get("disponibilidad"))
+            perfil = get_text(c.get("perfil"))
+            motivo_no_apto = get_text(c.get("motivo_no_apto"))
+            contacto = get_text(c.get("contacto"))
+            respuesta_creador = get_text(c.get("respuesta_creador"))
+            entrevista = get_text(c.get("entrevista"))
+            tipo_solicitud = get_text(c.get("tipo_solicitud"))
+            razon_no_contacto = get_text(c.get("razon_no_contacto"))
 
-            # 1. creadores
+            # === Conversión a tipos que exige la tabla ===
+            seguidores = to_int_relaxed(c.get("seguidores"), default=0)          # integer
+            cantidad_videos = to_int_relaxed(c.get("videos"), default=0)         # integer
+            likes_totales = to_int_relaxed(c.get("likes"), default=0)            # bigint ok
+            duracion_emisiones = parse_duration_to_hours_int(c.get("Duracion_Emisiones"), default=0)  # integer (horas)
+            dias_emisiones = parse_days_to_int(c.get("Dias_Emisiones"), default=0)                    # integer (días)
+
+            fila_excel = c.get("fila_excel")
+            apto = not bool(motivo_no_apto)
+
+            # 1) creadores
             cur.execute("SELECT id FROM creadores WHERE usuario = %s", (usuario,))
             creador_row = cur.fetchone()
             if creador_row:
@@ -489,39 +939,49 @@ def guardar_aspirantes(aspirantes, nombre_archivo=None, hoja_excel=None, lote_ca
                 """, (usuario, nickname, email, telefono))
                 creador_id = cur.fetchone()[0]
 
-            # 2. perfil_creador
-
-            # Elimina cualquier referencia a perfil en perfil_creador:
+            # 2) perfil_creador (tipos numéricos según tu esquema)
             cur.execute("SELECT id FROM perfil_creador WHERE creador_id = %s", (creador_id,))
             perfil_row = cur.fetchone()
             if perfil_row:
                 cur.execute("""
                     UPDATE perfil_creador SET
+                        usuario = %s,
                         seguidores = %s,
-                        cantidad_videos = %s,
-                        likes_totales = %s,
+                        videos = %s,
+                        likes = %s,
                         duracion_emisiones = %s,
                         dias_emisiones = %s,
+                        nombre = %s,
                         actualizado_en = NOW()
                     WHERE creador_id = %s
                 """, (
-                    seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones, creador_id
+                    usuario,
+                    seguidores, cantidad_videos, likes_totales,
+                    duracion_emisiones, dias_emisiones,
+                    get_text(c.get("nombre")),  # opcional: guardar el "Nombre" del TXT
+                    creador_id
                 ))
             else:
                 cur.execute("""
                     INSERT INTO perfil_creador (
-                        creador_id,
-                        seguidores, cantidad_videos, likes_totales,
+                        usuario, creador_id,
+                        seguidores, videos, likes,
                         duracion_emisiones, dias_emisiones,
-                        creado_en, actualizado_en
+                        nombre, creado_en, actualizado_en
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s, NOW(), NOW()
+                        %s, %s,
+                        %s, %s, %s,
+                        %s, %s,
+                        %s, NOW(), NOW()
                     )
                 """, (
-                    creador_id, seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones
+                    usuario, creador_id,
+                    seguidores, cantidad_videos, likes_totales,
+                    duracion_emisiones, dias_emisiones,
+                    get_text(c.get("nombre"))
                 ))
 
-            # 3. cargue_creadores
+            # 3) cargue_creadores (si tus columnas allí son texto/mixtas, se mantienen)
             cur.execute("SELECT id FROM cargue_creadores WHERE usuario = %s AND hoja_excel = %s", (usuario, hoja_excel))
             cargue_row = cur.fetchone()
             if cargue_row:
@@ -594,20 +1054,25 @@ def guardar_aspirantes(aspirantes, nombre_archivo=None, hoja_excel=None, lote_ca
                 "creador_id": creador_id
             })
 
-        except Exception as err:
-            print(f"Error en fila {c.get('fila_excel')}: {err}")
-        conn.rollback()
-        filas_fallidas.append({
-            "fila": c.get("fila_excel"),
-            "error": str(err),
-            "aspirante": c
-        })
+        except Exception as e:
+            logger.error(
+                f"Error al guardar aspirante (fila={c.get('fila_excel')}, usuario={c.get('usuario')}): {e}",
+                exc_info=True
+            )
+            filas_fallidas.append({
+                "fila": c.get("fila_excel"),
+                "usuario": c.get("usuario"),
+                "error": str(e),
+            })
+            # continuar con el siguiente registro
 
     conn.commit()
     cur.close()
     conn.close()
+
     print(f"✅ Contactos procesados. Filas exitosas: {len(resultados)}. Filas fallidas: {len(filas_fallidas)}")
     return {
+        "status": "ok",
         "exitosos": resultados,
         "fallidos": filas_fallidas
     }
