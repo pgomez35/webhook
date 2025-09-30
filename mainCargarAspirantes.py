@@ -1000,15 +1000,26 @@ def guardar_aspirantes(
                         nickname = %s,
                         email = %s,
                         telefono = %s,
+                        estado_id = 3,
                         actualizado_en = NOW()
                     WHERE id = %s
-                """, (nickname, email, telefono, creador_id))
+                """, (
+                    get_text(c.get("nombre")),  # ⬅️ usamos el mismo nombre que en perfil_creador.nombre
+                    email,
+                    telefono,
+                    creador_id
+                ))
             else:
                 cur.execute("""
-                    INSERT INTO creadores (usuario, nickname, email, telefono, activo, creado_en, actualizado_en)
-                    VALUES (%s, %s, %s, %s, TRUE, NOW(), NOW())
+                    INSERT INTO creadores (usuario, nickname, email, telefono, estado_id, activo, creado_en, actualizado_en)
+                    VALUES (%s, %s, %s, %s, 3, TRUE, NOW(), NOW())
                     RETURNING id
-                """, (usuario, nickname, email, telefono))
+                """, (
+                    usuario,
+                    get_text(c.get("nombre")),  # ⬅️ nickname = nombre del TXT
+                    email,
+                    telefono
+                ))
                 creador_id = cur.fetchone()[0]
 
             # 2) perfil_creador (tipos numéricos según tu esquema)
