@@ -224,7 +224,7 @@ def parsear_bloques_desde_txt(ruta_txt: str | Path) -> dict:
 
 def get_gspread_client():
     scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    cred_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+    cred_json = os.getenv("GOOGLE_CREDENTIALS_JSON_VIEJA")
     cred_dict = json.loads(cred_json)
     creds = Credentials.from_service_account_info(cred_dict, scopes=scope)
     return gspread.authorize(creds)
