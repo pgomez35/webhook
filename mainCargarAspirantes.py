@@ -104,7 +104,7 @@ def _keep(s: str) -> str:
 #             "Dias_Emisiones": dias_validos,
 #             "caducidad_solicitud": caducidad,
 #             "agente_recluta": agente,
-#             "fecha_solcitud": fecha_sol,  # se respeta la grafía pedida
+#             "fecha_solicitud": fecha_sol,  # se respeta la grafía pedida
 #         }
 #
 #         while i < n and lineas[i].strip() == "":
@@ -215,7 +215,7 @@ def parsear_bloques_desde_txt(ruta_txt: str | Path) -> dict:
             "Dias_Emisiones": dias_validos,     # idem
             "caducidad_solicitud": caducidad,
             "agente_recluta": agente,
-            "fecha_solcitud": fecha_sol,        # se respeta la grafía pedida
+            "fecha_solicitud": fecha_sol,        # se respeta la grafía pedida
             "canal": canal,                     # NUEVO: LIVE / Código QR / QR code (texto tal cual)
         }
 
@@ -300,77 +300,77 @@ def cargar_aspirantes_desde_workspace(
         }
 
 
-def obtener_aspirantes_desde_hoja(str_key, nombre_hoja, ruta_txt):
-    """
-    Lee la hoja de Google Sheets (gspread) y mezcla los datos base con
-    los obtenidos desde el archivo de texto vertical para cada 'usuario'.
-    """
-    try:
-        logger.info(f"📥 Iniciando lectura de aspirantes: hoja={nombre_hoja}, str_key={str_key}, txt={ruta_txt}")
-
-        # 1) Parsear archivo de texto
-        info_por_usuario = parsear_bloques_desde_txt(ruta_txt)
-        logger.info(f"✅ TXT parseado, usuarios encontrados: {len(info_por_usuario)}")
-
-        # 2) Leer la hoja
-        gc = get_gspread_client()
-        logger.info("✅ Cliente gspread obtenido")
-
-        spreadsheet = gc.open_by_key(str_key)
-        logger.info(f"✅ Spreadsheet abierto: {spreadsheet.title}")
-
-        worksheet = spreadsheet.worksheet(nombre_hoja)
-        logger.info(f"✅ Worksheet abierto: {worksheet.title}")
-
-        # Detectar rango
-        columna_B = worksheet.col_values(2)[3:]
-        ultima_fila = 3 + len([c for c in columna_B if c.strip() != ""])
-        rango = f"A4:X{ultima_fila}"
-        logger.info(f"📊 Rango calculado: {rango}")
-
-        filas = worksheet.get(rango)
-        logger.info(f"✅ Filas obtenidas: {len(filas)}")
-
-        aspirantes = []
-        for i, fila in enumerate(filas):
-            fila += [''] * (25 - len(fila))  # normaliza tamaño
-            usuario = fila[1].strip()
-
-            aspirante = {
-                "usuario": usuario,
-                "telefono": fila[2].strip().replace(" ", "").replace("+", ""),
-                "disponibilidad": fila[3].strip(),
-                "motivo_no_apto": fila[4].strip().upper(),
-                "perfil": fila[5].strip(),
-                "contacto": fila[8].strip(),
-                "respuesta_creador": fila[9].strip(),
-                "entrevista": fila[11].strip(),
-                "tipo_solicitud": fila[15].strip(),
-                "email": fila[16].strip(),
-                "nickname": fila[17].strip(),
-                "razon_no_contacto": fila[18].strip().upper(),
-                "fila_excel": i + 4
-            }
-
-            # Mezclar datos del TXT
-            txt = info_por_usuario.get(usuario, {})
-            aspirante["seguidores"] = txt.get("seguidores", "")
-            aspirante["videos"] = txt.get("videos", "")
-            aspirante["likes"] = txt.get("likes", "")
-            aspirante["Duracion_Emisiones"] = txt.get("Duracion_Emisiones", "")
-            aspirante["Dias_Emisiones"] = txt.get("Dias_Emisiones", "")
-            aspirante["caducidad_solicitud"] = txt.get("caducidad_solicitud", "")
-            aspirante["agente_recluta"] = txt.get("agente_recluta", "")
-            aspirante["fecha_solcitud"] = txt.get("fecha_solcitud", "")
-
-            aspirantes.append(aspirante)
-
-        logger.info(f"✅ Aspirantes procesados: {len(aspirantes)}")
-        return aspirantes
-
-    except Exception as e:
-        logger.error(f"❌ Error leyendo hoja de cálculo: {e}", exc_info=True)
-        return []
+# def obtener_aspirantes_desde_hoja(str_key, nombre_hoja, ruta_txt):
+#     """
+#     Lee la hoja de Google Sheets (gspread) y mezcla los datos base con
+#     los obtenidos desde el archivo de texto vertical para cada 'usuario'.
+#     """
+#     try:
+#         logger.info(f"📥 Iniciando lectura de aspirantes: hoja={nombre_hoja}, str_key={str_key}, txt={ruta_txt}")
+#
+#         # 1) Parsear archivo de texto
+#         info_por_usuario = parsear_bloques_desde_txt(ruta_txt)
+#         logger.info(f"✅ TXT parseado, usuarios encontrados: {len(info_por_usuario)}")
+#
+#         # 2) Leer la hoja
+#         gc = get_gspread_client()
+#         logger.info("✅ Cliente gspread obtenido")
+#
+#         spreadsheet = gc.open_by_key(str_key)
+#         logger.info(f"✅ Spreadsheet abierto: {spreadsheet.title}")
+#
+#         worksheet = spreadsheet.worksheet(nombre_hoja)
+#         logger.info(f"✅ Worksheet abierto: {worksheet.title}")
+#
+#         # Detectar rango
+#         columna_B = worksheet.col_values(2)[3:]
+#         ultima_fila = 3 + len([c for c in columna_B if c.strip() != ""])
+#         rango = f"A4:X{ultima_fila}"
+#         logger.info(f"📊 Rango calculado: {rango}")
+#
+#         filas = worksheet.get(rango)
+#         logger.info(f"✅ Filas obtenidas: {len(filas)}")
+#
+#         aspirantes = []
+#         for i, fila in enumerate(filas):
+#             fila += [''] * (25 - len(fila))  # normaliza tamaño
+#             usuario = fila[1].strip()
+#
+#             aspirante = {
+#                 "usuario": usuario,
+#                 "telefono": fila[2].strip().replace(" ", "").replace("+", ""),
+#                 "disponibilidad": fila[3].strip(),
+#                 "motivo_no_apto": fila[4].strip().upper(),
+#                 "perfil": fila[5].strip(),
+#                 "contacto": fila[8].strip(),
+#                 "respuesta_creador": fila[9].strip(),
+#                 "entrevista": fila[11].strip(),
+#                 "tipo_solicitud": fila[15].strip(),
+#                 "email": fila[16].strip(),
+#                 "nickname": fila[17].strip(),
+#                 "razon_no_contacto": fila[18].strip().upper(),
+#                 "fila_excel": i + 4
+#             }
+#
+#             # Mezclar datos del TXT
+#             txt = info_por_usuario.get(usuario, {})
+#             aspirante["seguidores"] = txt.get("seguidores", "")
+#             aspirante["videos"] = txt.get("videos", "")
+#             aspirante["likes"] = txt.get("likes", "")
+#             aspirante["Duracion_Emisiones"] = txt.get("Duracion_Emisiones", "")
+#             aspirante["Dias_Emisiones"] = txt.get("Dias_Emisiones", "")
+#             aspirante["caducidad_solicitud"] = txt.get("caducidad_solicitud", "")
+#             aspirante["agente_recluta"] = txt.get("agente_recluta", "")
+#             aspirante["fecha_solicitud"] = txt.get("fecha_solicitud", "")
+#
+#             aspirantes.append(aspirante)
+#
+#         logger.info(f"✅ Aspirantes procesados: {len(aspirantes)}")
+#         return aspirantes
+#
+#     except Exception as e:
+#         logger.error(f"❌ Error leyendo hoja de cálculo: {e}", exc_info=True)
+#         return []
 
 
 
@@ -609,9 +609,7 @@ from DataBase import get_connection,limpiar_telefono,safe_int
 #         "exitosos": resultados,
 #         "fallidos": filas_fallidas
 #     }
-def get_text(val):
-    # Preserva tal cual, solo recorta espacios
-    return "" if val is None else str(val).strip()
+
 
 # def guardar_aspirantes(
 #     aspirantes, nombre_archivo=None, hoja_excel=None, lote_carga=None, procesado_por=None,
@@ -790,9 +788,9 @@ def get_text(val):
 #         "exitosos": resultados,
 #         "fallidos": filas_fallidas
 #     }
-import re
 
-# -------------------- Helpers de parsing --------------------
+
+import re
 
 def get_text(val):
     """Texto limpio (str) o cadena vacía si viene None."""
@@ -831,15 +829,7 @@ def parse_days_to_int(val, default=0):
         return to_int_relaxed(s, default=default)
 
 def parse_duration_to_hours_int(text, default=0):
-    """
-    Convierte una duración tipo '3d 2h 54m 10s', '2h 54m 21s', '23m 42s'
-    a HORAS (int) usando **redondeo**.
-      - '2h 54m 21s' -> 3
-      - '3d 2h 54m 10s' -> 75
-      - '23m 42s' -> 0
-      - '59m' -> 1
-    Si no se puede convertir, devuelve 'default' (por defecto 0).
-    """
+
     if text is None:
         return default
     s = str(text).strip().lower()
@@ -872,6 +862,88 @@ def parse_duration_to_hours_int(text, default=0):
 
 
 # -------------------- guardar_aspirantes (ajustada) --------------------
+def obtener_aspirantes_desde_hoja(str_key, nombre_hoja, ruta_txt):
+    try:
+        # 1) Parseo TXT (como ya lo tienes)
+        info_por_usuario = parsear_bloques_desde_txt(ruta_txt)
+
+        # 2) Conectar y abrir hoja
+        gc = get_gspread_client()
+        spreadsheet = gc.open_by_key(str_key)
+        worksheet = spreadsheet.worksheet(nombre_hoja)
+
+        # ---- Cálculo de última fila basado en Columna B (usuarios) ----
+        # B4 en adelante son datos; B3 es encabezado.
+        col_B_desde_4 = worksheet.col_values(2)[3:]  # índice base 0 => [3:] salta 3 filas (hasta B3)
+        # Filas no vacías (trim)
+        col_B_no_vacias = [c for c in col_B_desde_4 if str(c).strip() != ""]
+        ultima_fila = 3 + len(col_B_no_vacias)  # fila 3 + cantidad de filas con usuario
+
+        # Si por algún motivo viene un hueco en B pero hay otras columnas con datos,
+        # usamos un fallback: leer A4:X(3 + len(col_B_desde_4)) y luego filtrar vacíos.
+        rango = f"A4:X{ultima_fila}"
+        filas = worksheet.get(rango)
+
+        # Fallback si el rango vino vacío pero había datos en B
+        if not filas and col_B_desde_4:
+            rango_fallback = f"A4:X{3 + len(col_B_desde_4)}"
+            filas = worksheet.get(rango_fallback)
+
+        aspirantes = []
+        for i, fila in enumerate(filas):
+            # normaliza ancho a 24 columnas (A..X)
+            if len(fila) < 24:
+                fila += [''] * (24 - len(fila))
+
+            usuario = fila[1].strip()  # Columna B
+            if not usuario:
+                # si la fila no tiene usuario, saltamos
+                continue
+
+            aspirante = {
+                "usuario": usuario,
+                "telefono": fila[2].strip().replace(" ", "").replace("+", ""),  # C
+                "disponibilidad": fila[3].strip(),                              # D
+                "motivo_no_apto": fila[4].strip().upper(),                     # E
+                "perfil": fila[5].strip(),                                     # F
+                "contacto": fila[8].strip(),                                   # I
+                "respuesta_creador": fila[9].strip(),                          # J
+                "entrevista": fila[11].strip(),                                 # L
+                "tipo_solicitud": fila[15].strip(),                             # P
+                "email": fila[16].strip(),                                      # Q
+                "nickname": fila[17].strip(),                                   # R
+                "razon_no_contacto": fila[18].strip().upper(),                  # S
+                # Métricas vienen del TXT (no del sheet)
+                "seguidores": "",
+                "videos": "",
+                "likes": "",
+                "Duracion_Emisiones": "",
+                "Dias_Emisiones": "",
+                "fila_excel": i + 4,  # porque empezamos en la fila 4
+            }
+
+            # Mezcla con datos del TXT por usuario
+            datos_txt = info_por_usuario.get(usuario, {})
+            if datos_txt:
+                aspirante["seguidores"] = datos_txt.get("seguidores", "")
+                aspirante["videos"] = datos_txt.get("videos", "")
+                aspirante["likes"] = datos_txt.get("likes", "")
+                aspirante["Duracion_Emisiones"] = datos_txt.get("Duracion_Emisiones", "")
+                aspirante["Dias_Emisiones"] = datos_txt.get("Dias_Emisiones", "")
+                aspirante["nombre"] = datos_txt.get("nombre", "")
+                aspirante["caducidad_solicitud"] = datos_txt.get("caducidad_solicitud", "")
+                aspirante["agente_recluta"] = datos_txt.get("agente_recluta", "")
+                aspirante["fecha_solicitud"] = datos_txt.get("fecha_solicitud", "")
+                aspirante["canal"] = datos_txt.get("canal", "")
+
+            aspirantes.append(aspirante)
+
+        return aspirantes
+
+    except Exception as e:
+        print(f"❌ Error leyendo hoja de cálculo: {e}")
+        return []
+
 
 def guardar_aspirantes(
     aspirantes, nombre_archivo=None, hoja_excel=None, lote_carga=None, procesado_por=None,
