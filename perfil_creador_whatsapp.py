@@ -1567,7 +1567,7 @@ def procesar_respuestas(respuestas):
 
     # Tipo de contenido (checkbox)
     tipo_contenido = {v: False for v in map_tipo_contenido.values()}
-    for opcion in respuestas.get(16, "").split(","):
+    for opcion in respuestas.get(17, "").split(","):
         opcion = opcion.strip()
         if opcion in map_tipo_contenido:
             tipo_contenido[map_tipo_contenido[opcion]] = True
@@ -1575,7 +1575,7 @@ def procesar_respuestas(respuestas):
 
     # Intereses (checkbox)
     intereses = {v: False for v in map_intereses.values()}
-    for opcion in respuestas.get(17, "").split(","):
+    for opcion in respuestas.get(18, "").split(","):
         opcion = opcion.strip()
         if opcion in map_intereses:
             intereses[map_intereses[opcion]] = True
