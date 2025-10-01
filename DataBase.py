@@ -1379,7 +1379,7 @@ def obtener_creadores_db():
             FROM creadores c
             INNER JOIN estados_creador ec ON c.estado_id = ec.id
             WHERE c.activo = TRUE
-              AND c.estado_id IN (3,4,5)
+              AND c.estado_id IN (3,4,5,7)
             ORDER BY c.creado_en ASC
         """
 
