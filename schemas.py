@@ -746,27 +746,27 @@ class InvitacionOut(InvitacionBase):
     creador_id: int
     creado_en: datetime
 
-# ========== ENTREVISTAS ==========
-class EntrevistaBase(BaseModel):
-    fecha_programada: Optional[datetime] = None
-    usuario_programa: Optional[int] = None
-    realizada: Optional[bool] = False
-    fecha_realizada: Optional[datetime] = None
-    usuario_evalua: Optional[int] = None
-    resultado: Optional[str] = None
-    observaciones: Optional[str] = None
-    evento_id: Optional[str] = None  # <-- agregado
-
-class EntrevistaCreate(EntrevistaBase):
-    creador_id: int
-
-class EntrevistaUpdate(EntrevistaBase):
-    pass
-
-class EntrevistaOut(EntrevistaBase):
-    id: int
-    creador_id: int
-    creado_en: datetime
+# # ========== ENTREVISTAS ==========
+# class EntrevistaBase(BaseModel):
+#     fecha_programada: Optional[datetime] = None
+#     usuario_programa: Optional[int] = None
+#     realizada: Optional[bool] = False
+#     fecha_realizada: Optional[datetime] = None
+#     usuario_evalua: Optional[int] = None
+#     resultado: Optional[str] = None
+#     observaciones: Optional[str] = None
+#     evento_id: Optional[str] = None  # <-- agregado
+#
+# class EntrevistaCreate(EntrevistaBase):
+#     creador_id: int
+#
+# class EntrevistaUpdate(EntrevistaBase):
+#     pass
+#
+# class EntrevistaOut(EntrevistaBase):
+#     id: int
+#     creador_id: int
+#     creado_en: datetime
 
 
 class GuardarResumenInput(BaseModel):

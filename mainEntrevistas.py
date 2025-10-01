@@ -144,28 +144,6 @@ def crear_entrevista_base(creador_id: int):
     finally:
         conn.close()
 
-
-# def insertar_agendamiento(datos: dict):
-#     try:
-#         conn = get_connection()
-#         with conn.cursor() as cur:
-#             columnas = ', '.join(datos.keys())
-#             placeholders = ', '.join(['%s'] * len(datos))
-#             sql = f"""
-#                 INSERT INTO entrevista_agendamiento ({columnas})
-#                 VALUES ({placeholders})
-#                 RETURNING id, creado_en
-#             """
-#             cur.execute(sql, tuple(datos.values()))
-#             row = cur.fetchone()
-#             conn.commit()
-#             return {"id": row[0], "creado_en": row[1]}
-#     except Exception as e:
-#         print("❌ Error al insertar agendamiento:", e)
-#         return None
-#     finally:
-#         conn.close()
-
 from typing import Optional
 
 def insertar_agendamiento(datos: dict) -> Optional[dict]:
@@ -251,8 +229,6 @@ def insertar_agendamiento(datos: dict) -> Optional[dict]:
         return None
     finally:
         conn.close()
-
-
 
 def obtener_entrevista_con_agendamientos(creador_id: int):
     conn = None
@@ -515,106 +491,6 @@ def eliminar_agendamiento(
         conn.close()
 
 
-
-# # ================================
-# # 📌 CREAR AGENDAMIENTO DE ENTREVISTA + EVENTO
-# # ================================
-# @router.post("/api/entrevistas/{entrevista_id}/agendamientos", response_model=AgendamientoOut)
-# def crear_agendamiento(entrevista_id: int, datos: AgendamientoCreate, usuario_actual: dict = Depends(obtener_usuario_actual)):
-#     try:
-#         # Validación mínima
-#         if "creador_id" not in datos:
-#             raise HTTPException(status_code=400, detail="El campo creador_id es obligatorio")
-#         if "fecha_programada" not in datos:
-#             raise HTTPException(status_code=400, detail="El campo fecha_programada es obligatorio")
-#
-#         creador_id = datos["creador_id"]
-#         fecha_inicio = datos["fecha_programada"]
-#         fecha_fin = fecha_inicio + timedelta(hours=1)  # duración por defecto 1h
-#
-#         # === Crear evento en calendario ===
-#         try:
-#             evento_payload = EventoIn(
-#                 titulo="Entrevista",
-#                 descripcion=datos.get("observaciones") or "Entrevista programada",
-#                 inicio=fecha_inicio,
-#                 fin=fecha_fin,
-#                 participantes_ids=[creador_id],
-#             )
-#             evento_creado = crear_evento(evento_payload, usuario_actual)
-#             datos["evento_id"] = evento_creado.id
-#         except Exception as e:
-#             print(f"⚠️ Error al crear evento en calendario: {e}")
-#             datos["evento_id"] = None
-#
-#         # === Insertar agendamiento en DB ===
-#         datos["entrevista_id"] = entrevista_id
-#         datos["usuario_programa"] = usuario_actual.get("id")
-#
-#         resultado = insertar_agendamiento(datos)
-#         if not resultado:
-#             raise HTTPException(status_code=500, detail="Error al insertar agendamiento")
-#
-#         return {
-#             "status": "ok",
-#             "agendamiento": {**resultado, "evento": evento_creado.dict() if datos.get("evento_id") else None}
-#         }
-#
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Error al crear agendamiento: {e}")
-#
-#
-#
-# # DELETE eliminar agendamiento de entrevista
-# @router.delete("/api/entrevistas/agendamientos/{agendamiento_id}", response_model=dict)
-# def eliminar_agendamiento(agendamiento_id: int, usuario_actual: dict = Depends(obtener_usuario_actual)):
-#     """
-#     Elimina un agendamiento de la tabla entrevista_agendamiento
-#     y también elimina el evento en Google Calendar (si existe).
-#     No actualiza estados de entrevista, perfil_creador ni creadores.
-#     """
-#     if not usuario_actual:
-#         raise HTTPException(status_code=401, detail="Usuario no autorizado")
-#
-#     conn = get_connection()
-#     cur = conn.cursor()
-#     try:
-#         # 1. Buscar el evento_id asociado al agendamiento
-#         cur.execute("""
-#             SELECT evento_id
-#             FROM entrevista_agendamiento
-#             WHERE id = %s
-#         """, (agendamiento_id,))
-#         row = cur.fetchone()
-#
-#         if not row:
-#             raise HTTPException(status_code=404, detail=f"Agendamiento {agendamiento_id} no encontrado")
-#
-#         evento_id = row[0]
-#
-#         # 2. Eliminar el agendamiento de la tabla entrevista_agendamiento
-#         cur.execute("DELETE FROM entrevista_agendamiento WHERE id = %s", (agendamiento_id,))
-#         conn.commit()
-#
-#         # 3. Si tenía evento asociado, borrarlo de Google Calendar y de agendamientos
-#         if evento_id:
-#             eliminar_evento(evento_id)
-#
-#         return {
-#             "ok": True,
-#             "mensaje": f"Agendamiento {agendamiento_id} eliminado"
-#                       + (f" y evento {evento_id} eliminado" if evento_id else "")
-#         }
-#
-#     except Exception as e:
-#         conn.rollback()
-#         logger.error(f"❌ Error al eliminar agendamiento {agendamiento_id}: {e}")
-#         raise HTTPException(status_code=500, detail=str(e))
-#     finally:
-#         cur.close()
-#         conn.close()
-
-
 # ================================
 # 📌 OBTENER ENTREVISTA + AGENDAMIENTOS
 # ================================
@@ -631,27 +507,6 @@ def obtener_entrevista(creador_id: int):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener entrevista: {e}")
-
-
-# ================================
-# 📌 ACTUALIZAR ENTREVISTA
-# ================================
-# @router.put("/entrevistas/{entrevista_id}", response_model=EntrevistaOut)
-# def actualizar_entrevista_api(
-#     entrevista_id: int,
-#     datos: EntrevistaUpdate,
-#     usuario_actual: dict = Depends(obtener_usuario_actual)
-# ):
-#     try:
-#         payload = datos.dict(exclude_unset=True)
-#         entrevista = actualizar_entrevista(entrevista_id, payload, usuario_actual["id"])
-#         if not entrevista:
-#             raise HTTPException(status_code=404, detail="Entrevista no encontrada")
-#         return entrevista
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Error al actualizar entrevista: {e}")
-#
-
 
 # Mapa de estado_id según el resultado de la entrevista
 # Ajusta los IDs si en tu catálogo son distintos
@@ -731,9 +586,14 @@ def actualizar_entrevista(
                 eval_int = None
 
             if eval_int in (1, 2, 3):
-                actualizar_estado_creador(creador_id, 7)  # Rechazado
-                # (si quieres loggear) logger.info(f"creador {creador_id} → estado_id=7 por evaluacion_global={eval_int}")
-        # Si eval_int es 3,4,5 o None: no cambiamos el estado
+                # Rechazado
+                actualizar_estado_creador(creador_id, 7)
+                # logger.info(f"creador {creador_id} → estado_id=7 (Rechazado) por evaluacion_global={eval_int}")
+            elif eval_int == 4:
+                # Estado = 4 (Entrevista/Apto intermedio)
+                actualizar_estado_creador(creador_id, 4)
+                # logger.info(f"creador {creador_id} → estado_id=4 por evaluacion_global=4")
+            # Si es 5 o None, no cambiamos el estado
     except Exception:
         # No rompemos la respuesta si falla el update de estado
         pass
@@ -752,62 +612,3 @@ def actualizar_entrevista(
         profesionalismo_normas=actualizado.get("profesionalismo_normas"),
         evaluacion_global=actualizado.get("evaluacion_global"),
     )
-
-# @router.put("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
-# def actualizar_entrevista(
-#     creador_id: int,
-#     datos: EntrevistaUpdate,
-#     usuario_actual: dict = Depends(obtener_usuario_actual),
-# ):
-#     usuario_id = usuario_actual.get("id")
-#     if not usuario_id:
-#         raise HTTPException(status_code=401, detail="Usuario no autorizado")
-#
-#     # Solo campos presentes en el body
-#     payload = datos.dict(exclude_unset=True)
-#
-#     # Si el payload incluye calificaciones pero no "usuario_evalua",
-#     # opcionalmente puedes setear el evaluador actual:
-#     if any(k in payload for k in (
-#         "aspecto_tecnico", "presencia_carisma",
-#         "interaccion_audiencia", "profesionalismo_normas",
-#         "evaluacion_global"
-#     )):
-#         payload.setdefault("usuario_evalua", usuario_id)
-#
-#     # 1) Actualiza la entrevista (por creador_id) y devuelve el registro actualizado
-#     #    Debe devolver un dict con al menos estos campos:
-#     #    id, creado_en, creador_id, usuario_evalua, resultado, observaciones,
-#     #    aspecto_tecnico, presencia_carisma, interaccion_audiencia,
-#     #    profesionalismo_normas, evaluacion_global
-#     actualizado = actualizar_entrevista_por_creador(creador_id, payload)
-#     if not actualizado:
-#         raise HTTPException(status_code=404, detail="No existe entrevista para este creador")
-#
-#     # 2) Derivar estado_id a partir de `resultado` (payload o valor final en DB)
-#     resultado_raw = payload.get("resultado") or actualizado.get("resultado")
-#     resultado_norm = _normalize_text(resultado_raw)
-#     estado_id = RESULTADO_TO_ESTADO_ID.get(resultado_norm)
-#
-#     if estado_id is not None:
-#         try:
-#             actualizar_estado_creador(creador_id, estado_id)
-#         except Exception:
-#             # No rompemos la respuesta si falla el update de estado
-#             pass
-#
-#     # 3) Responder exactamente con el schema EntrevistaOut
-#     return EntrevistaOut(
-#         id=actualizado["id"],
-#         creado_en=actualizado["creado_en"],
-#         creador_id=actualizado["creador_id"],
-#         usuario_evalua=actualizado.get("usuario_evalua"),
-#         resultado=actualizado.get("resultado"),
-#         observaciones=actualizado.get("observaciones"),
-#         aspecto_tecnico=actualizado.get("aspecto_tecnico"),
-#         presencia_carisma=actualizado.get("presencia_carisma"),
-#         interaccion_audiencia=actualizado.get("interaccion_audiencia"),
-#         profesionalismo_normas=actualizado.get("profesionalismo_normas"),
-#         evaluacion_global=actualizado.get("evaluacion_global"),
-#     )
-#
