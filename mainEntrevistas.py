@@ -22,6 +22,7 @@ class AgendamientoBase(BaseModel):
     entrevista_id: int
     creador_id: int
     fecha_programada: datetime
+    duracion_minutos: Optional[int] = 30  # Agregar este campo
     usuario_programa: Optional[int] = None
     evento_id: Optional[str] = None
 
@@ -144,26 +145,114 @@ def crear_entrevista_base(creador_id: int):
         conn.close()
 
 
-def insertar_agendamiento(datos: dict):
+# def insertar_agendamiento(datos: dict):
+#     try:
+#         conn = get_connection()
+#         with conn.cursor() as cur:
+#             columnas = ', '.join(datos.keys())
+#             placeholders = ', '.join(['%s'] * len(datos))
+#             sql = f"""
+#                 INSERT INTO entrevista_agendamiento ({columnas})
+#                 VALUES ({placeholders})
+#                 RETURNING id, creado_en
+#             """
+#             cur.execute(sql, tuple(datos.values()))
+#             row = cur.fetchone()
+#             conn.commit()
+#             return {"id": row[0], "creado_en": row[1]}
+#     except Exception as e:
+#         print("❌ Error al insertar agendamiento:", e)
+#         return None
+#     finally:
+#         conn.close()
+
+from typing import Optional
+
+def insertar_agendamiento(datos: dict) -> Optional[dict]:
+    """
+    Inserta un agendamiento en entrevista_agendamiento y retorna
+    un dict con todos los campos que AgendamientoOut espera.
+    """
+    conn = get_connection()
     try:
-        conn = get_connection()
         with conn.cursor() as cur:
-            columnas = ', '.join(datos.keys())
-            placeholders = ', '.join(['%s'] * len(datos))
+            # Campos permitidos en la tabla
+            allowed_cols = {
+                "entrevista_id",
+                "creador_id",
+                "fecha_programada",
+                "duracion_minutos",
+                "usuario_programa",
+                "evento_id",
+                "realizada",
+                "fecha_realizada",
+            }
+
+            # Filtra datos inesperados y aplica defaults
+            payload = {k: v for k, v in datos.items() if k in allowed_cols}
+            payload.setdefault("duracion_minutos", 60)
+            payload.setdefault("realizada", False)
+
+            cols = ", ".join(payload.keys())
+            placeholders = ", ".join(["%s"] * len(payload))
+
             sql = f"""
-                INSERT INTO entrevista_agendamiento ({columnas})
+                INSERT INTO entrevista_agendamiento ({cols})
                 VALUES ({placeholders})
-                RETURNING id, creado_en
+                RETURNING
+                    id,
+                    entrevista_id,
+                    creador_id,
+                    fecha_programada,
+                    duracion_minutos,
+                    realizada,
+                    fecha_realizada,
+                    usuario_programa,
+                    evento_id,
+                    creado_en
             """
-            cur.execute(sql, tuple(datos.values()))
+
+            cur.execute(sql, tuple(payload.values()))
             row = cur.fetchone()
             conn.commit()
-            return {"id": row[0], "creado_en": row[1]}
+
+            if not row:
+                return None
+
+            # Orden debe coincidir con el RETURNING
+            (
+                _id,
+                _entrevista_id,
+                _creador_id,
+                _fecha_programada,
+                _duracion_minutos,
+                _realizada,
+                _fecha_realizada,
+                _usuario_programa,
+                _evento_id,
+                _creado_en,
+            ) = row
+
+            return {
+                "id": _id,
+                "entrevista_id": _entrevista_id,
+                "creador_id": _creador_id,
+                "fecha_programada": _fecha_programada,
+                "duracion_minutos": _duracion_minutos,
+                "realizada": _realizada,
+                "fecha_realizada": _fecha_realizada,
+                "usuario_programa": _usuario_programa,
+                "evento_id": _evento_id,
+                "creado_en": _creado_en,
+            }
     except Exception as e:
+        # usa tu logger si ya lo tienes
         print("❌ Error al insertar agendamiento:", e)
         return None
     finally:
         conn.close()
+
+
 
 def obtener_entrevista_con_agendamientos(creador_id: int):
     conn = None
@@ -266,9 +355,6 @@ def actualizar_entrevista(entrevista_id: int, datos: dict):
         print("❌ Error al actualizar entrevista:", e)
         return None
 
-
-
-
 # ================================
 # 📌 CREAR ENTREVISTA
 # ================================
@@ -291,63 +377,96 @@ import logging
 logger = logging.getLogger("uvicorn.error")
 
 from main import  eliminar_evento,crear_evento
-# ================================
-# 📌 CREAR AGENDAMIENTO DE ENTREVISTA + EVENTO
-# ================================
+
+from datetime import datetime, timedelta
+from fastapi import HTTPException, Depends
+import logging
+
+logger = logging.getLogger(__name__)
+
 @router.post("/api/entrevistas/{entrevista_id}/agendamientos", response_model=AgendamientoOut)
-def crear_agendamiento(entrevista_id: int, datos: AgendamientoCreate, usuario_actual: dict = Depends(obtener_usuario_actual)):
+def crear_agendamiento(
+    entrevista_id: int,
+    datos: AgendamientoCreate,
+    usuario_actual: dict = Depends(obtener_usuario_actual)
+):
     try:
-        # Validación mínima
-        if "creador_id" not in datos:
+        if not usuario_actual:
+            raise HTTPException(status_code=401, detail="Usuario no autorizado")
+
+        # ✅ Pydantic model → dict (solo campos presentes)
+        body = datos.dict(exclude_unset=True)
+
+        # Validaciones mínimas (usando atributos del modelo)
+        if datos.creador_id is None:
             raise HTTPException(status_code=400, detail="El campo creador_id es obligatorio")
-        if "fecha_programada" not in datos:
+        if datos.fecha_programada is None:
             raise HTTPException(status_code=400, detail="El campo fecha_programada es obligatorio")
 
-        creador_id = datos["creador_id"]
-        fecha_inicio = datos["fecha_programada"]
-        fecha_fin = fecha_inicio + timedelta(hours=1)  # duración por defecto 1h
+        creador_id = datos.creador_id
+        fecha_inicio: datetime = datos.fecha_programada
 
-        # === Crear evento en calendario ===
+        # ✅ Duración: usar la del body o default 60 minutos
+        duracion_minutos = datos.duracion_minutos if datos.duracion_minutos is not None else 60
+        fecha_fin = fecha_inicio + timedelta(minutes=duracion_minutos)
+
+        # === Crear evento en calendario (opcional) ===
+        evento_id = None
         try:
+            # Si tienes un modelo EventoIn diferente, ajusta estos campos
             evento_payload = EventoIn(
                 titulo="Entrevista",
-                descripcion=datos.get("observaciones") or "Entrevista programada",
+                descripcion="Entrevista programada",
                 inicio=fecha_inicio,
                 fin=fecha_fin,
                 participantes_ids=[creador_id],
             )
             evento_creado = crear_evento(evento_payload, usuario_actual)
-            datos["evento_id"] = evento_creado.id
+            evento_id = getattr(evento_creado, "id", None)
         except Exception as e:
-            print(f"⚠️ Error al crear evento en calendario: {e}")
-            datos["evento_id"] = None
+            logger.warning(f"⚠️ Error al crear evento en calendario: {e}")
+            evento_id = None
 
         # === Insertar agendamiento en DB ===
-        datos["entrevista_id"] = entrevista_id
-        datos["usuario_programa"] = usuario_actual.get("id")
+        # Importante: siempre usar el entrevista_id del path
+        payload_ag = {
+            "entrevista_id": entrevista_id,
+            "creador_id": creador_id,
+            "fecha_programada": fecha_inicio,
+            "duracion_minutos": duracion_minutos,
+            "usuario_programa": usuario_actual.get("id"),
+            "evento_id": evento_id,
+        }
 
-        resultado = insertar_agendamiento(datos)
+        resultado = insertar_agendamiento(payload_ag)
         if not resultado:
             raise HTTPException(status_code=500, detail="Error al insertar agendamiento")
 
-        return {
-            "status": "ok",
-            "agendamiento": {**resultado, "evento": evento_creado.dict() if datos.get("evento_id") else None}
-        }
+        # ✅ Devolver exactamente AgendamientoOut
+        return AgendamientoOut(
+            id=resultado["id"],
+            entrevista_id=resultado["entrevista_id"],
+            creador_id=resultado["creador_id"],
+            fecha_programada=resultado["fecha_programada"],
+            duracion_minutos=resultado.get("duracion_minutos"),
+            realizada=resultado.get("realizada", False),
+            fecha_realizada=resultado.get("fecha_realizada"),
+            usuario_programa=resultado.get("usuario_programa"),
+            evento_id=resultado.get("evento_id"),
+            creado_en=resultado["creado_en"],
+        )
 
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.exception("❌ Error al crear agendamiento")
         raise HTTPException(status_code=500, detail=f"Error al crear agendamiento: {e}")
 
-
-
-# DELETE eliminar agendamiento de entrevista
 @router.delete("/api/entrevistas/agendamientos/{agendamiento_id}", response_model=dict)
-def eliminar_agendamiento(agendamiento_id: int, usuario_actual: dict = Depends(obtener_usuario_actual)):
-    """
-    Elimina un agendamiento de la tabla entrevista_agendamiento
-    y también elimina el evento en Google Calendar (si existe).
-    No actualiza estados de entrevista, perfil_creador ni creadores.
-    """
+def eliminar_agendamiento(
+    agendamiento_id: int,
+    usuario_actual: dict = Depends(obtener_usuario_actual)
+):
     if not usuario_actual:
         raise HTTPException(status_code=401, detail="Usuario no autorizado")
 
@@ -356,8 +475,8 @@ def eliminar_agendamiento(agendamiento_id: int, usuario_actual: dict = Depends(o
     try:
         # 1. Buscar el evento_id asociado al agendamiento
         cur.execute("""
-            SELECT evento_id 
-            FROM entrevista_agendamiento 
+            SELECT evento_id
+            FROM entrevista_agendamiento
             WHERE id = %s
         """, (agendamiento_id,))
         row = cur.fetchone()
@@ -367,13 +486,17 @@ def eliminar_agendamiento(agendamiento_id: int, usuario_actual: dict = Depends(o
 
         evento_id = row[0]
 
-        # 2. Eliminar el agendamiento de la tabla entrevista_agendamiento
+        # 2. Eliminar el agendamiento
         cur.execute("DELETE FROM entrevista_agendamiento WHERE id = %s", (agendamiento_id,))
         conn.commit()
 
-        # 3. Si tenía evento asociado, borrarlo de Google Calendar y de agendamientos
+        # 3. Si tenía evento asociado, borrarlo de Google Calendar
         if evento_id:
-            eliminar_evento(evento_id)
+            try:
+                eliminar_evento(evento_id)
+            except Exception as e:
+                # No hacemos rollback del DELETE si falla el Calendar
+                logger.warning(f"⚠️ No se pudo eliminar el evento {evento_id} en Calendar: {e}")
 
         return {
             "ok": True,
@@ -381,6 +504,8 @@ def eliminar_agendamiento(agendamiento_id: int, usuario_actual: dict = Depends(o
                       + (f" y evento {evento_id} eliminado" if evento_id else "")
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         conn.rollback()
         logger.error(f"❌ Error al eliminar agendamiento {agendamiento_id}: {e}")
@@ -388,6 +513,106 @@ def eliminar_agendamiento(agendamiento_id: int, usuario_actual: dict = Depends(o
     finally:
         cur.close()
         conn.close()
+
+
+
+# # ================================
+# # 📌 CREAR AGENDAMIENTO DE ENTREVISTA + EVENTO
+# # ================================
+# @router.post("/api/entrevistas/{entrevista_id}/agendamientos", response_model=AgendamientoOut)
+# def crear_agendamiento(entrevista_id: int, datos: AgendamientoCreate, usuario_actual: dict = Depends(obtener_usuario_actual)):
+#     try:
+#         # Validación mínima
+#         if "creador_id" not in datos:
+#             raise HTTPException(status_code=400, detail="El campo creador_id es obligatorio")
+#         if "fecha_programada" not in datos:
+#             raise HTTPException(status_code=400, detail="El campo fecha_programada es obligatorio")
+#
+#         creador_id = datos["creador_id"]
+#         fecha_inicio = datos["fecha_programada"]
+#         fecha_fin = fecha_inicio + timedelta(hours=1)  # duración por defecto 1h
+#
+#         # === Crear evento en calendario ===
+#         try:
+#             evento_payload = EventoIn(
+#                 titulo="Entrevista",
+#                 descripcion=datos.get("observaciones") or "Entrevista programada",
+#                 inicio=fecha_inicio,
+#                 fin=fecha_fin,
+#                 participantes_ids=[creador_id],
+#             )
+#             evento_creado = crear_evento(evento_payload, usuario_actual)
+#             datos["evento_id"] = evento_creado.id
+#         except Exception as e:
+#             print(f"⚠️ Error al crear evento en calendario: {e}")
+#             datos["evento_id"] = None
+#
+#         # === Insertar agendamiento en DB ===
+#         datos["entrevista_id"] = entrevista_id
+#         datos["usuario_programa"] = usuario_actual.get("id")
+#
+#         resultado = insertar_agendamiento(datos)
+#         if not resultado:
+#             raise HTTPException(status_code=500, detail="Error al insertar agendamiento")
+#
+#         return {
+#             "status": "ok",
+#             "agendamiento": {**resultado, "evento": evento_creado.dict() if datos.get("evento_id") else None}
+#         }
+#
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Error al crear agendamiento: {e}")
+#
+#
+#
+# # DELETE eliminar agendamiento de entrevista
+# @router.delete("/api/entrevistas/agendamientos/{agendamiento_id}", response_model=dict)
+# def eliminar_agendamiento(agendamiento_id: int, usuario_actual: dict = Depends(obtener_usuario_actual)):
+#     """
+#     Elimina un agendamiento de la tabla entrevista_agendamiento
+#     y también elimina el evento en Google Calendar (si existe).
+#     No actualiza estados de entrevista, perfil_creador ni creadores.
+#     """
+#     if not usuario_actual:
+#         raise HTTPException(status_code=401, detail="Usuario no autorizado")
+#
+#     conn = get_connection()
+#     cur = conn.cursor()
+#     try:
+#         # 1. Buscar el evento_id asociado al agendamiento
+#         cur.execute("""
+#             SELECT evento_id
+#             FROM entrevista_agendamiento
+#             WHERE id = %s
+#         """, (agendamiento_id,))
+#         row = cur.fetchone()
+#
+#         if not row:
+#             raise HTTPException(status_code=404, detail=f"Agendamiento {agendamiento_id} no encontrado")
+#
+#         evento_id = row[0]
+#
+#         # 2. Eliminar el agendamiento de la tabla entrevista_agendamiento
+#         cur.execute("DELETE FROM entrevista_agendamiento WHERE id = %s", (agendamiento_id,))
+#         conn.commit()
+#
+#         # 3. Si tenía evento asociado, borrarlo de Google Calendar y de agendamientos
+#         if evento_id:
+#             eliminar_evento(evento_id)
+#
+#         return {
+#             "ok": True,
+#             "mensaje": f"Agendamiento {agendamiento_id} eliminado"
+#                       + (f" y evento {evento_id} eliminado" if evento_id else "")
+#         }
+#
+#     except Exception as e:
+#         conn.rollback()
+#         logger.error(f"❌ Error al eliminar agendamiento {agendamiento_id}: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
+#     finally:
+#         cur.close()
+#         conn.close()
 
 
 # ================================
