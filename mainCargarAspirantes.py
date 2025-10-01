@@ -231,6 +231,13 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+from fastapi import UploadFile, File, Form
+from pathlib import Path
+from openpyxl import load_workbook
+import uuid, os, logging
+
+logger = logging.getLogger(__name__)
+
 @router.post("/cargar_aspirantes_local")
 async def cargar_aspirantes_desde_archivo(
     file: UploadFile = File(...),
@@ -238,22 +245,26 @@ async def cargar_aspirantes_desde_archivo(
     nombre_hoja: str = Form(None),
 ):
     """
-    Carga aspirantes desde un archivo Excel local (.xlsx) subido por el usuario,
+    Carga aspirantes desde un archivo Excel local (.xlsx/.xlsm) subido por el usuario,
     mezclando datos con el TXT (parseado por usuario).
-    Estructura de columnas igual a la de Google Sheets:
+    Estructura esperada (igual a workspace):
       - Encabezados en fila 3
       - Datos desde fila 4
       - Usuarios en columna B
-      - Rangos A..X (24 columnas)
+      - Rango A..X (24 columnas)
     """
+    xlsx_path = None
+    wb = None
     try:
-        # 1) Guardar el Excel subido
-        if not file.filename.lower().endswith(".xlsx"):
-            return {"status": "error", "mensaje": "El archivo debe ser .xlsx"}
+        # 1) Guardar el Excel subido en /tmp (Render permite escribir allí)
+        fname = (file.filename or "").lower()
+        if not (fname.endswith(".xlsx") or fname.endswith(".xlsm")):
+            return {"status": "error", "mensaje": "El archivo debe ser .xlsx o .xlsm"}
 
         tmp_dir = Path("/tmp")
         tmp_dir.mkdir(parents=True, exist_ok=True)
-        xlsx_path = tmp_dir / f"local_{file.filename}"
+        safe_name = f"local_{uuid.uuid4().hex}_{os.path.basename(file.filename)}"
+        xlsx_path = tmp_dir / safe_name
         xlsx_path.write_bytes(await file.read())
 
         # 2) Parsear TXT (igual que workspace)
@@ -262,41 +273,54 @@ async def cargar_aspirantes_desde_archivo(
 
         # 3) Abrir Excel y seleccionar hoja
         wb = load_workbook(filename=str(xlsx_path), data_only=True)
-        ws = wb[nombre_hoja] if nombre_hoja and nombre_hoja in wb.sheetnames else wb.active
+
+        if nombre_hoja:
+            if nombre_hoja not in wb.sheetnames:
+                return {"status": "error", "mensaje": f"La hoja '{nombre_hoja}' no existe en el Excel"}
+            ws = wb[nombre_hoja]
+        else:
+            # Fuerza la primera hoja del libro (más determinista que wb.active)
+            ws = wb[wb.sheetnames[0]]
         logger.info(f"📄 Hoja usada (local): {ws.title}")
 
         # 4) Detectar última fila usando Columna B (usuarios)
-        #    Encabezados en fila 3; datos desde fila 4
-        #    Tomamos B4 hacia abajo hasta la última con valor (trim != "")
-        col_B_desde_4 = []
-        row_idx = 4
-        while True:
-            cell_val = ws.cell(row=row_idx, column=2).value  # B = 2
-            if cell_val is None or str(cell_val).strip() == "":
-                # detenemos cuando encontramos primera vacía consecutiva y no hay más datos en B
-                # (si tu archivo tiene huecos en B con datos en otras columnas, puedes mejorar este corte)
-                break
-            col_B_desde_4.append(str(cell_val).strip())
-            row_idx += 1
+        #    Fila 3 = encabezados; datos desde fila 4
+        #    Permitimos huecos: cortamos tras 'consecutive_empties_limit' vacíos seguidos.
+        col_B = 2
+        start_row = 4
+        consecutive_empties = 0
+        consecutive_empties_limit = 8  # si hay 8 filas seguidas vacías en B, asumimos fin
+        ultima_fila = start_row - 1
 
-        if not col_B_desde_4:
+        r = start_row
+        while True:
+            val = ws.cell(row=r, column=col_B).value
+            s = ("" if val is None else str(val).strip())
+            if s == "":
+                consecutive_empties += 1
+                if consecutive_empties >= consecutive_empties_limit:
+                    break
+            else:
+                consecutive_empties = 0
+                ultima_fila = r
+            r += 1
+
+        if ultima_fila < start_row:
             logger.warning("⚠️ No se encontraron usuarios en la columna B (fila 4 en adelante)")
             return {"status": "error", "mensaje": "No se encontraron aspirantes en el archivo"}
 
-        ultima_fila = 3 + len(col_B_desde_4)  # fila 3 + cantidad de filas con usuario
-        logger.info(f"📊 Rango calculado (local): A4:X{ultima_fila}")
+        logger.info(f"📊 Rango calculado (local): A{start_row}:X{ultima_fila}")
 
         # 5) Leer filas A..X y construir aspirantes (igual mapeo que workspace)
         aspirantes = []
-        for i in range(4, ultima_fila + 1):
+        for i in range(start_row, ultima_fila + 1):
             # Normalizar 24 columnas A..X (1..24)
             fila_vals = []
             for c in range(1, 24 + 1):
                 v = ws.cell(row=i, column=c).value
                 fila_vals.append("" if v is None else str(v).strip())
 
-            # Usuario en columna B (idx 1)
-            usuario = fila_vals[1]
+            usuario = fila_vals[1]  # Columna B (índice 1)
             if not usuario:
                 continue
 
@@ -321,7 +345,7 @@ async def cargar_aspirantes_desde_archivo(
                 "Duracion_Emisiones": "",
                 "Dias_Emisiones": "",
 
-                "fila_excel": i,  # fila real en el archivo (coincide con Google Sheets)
+                "fila_excel": i,  # fila real en el archivo
             }
 
             # 6) Mezclar con datos del TXT por usuario
@@ -354,6 +378,143 @@ async def cargar_aspirantes_desde_archivo(
     except Exception as e:
         logger.error(f"❌ Error en cargar_aspirantes_local: {e}", exc_info=True)
         return {"status": "error", "mensaje": f"Error al cargar archivo local: {str(e)}"}
+
+    finally:
+        # Limpieza de recursos
+        try:
+            if wb:
+                wb.close()
+        except Exception:
+            pass
+        try:
+            if xlsx_path and Path(xlsx_path).exists():
+                os.remove(xlsx_path)
+        except Exception:
+            pass
+
+# @router.post("/cargar_aspirantes_local")
+# async def cargar_aspirantes_desde_archivo(
+#     file: UploadFile = File(...),
+#     ruta_txt: str = Form(...),
+#     nombre_hoja: str = Form(None),
+# ):
+#     """
+#     Carga aspirantes desde un archivo Excel local (.xlsx) subido por el usuario,
+#     mezclando datos con el TXT (parseado por usuario).
+#     Estructura de columnas igual a la de Google Sheets:
+#       - Encabezados en fila 3
+#       - Datos desde fila 4
+#       - Usuarios en columna B
+#       - Rangos A..X (24 columnas)
+#     """
+#     try:
+#         # 1) Guardar el Excel subido
+#         if not file.filename.lower().endswith(".xlsx"):
+#             return {"status": "error", "mensaje": "El archivo debe ser .xlsx"}
+#
+#         tmp_dir = Path("/tmp")
+#         tmp_dir.mkdir(parents=True, exist_ok=True)
+#         xlsx_path = tmp_dir / f"local_{file.filename}"
+#         xlsx_path.write_bytes(await file.read())
+#
+#         # 2) Parsear TXT (igual que workspace)
+#         info_por_usuario = parsear_bloques_desde_txt(ruta_txt)
+#         logger.info(f"✅ TXT parseado, usuarios encontrados: {len(info_por_usuario)}")
+#
+#         # 3) Abrir Excel y seleccionar hoja
+#         wb = load_workbook(filename=str(xlsx_path), data_only=True)
+#         ws = wb[nombre_hoja] if nombre_hoja and nombre_hoja in wb.sheetnames else wb.active
+#         logger.info(f"📄 Hoja usada (local): {ws.title}")
+#
+#         # 4) Detectar última fila usando Columna B (usuarios)
+#         #    Encabezados en fila 3; datos desde fila 4
+#         #    Tomamos B4 hacia abajo hasta la última con valor (trim != "")
+#         col_B_desde_4 = []
+#         row_idx = 4
+#         while True:
+#             cell_val = ws.cell(row=row_idx, column=2).value  # B = 2
+#             if cell_val is None or str(cell_val).strip() == "":
+#                 # detenemos cuando encontramos primera vacía consecutiva y no hay más datos en B
+#                 # (si tu archivo tiene huecos en B con datos en otras columnas, puedes mejorar este corte)
+#                 break
+#             col_B_desde_4.append(str(cell_val).strip())
+#             row_idx += 1
+#
+#         if not col_B_desde_4:
+#             logger.warning("⚠️ No se encontraron usuarios en la columna B (fila 4 en adelante)")
+#             return {"status": "error", "mensaje": "No se encontraron aspirantes en el archivo"}
+#
+#         ultima_fila = 3 + len(col_B_desde_4)  # fila 3 + cantidad de filas con usuario
+#         logger.info(f"📊 Rango calculado (local): A4:X{ultima_fila}")
+#
+#         # 5) Leer filas A..X y construir aspirantes (igual mapeo que workspace)
+#         aspirantes = []
+#         for i in range(4, ultima_fila + 1):
+#             # Normalizar 24 columnas A..X (1..24)
+#             fila_vals = []
+#             for c in range(1, 24 + 1):
+#                 v = ws.cell(row=i, column=c).value
+#                 fila_vals.append("" if v is None else str(v).strip())
+#
+#             # Usuario en columna B (idx 1)
+#             usuario = fila_vals[1]
+#             if not usuario:
+#                 continue
+#
+#             aspirante = {
+#                 "usuario": usuario,
+#                 "telefono": fila_vals[2].replace(" ", "").replace("+", ""),  # C
+#                 "disponibilidad": fila_vals[3],                               # D
+#                 "motivo_no_apto": fila_vals[4].upper(),                       # E
+#                 "perfil": fila_vals[5],                                       # F
+#                 "contacto": fila_vals[8],                                     # I
+#                 "respuesta_creador": fila_vals[9],                            # J
+#                 "entrevista": fila_vals[11],                                  # L
+#                 "tipo_solicitud": fila_vals[15],                              # P
+#                 "email": fila_vals[16],                                       # Q
+#                 "nickname": fila_vals[17],                                    # R
+#                 "razon_no_contacto": fila_vals[18].upper(),                   # S
+#
+#                 # Métricas vienen del TXT (no del Excel)
+#                 "seguidores": "",
+#                 "videos": "",
+#                 "likes": "",
+#                 "Duracion_Emisiones": "",
+#                 "Dias_Emisiones": "",
+#
+#                 "fila_excel": i,  # fila real en el archivo (coincide con Google Sheets)
+#             }
+#
+#             # 6) Mezclar con datos del TXT por usuario
+#             dtx = info_por_usuario.get(usuario, {})
+#             if dtx:
+#                 aspirante["seguidores"] = dtx.get("seguidores", "")
+#                 aspirante["videos"] = dtx.get("videos", "")
+#                 aspirante["likes"] = dtx.get("likes", "")
+#                 aspirante["Duracion_Emisiones"] = dtx.get("Duracion_Emisiones", "")
+#                 aspirante["Dias_Emisiones"] = dtx.get("Dias_Emisiones", "")
+#                 aspirante["nombre"] = dtx.get("nombre", "")
+#                 aspirante["caducidad_solicitud"] = dtx.get("caducidad_solicitud", "")
+#                 aspirante["agente_recluta"] = dtx.get("agente_recluta", "")
+#                 aspirante["fecha_solicitud"] = dtx.get("fecha_solcitud", "") or dtx.get("fecha_solicitud", "")
+#                 aspirante["canal"] = dtx.get("canal", "")
+#
+#             aspirantes.append(aspirante)
+#
+#         if not aspirantes:
+#             return {"status": "error", "mensaje": "No se construyeron aspirantes desde el archivo"}
+#
+#         # 7) Guardar en DB
+#         guardar_aspirantes(aspirantes, nombre_archivo=xlsx_path.name, hoja_excel=ws.title)
+#         logger.info(f"✅ {len(aspirantes)} aspirantes (local) cargados y guardados correctamente")
+#         return {
+#             "status": "ok",
+#             "mensaje": f"{len(aspirantes)} aspirantes cargados y guardados correctamente"
+#         }
+#
+#     except Exception as e:
+#         logger.error(f"❌ Error en cargar_aspirantes_local: {e}", exc_info=True)
+#         return {"status": "error", "mensaje": f"Error al cargar archivo local: {str(e)}"}
 
 from DataBase import get_connection,limpiar_telefono,safe_int
 
