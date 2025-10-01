@@ -31,6 +31,8 @@ def parsear_bloques_desde_txt(ruta_txt: str | Path) -> dict:
     lineas = [ln.rstrip("\n\r") for ln in texto.splitlines()]
     i, n = 0, len(lineas)
     out = {}
+    _cnt_total = _cnt_con_fecha = _cnt_con_canal = 0
+    _ejemplos = []
 
     while i < n:
         # Posible inicio de bloque: línea con el usuario
@@ -125,10 +127,19 @@ def parsear_bloques_desde_txt(ruta_txt: str | Path) -> dict:
             "canal": canal,                     # NUEVO: LIVE / Código QR / QR code (texto tal cual)
         }
 
+        _cnt_total += 1
+        if canal: _cnt_con_canal += 1
+        if fecha_sol:
+            _cnt_con_fecha += 1
+            if len(_ejemplos) < 3:
+                _ejemplos.append((usuario, canal, fecha_sol))
+
         # Saltar blancos entre bloques
         while i < n and lineas[i].strip() == "":
             i += 1
 
+    # log final
+    logger.info(f"TXT parseado: total={_cnt_total}, con_canal={_cnt_con_canal}, con_fecha={_cnt_con_fecha}, ejemplos={_ejemplos}")
     return out
 
 
@@ -359,7 +370,7 @@ async def cargar_aspirantes_desde_archivo(
                 aspirante["nombre"] = dtx.get("nombre", "")
                 aspirante["caducidad_solicitud"] = dtx.get("caducidad_solicitud", "")
                 aspirante["agente_recluta"] = dtx.get("agente_recluta", "")
-                aspirante["fecha_solicitud"] = dtx.get("fecha_solcitud", "") or dtx.get("fecha_solicitud", "")
+                aspirante["fecha_solicitud"] = dtx.get("fecha_solicitud", "")
                 aspirante["canal"] = dtx.get("canal", "")
 
             aspirantes.append(aspirante)
@@ -771,8 +782,13 @@ def guardar_aspirantes(
 
             # NUEVO: fecha_solicitud (del TXT parseado)
             # tu parseador guarda c["fecha_solicitud"] o (a veces) "fecha_solcitud"; probamos ambos
-            fecha_sol_txt = c.get("fecha_solicitud") or c.get("fecha_solcitud")
+            fecha_sol_txt = c.get("fecha_solicitud")
             fecha_solicitud_dt = _parse_fecha_solicitud(fecha_sol_txt)
+
+            if fecha_sol_txt:
+                logger.info(f"[{usuario}] fecha_solicitud TXT='{fecha_sol_txt}' -> parsed={fecha_solicitud_dt}")
+            else:
+                logger.info(f"[{usuario}] SIN fecha_solicitud en el aspirante")
 
             # === Conversión a tipos que exige la tabla ===
             seguidores = to_int_relaxed(c.get("seguidores"), default=0)
@@ -803,6 +819,8 @@ def guardar_aspirantes(
                     telefono,
                 ]
                 if fecha_solicitud_dt is not None:
+                    logger.info(f"[{usuario}] Actualizando/insertando creadores.fecha_solicitud={fecha_solicitud_dt}")
+
                     set_cols.insert(3, "fecha_solicitud = %s")  # antes de estado_id por orden
                     params.insert(3, fecha_solicitud_dt)
 
@@ -817,6 +835,9 @@ def guardar_aspirantes(
             else:
                 # INSERT incluye fecha_solicitud si viene
                 if fecha_solicitud_dt is not None:
+
+                    logger.info(f"[{usuario}] Actualizando/insertando creadores.fecha_solicitud={fecha_solicitud_dt}")
+                    
                     cur.execute("""
                         INSERT INTO creadores (usuario, nickname, email, telefono, fecha_solicitud, estado_id, activo, creado_en, actualizado_en)
                         VALUES (%s, %s, %s, %s, %s, 3, TRUE, NOW(), NOW())
