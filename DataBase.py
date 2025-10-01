@@ -1368,19 +1368,19 @@ def obtener_creadores_db():
         cur = conn.cursor()
 
         sql = """
-            SELECT 
-                c.id, 
-                c.usuario, 
-                c.nickname, 
-                c.nombre_real, 
-                c.telefono,
-                ec.nombre AS estado_nombre,
-                c.creado_en
-            FROM creadores c
-            INNER JOIN estados_creador ec ON c.estado_id = ec.id
-            WHERE c.activo = TRUE
-              AND c.estado_id IN (3,4,5,7)
-            ORDER BY c.creado_en ASC
+                SELECT 
+                    c.id, 
+                    c.usuario, 
+                    c.nickname, 
+                    c.nombre_real, 
+                    c.telefono,
+                    ec.nombre AS estado_nombre,
+                    COALESCE(c.fecha_solicitud, c.creado_en) AS creado_en
+                FROM creadores c
+                INNER JOIN estados_creador ec ON c.estado_id = ec.id
+                WHERE c.activo = TRUE
+                  AND c.estado_id IN (3,4,5,7)
+                ORDER BY fecha_mostrar ASC;
         """
 
         cur.execute(sql)
