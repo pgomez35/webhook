@@ -2476,6 +2476,28 @@ def actualizar_telefono_aspirante(aspirante_id: int, numero: str):
         print("❌ Error al actualizar teléfono de aspirante:", e)
         return False
 
+def insertar_entrevista(datos: dict):
+    try:
+        conn = get_connection()
+        with conn.cursor() as cur:
+            columnas = ', '.join(datos.keys())
+            placeholders = ', '.join(['%s'] * len(datos))
+            sql = f"""
+                INSERT INTO entrevistas ({columnas})
+                VALUES ({placeholders})
+                RETURNING id, creado_en
+            """
+            cur.execute(sql, tuple(datos.values()))
+            row = cur.fetchone()
+            conn.commit()
+            return {"id": row[0], "creado_en": row[1]}
+    except Exception as e:
+        print("❌ Error al insertar entrevista:", e)
+        return None
+    finally:
+        conn.close()
+
+
 # if __name__ == "__main__":
 #     print("Probando diagnóstico...")
 #     # resultado = diagnostico_perfil_creador(27)  # Cambia el ID según quieras

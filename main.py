@@ -2146,6 +2146,7 @@ ESTADO_DEFAULT = 99  # si no coincide
 @app.put("/api/perfil_creador/{creador_id}/resumen")
 def guardar_resumen_final(creador_id: int, datos: GuardarResumenInput):
     try:
+        # 1) Actualiza perfil_creador
         payload = {
             "diagnostico": datos.diagnostico,
             "mejoras_sugeridas": datos.mejoras_sugeridas,
@@ -2153,18 +2154,54 @@ def guardar_resumen_final(creador_id: int, datos: GuardarResumenInput):
             "usuario_evalua": datos.usuario_evalua,
             "estado_evaluacion": datos.estado_evaluacion,
         }
-
-        # 1️⃣ Actualiza perfil_creador
         actualizar_datos_perfil_creador(creador_id, payload)
 
-        # 2️⃣ Si viene un estado, actualiza también creadores.estado_id
+        entrevista_creada = None
+
+        # 2) Si viene un estado, actualiza también creadores.estado_id
         if datos.estado_evaluacion:
             estado_id = ESTADO_MAP.get(datos.estado_evaluacion, ESTADO_DEFAULT)
             actualizar_estado_creador(creador_id, estado_id)
 
-        return {"status": "ok", "mensaje": "Resumen actualizado correctamente"}
+            # 3) Si el estado es "Entrevista" (4), insertamos entrevista mínima
+            if estado_id == 4:
+                entrevista_payload = {
+                    "creador_id": creador_id,
+                    # no ponemos más campos, solo los mínimos;
+                    # la tabla agrega id y creado_en por default
+                }
+                entrevista_creada = insertar_entrevista(entrevista_payload)
+
+        return {
+            "status": "ok",
+            "mensaje": "Resumen actualizado correctamente",
+            "entrevista_creada": entrevista_creada,  # {"id": ..., "creado_en": ...} o None
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# @app.put("/api/perfil_creador/{creador_id}/resumen")
+# def guardar_resumen_final(creador_id: int, datos: GuardarResumenInput):
+#     try:
+#         payload = {
+#             "diagnostico": datos.diagnostico,
+#             "mejoras_sugeridas": datos.mejoras_sugeridas,
+#             "observaciones_finales": datos.observaciones_finales,
+#             "usuario_evalua": datos.usuario_evalua,
+#             "estado_evaluacion": datos.estado_evaluacion,
+#         }
+#
+#         # 1️⃣ Actualiza perfil_creador
+#         actualizar_datos_perfil_creador(creador_id, payload)
+#
+#         # 2️⃣ Si viene un estado, actualiza también creadores.estado_id
+#         if datos.estado_evaluacion:
+#             estado_id = ESTADO_MAP.get(datos.estado_evaluacion, ESTADO_DEFAULT)
+#             actualizar_estado_creador(creador_id, estado_id)
+#
+#         return {"status": "ok", "mensaje": "Resumen actualizado correctamente"}
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
 
 
 # @app.put("/api/perfil_creador/{creador_id}/resumen",
