@@ -294,7 +294,7 @@ from main import  eliminar_evento,crear_evento
 # ================================
 # 📌 CREAR AGENDAMIENTO DE ENTREVISTA + EVENTO
 # ================================
-@router.post("/entrevistas/{entrevista_id}/agendamientos", response_model=AgendamientoOut)
+@router.post("/api/entrevistas/{entrevista_id}/agendamientos", response_model=AgendamientoOut)
 def crear_agendamiento(entrevista_id: int, datos: AgendamientoCreate, usuario_actual: dict = Depends(obtener_usuario_actual)):
     try:
         # Validación mínima
@@ -341,7 +341,7 @@ def crear_agendamiento(entrevista_id: int, datos: AgendamientoCreate, usuario_ac
 
 
 # DELETE eliminar agendamiento de entrevista
-@router.delete("/entrevistas/agendamientos/{agendamiento_id}", response_model=dict)
+@router.delete("/api/entrevistas/agendamientos/{agendamiento_id}", response_model=dict)
 def eliminar_agendamiento(agendamiento_id: int, usuario_actual: dict = Depends(obtener_usuario_actual)):
     """
     Elimina un agendamiento de la tabla entrevista_agendamiento
@@ -393,7 +393,7 @@ def eliminar_agendamiento(agendamiento_id: int, usuario_actual: dict = Depends(o
 # ================================
 # 📌 OBTENER ENTREVISTA + AGENDAMIENTOS
 # ================================
-@router.get("/entrevistas/{creador_id}", response_model=EntrevistaDetalleOut)
+@router.get("/api/entrevistas/{creador_id}", response_model=EntrevistaDetalleOut)
 def obtener_entrevista(creador_id: int):
     try:
         entrevista = obtener_entrevista_con_agendamientos(creador_id)
