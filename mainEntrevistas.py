@@ -6,7 +6,14 @@ from auth import obtener_usuario_actual
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
-from DataBase import  get_connection
+from DataBase import  get_connection,actualizar_estado_creador,actualizar_entrevista_por_creador
+import unicodedata
+
+from fastapi import APIRouter, HTTPException, Depends, Body
+from typing import Optional, List, Dict
+
+router = APIRouter(prefix="/api", tags=["Entrevistas"])
+
 # =====================
 # 🎯 AGENDAMIENTOS
 # =====================
@@ -261,10 +268,6 @@ def actualizar_entrevista(entrevista_id: int, datos: dict):
 
 
 
-from fastapi import APIRouter, HTTPException, Depends, Body
-from typing import Optional, List, Dict
-
-router = APIRouter(prefix="/api", tags=["Entrevistas"])
 
 # ================================
 # 📌 CREAR ENTREVISTA
@@ -408,19 +411,116 @@ def obtener_entrevista(creador_id: int):
 # ================================
 # 📌 ACTUALIZAR ENTREVISTA
 # ================================
-@router.put("/entrevistas/{entrevista_id}", response_model=EntrevistaOut)
-def actualizar_entrevista_api(
-    entrevista_id: int,
-    datos: EntrevistaUpdate,
-    usuario_actual: dict = Depends(obtener_usuario_actual)
-):
-    try:
-        payload = datos.dict(exclude_unset=True)
-        entrevista = actualizar_entrevista(entrevista_id, payload, usuario_actual["id"])
-        if not entrevista:
-            raise HTTPException(status_code=404, detail="Entrevista no encontrada")
-        return entrevista
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al actualizar entrevista: {e}")
+# @router.put("/entrevistas/{entrevista_id}", response_model=EntrevistaOut)
+# def actualizar_entrevista_api(
+#     entrevista_id: int,
+#     datos: EntrevistaUpdate,
+#     usuario_actual: dict = Depends(obtener_usuario_actual)
+# ):
+#     try:
+#         payload = datos.dict(exclude_unset=True)
+#         entrevista = actualizar_entrevista(entrevista_id, payload, usuario_actual["id"])
+#         if not entrevista:
+#             raise HTTPException(status_code=404, detail="Entrevista no encontrada")
+#         return entrevista
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Error al actualizar entrevista: {e}")
+#
 
+
+# Mapa de estado_id según el resultado de la entrevista
+# Ajusta los IDs si en tu catálogo son distintos
+RESULTADO_TO_ESTADO_ID = {
+    "PROGRAMADA": 4,
+    "ENTREVISTA": 4,
+    "INVITACION": 5,  # "Invitación"
+    "RECHAZADO": 7,
+}
+
+def _normalize_text(s: Optional[str]) -> Optional[str]:
+    if s is None:
+        return None
+    # quita acentos, pasa a mayúsculas y trimea
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    return s.strip().upper()
+
+import unicodedata
+from typing import Optional
+from fastapi import HTTPException, Depends
+from datetime import datetime
+
+# Mapa de estados (ajusta IDs si tu catálogo cambia)
+RESULTADO_TO_ESTADO_ID = {
+    "PROGRAMADA": 4,
+    "ENTREVISTA": 4,
+    "INVITACION": 5,   # "Invitación"
+    "RECHAZADO": 7,
+}
+
+def _normalize_text(s: Optional[str]) -> Optional[str]:
+    if s is None:
+        return None
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    return s.strip().upper()
+
+
+@router.put("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
+def actualizar_entrevista(
+    creador_id: int,
+    datos: EntrevistaUpdate,
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
+    usuario_id = usuario_actual.get("id")
+    if not usuario_id:
+        raise HTTPException(status_code=401, detail="Usuario no autorizado")
+
+    # Solo campos presentes en el body
+    payload = datos.dict(exclude_unset=True)
+
+    # Si el payload incluye calificaciones pero no "usuario_evalua",
+    # opcionalmente puedes setear el evaluador actual:
+    if any(k in payload for k in (
+        "aspecto_tecnico", "presencia_carisma",
+        "interaccion_audiencia", "profesionalismo_normas",
+        "evaluacion_global"
+    )):
+        payload.setdefault("usuario_evalua", usuario_id)
+
+    # 1) Actualiza la entrevista (por creador_id) y devuelve el registro actualizado
+    #    Debe devolver un dict con al menos estos campos:
+    #    id, creado_en, creador_id, usuario_evalua, resultado, observaciones,
+    #    aspecto_tecnico, presencia_carisma, interaccion_audiencia,
+    #    profesionalismo_normas, evaluacion_global
+    actualizado = actualizar_entrevista_por_creador(creador_id, payload)
+    if not actualizado:
+        raise HTTPException(status_code=404, detail="No existe entrevista para este creador")
+
+    # 2) Derivar estado_id a partir de `resultado` (payload o valor final en DB)
+    resultado_raw = payload.get("resultado") or actualizado.get("resultado")
+    resultado_norm = _normalize_text(resultado_raw)
+    estado_id = RESULTADO_TO_ESTADO_ID.get(resultado_norm)
+
+    if estado_id is not None:
+        try:
+            actualizar_estado_creador(creador_id, estado_id)
+        except Exception:
+            # No rompemos la respuesta si falla el update de estado
+            pass
+
+    # 3) Responder exactamente con el schema EntrevistaOut
+    return EntrevistaOut(
+        id=actualizado["id"],
+        creado_en=actualizado["creado_en"],
+        creador_id=actualizado["creador_id"],
+        usuario_evalua=actualizado.get("usuario_evalua"),
+        resultado=actualizado.get("resultado"),
+        observaciones=actualizado.get("observaciones"),
+        aspecto_tecnico=actualizado.get("aspecto_tecnico"),
+        presencia_carisma=actualizado.get("presencia_carisma"),
+        interaccion_audiencia=actualizado.get("interaccion_audiencia"),
+        profesionalismo_normas=actualizado.get("profesionalismo_normas"),
+        evaluacion_global=actualizado.get("evaluacion_global"),
+    )
 

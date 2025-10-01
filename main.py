@@ -2924,161 +2924,161 @@ async def debug_entrevista(request: Request):
 from datetime import timedelta
 from fastapi import Depends, HTTPException
 
-# Endpoint GET por creador
-@app.get("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
-def obtener_entrevista(creador_id: int):
-    entrevista = obtener_entrevista_por_creador(creador_id)
-    if not entrevista:
-        raise HTTPException(status_code=404, detail="No existe entrevista para este creador")
-    return entrevista
-
-# POST crear entrevista + evento
-@app.post("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
-def crear_entrevista(
-    creador_id: int,
-    datos: EntrevistaCreate,
-    usuario_actual: dict = Depends(obtener_usuario_actual)
-):
-    usuario_id = usuario_actual.get("id")
-    if not usuario_id:
-        raise HTTPException(status_code=401, detail="Usuario no autorizado")
-
-    payload = datos.dict(exclude_unset=True)
-    payload["creador_id"] = creador_id
-    payload["usuario_programa"] = usuario_id
-    payload.setdefault("realizada", False)
-    payload.setdefault("resultado", "sin evaluar")
-
-    if not payload.get("realizada"):
-        payload["fecha_realizada"] = None
-        payload["usuario_evalua"] = None
-
-    # === Crear evento en calendario ===
-    try:
-        fecha_inicio = payload["fecha_programada"]
-        fecha_fin = fecha_inicio + timedelta(hours=1)  # duración por defecto = 1h
-
-        evento_payload = EventoIn(
-            titulo="Entrevista",
-            descripcion=payload.get("observaciones") or "Entrevista programada",
-            inicio=fecha_inicio,
-            fin=fecha_fin,
-            participantes_ids=[creador_id],
-        )
-        evento_creado = crear_evento(evento_payload, usuario_actual)
-        payload["evento_id"] = evento_creado.id  # <-- guardar evento_id
-    except Exception as e:
-        print(f"⚠️ Error al crear evento: {e}")
-        payload["evento_id"] = None
-
-    # === Insertar entrevista en DB ===
-    resultado = insertar_entrevista(payload)
-    if not resultado:
-        raise HTTPException(status_code=500, detail="Error al crear la entrevista")
-
-    return EntrevistaOut.model_validate({**payload, **resultado})
-
-
-from datetime import timedelta
-from fastapi import Path, Depends, HTTPException
-
-@app.put("/api/entrevistas/reprogramar/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
-def reprogramar_entrevista(
-    creador_id: int = Path(..., description="ID del creador cuya entrevista se reprograma"),
-    datos: EntrevistaUpdate = None,
-    usuario_actual: dict = Depends(obtener_usuario_actual)
-):
-    usuario_id = usuario_actual.get("id")
-    if not usuario_id:
-        raise HTTPException(status_code=401, detail="Usuario no autorizado")
-
-    # Obtener entrevista actual
-    entrevista = obtener_entrevista_por_creador(creador_id)
-    if not entrevista:
-        raise HTTPException(status_code=404, detail="Entrevista no encontrada")
-
-    # Actualizar datos en DB
-    payload = datos.dict(exclude_unset=True)
-    entrevista_actualizada = actualizar_entrevista_por_creador(creador_id, payload)
-    if not entrevista_actualizada:
-        raise HTTPException(status_code=500, detail="Error al actualizar la entrevista")
-
-    # Actualizar evento en calendario si existe evento_id
-    if payload.get("fecha_programada") and entrevista.get("evento_id"):
-        try:
-            fecha_inicio = payload["fecha_programada"]
-            fecha_fin = fecha_inicio + timedelta(hours=1)  # duración fija 1h
-
-            evento_payload = EventoIn(
-                titulo="Entrevista",
-                descripcion=payload.get("observaciones") or entrevista.get("observaciones") or "Entrevista programada",
-                inicio=fecha_inicio,
-                fin=fecha_fin,
-                participantes_ids=[creador_id],
-            )
-            editar_evento(entrevista["evento_id"], evento_payload)
-        except Exception as e:
-            print(f"⚠️ Error al actualizar evento de calendario: {e}")
-
-    return EntrevistaOut.model_validate({**entrevista, **entrevista_actualizada})
-
-
-import unicodedata
-
-# Mapa de estado_id según el resultado de la entrevista
-# Ajusta los IDs si en tu catálogo son distintos
-RESULTADO_TO_ESTADO_ID = {
-    "PROGRAMADA": 4,
-    "ENTREVISTA": 4,
-    "INVITACION": 5,  # "Invitación"
-    "RECHAZADO": 7,
-}
-
-def _normalize_text(s: Optional[str]) -> Optional[str]:
-    if s is None:
-        return None
-    # quita acentos, pasa a mayúsculas y trimea
-    s = unicodedata.normalize("NFD", s)
-    s = "".join(ch for ch in s if not unicodedata.combining(ch))
-    return s.strip().upper()
-
-@app.put("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
-def actualizar_entrevista(
-    creador_id: int,
-    datos: EntrevistaUpdate,
-    usuario_actual: dict = Depends(obtener_usuario_actual),
-):
-    usuario_id = usuario_actual.get("id")
-    if not usuario_id:
-        raise HTTPException(status_code=401, detail="Usuario no autorizado")
-
-    data_dict = datos.dict(exclude_unset=True)
-
-    # Si se marca como realizada, completa evaluador/fecha si no vienen
-    if data_dict.get("realizada"):
-        data_dict.setdefault("usuario_evalua", usuario_id)
-        data_dict.setdefault("fecha_realizada", datetime.utcnow())
-
-    # 1) Actualiza la entrevista
-    actualizado = actualizar_entrevista_por_creador(creador_id, data_dict)
-    if not actualizado:
-        raise HTTPException(status_code=404, detail="No existe entrevista para este creador")
-
-    # 2) Derivar estado_id a partir de `resultado`
-    #    - usa el que vino en el payload si está, si no el que quedó en DB
-    resultado_raw = data_dict.get("resultado") or actualizado.get("resultado")
-    resultado_norm = _normalize_text(resultado_raw)  # ENTREVISTA | INVITACION | RECHAZADO
-
-    estado_id = RESULTADO_TO_ESTADO_ID.get(resultado_norm)
-    if estado_id is not None:
-        try:
-            actualizar_estado_creador(creador_id, estado_id)
-        except Exception:
-            # Opcional: loggear si quieres, pero no romper la respuesta.
-            pass
-
-    # 3) Responder
-    return EntrevistaOut.model_validate(actualizado)
+# # Endpoint GET por creador
+# @app.get("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
+# def obtener_entrevista(creador_id: int):
+#     entrevista = obtener_entrevista_por_creador(creador_id)
+#     if not entrevista:
+#         raise HTTPException(status_code=404, detail="No existe entrevista para este creador")
+#     return entrevista
+#
+# # POST crear entrevista + evento
+# @app.post("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
+# def crear_entrevista(
+#     creador_id: int,
+#     datos: EntrevistaCreate,
+#     usuario_actual: dict = Depends(obtener_usuario_actual)
+# ):
+#     usuario_id = usuario_actual.get("id")
+#     if not usuario_id:
+#         raise HTTPException(status_code=401, detail="Usuario no autorizado")
+#
+#     payload = datos.dict(exclude_unset=True)
+#     payload["creador_id"] = creador_id
+#     payload["usuario_programa"] = usuario_id
+#     payload.setdefault("realizada", False)
+#     payload.setdefault("resultado", "sin evaluar")
+#
+#     if not payload.get("realizada"):
+#         payload["fecha_realizada"] = None
+#         payload["usuario_evalua"] = None
+#
+#     # === Crear evento en calendario ===
+#     try:
+#         fecha_inicio = payload["fecha_programada"]
+#         fecha_fin = fecha_inicio + timedelta(hours=1)  # duración por defecto = 1h
+#
+#         evento_payload = EventoIn(
+#             titulo="Entrevista",
+#             descripcion=payload.get("observaciones") or "Entrevista programada",
+#             inicio=fecha_inicio,
+#             fin=fecha_fin,
+#             participantes_ids=[creador_id],
+#         )
+#         evento_creado = crear_evento(evento_payload, usuario_actual)
+#         payload["evento_id"] = evento_creado.id  # <-- guardar evento_id
+#     except Exception as e:
+#         print(f"⚠️ Error al crear evento: {e}")
+#         payload["evento_id"] = None
+#
+#     # === Insertar entrevista en DB ===
+#     resultado = insertar_entrevista(payload)
+#     if not resultado:
+#         raise HTTPException(status_code=500, detail="Error al crear la entrevista")
+#
+#     return EntrevistaOut.model_validate({**payload, **resultado})
+#
+#
+# from datetime import timedelta
+# from fastapi import Path, Depends, HTTPException
+#
+# @app.put("/api/entrevistas/reprogramar/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
+# def reprogramar_entrevista(
+#     creador_id: int = Path(..., description="ID del creador cuya entrevista se reprograma"),
+#     datos: EntrevistaUpdate = None,
+#     usuario_actual: dict = Depends(obtener_usuario_actual)
+# ):
+#     usuario_id = usuario_actual.get("id")
+#     if not usuario_id:
+#         raise HTTPException(status_code=401, detail="Usuario no autorizado")
+#
+#     # Obtener entrevista actual
+#     entrevista = obtener_entrevista_por_creador(creador_id)
+#     if not entrevista:
+#         raise HTTPException(status_code=404, detail="Entrevista no encontrada")
+#
+#     # Actualizar datos en DB
+#     payload = datos.dict(exclude_unset=True)
+#     entrevista_actualizada = actualizar_entrevista_por_creador(creador_id, payload)
+#     if not entrevista_actualizada:
+#         raise HTTPException(status_code=500, detail="Error al actualizar la entrevista")
+#
+#     # Actualizar evento en calendario si existe evento_id
+#     if payload.get("fecha_programada") and entrevista.get("evento_id"):
+#         try:
+#             fecha_inicio = payload["fecha_programada"]
+#             fecha_fin = fecha_inicio + timedelta(hours=1)  # duración fija 1h
+#
+#             evento_payload = EventoIn(
+#                 titulo="Entrevista",
+#                 descripcion=payload.get("observaciones") or entrevista.get("observaciones") or "Entrevista programada",
+#                 inicio=fecha_inicio,
+#                 fin=fecha_fin,
+#                 participantes_ids=[creador_id],
+#             )
+#             editar_evento(entrevista["evento_id"], evento_payload)
+#         except Exception as e:
+#             print(f"⚠️ Error al actualizar evento de calendario: {e}")
+#
+#     return EntrevistaOut.model_validate({**entrevista, **entrevista_actualizada})
+#
+#
+# import unicodedata
+#
+# # Mapa de estado_id según el resultado de la entrevista
+# # Ajusta los IDs si en tu catálogo son distintos
+# RESULTADO_TO_ESTADO_ID = {
+#     "PROGRAMADA": 4,
+#     "ENTREVISTA": 4,
+#     "INVITACION": 5,  # "Invitación"
+#     "RECHAZADO": 7,
+# }
+#
+# def _normalize_text(s: Optional[str]) -> Optional[str]:
+#     if s is None:
+#         return None
+#     # quita acentos, pasa a mayúsculas y trimea
+#     s = unicodedata.normalize("NFD", s)
+#     s = "".join(ch for ch in s if not unicodedata.combining(ch))
+#     return s.strip().upper()
+#
+# @app.put("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
+# def actualizar_entrevista(
+#     creador_id: int,
+#     datos: EntrevistaUpdate,
+#     usuario_actual: dict = Depends(obtener_usuario_actual),
+# ):
+#     usuario_id = usuario_actual.get("id")
+#     if not usuario_id:
+#         raise HTTPException(status_code=401, detail="Usuario no autorizado")
+#
+#     data_dict = datos.dict(exclude_unset=True)
+#
+#     # Si se marca como realizada, completa evaluador/fecha si no vienen
+#     if data_dict.get("realizada"):
+#         data_dict.setdefault("usuario_evalua", usuario_id)
+#         data_dict.setdefault("fecha_realizada", datetime.utcnow())
+#
+#     # 1) Actualiza la entrevista
+#     actualizado = actualizar_entrevista_por_creador(creador_id, data_dict)
+#     if not actualizado:
+#         raise HTTPException(status_code=404, detail="No existe entrevista para este creador")
+#
+#     # 2) Derivar estado_id a partir de `resultado`
+#     #    - usa el que vino en el payload si está, si no el que quedó en DB
+#     resultado_raw = data_dict.get("resultado") or actualizado.get("resultado")
+#     resultado_norm = _normalize_text(resultado_raw)  # ENTREVISTA | INVITACION | RECHAZADO
+#
+#     estado_id = RESULTADO_TO_ESTADO_ID.get(resultado_norm)
+#     if estado_id is not None:
+#         try:
+#             actualizar_estado_creador(creador_id, estado_id)
+#         except Exception:
+#             # Opcional: loggear si quieres, pero no romper la respuesta.
+#             pass
+#
+#     # 3) Responder
+#     return EntrevistaOut.model_validate(actualizado)
 
 
 # GET por creador
