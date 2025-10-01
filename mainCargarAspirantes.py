@@ -1,19 +1,22 @@
-from fastapi import APIRouter, Body, UploadFile, File
 import os
 import json
 import gspread
 from google.oauth2.service_account import Credentials
 import pandas as pd
 
-import logging
+from fastapi import APIRouter, UploadFile, File, Form,Body, HTTPException
+from openpyxl import load_workbook
 from pathlib import Path
+import logging
 import uuid
+
+logger = logging.getLogger(__name__)
+
 
 router = APIRouter()
 
-
 import re
-from pathlib import Path
+
 
 # --- Parser del archivo de texto (respeta los valores tal cual) ---
 def _keep(s: str) -> str:
@@ -235,42 +238,50 @@ def cargar_aspirantes_desde_workspace(
 #     except Exception as e:
 #         return {"status": "error", "mensaje": f"Error al cargar archivo: {str(e)}"}
 
-from fastapi import UploadFile, File, Form
-from openpyxl import load_workbook
-from pathlib import Path
-import logging
-
-logger = logging.getLogger(__name__)
-
-from fastapi import UploadFile, File, Form
-from pathlib import Path
-from openpyxl import load_workbook
-import uuid, os, logging
-
-logger = logging.getLogger(__name__)
-
 @router.post("/cargar_aspirantes_local")
 async def cargar_aspirantes_desde_archivo(
-    file: UploadFile = File(...),
-    ruta_txt: str = Form(...),
-    nombre_hoja: str = Form(None),
+    file: UploadFile = File(...),                # ← Excel (.xlsx/.xlsm)
+    txt_file: UploadFile | None = File(None),    # ← TXT (opcional)
+    nombre_hoja: str | None = Form(None),        # ← nombre de hoja (opcional)
 ):
     """
-    Carga aspirantes desde un archivo Excel local (.xlsx/.xlsm) subido por el usuario,
-    mezclando datos con el TXT (parseado por usuario).
-    Estructura esperada (igual a workspace):
+    Carga aspirantes desde un Excel local + TXT (subido en el mismo request o por ruta_txt previa).
+
+    Estructura esperada del Excel:
       - Encabezados en fila 3
       - Datos desde fila 4
       - Usuarios en columna B
       - Rango A..X (24 columnas)
     """
     xlsx_path = None
+    txt_path = None
     wb = None
+
     try:
-        # 1) Guardar el Excel subido en /tmp (Render permite escribir allí)
+        # ========= 1) Guardar TXT (si vino adjunto); si no, usar ruta_txt =========
+        if txt_file is not None:
+            # Validar extensión del TXT
+            txt_name = (txt_file.filename or "").lower()
+            if not txt_name.endswith(".txt"):
+                return {"status": "error", "mensaje": "El archivo TXT debe tener extensión .txt"}
+            # Guardar en /tmp (Render permite escribir allí)
+            tmp_dir = Path("/tmp")
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            safe_txt = f"txt_{uuid.uuid4().hex}_{os.path.basename(txt_file.filename)}"
+            txt_path = tmp_dir / safe_txt
+            txt_path.write_bytes(await txt_file.read())
+        else:
+            # Si no vino archivo, esperamos una ruta válida (previamente subida con /upload_txt)
+            if not ruta_txt:
+                return {"status": "error", "mensaje": "Debes adjuntar txt_file o enviar ruta_txt"}
+            txt_path = Path(ruta_txt)
+            if not txt_path.exists():
+                return {"status": "error", "mensaje": f"No existe el archivo TXT en la ruta: {ruta_txt}"}
+
+        # ========= 2) Guardar Excel =========
         fname = (file.filename or "").lower()
         if not (fname.endswith(".xlsx") or fname.endswith(".xlsm")):
-            return {"status": "error", "mensaje": "El archivo debe ser .xlsx o .xlsm"}
+            return {"status": "error", "mensaje": "El archivo Excel debe ser .xlsx o .xlsm"}
 
         tmp_dir = Path("/tmp")
         tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -278,29 +289,26 @@ async def cargar_aspirantes_desde_archivo(
         xlsx_path = tmp_dir / safe_name
         xlsx_path.write_bytes(await file.read())
 
-        # 2) Parsear TXT (igual que workspace)
-        info_por_usuario = parsear_bloques_desde_txt(ruta_txt)
+        # ========= 3) Parsear TXT =========
+        info_por_usuario = parsear_bloques_desde_txt(str(txt_path))
         logger.info(f"✅ TXT parseado, usuarios encontrados: {len(info_por_usuario)}")
 
-        # 3) Abrir Excel y seleccionar hoja
+        # ========= 4) Abrir Excel y seleccionar hoja =========
         wb = load_workbook(filename=str(xlsx_path), data_only=True)
-
         if nombre_hoja:
             if nombre_hoja not in wb.sheetnames:
                 return {"status": "error", "mensaje": f"La hoja '{nombre_hoja}' no existe en el Excel"}
             ws = wb[nombre_hoja]
         else:
-            # Fuerza la primera hoja del libro (más determinista que wb.active)
+            # Primera hoja (determinista)
             ws = wb[wb.sheetnames[0]]
         logger.info(f"📄 Hoja usada (local): {ws.title}")
 
-        # 4) Detectar última fila usando Columna B (usuarios)
-        #    Fila 3 = encabezados; datos desde fila 4
-        #    Permitimos huecos: cortamos tras 'consecutive_empties_limit' vacíos seguidos.
+        # ========= 5) Detectar última fila por Columna B (usuarios) =========
         col_B = 2
         start_row = 4
         consecutive_empties = 0
-        consecutive_empties_limit = 8  # si hay 8 filas seguidas vacías en B, asumimos fin
+        consecutive_empties_limit = 8
         ultima_fila = start_row - 1
 
         r = start_row
@@ -322,20 +330,19 @@ async def cargar_aspirantes_desde_archivo(
 
         logger.info(f"📊 Rango calculado (local): A{start_row}:X{ultima_fila}")
 
-        # 5) Leer filas A..X y construir aspirantes (igual mapeo que workspace)
+        # ========= 6) Construir aspirantes =========
         aspirantes = []
         for i in range(start_row, ultima_fila + 1):
-            # Normalizar 24 columnas A..X (1..24)
             fila_vals = []
-            for c in range(1, 24 + 1):
+            for c in range(1, 24 + 1):  # A..X = 24 columnas
                 v = ws.cell(row=i, column=c).value
                 fila_vals.append("" if v is None else str(v).strip())
 
-            usuario = fila_vals[1]  # Columna B (índice 1)
+            usuario = fila_vals[1]  # Columna B
             if not usuario:
                 continue
 
-            aspirante = {
+            asp = {
                 "usuario": usuario,
                 "telefono": fila_vals[2].replace(" ", "").replace("+", ""),  # C
                 "disponibilidad": fila_vals[3],                               # D
@@ -349,49 +356,44 @@ async def cargar_aspirantes_desde_archivo(
                 "nickname": fila_vals[17],                                    # R
                 "razon_no_contacto": fila_vals[18].upper(),                   # S
 
-                # Métricas vienen del TXT (no del Excel)
+                # Métricas del TXT
                 "seguidores": "",
                 "videos": "",
                 "likes": "",
                 "Duracion_Emisiones": "",
                 "Dias_Emisiones": "",
-
-                "fila_excel": i,  # fila real en el archivo
+                "fila_excel": i,
             }
 
-            # 6) Mezclar con datos del TXT por usuario
             dtx = info_por_usuario.get(usuario, {})
             if dtx:
-                aspirante["seguidores"] = dtx.get("seguidores", "")
-                aspirante["videos"] = dtx.get("videos", "")
-                aspirante["likes"] = dtx.get("likes", "")
-                aspirante["Duracion_Emisiones"] = dtx.get("Duracion_Emisiones", "")
-                aspirante["Dias_Emisiones"] = dtx.get("Dias_Emisiones", "")
-                aspirante["nombre"] = dtx.get("nombre", "")
-                aspirante["caducidad_solicitud"] = dtx.get("caducidad_solicitud", "")
-                aspirante["agente_recluta"] = dtx.get("agente_recluta", "")
-                aspirante["fecha_solicitud"] = dtx.get("fecha_solicitud", "")
-                aspirante["canal"] = dtx.get("canal", "")
+                asp["seguidores"] = dtx.get("seguidores", "")
+                asp["videos"] = dtx.get("videos", "")
+                asp["likes"] = dtx.get("likes", "")
+                asp["Duracion_Emisiones"] = dtx.get("Duracion_Emisiones", "")
+                asp["Dias_Emisiones"] = dtx.get("Dias_Emisiones", "")
+                asp["nombre"] = dtx.get("nombre", "")
+                asp["caducidad_solicitud"] = dtx.get("caducidad_solicitud", "")
+                asp["agente_recluta"] = dtx.get("agente_recluta", "")
+                asp["fecha_solicitud"] = dtx.get("fecha_solicitud", "")
+                asp["canal"] = dtx.get("canal", "")
 
-            aspirantes.append(aspirante)
+            aspirantes.append(asp)
 
         if not aspirantes:
             return {"status": "error", "mensaje": "No se construyeron aspirantes desde el archivo"}
 
-        # 7) Guardar en DB
+        # ========= 7) Guardar en DB =========
         guardar_aspirantes(aspirantes, nombre_archivo=xlsx_path.name, hoja_excel=ws.title)
         logger.info(f"✅ {len(aspirantes)} aspirantes (local) cargados y guardados correctamente")
-        return {
-            "status": "ok",
-            "mensaje": f"{len(aspirantes)} aspirantes cargados y guardados correctamente"
-        }
+        return {"status": "ok", "mensaje": f"{len(aspirantes)} aspirantes cargados y guardados correctamente"}
 
     except Exception as e:
         logger.error(f"❌ Error en cargar_aspirantes_local: {e}", exc_info=True)
         return {"status": "error", "mensaje": f"Error al cargar archivo local: {str(e)}"}
 
     finally:
-        # Limpieza de recursos
+        # Cerrar y limpiar
         try:
             if wb:
                 wb.close()
@@ -402,6 +404,168 @@ async def cargar_aspirantes_desde_archivo(
                 os.remove(xlsx_path)
         except Exception:
             pass
+        # si el TXT fue subido en este request (no cuando vino como ruta_txt), puedes optar por borrarlo:
+        # try:
+        #     if txt_file is not None and txt_path and Path(txt_path).exists():
+        #         os.remove(txt_path)
+        # except Exception:
+        #     pass
+
+
+
+# @router.post("/cargar_aspirantes_local")
+# async def cargar_aspirantes_desde_archivo(
+#     file: UploadFile = File(...),
+#     ruta_txt: str = Form(...),
+#     nombre_hoja: str = Form(None),
+# ):
+#     """
+#     Carga aspirantes desde un archivo Excel local (.xlsx/.xlsm) subido por el usuario,
+#     mezclando datos con el TXT (parseado por usuario).
+#     Estructura esperada (igual a workspace):
+#       - Encabezados en fila 3
+#       - Datos desde fila 4
+#       - Usuarios en columna B
+#       - Rango A..X (24 columnas)
+#     """
+#     xlsx_path = None
+#     wb = None
+#     try:
+#         # 1) Guardar el Excel subido en /tmp (Render permite escribir allí)
+#         fname = (file.filename or "").lower()
+#         if not (fname.endswith(".xlsx") or fname.endswith(".xlsm")):
+#             return {"status": "error", "mensaje": "El archivo debe ser .xlsx o .xlsm"}
+#
+#         tmp_dir = Path("/tmp")
+#         tmp_dir.mkdir(parents=True, exist_ok=True)
+#         safe_name = f"local_{uuid.uuid4().hex}_{os.path.basename(file.filename)}"
+#         xlsx_path = tmp_dir / safe_name
+#         xlsx_path.write_bytes(await file.read())
+#
+#         # 2) Parsear TXT (igual que workspace)
+#         info_por_usuario = parsear_bloques_desde_txt(ruta_txt)
+#         logger.info(f"✅ TXT parseado, usuarios encontrados: {len(info_por_usuario)}")
+#
+#         # 3) Abrir Excel y seleccionar hoja
+#         wb = load_workbook(filename=str(xlsx_path), data_only=True)
+#
+#         if nombre_hoja:
+#             if nombre_hoja not in wb.sheetnames:
+#                 return {"status": "error", "mensaje": f"La hoja '{nombre_hoja}' no existe en el Excel"}
+#             ws = wb[nombre_hoja]
+#         else:
+#             # Fuerza la primera hoja del libro (más determinista que wb.active)
+#             ws = wb[wb.sheetnames[0]]
+#         logger.info(f"📄 Hoja usada (local): {ws.title}")
+#
+#         # 4) Detectar última fila usando Columna B (usuarios)
+#         #    Fila 3 = encabezados; datos desde fila 4
+#         #    Permitimos huecos: cortamos tras 'consecutive_empties_limit' vacíos seguidos.
+#         col_B = 2
+#         start_row = 4
+#         consecutive_empties = 0
+#         consecutive_empties_limit = 8  # si hay 8 filas seguidas vacías en B, asumimos fin
+#         ultima_fila = start_row - 1
+#
+#         r = start_row
+#         while True:
+#             val = ws.cell(row=r, column=col_B).value
+#             s = ("" if val is None else str(val).strip())
+#             if s == "":
+#                 consecutive_empties += 1
+#                 if consecutive_empties >= consecutive_empties_limit:
+#                     break
+#             else:
+#                 consecutive_empties = 0
+#                 ultima_fila = r
+#             r += 1
+#
+#         if ultima_fila < start_row:
+#             logger.warning("⚠️ No se encontraron usuarios en la columna B (fila 4 en adelante)")
+#             return {"status": "error", "mensaje": "No se encontraron aspirantes en el archivo"}
+#
+#         logger.info(f"📊 Rango calculado (local): A{start_row}:X{ultima_fila}")
+#
+#         # 5) Leer filas A..X y construir aspirantes (igual mapeo que workspace)
+#         aspirantes = []
+#         for i in range(start_row, ultima_fila + 1):
+#             # Normalizar 24 columnas A..X (1..24)
+#             fila_vals = []
+#             for c in range(1, 24 + 1):
+#                 v = ws.cell(row=i, column=c).value
+#                 fila_vals.append("" if v is None else str(v).strip())
+#
+#             usuario = fila_vals[1]  # Columna B (índice 1)
+#             if not usuario:
+#                 continue
+#
+#             aspirante = {
+#                 "usuario": usuario,
+#                 "telefono": fila_vals[2].replace(" ", "").replace("+", ""),  # C
+#                 "disponibilidad": fila_vals[3],                               # D
+#                 "motivo_no_apto": fila_vals[4].upper(),                       # E
+#                 "perfil": fila_vals[5],                                       # F
+#                 "contacto": fila_vals[8],                                     # I
+#                 "respuesta_creador": fila_vals[9],                            # J
+#                 "entrevista": fila_vals[11],                                  # L
+#                 "tipo_solicitud": fila_vals[15],                              # P
+#                 "email": fila_vals[16],                                       # Q
+#                 "nickname": fila_vals[17],                                    # R
+#                 "razon_no_contacto": fila_vals[18].upper(),                   # S
+#
+#                 # Métricas vienen del TXT (no del Excel)
+#                 "seguidores": "",
+#                 "videos": "",
+#                 "likes": "",
+#                 "Duracion_Emisiones": "",
+#                 "Dias_Emisiones": "",
+#
+#                 "fila_excel": i,  # fila real en el archivo
+#             }
+#
+#             # 6) Mezclar con datos del TXT por usuario
+#             dtx = info_por_usuario.get(usuario, {})
+#             if dtx:
+#                 aspirante["seguidores"] = dtx.get("seguidores", "")
+#                 aspirante["videos"] = dtx.get("videos", "")
+#                 aspirante["likes"] = dtx.get("likes", "")
+#                 aspirante["Duracion_Emisiones"] = dtx.get("Duracion_Emisiones", "")
+#                 aspirante["Dias_Emisiones"] = dtx.get("Dias_Emisiones", "")
+#                 aspirante["nombre"] = dtx.get("nombre", "")
+#                 aspirante["caducidad_solicitud"] = dtx.get("caducidad_solicitud", "")
+#                 aspirante["agente_recluta"] = dtx.get("agente_recluta", "")
+#                 aspirante["fecha_solicitud"] = dtx.get("fecha_solicitud", "")
+#                 aspirante["canal"] = dtx.get("canal", "")
+#
+#             aspirantes.append(aspirante)
+#
+#         if not aspirantes:
+#             return {"status": "error", "mensaje": "No se construyeron aspirantes desde el archivo"}
+#
+#         # 7) Guardar en DB
+#         guardar_aspirantes(aspirantes, nombre_archivo=xlsx_path.name, hoja_excel=ws.title)
+#         logger.info(f"✅ {len(aspirantes)} aspirantes (local) cargados y guardados correctamente")
+#         return {
+#             "status": "ok",
+#             "mensaje": f"{len(aspirantes)} aspirantes cargados y guardados correctamente"
+#         }
+#
+#     except Exception as e:
+#         logger.error(f"❌ Error en cargar_aspirantes_local: {e}", exc_info=True)
+#         return {"status": "error", "mensaje": f"Error al cargar archivo local: {str(e)}"}
+#
+#     finally:
+#         # Limpieza de recursos
+#         try:
+#             if wb:
+#                 wb.close()
+#         except Exception:
+#             pass
+#         try:
+#             if xlsx_path and Path(xlsx_path).exists():
+#                 os.remove(xlsx_path)
+#         except Exception:
+#             pass
 
 # @router.post("/cargar_aspirantes_local")
 # async def cargar_aspirantes_desde_archivo(
@@ -683,6 +847,7 @@ def obtener_aspirantes_desde_hoja(str_key, nombre_hoja, ruta_txt):
     except Exception as e:
         print(f"❌ Error leyendo hoja de cálculo: {e}")
         return []
+
 from datetime import datetime
 
 # --- helpers mínimos usados en la función ---
