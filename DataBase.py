@@ -1380,7 +1380,7 @@ def obtener_creadores_db():
                 INNER JOIN estados_creador ec ON c.estado_id = ec.id
                 WHERE c.activo = TRUE
                   AND c.estado_id IN (3,4,5,7)
-                ORDER BY fecha_mostrar ASC;
+                ORDER BY creado_en ASC;
         """
 
         cur.execute(sql)

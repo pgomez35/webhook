@@ -837,7 +837,7 @@ def guardar_aspirantes(
                 if fecha_solicitud_dt is not None:
 
                     logger.info(f"[{usuario}] Actualizando/insertando creadores.fecha_solicitud={fecha_solicitud_dt}")
-                    
+
                     cur.execute("""
                         INSERT INTO creadores (usuario, nickname, email, telefono, fecha_solicitud, estado_id, activo, creado_en, actualizado_en)
                         VALUES (%s, %s, %s, %s, %s, 3, TRUE, NOW(), NOW())
