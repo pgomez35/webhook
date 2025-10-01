@@ -735,26 +735,54 @@ def parse_days_to_int(s, default=0):
         txt = txt[:-1]
     return to_int_relaxed(txt, default)
 
-def _parse_fecha_solicitud(fecha_str):
+from datetime import datetime
+
+def _parse_fecha_solicitud(s: str | None):
     """
-    Intenta parsear 'dd/mm/yyyy HH:MM:SS' (o sin segundos) a datetime (naive).
-    Retorna None si no se puede.
+    Intenta parsear una fecha en varios formatos comunes:
+    - dd/mm/YYYY HH:MM:SS
+    - mm/dd/YYYY HH:MM:SS
+    - dd-mm-YYYY HH:MM:SS
+    - mm-dd-YYYY HH:MM:SS
+    - (también variantes sin segundos)
+    Devuelve datetime o None si no se puede parsear.
     """
-    if not fecha_str:
+    if not s:
         return None
-    s = str(fecha_str).strip()
-    for fmt in ("%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M"):
+    s = str(s).strip()
+
+    formatos = [
+        "%d/%m/%Y %H:%M:%S",
+        "%m/%d/%Y %H:%M:%S",
+        "%d-%m-%Y %H:%M:%S",
+        "%m-%d-%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M",
+        "%m/%d/%Y %H:%M",
+        "%d-%m-%Y %H:%M",
+        "%m-%d-%Y %H:%M",
+    ]
+
+    for fmt in formatos:
         try:
             return datetime.strptime(s, fmt)
         except ValueError:
             continue
-    return None
-# --- fin helpers ---
 
+    # Heurística extra: si tiene '/' y el primer tramo <= 12, podría ser mm/dd
+    # (ya lo cubren los formatos arriba, pero la dejamos por si hay espacios raros)
+    try:
+        # normaliza dobles espacios
+        s2 = " ".join(s.split())
+        for fmt in formatos:
+            return datetime.strptime(s2, fmt)
+    except Exception:
+        pass
+
+    return None
 
 def guardar_aspirantes(
-    aspirantes, nombre_archivo=None, hoja_excel=None, lote_carga=None, procesado_por=None,
-    observaciones=None
+    aspirantes, nombre_archivo=None, hoja_excel=None, lote_carga=None,
+    procesado_por=None, observaciones=None
 ):
     """
     Guarda aspirantes mapeando los campos del TXT a los tipos de la tabla,
@@ -780,9 +808,8 @@ def guardar_aspirantes(
             tipo_solicitud = get_text(c.get("tipo_solicitud"))
             razon_no_contacto = get_text(c.get("razon_no_contacto"))
 
-            # NUEVO: fecha_solicitud (del TXT parseado)
-            # tu parseador guarda c["fecha_solicitud"] o (a veces) "fecha_solcitud"; probamos ambos
-            fecha_sol_txt = c.get("fecha_solicitud")
+            # === Fecha solicitud (del TXT) ===
+            fecha_sol_txt = c.get("fecha_solicitud") or c.get("fecha_solcitud")
             fecha_solicitud_dt = _parse_fecha_solicitud(fecha_sol_txt)
 
             if fecha_sol_txt:
@@ -790,7 +817,7 @@ def guardar_aspirantes(
             else:
                 logger.info(f"[{usuario}] SIN fecha_solicitud en el aspirante")
 
-            # === Conversión a tipos que exige la tabla ===
+            # Conversión a tipos
             seguidores = to_int_relaxed(c.get("seguidores"), default=0)
             cantidad_videos = to_int_relaxed(c.get("videos"), default=0)
             likes_totales = to_int_relaxed(c.get("likes"), default=0)
@@ -800,12 +827,12 @@ def guardar_aspirantes(
             fila_excel = c.get("fila_excel")
             apto = not bool(motivo_no_apto)
 
-            # 1) creadores
+            # === CREADORES ===
             cur.execute("SELECT id FROM creadores WHERE usuario = %s", (usuario,))
             creador_row = cur.fetchone()
             if creador_row:
                 creador_id = creador_row[0]
-                # construimos UPDATE dinámico para no pisar fecha_solicitud con NULL
+                # Construcción dinámica de UPDATE
                 set_cols = [
                     "nickname = %s",
                     "email = %s",
@@ -814,14 +841,12 @@ def guardar_aspirantes(
                     "actualizado_en = NOW()",
                 ]
                 params = [
-                    get_text(c.get("nombre")),  # nickname se actualiza con el "Nombre" del TXT
+                    get_text(c.get("nombre")),
                     email,
                     telefono,
                 ]
-                if fecha_solicitud_dt is not None:
-                    logger.info(f"[{usuario}] Actualizando/insertando creadores.fecha_solicitud={fecha_solicitud_dt}")
-
-                    set_cols.insert(3, "fecha_solicitud = %s")  # antes de estado_id por orden
+                if fecha_solicitud_dt:
+                    set_cols.insert(3, "fecha_solicitud = %s")
                     params.insert(3, fecha_solicitud_dt)
 
                 sql_update = f"""
@@ -833,36 +858,31 @@ def guardar_aspirantes(
                 cur.execute(sql_update, tuple(params))
 
             else:
-                # INSERT incluye fecha_solicitud si viene
-                if fecha_solicitud_dt is not None:
-
-                    logger.info(f"[{usuario}] Actualizando/insertando creadores.fecha_solicitud={fecha_solicitud_dt}")
-
+                if fecha_solicitud_dt:
                     cur.execute("""
-                        INSERT INTO creadores (usuario, nickname, email, telefono, fecha_solicitud, estado_id, activo, creado_en, actualizado_en)
+                        INSERT INTO creadores (
+                            usuario, nickname, email, telefono, fecha_solicitud,
+                            estado_id, activo, creado_en, actualizado_en
+                        )
                         VALUES (%s, %s, %s, %s, %s, 3, TRUE, NOW(), NOW())
                         RETURNING id
                     """, (
-                        usuario,
-                        get_text(c.get("nombre")),
-                        email,
-                        telefono,
-                        fecha_solicitud_dt
+                        usuario, get_text(c.get("nombre")), email, telefono, fecha_solicitud_dt
                     ))
                 else:
                     cur.execute("""
-                        INSERT INTO creadores (usuario, nickname, email, telefono, estado_id, activo, creado_en, actualizado_en)
+                        INSERT INTO creadores (
+                            usuario, nickname, email, telefono,
+                            estado_id, activo, creado_en, actualizado_en
+                        )
                         VALUES (%s, %s, %s, %s, 3, TRUE, NOW(), NOW())
                         RETURNING id
                     """, (
-                        usuario,
-                        get_text(c.get("nombre")),
-                        email,
-                        telefono
+                        usuario, get_text(c.get("nombre")), email, telefono
                     ))
                 creador_id = cur.fetchone()[0]
 
-            # 2) perfil_creador
+            # === PERFIL_CREADOR ===
             cur.execute("SELECT id FROM perfil_creador WHERE creador_id = %s", (creador_id,))
             perfil_row = cur.fetchone()
             if perfil_row:
@@ -891,12 +911,8 @@ def guardar_aspirantes(
                         seguidores, videos, likes,
                         duracion_emisiones, dias_emisiones,
                         nombre, creado_en, actualizado_en
-                    ) VALUES (
-                        %s, %s,
-                        %s, %s, %s,
-                        %s, %s,
-                        %s, NOW(), NOW()
                     )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
                 """, (
                     usuario, creador_id,
                     seguidores, cantidad_videos, likes_totales,
@@ -904,7 +920,7 @@ def guardar_aspirantes(
                     get_text(c.get("nombre"))
                 ))
 
-            # 3) cargue_creadores
+            # === CARGUE_CREADORES ===
             cur.execute("SELECT id FROM cargue_creadores WHERE usuario = %s AND hoja_excel = %s", (usuario, hoja_excel))
             cargue_row = cur.fetchone()
             if cargue_row:
@@ -954,7 +970,8 @@ def guardar_aspirantes(
                         nombre_archivo, hoja_excel, fila_excel, lote_carga,
                         estado, procesado, procesado_por, creador_id,
                         apto, observaciones, activo, creado_en, actualizado_en
-                    ) VALUES (
+                    )
+                    VALUES (
                         %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s,
@@ -987,18 +1004,264 @@ def guardar_aspirantes(
                 "usuario": c.get("usuario"),
                 "error": str(e),
             })
-            # continúa con el siguiente
 
     conn.commit()
     cur.close()
     conn.close()
 
     print(f"✅ Contactos procesados. Filas exitosas: {len(resultados)}. Filas fallidas: {len(filas_fallidas)}")
-    return {
-        "status": "ok",
-        "exitosos": resultados,
-        "fallidos": filas_fallidas
-    }
+    return {"status": "ok", "exitosos": resultados, "fallidos": filas_fallidas}
+
+
+
+#
+# def guardar_aspirantes(
+#     aspirantes, nombre_archivo=None, hoja_excel=None, lote_carga=None, procesado_por=None,
+#     observaciones=None
+# ):
+#     """
+#     Guarda aspirantes mapeando los campos del TXT a los tipos de la tabla,
+#     y ACTUALIZA/INSERTA creadores.fecha_solicitud cuando venga en el TXT.
+#     """
+#     conn = get_connection()
+#     cur = conn.cursor()
+#     resultados = []
+#     filas_fallidas = []
+#
+#     for c in aspirantes:
+#         try:
+#             usuario = get_text(c.get("usuario"))
+#             nickname = get_text(c.get("nickname"))
+#             email = get_text(c.get("email"))
+#             telefono = limpiar_telefono(get_text(c.get("telefono")))
+#             disponibilidad = get_text(c.get("disponibilidad"))
+#             perfil = get_text(c.get("perfil"))
+#             motivo_no_apto = get_text(c.get("motivo_no_apto"))
+#             contacto = get_text(c.get("contacto"))
+#             respuesta_creador = get_text(c.get("respuesta_creador"))
+#             entrevista = get_text(c.get("entrevista"))
+#             tipo_solicitud = get_text(c.get("tipo_solicitud"))
+#             razon_no_contacto = get_text(c.get("razon_no_contacto"))
+#
+#             # NUEVO: fecha_solicitud (del TXT parseado)
+#             # tu parseador guarda c["fecha_solicitud"] o (a veces) "fecha_solcitud"; probamos ambos
+#             fecha_sol_txt = c.get("fecha_solicitud")
+#             fecha_solicitud_dt = _parse_fecha_solicitud(fecha_sol_txt)
+#
+#             if fecha_sol_txt:
+#                 logger.info(f"[{usuario}] fecha_solicitud TXT='{fecha_sol_txt}' -> parsed={fecha_solicitud_dt}")
+#             else:
+#                 logger.info(f"[{usuario}] SIN fecha_solicitud en el aspirante")
+#
+#             # === Conversión a tipos que exige la tabla ===
+#             seguidores = to_int_relaxed(c.get("seguidores"), default=0)
+#             cantidad_videos = to_int_relaxed(c.get("videos"), default=0)
+#             likes_totales = to_int_relaxed(c.get("likes"), default=0)
+#             duracion_emisiones = parse_duration_to_hours_int(c.get("Duracion_Emisiones"), default=0)
+#             dias_emisiones = parse_days_to_int(c.get("Dias_Emisiones"), default=0)
+#
+#             fila_excel = c.get("fila_excel")
+#             apto = not bool(motivo_no_apto)
+#
+#             # 1) creadores
+#             cur.execute("SELECT id FROM creadores WHERE usuario = %s", (usuario,))
+#             creador_row = cur.fetchone()
+#             if creador_row:
+#                 creador_id = creador_row[0]
+#                 # construimos UPDATE dinámico para no pisar fecha_solicitud con NULL
+#                 set_cols = [
+#                     "nickname = %s",
+#                     "email = %s",
+#                     "telefono = %s",
+#                     "estado_id = 3",
+#                     "actualizado_en = NOW()",
+#                 ]
+#                 params = [
+#                     get_text(c.get("nombre")),  # nickname se actualiza con el "Nombre" del TXT
+#                     email,
+#                     telefono,
+#                 ]
+#                 if fecha_solicitud_dt is not None:
+#                     logger.info(f"[{usuario}] Actualizando/insertando creadores.fecha_solicitud={fecha_solicitud_dt}")
+#
+#                     set_cols.insert(3, "fecha_solicitud = %s")  # antes de estado_id por orden
+#                     params.insert(3, fecha_solicitud_dt)
+#
+#                 sql_update = f"""
+#                     UPDATE creadores SET
+#                         {", ".join(set_cols)}
+#                     WHERE id = %s
+#                 """
+#                 params.append(creador_id)
+#                 cur.execute(sql_update, tuple(params))
+#
+#             else:
+#                 # INSERT incluye fecha_solicitud si viene
+#                 if fecha_solicitud_dt is not None:
+#
+#                     logger.info(f"[{usuario}] Actualizando/insertando creadores.fecha_solicitud={fecha_solicitud_dt}")
+#
+#                     cur.execute("""
+#                         INSERT INTO creadores (usuario, nickname, email, telefono, fecha_solicitud, estado_id, activo, creado_en, actualizado_en)
+#                         VALUES (%s, %s, %s, %s, %s, 3, TRUE, NOW(), NOW())
+#                         RETURNING id
+#                     """, (
+#                         usuario,
+#                         get_text(c.get("nombre")),
+#                         email,
+#                         telefono,
+#                         fecha_solicitud_dt
+#                     ))
+#                 else:
+#                     cur.execute("""
+#                         INSERT INTO creadores (usuario, nickname, email, telefono, estado_id, activo, creado_en, actualizado_en)
+#                         VALUES (%s, %s, %s, %s, 3, TRUE, NOW(), NOW())
+#                         RETURNING id
+#                     """, (
+#                         usuario,
+#                         get_text(c.get("nombre")),
+#                         email,
+#                         telefono
+#                     ))
+#                 creador_id = cur.fetchone()[0]
+#
+#             # 2) perfil_creador
+#             cur.execute("SELECT id FROM perfil_creador WHERE creador_id = %s", (creador_id,))
+#             perfil_row = cur.fetchone()
+#             if perfil_row:
+#                 cur.execute("""
+#                     UPDATE perfil_creador SET
+#                         usuario = %s,
+#                         seguidores = %s,
+#                         videos = %s,
+#                         likes = %s,
+#                         duracion_emisiones = %s,
+#                         dias_emisiones = %s,
+#                         nombre = %s,
+#                         actualizado_en = NOW()
+#                     WHERE creador_id = %s
+#                 """, (
+#                     usuario,
+#                     seguidores, cantidad_videos, likes_totales,
+#                     duracion_emisiones, dias_emisiones,
+#                     get_text(c.get("nombre")),
+#                     creador_id
+#                 ))
+#             else:
+#                 cur.execute("""
+#                     INSERT INTO perfil_creador (
+#                         usuario, creador_id,
+#                         seguidores, videos, likes,
+#                         duracion_emisiones, dias_emisiones,
+#                         nombre, creado_en, actualizado_en
+#                     ) VALUES (
+#                         %s, %s,
+#                         %s, %s, %s,
+#                         %s, %s,
+#                         %s, NOW(), NOW()
+#                     )
+#                 """, (
+#                     usuario, creador_id,
+#                     seguidores, cantidad_videos, likes_totales,
+#                     duracion_emisiones, dias_emisiones,
+#                     get_text(c.get("nombre"))
+#                 ))
+#
+#             # 3) cargue_creadores
+#             cur.execute("SELECT id FROM cargue_creadores WHERE usuario = %s AND hoja_excel = %s", (usuario, hoja_excel))
+#             cargue_row = cur.fetchone()
+#             if cargue_row:
+#                 cargue_id = cargue_row[0]
+#                 cur.execute("""
+#                     UPDATE cargue_creadores SET
+#                         nickname = %s,
+#                         email = %s,
+#                         telefono = %s,
+#                         disponibilidad = %s,
+#                         perfil = %s,
+#                         motivo_no_apto = %s,
+#                         contacto = %s,
+#                         respuesta_creador = %s,
+#                         entrevista = %s,
+#                         tipo_solicitud = %s,
+#                         razon_no_contacto = %s,
+#                         seguidores = %s,
+#                         cantidad_videos = %s,
+#                         likes_totales = %s,
+#                         duracion_emisiones = %s,
+#                         dias_emisiones = %s,
+#                         nombre_archivo = %s,
+#                         fila_excel = %s,
+#                         lote_carga = %s,
+#                         estado = %s,
+#                         procesado = %s,
+#                         procesado_por = %s,
+#                         creador_id = %s,
+#                         apto = %s,
+#                         observaciones = %s,
+#                         actualizado_en = NOW()
+#                     WHERE id = %s
+#                 """, (
+#                     nickname, email, telefono, disponibilidad, perfil, motivo_no_apto,
+#                     contacto, respuesta_creador, entrevista, tipo_solicitud, razon_no_contacto,
+#                     seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones,
+#                     nombre_archivo, fila_excel, lote_carga, "Procesando", False, procesado_por,
+#                     creador_id, apto, observaciones, cargue_id
+#                 ))
+#             else:
+#                 cur.execute("""
+#                     INSERT INTO cargue_creadores (
+#                         usuario, nickname, email, telefono, disponibilidad, perfil, motivo_no_apto,
+#                         contacto, respuesta_creador, entrevista, tipo_solicitud, razon_no_contacto,
+#                         seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones,
+#                         nombre_archivo, hoja_excel, fila_excel, lote_carga,
+#                         estado, procesado, procesado_por, creador_id,
+#                         apto, observaciones, activo, creado_en, actualizado_en
+#                     ) VALUES (
+#                         %s, %s, %s, %s, %s, %s, %s,
+#                         %s, %s, %s, %s, %s,
+#                         %s, %s, %s, %s, %s,
+#                         %s, %s, %s, %s,
+#                         %s, %s, %s, %s,
+#                         %s, %s, TRUE, NOW(), NOW()
+#                     )
+#                 """, (
+#                     usuario, nickname, email, telefono, disponibilidad, perfil, motivo_no_apto,
+#                     contacto, respuesta_creador, entrevista, tipo_solicitud, razon_no_contacto,
+#                     seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones,
+#                     nombre_archivo, hoja_excel, fila_excel, lote_carga,
+#                     "Procesando", False, procesado_por, creador_id,
+#                     apto, observaciones
+#                 ))
+#
+#             resultados.append({
+#                 "fila": fila_excel,
+#                 "usuario": usuario,
+#                 "creador_id": creador_id
+#             })
+#
+#         except Exception as e:
+#             logger.error(
+#                 f"Error al guardar aspirante (fila={c.get('fila_excel')}, usuario={c.get('usuario')}): {e}",
+#                 exc_info=True
+#             )
+#             filas_fallidas.append({
+#                 "fila": c.get("fila_excel"),
+#                 "usuario": c.get("usuario"),
+#                 "error": str(e),
+#             })
+#             # continúa con el siguiente
+#
+#     conn.commit()
+#     cur.close()
+#     conn.close()
+#
+#     print(f"✅ Contactos procesados. Filas exitosas: {len(resultados)}. Filas fallidas: {len(filas_fallidas)}")
+#     return {
+#         "status": "ok",
+#         "exitosos": resultados,
+#         "fallidos": filas_fallidas
+#     }
 
 
 # def guardar_aspirantes(
