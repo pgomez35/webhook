@@ -2213,47 +2213,94 @@ def obtener_entrevista_por_creador(creador_id: int):
             conn.close()
 
 # Función para actualizar entrevista
-def actualizar_entrevista_por_creador(creador_id: int, datos: dict):
-    if not datos:
-        return None  # Nada que actualizar
-
+def actualizar_entrevista_por_creador(creador_id: int, payload: dict) -> dict | None:
+    """
+    Actualiza la entrevista más reciente del creador y devuelve el registro actualizado.
+    Retorna None si no hay entrevista para ese creador.
+    """
+    conn = get_connection()
     try:
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                # Construir SET dinámico
-                set_clauses = [f"{key} = %s" for key in datos.keys()]
-                values = list(datos.values())
+        with conn.cursor() as cur:
+            # 1) Obtener la entrevista más reciente del creador
+            cur.execute("""
+                SELECT id
+                FROM entrevistas
+                WHERE creador_id = %s
+                ORDER BY creado_en DESC
+                LIMIT 1
+            """, (creador_id,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            entrevista_id = row[0]
 
+            # 2) Campos válidos en la tabla entrevistas (según tu schema)
+            campos_validos = {
+                "resultado",
+                "observaciones",
+                "usuario_evalua",
+                "aspecto_tecnico",
+                "presencia_carisma",
+                "interaccion_audiencia",
+                "profesionalismo_normas",
+                "evaluacion_global",
+            }
+
+            sets = []
+            values = []
+            for k, v in payload.items():
+                if k in campos_validos:
+                    sets.append(f"{k} = %s")
+                    values.append(v)
+
+            if sets:
                 sql = f"""
                     UPDATE entrevistas
-                    SET {', '.join(set_clauses)}
-                    WHERE creador_id = %s
-                    RETURNING id, creador_id, fecha_programada, usuario_programa, realizada,
-                              fecha_realizada, usuario_evalua, resultado, observaciones, creado_en
+                    SET {', '.join(sets)}, modificado_en = NOW()
+                    WHERE id = %s
+                    RETURNING
+                        id,
+                        creador_id,
+                        usuario_evalua,
+                        resultado,
+                        observaciones,
+                        aspecto_tecnico,
+                        presencia_carisma,
+                        interaccion_audiencia,
+                        profesionalismo_normas,
+                        evaluacion_global,
+                        creado_en
                 """
-                values.append(creador_id)
+                values.append(entrevista_id)
                 cur.execute(sql, tuple(values))
-                row = cur.fetchone()
-                conn.commit()
+            else:
+                # Si no hay cambios, solo lee el registro actual
+                cur.execute("""
+                    SELECT
+                        id,
+                        creador_id,
+                        usuario_evalua,
+                        resultado,
+                        observaciones,
+                        aspecto_tecnico,
+                        presencia_carisma,
+                        interaccion_audiencia,
+                        profesionalismo_normas,
+                        evaluacion_global,
+                        creado_en
+                    FROM entrevistas
+                    WHERE id = %s
+                """, (entrevista_id,))
 
-                if not row:
-                    return None
+            updated = cur.fetchone()
+            if not updated:
+                return None
 
-                return {
-                    "id": row[0],
-                    "creador_id": row[1],
-                    "fecha_programada": row[2],
-                    "usuario_programa": row[3],
-                    "realizada": row[4],
-                    "fecha_realizada": row[5],
-                    "usuario_evalua": row[6],
-                    "resultado": row[7],
-                    "observaciones": row[8],
-                    "creado_en": row[9],
-                }
-    except Exception as e:
-        print("❌ Error al actualizar entrevista:", e)
-        return None
+            conn.commit()
+            cols = [d[0] for d in cur.description]
+            return dict(zip(cols, updated))
+    finally:
+        conn.close()
 
 # Función para insertar invitación
 def insertar_invitacion(datos: dict):
