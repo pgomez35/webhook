@@ -3645,20 +3645,11 @@ from typing import Optional
 from fastapi import HTTPException, Depends
 from datetime import datetime
 
-# Mapa de estados (ajusta IDs si tu catálogo cambia)
-RESULTADO_TO_ESTADO_ID = {
-    "PROGRAMADA": 4,
-    "ENTREVISTA": 4,
-    "INVITACION": 5,   # "Invitación"
-    "RECHAZADO": 7,
-}
 
-def _normalize_text(s: Optional[str]) -> Optional[str]:
-    if s is None:
-        return None
-    s = unicodedata.normalize("NFD", s)
-    s = "".join(ch for ch in s if not unicodedata.combining(ch))
-    return s.strip().upper()
+RESULTADO_TO_ESTADO_ID = {
+    "RECHAZADO": 7,
+    "INVITACION": 5,   # "Invitación" sin tilde al normalizar
+}
 
 @app.put("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
 def actualizar_entrevista(
@@ -3686,31 +3677,20 @@ def actualizar_entrevista(
     if not actualizado:
         raise HTTPException(status_code=404, detail="No existe entrevista para este creador")
 
-    # 2) Regla NUEVA de estado por evaluacion_global:
-    #    - si evaluacion_global es 1 o 2 => estado_id = 7 (Rechazado)
-    #    - en otro caso, NO tocamos el estado
+    # 2) NUEVA lógica: actualizar estado_id SOLO según `resultado`
+    #    - usamos el que vino en el payload; si no, el que quedó en DB
     try:
-        # Tomamos el valor que venga en el payload; si no está, usamos el que quedó en DB
-        eval_val = payload.get("evaluacion_global", actualizado.get("evaluacion_global"))
+        resultado_raw = payload.get("resultado") or actualizado.get("resultado")
+        resultado_norm = _normalize_text(resultado_raw) if resultado_raw else None
 
-        # Normalizamos por si viene como string
-        if eval_val is not None:
-            try:
-                eval_int = int(eval_val)
-            except (TypeError, ValueError):
-                eval_int = None
-
-            if eval_int in (1, 2, 3):
-                # Rechazado
-                actualizar_estado_creador(creador_id, 7)
-                # logger.info(f"creador {creador_id} → estado_id=7 (Rechazado) por evaluacion_global={eval_int}")
-            elif eval_int == 4:
-                # Estado = 4 (Entrevista/Apto intermedio)
-                actualizar_estado_creador(creador_id, 4)
-                # logger.info(f"creador {creador_id} → estado_id=4 por evaluacion_global=4")
-            # Si es 5 o None, no cambiamos el estado
+        if resultado_norm:
+            estado_id = RESULTADO_TO_ESTADO_ID.get(resultado_norm)
+            if estado_id is not None:
+                actualizar_estado_creador(creador_id, estado_id)
+                # (opcional) logger.info(f"creador {creador_id} → estado_id={estado_id} por resultado='{resultado_raw}'")
+        # Si no hay resultado o no mapea, NO se toca el estado
     except Exception:
-        # No rompemos la respuesta si falla el update de estado
+        # No rompemos la respuesta si falla la actualización de estado
         pass
 
     # 3) Responder exactamente con el schema EntrevistaOut

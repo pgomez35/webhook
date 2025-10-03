@@ -1524,6 +1524,7 @@ def obtener_perfil_creador(creador_id):
                 biografia_sugerida,
                 puntaje_manual_categoria,
                 genero,
+                telefono,
                 pais,
                 ciudad,
                 zona_horaria,
@@ -1713,7 +1714,7 @@ def actualizar_datos_perfil_creador(creador_id, datos_dict):
             # Datos personales y generales
             "nombre", "edad", "genero", "pais", "ciudad", "zona_horaria",
             "idioma", "campo_estudios", "estudios", "actividad_actual",
-            "puntaje_general", "puntaje_general_categoria",
+            "puntaje_general", "puntaje_general_categoria","telefono",
 
             # Evaluación manual/cualitativa
             "biografia", "apariencia", "engagement", "calidad_contenido",

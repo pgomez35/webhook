@@ -503,6 +503,7 @@ class DatosPersonalesInput(BaseModel):
     campo_estudios: Optional[str] = None
     estudios: Optional[str] = None
     actividad_actual: Optional[str] = None
+    telefono: Optional[str] = None
 
 
 # === Schema de SALIDA (lo que devuelve la API) ===

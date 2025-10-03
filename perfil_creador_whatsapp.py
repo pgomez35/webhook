@@ -1536,6 +1536,61 @@ map_intereses = {
 
 # ================== FUNCIONES ==================
 
+import unicodedata
+
+def _norm(s: str) -> str:
+    if s is None:
+        return ""
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    return s.strip().lower()
+
+# País → zona horaria (valores según tu fuente)
+_PAIS_A_TZ = {
+    # México
+    _norm("México"): "America/Mexico_City",
+
+    # Colombia / Perú / Ecuador / Panamá
+    _norm("Colombia"): "America/Bogota",
+    _norm("Perú"): "America/Bogota",
+    _norm("Ecuador"): "America/Bogota",
+    _norm("Panamá"): "America/Bogota",
+
+    # Venezuela / Bolivia / Paraguay
+    _norm("Venezuela"): "America/Caracas",
+    _norm("Bolivia"): "America/Caracas",
+    _norm("Paraguay"): "America/Caracas",
+
+    # Chile
+    _norm("Chile"): "America/Santiago",
+
+    # Argentina / Uruguay
+    _norm("Argentina"): "America/Argentina/Buenos_Aires",
+    _norm("Uruguay"): "America/Argentina/Buenos_Aires",
+
+    # “Centroamérica” (tu valor custom)
+    _norm("Costa Rica"): "America/CentralAmerica",
+    _norm("El Salvador"): "America/CentralAmerica",
+    _norm("Guatemala"): "America/CentralAmerica",
+    _norm("Honduras"): "America/CentralAmerica",
+    _norm("Nicaragua"): "America/CentralAmerica",
+
+    # Cuba
+    _norm("Cuba"): "America/Cuba",
+
+    # Caribe (Puerto Rico, República Dominicana)
+    _norm("Puerto Rico"): "America/Santo_Domingo",
+    _norm("República Dominicana"): "America/Santo_Domingo",
+
+    # Brasil
+    _norm("Brasil"): "America/Sao_Paulo",
+}
+
+def infer_zona_horaria(pais: str | None) -> str | None:
+    if not pais:
+        return None
+    return _PAIS_A_TZ.get(_norm(pais))
+
 def redondear_a_un_decimal(valor):
     return float(Decimal(valor).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
 
@@ -1554,6 +1609,12 @@ def procesar_respuestas(respuestas):
     datos["intencion_trabajo"] = map_intencion.get(respuestas.get(10))
     datos["frecuencia_lives"] = int(respuestas.get(11)) if respuestas.get(11) else None
     datos["tiempo_disponible"] = int(respuestas.get(12)) if respuestas.get(12) else None
+
+    # ⬇️ NUEVO: zona_horaria con base al país
+    if datos.get("pais"):
+        tz = infer_zona_horaria(datos["pais"])
+        if tz:
+            datos["zona_horaria"] = tz
 
     # Experiencia plataformas principales
     experiencia = {
@@ -1609,6 +1670,9 @@ def consolidar_perfil(telefono: str):
 
                 # Procesar respuestas
                 datos_update = procesar_respuestas(respuestas)
+
+                # ⬅️ AÑADIMOS el teléfono al update de perfil_creador
+                datos_update["telefono"] = telefono
 
                 # Crear query dinámico UPDATE
                 set_clause = ", ".join([f"{k}=%s" for k in datos_update.keys()])
