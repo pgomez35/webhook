@@ -381,22 +381,30 @@ SLIDER_LABELS = {
     }
 }
 
-
 def evaluar_datos_generales(edad, genero, idiomas, estudios, pais=None, actividad_actual=None):
+    # ==== Edad (Rango 1-5) ====
+    # 1: Menos de 18 años
+    # 2: 18 - 24 años
+    # 3: 25 - 34 años
+    # 4: 35 - 45 años
+    # 5: Más de 45 años
 
-    # ==== Edad ====
     if edad is None:
         e = 0
-    elif edad < 18:
-        return 0   # no apto
-    elif edad < 20:
+    elif edad == 1:
+        # Menores de 18: no apto
+        return {
+            "puntaje_general": 0,
+            "puntaje_general_categoria": "No apto"
+        }
+    elif edad == 2:
         e = 2
-    elif edad <= 40:
+    elif edad == 3 or edad == 4:
         e = 3
-    elif edad <= 60:
-        e = 2
-    else:
+    elif edad == 5:
         e = 1
+    else:
+        e = 0
 
     # ==== Género ====
     genero_map = {
@@ -484,7 +492,6 @@ def evaluar_datos_generales(edad, genero, idiomas, estudios, pais=None, activida
         "puntaje_general": score_final,
         "puntaje_general_categoria": categoria
     }
-
 
 def evaluar_preferencias_habitos(
     exp_otras: dict,
