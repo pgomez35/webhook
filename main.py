@@ -63,7 +63,7 @@ SERVICE_ACCOUNT_INFO = os.getenv("GOOGLE_CREDENTIALS_JSON")
 CALENDAR_ID = os.getenv("CALENDAR_ID")
 # CALENDAR_ID = "primary" # para que sea siempre primary, pero tambien puedo configurarlo en variables del backend
 
-from main_mensajeria_whatsapp1 import router as perfil_creador_router
+from main_mensajeria_whatsapp import router as perfil_creador_router
 from mainCargarAspirantes import router as aspirantes_router
 # from mainEntrevistas import router as entrevistas_router  # 👈 importa el router de entrevistas
 
