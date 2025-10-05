@@ -143,6 +143,7 @@ ciudades_por_pais = {
 
 preguntas = {
     1: "📌 ¿Cuál es tu nombre completo?",
+
     2: (
         "📌 ¿En qué rango de edad te encuentras?\n"
         "1️⃣ Menos de 18 años\n"
@@ -151,11 +152,15 @@ preguntas = {
         "4️⃣ 35 - 45 años\n"
         "5️⃣ Más de 45 años"
     ),
-    3: "📌 Género:\n"
-       "1️⃣ Masculino\n"
-       "2️⃣ Femenino\n"
-       "3️⃣ Otro\n"
-       "4️⃣ Prefiero no decir",
+
+    3: (
+        "📌 Género:\n"
+        "1️⃣ Masculino\n"
+        "2️⃣ Femenino\n"
+        "3️⃣ Otro\n"
+        "4️⃣ Prefiero no decir"
+    ),
+
     4: "📌 País (elige de la lista o escribe el tuyo si no aparece):\n"
         "1️⃣ Argentina 2️⃣ Bolivia\n"
         "3️⃣ Chile   4️⃣ Colombia\n"
@@ -174,38 +179,47 @@ preguntas = {
         "1️⃣8️⃣ Uruguay\n"
         "1️⃣9️⃣ Venezuela\n"
         "2️⃣0️⃣ Otro (escribe tu país)",
+
     5: "📌 Ciudad principal (escríbela en texto)",
-    6: "📌 Actividad actual:\n"
-       "1️⃣ Estudia tiempo completo\n"
-       "2️⃣ Estudia medio tiempo\n"
-       "3️⃣ Trabaja tiempo completo\n"
-       "4️⃣ Trabaja medio tiempo\n"
-       "5️⃣ Buscando empleo\n"
-       "6️⃣ Emprendiendo\n"
-       "7️⃣ Disponible tiempo completo\n"
-       "8️⃣ Otro",
-    7: "📌 ¿Cuál es tu intención principal en la plataforma?\n"
+
+    6: (
+        "📌 Actividad actual:\n"
+        "1️⃣ Estudia tiempo completo\n"
+        "2️⃣ Estudia medio tiempo\n"
+        "3️⃣ Trabaja tiempo completo\n"
+        "4️⃣ Trabaja medio tiempo\n"
+        "5️⃣ Buscando empleo\n"
+        "6️⃣ Emprendiendo\n"
+        "7️⃣ Disponible tiempo completo\n"
+        "8️⃣ Otro"
+    ),
+
+    7: (
+        "📌 ¿Cuál es tu intención principal en la plataforma?\n"
         "1️⃣ Fuente de ingresos principal\n"
         "2️⃣ Fuente de ingresos secundaria\n"
         "3️⃣ Hobby, pero me gustaría profesionalizarlo\n"
         "4️⃣ Diversión, sin intención profesional\n"
-        "5️⃣ No estoy seguro",
-    8: "📌 ¿Cuántos meses de experiencia tienes en TikTok Live?",
-    9: (
-        "📌 ¿Cuantas horas por dia tendrías para hacer live?\n"
-        "1️⃣ 0-1 hrs\n"
-        "1️⃣ 1–3 hrs\n"
-        "2️⃣ Más de 3 hrs\n"
+        "5️⃣ No estoy seguro"
     ),
+
+    8: "📌 ¿Cuántos meses de experiencia tienes en TikTok Live?",
+
+    9: (
+        "📌 ¿Cuántas horas por día tendrías disponibles para hacer lives?\n"
+        "1️⃣ 0-1 hrs\n"
+        "2️⃣ 1–3 hrs\n"
+        "3️⃣ Más de 3 hrs"
+    ),
+
     10: (
         "📌 ¿Cuántos días a la semana podrías transmitir?\n"
-        "2️⃣ 1-2 días\n"
+        "1️⃣ 1-2 días\n"
         "2️⃣ 3-5 días\n"
-        "1️⃣ Todos los días\n"
-        "3️⃣ Ninguno"
+        "3️⃣ Todos los días\n"
+        "4️⃣ Ninguno"
     ),
 }
-
 
 # ============================
 # VALIDACIONES
@@ -575,14 +589,14 @@ def manejar_respuesta(numero, texto):
                 enviar_mensaje(numero, "⚠️ Ingresa un número válido de meses (0–999).")
                 return
 
-        elif paso == 9:  # Horas por semana
+        elif paso == 9:  # Horas por día
             if texto not in ["1", "2", "3"]:
                 enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–3).")
                 return
 
         elif paso == 10:  # Días por semana
-            if texto not in ["1", "2", "3"]:
-                enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–3).")
+            if texto not in ["1", "2", "3", "4"]:
+                enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–4).")
                 return
 
         # Guardar respuesta
@@ -595,7 +609,7 @@ def manejar_respuesta(numero, texto):
 
             # mensaje especial al terminar la 8
             if paso == 8:
-                enviar_mensaje(numero, "✅ Gracias por las respuestas. Para continuar en el proceso es importante que contestes las siguientes 2 preguntas adicionales:")
+                enviar_mensaje(numero, "✅ Para avanzar en el proceso es importante que contestes las 2 siguientes preguntas:")
 
             enviar_pregunta(numero, siguiente)
 
@@ -1102,13 +1116,11 @@ def procesar_respuestas(respuestas):
     datos["genero"] = map_genero.get(respuestas.get(3))
     datos["pais"] = map_paises.get(respuestas.get(4))
     datos["ciudad"] = respuestas.get(5)
-    datos["estudios"] = map_estudios.get(respuestas.get(6))
-    datos["idioma"] = map_idiomas.get(respuestas.get(7))
-    datos["actividad_actual"] = map_actividad.get(respuestas.get(8))
-    datos["horario_preferido"] = map_horario.get(respuestas.get(9))
-    datos["intencion_trabajo"] = map_intencion.get(respuestas.get(10))
-    datos["frecuencia_lives"] = int(respuestas.get(11)) if respuestas.get(11) else None
-    datos["tiempo_disponible"] = int(respuestas.get(12)) if respuestas.get(12) else None
+    datos["actividad_actual"] = map_actividad.get(respuestas.get(6))
+    datos["intencion_trabajo"] = map_intencion.get(respuestas.get(7))
+    datos["tiempo_disponible"] = int(respuestas.get(9)) if respuestas.get(9) else None
+    datos["frecuencia_lives"] = int(respuestas.get(10)) if respuestas.get(10) else None
+
 
     # ⬇️ NUEVO: zona_horaria con base al país
     if datos.get("pais"):
@@ -1116,33 +1128,18 @@ def procesar_respuestas(respuestas):
         if tz:
             datos["zona_horaria"] = tz
 
-    # Experiencia plataformas principales
+    # Experiencia plataformas principales (solo TikTok Live, las demás fijas en 0)
     experiencia = {
-        "TikTok Live": redondear_a_un_decimal(int(respuestas.get(13, 0)) / 12) if respuestas.get(13) else 0,
-        "Bigo Live": redondear_a_un_decimal(int(respuestas.get(14, 0)) / 12) if respuestas.get(14) else 0,
-        "NimoTV": redondear_a_un_decimal(int(respuestas.get(15, 0)) / 12) if respuestas.get(15) else 0,
-        "Twitch": redondear_a_un_decimal(int(respuestas.get(15, 0)) / 12) if respuestas.get(16) else 0,
+        "TikTok Live": redondear_a_un_decimal(int(respuestas.get(8, 0)) / 12) if respuestas.get(8) else 0,
+        "Bigo Live": 0,
+        "NimoTV": 0,
+        "Twitch": 0,
         "Otro": 0
     }
     datos["experiencia_otras_plataformas"] = json.dumps(experiencia)
 
-    # Tipo de contenido (checkbox)
-    tipo_contenido = {v: False for v in map_tipo_contenido.values()}
-    for opcion in respuestas.get(17, "").split(","):
-        opcion = opcion.strip()
-        if opcion in map_tipo_contenido:
-            tipo_contenido[map_tipo_contenido[opcion]] = True
-    datos["tipo_contenido"] = json.dumps(tipo_contenido)
-
-    # Intereses (checkbox)
-    intereses = {v: False for v in map_intereses.values()}
-    for opcion in respuestas.get(18, "").split(","):
-        opcion = opcion.strip()
-        if opcion in map_intereses:
-            intereses[map_intereses[opcion]] = True
-    datos["intereses"] = json.dumps(intereses)
-
     return datos
+
 
 def consolidar_perfil(telefono: str):
     """Procesa y actualiza un solo número en perfil_creador con manejo de errores"""
