@@ -609,7 +609,7 @@ def manejar_respuesta(numero, texto):
 
             # mensaje especial al terminar la 8
             if paso == 8:
-                enviar_mensaje(numero, "✅ Para avanzar en el proceso es importante que contestes las 2 siguientes preguntas:")
+                enviar_mensaje(numero, "Para seguir en el proceso, es importante que respondas las 2 preguntas 💪")
 
             enviar_pregunta(numero, siguiente)
 
