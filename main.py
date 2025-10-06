@@ -3092,6 +3092,7 @@ from fastapi import Depends, HTTPException
 
 
 # GET por creador
+
 @app.get("/api/invitaciones/{creador_id}", response_model=InvitacionOut, tags=["Invitaciones"])
 def obtener_invitacion(creador_id: int):
     invitacion = obtener_invitacion_por_creador(creador_id)
@@ -3715,7 +3716,7 @@ def actualizar_entrevista(
                             creador_id=creador_id,
                             usuario_invita=usuario_id,
                             manager_id=None,
-                            estado="INVITACION"
+                            estado="sin programar"
                         )
 
                         if invitacion_creada:

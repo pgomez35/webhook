@@ -2616,7 +2616,7 @@ def actualizar_telefono_aspirante(aspirante_id: int, numero: str):
         return False
 
 
-def crear_invitacion_minima(creador_id: int, usuario_invita: int, manager_id: int = None, estado: str = "INVITACION"):
+def crear_invitacion_minima(creador_id: int, usuario_invita: int, manager_id: int = None, estado: str = "sin programar"):
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
@@ -2629,22 +2629,33 @@ def crear_invitacion_minima(creador_id: int, usuario_invita: int, manager_id: in
                     print(f"⚠️ Ya existe una invitación para el creador {creador_id}.")
                     return False
 
-                # Insertar nueva invitación mínima
+                # Insertar solo los campos mínimos
                 cur.execute(
                     """
-                    INSERT INTO invitaciones (creador_id, fecha_invitacion, usuario_invita, manager_id, estado, acepta_invitacion)
-                    VALUES (%s, now(), %s, %s, %s, %s)
+                    INSERT INTO invitaciones (
+                        creador_id, usuario_invita, manager_id, estado, creado_en
+                    )
+                    VALUES (%s, %s, %s, %s, NOW())
+                    RETURNING creador_id, usuario_invita, manager_id, estado, creado_en
                     """,
-                    (creador_id, usuario_invita, manager_id, estado, False)
+                    (creador_id, usuario_invita, manager_id, estado)
                 )
+
+                row = cur.fetchone()
                 conn.commit()
-                print(f"✅ Invitación mínima creada correctamente para creador {creador_id}")
-                return True
+
+                if row:
+                    columns = [desc[0] for desc in cur.description]
+                    invitacion = dict(zip(columns, row))
+                    print(f"✅ Invitación mínima creada correctamente para creador {creador_id}")
+                    return invitacion
+
+                print(f"⚠️ No se retornaron datos al crear la invitación para creador {creador_id}.")
+                return None
 
     except Exception as e:
         print(f"❌ Error al crear invitación mínima para creador {creador_id}:", e)
-        return False
-
+        return None
 
 
 
@@ -2654,7 +2665,17 @@ def obtener_invitacion_por_creador(creador_id: int):
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT id
+                    SELECT 
+                        id,
+                        creador_id,
+                        fecha_invitacion,
+                        usuario_invita,
+                        manager_id,
+                        estado,
+                        acepta_invitacion,
+                        fecha_incorporacion,
+                        observaciones,
+                        creado_en
                     FROM invitaciones
                     WHERE creador_id = %s
                     ORDER BY fecha_invitacion DESC
@@ -2665,9 +2686,11 @@ def obtener_invitacion_por_creador(creador_id: int):
                 row = cur.fetchone()
                 if row:
                     columns = [desc[0] for desc in cur.description]
-                    return dict(zip(columns, row))
+                    invitacion = dict(zip(columns, row))
+                    return invitacion
                 return None
     except Exception as e:
         print(f"❌ Error al consultar invitación de creador {creador_id}: {e}")
         return None
+
 
