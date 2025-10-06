@@ -801,10 +801,17 @@ def obtener_nombre_usuario(numero: str) -> str:
     datos = usuarios_flujo.get(numero, {})
     return datos.get("nombre", None)
 
+# --- Función de inicialización segura ---
+def asegurar_flujo(numero):
+    if numero not in usuarios_flujo or not isinstance(usuarios_flujo[numero], dict):
+        usuarios_flujo[numero] = {}
+
 def manejar_respuesta(numero, texto):
     texto_normalizado = texto.strip().lower()
     paso = obtener_flujo(numero)
     rol = obtener_rol_usuario(numero)
+
+    asegurar_flujo(numero)  # 🔒 Inicialización segura
 
     # --- Detectar saludos ---
     if texto_normalizado in ["hola", "buenas", "saludos"]:
@@ -941,10 +948,10 @@ def manejar_respuesta(numero, texto):
                 return
 
             # Guardamos el nombre para reutilizar
-            if numero not in usuarios_flujo:
+            if numero not in usuarios_flujo or not isinstance(usuarios_flujo[numero], dict):
                 usuarios_flujo[numero] = {}
-
             usuarios_flujo[numero].update({"paso": paso, "nombre": texto.strip()})
+
 
         elif paso == 2:  # Edad
             try:
