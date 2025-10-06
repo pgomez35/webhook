@@ -3121,7 +3121,28 @@ def crear_invitacion(
 
     return InvitacionOut.model_validate({**payload, **resultado})
 
-# PUT actualizar (por creador_id)
+# # PUT actualizar (por creador_id)
+# @app.put("/api/invitaciones/{creador_id}", response_model=InvitacionOut, tags=["Invitaciones"])
+# def actualizar_invitacion(
+#     creador_id: int,
+#     datos: InvitacionUpdate,
+#     usuario_actual: dict = Depends(obtener_usuario_actual)
+# ):
+#     usuario_id = usuario_actual.get("id")
+#     if not usuario_id:
+#         raise HTTPException(status_code=401, detail="Usuario no autorizado")
+#
+#     # Tomamos solo los campos enviados, pero forzamos usuario_invita = usuario actual
+#     update_data = datos.dict(exclude_unset=True)
+#     update_data["usuario_invita"] = usuario_id
+#
+#     actualizado = actualizar_invitacion_por_creador(creador_id, update_data)
+#     if not actualizado:
+#         raise HTTPException(status_code=404, detail="No existe invitación para este creador")
+#
+#     return InvitacionOut.model_validate(actualizado)
+
+# PUT actualizar invitación (por creador_id)
 @app.put("/api/invitaciones/{creador_id}", response_model=InvitacionOut, tags=["Invitaciones"])
 def actualizar_invitacion(
     creador_id: int,
@@ -3136,11 +3157,26 @@ def actualizar_invitacion(
     update_data = datos.dict(exclude_unset=True)
     update_data["usuario_invita"] = usuario_id
 
-    actualizado = actualizar_invitacion_por_creador(creador_id, update_data)
-    if not actualizado:
+    # Actualizar invitación
+    invitacion_actualizada = actualizar_invitacion_por_creador(creador_id, update_data)
+    if not invitacion_actualizada:
         raise HTTPException(status_code=404, detail="No existe invitación para este creador")
 
-    return InvitacionOut.model_validate(actualizado)
+    # ✅ Lógica adicional: actualizar estado_id en creadores
+    estado = update_data.get("estado")
+    if estado:
+        try:
+            if estado == "Aceptada por Aspirante":
+                actualizar_estado_creador(creador_id, 6)
+                print(f"🔄 Estado del creador {creador_id} actualizado a 6 (Aceptada por Aspirante)")
+            elif estado == "Rechazada":
+                actualizar_estado_creador(creador_id, 7)
+                print(f"🔄 Estado del creador {creador_id} actualizado a 7 (Rechazada)")
+        except Exception as e:
+            print(f"⚠️ Error al actualizar estado del creador {creador_id}: {e}")
+
+    return InvitacionOut.model_validate(invitacion_actualizada)
+
 
 
 @app.put("/api/creadores/{creador_id}/estado",
