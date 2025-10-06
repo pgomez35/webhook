@@ -717,7 +717,7 @@ preguntas = {
     1: "📌 ¿Cuál es tu nombre completo sin apellidos?",
 
     2: (
-        "📌 , dime por favor en qué rango de edad te encuentras?\n"
+        "📌 {nombre}, dime por favor en qué rango de edad te encuentras?\n"
         "1️⃣ Menos de 18 años\n"
         "2️⃣ 18 - 24 años\n"
         "3️⃣ 25 - 34 años\n"
@@ -733,7 +733,7 @@ preguntas = {
         "4️⃣ Prefiero no decir"
     ),
 
-    4: "📌 , es importante conocer en qué País te encuentras para continuar en el proceso:\n"
+    4: "📌 {nombre}, es importante conocer en qué País te encuentras para continuar en el proceso:\n"
         "1️⃣ Argentina 2️⃣ Bolivia\n"
         "3️⃣ Chile   4️⃣ Colombia\n"
         "5️⃣ Costa Rica 6️⃣ Cuba\n"
@@ -752,7 +752,7 @@ preguntas = {
         "1️⃣9️⃣ Venezuela\n"
         "2️⃣0️⃣ Otro (escribe tu país)",
 
-    5: "📌 en qué Ciudad estás? (escríbela en texto)",
+    5: "📌 , en qué Ciudad estás? (escríbela en texto)",
 
     6: (
         "📌 Me gustaría conocer tu Actividad actual:\n"
@@ -768,7 +768,7 @@ preguntas = {
     ),
 
     7: (
-        "📌 , dime cuál es tu Objetivo principal en la plataforma tiktok?\n"
+        "📌 {nombre}, dime cuál es tu Objetivo principal en la plataforma tiktok?\n"
         "1️⃣ Fuente de ingresos principal\n"
         "2️⃣ Fuente de ingresos secundaria\n"
         "3️⃣ Hobby, pero me gustaría profesionalizarlo\n"
@@ -1020,8 +1020,8 @@ def manejar_respuesta(numero, texto):
             nombre = obtener_nombre_usuario(numero)
             texto_pregunta = preguntas[siguiente]
 
-            if nombre and siguiente in [2, 4, 7]:
-                texto_pregunta = f"{nombre}, {texto_pregunta}"
+            if "{nombre}" in texto_pregunta:
+                texto_pregunta = texto_pregunta.format(nombre=nombre)
 
             # 💬 Mensaje especial después de la 8
             if paso == 8:
