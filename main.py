@@ -2166,12 +2166,21 @@ def guardar_resumen_final(creador_id: int, datos: GuardarResumenInput):
 
             # 3) Si el estado es "Entrevista" (4), insertamos entrevista mínima
             if estado_id == 4:
+                # Crear entrevista mínima
                 entrevista_payload = {
                     "creador_id": creador_id,
-                    # no ponemos más campos, solo los mínimos;
-                    # la tabla agrega id y creado_en por default
+                    # Campos mínimos
                 }
                 entrevista_creada = insertar_entrevista(entrevista_payload)
+
+            elif estado_id == 5:
+                # Crear invitación mínima
+                invitacion_creada = crear_invitacion_minima(creador_id, estado="pendiente_tiktok")
+
+                if invitacion_creada:
+                    print(f"✅ Invitación creada correctamente para creador {creador_id}: {invitacion_creada}")
+                else:
+                    print(f"⚠️ No se pudo crear la invitación para el creador {creador_id}")
 
         return {
             "status": "ok",
@@ -3122,14 +3131,15 @@ def actualizar_invitacion(
     if not usuario_id:
         raise HTTPException(status_code=401, detail="Usuario no autorizado")
 
+    # Tomamos solo los campos enviados, pero forzamos usuario_invita = usuario actual
     update_data = datos.dict(exclude_unset=True)
+    update_data["usuario_invita"] = usuario_id
 
     actualizado = actualizar_invitacion_por_creador(creador_id, update_data)
     if not actualizado:
         raise HTTPException(status_code=404, detail="No existe invitación para este creador")
 
     return InvitacionOut.model_validate(actualizado)
-
 
 
 @app.put("/api/creadores/{creador_id}/estado",
@@ -3645,11 +3655,8 @@ from typing import Optional
 from fastapi import HTTPException, Depends
 from datetime import datetime
 
-
-RESULTADO_TO_ESTADO_ID = {
-    "RECHAZADO": 7,
-    "INVITACION": 5,   # "Invitación" sin tilde al normalizar
-}
+from fastapi import APIRouter, Depends, HTTPException
+from datetime import date
 
 @app.put("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
 def actualizar_entrevista(
@@ -3664,7 +3671,7 @@ def actualizar_entrevista(
     # Solo campos presentes en el body
     payload = datos.dict(exclude_unset=True)
 
-    # Si el payload incluye calificaciones pero no "usuario_evalua", setear evaluador actual
+    # Si hay calificaciones pero no usuario_evalua, setear el evaluador actual
     if any(k in payload for k in (
         "aspecto_tecnico", "presencia_carisma",
         "interaccion_audiencia", "profesionalismo_normas",
@@ -3672,28 +3679,57 @@ def actualizar_entrevista(
     )):
         payload.setdefault("usuario_evalua", usuario_id)
 
-    # 1) Actualiza la entrevista (por creador_id) y devuelve el registro actualizado
+    # 1️⃣ Actualiza entrevista por creador
     actualizado = actualizar_entrevista_por_creador(creador_id, payload)
     if not actualizado:
         raise HTTPException(status_code=404, detail="No existe entrevista para este creador")
 
-    # 2) NUEVA lógica: actualizar estado_id SOLO según `resultado`
-    #    - usamos el que vino en el payload; si no, el que quedó en DB
+    # 2️⃣ Actualizar estado_id según `resultado`
     try:
         resultado_raw = payload.get("resultado") or actualizado.get("resultado")
         resultado_norm = _normalize_text(resultado_raw) if resultado_raw else None
 
+        print(f"🧩 Resultado bruto recibido: {resultado_raw}")
+        print(f"🧩 Resultado normalizado: {resultado_norm}")
+
         if resultado_norm:
             estado_id = RESULTADO_TO_ESTADO_ID.get(resultado_norm)
-            if estado_id is not None:
-                actualizar_estado_creador(creador_id, estado_id)
-                # (opcional) logger.info(f"creador {creador_id} → estado_id={estado_id} por resultado='{resultado_raw}'")
-        # Si no hay resultado o no mapea, NO se toca el estado
-    except Exception:
-        # No rompemos la respuesta si falla la actualización de estado
-        pass
 
-    # 3) Responder exactamente con el schema EntrevistaOut
+            if estado_id is None:
+                print(f"⚠️ Resultado '{resultado_norm}' no reconocido en RESULTADO_TO_ESTADO_ID, no se actualizará estado.")
+            else:
+                print(f"🔄 Estado asignado: {estado_id} (según resultado '{resultado_norm}')")
+
+                # Actualiza el estado del creador
+                actualizar_estado_creador(creador_id, estado_id)
+                print(f"✅ Estado del creador {creador_id} actualizado correctamente a {estado_id}")
+
+                # 3️⃣ Crear invitación automática si el resultado implica una invitación
+                if estado_id == 5:
+                    try:
+                        # El usuario que invita es el mismo evaluador actual
+                        invitacion_data = {
+                            "creador_id": creador_id,
+                            "usuario_invita": usuario_id,
+                            "fecha_invitacion": date.today(),
+                            "estado": "sin programar",
+                            "observaciones": "Invitación creada automáticamente desde evaluación"
+                        }
+
+                        invitacion_creada = crear_invitacion_minima(creador_id, invitacion_data)
+                        if invitacion_creada:
+                            print(f"✅ Invitación creada automáticamente para creador {creador_id}: {invitacion_creada}")
+                        else:
+                            print(f"⚠️ No se pudo crear la invitación para creador {creador_id} (posiblemente ya existe).")
+                    except Exception as e:
+                        print(f"❌ Error al crear invitación automática: {e}")
+
+    except Exception as e:
+        print(f"⚠️ Error al actualizar estado o crear invitación: {e}")
+        # No interrumpe la respuesta si algo falla
+
+
+    # 4️⃣ Retorna respuesta normalizada
     return EntrevistaOut(
         id=actualizado["id"],
         creado_en=actualizado["creado_en"],
@@ -3707,4 +3743,7 @@ def actualizar_entrevista(
         profesionalismo_normas=actualizado.get("profesionalismo_normas"),
         evaluacion_global=actualizado.get("evaluacion_global"),
     )
+
+
+
 

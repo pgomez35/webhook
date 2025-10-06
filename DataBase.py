@@ -9,6 +9,9 @@ from gspread.worksheet import JSONResponse
 
 from schemas import ActualizacionContactoInfo
 from psycopg2.extras import RealDictCursor
+
+from datetime import date
+
 # Para hash de contraseñas (instalar con: pip install bcrypt)
 try:
     import bcrypt
@@ -2612,35 +2615,47 @@ def actualizar_telefono_aspirante(aspirante_id: int, numero: str):
         print("❌ Error al actualizar teléfono de aspirante:", e)
         return False
 
-# def insertar_entrevista(datos: dict):
-#     try:
-#         conn = get_connection()
-#         with conn.cursor() as cur:
-#             columnas = ', '.join(datos.keys())
-#             placeholders = ', '.join(['%s'] * len(datos))
-#             sql = f"""
-#                 INSERT INTO entrevistas ({columnas})
-#                 VALUES ({placeholders})
-#                 RETURNING id, creado_en
-#             """
-#             cur.execute(sql, tuple(datos.values()))
-#             row = cur.fetchone()
-#             conn.commit()
-#             return {"id": row[0], "creado_en": row[1]}
-#     except Exception as e:
-#         print("❌ Error al insertar entrevista:", e)
-#         return None
-#     finally:
-#         conn.close()
+def crear_invitacion_minima(creador_id: int, usuario_invita: int = None, estado: str = "sin programar"):
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO invitaciones (creador_id, usuario_invita, fecha_invitacion, estado)
+                    VALUES (%s, %s, CURRENT_DATE, %s)
+                    RETURNING id, creador_id, usuario_invita, estado, fecha_invitacion, creado_en;
+                """, (creador_id, usuario_invita, estado))
+                row = cur.fetchone()
+                conn.commit()
+                if row:
+                    columns = [desc[0] for desc in cur.description]
+                    return dict(zip(columns, row))
+                return None
+    except Exception as e:
+        print(f"❌ Error al crear invitación mínima para creador {creador_id}: {e}")
+        return None
 
 
-# if __name__ == "__main__":
-#     print("Probando diagnóstico...")
-#     # resultado = diagnostico_perfil_creador(27)  # Cambia el ID según quieras
-#     creador_id=69
-#     resultado=obtener_perfil_creador(creador_id)
-#
-#     print("Resultado:", resultado)
 
-
+def obtener_invitacion_por_creador(creador_id: int):
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id
+                    FROM invitaciones
+                    WHERE creador_id = %s
+                    ORDER BY fecha_invitacion DESC
+                    LIMIT 1;
+                    """,
+                    (creador_id,)
+                )
+                row = cur.fetchone()
+                if row:
+                    columns = [desc[0] for desc in cur.description]
+                    return dict(zip(columns, row))
+                return None
+    except Exception as e:
+        print(f"❌ Error al consultar invitación de creador {creador_id}: {e}")
+        return None
 
