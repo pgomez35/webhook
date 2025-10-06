@@ -2615,24 +2615,36 @@ def actualizar_telefono_aspirante(aspirante_id: int, numero: str):
         print("❌ Error al actualizar teléfono de aspirante:", e)
         return False
 
-def crear_invitacion_minima(creador_id: int, usuario_invita: int = None, estado: str = "sin programar"):
+
+def crear_invitacion_minima(creador_id: int, usuario_invita: int, manager_id: int = None, estado: str = "INVITACION"):
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO invitaciones (creador_id, usuario_invita, fecha_invitacion, estado)
-                    VALUES (%s, %s, CURRENT_DATE, %s)
-                    RETURNING id, creador_id, usuario_invita, estado, fecha_invitacion, creado_en;
-                """, (creador_id, usuario_invita, estado))
-                row = cur.fetchone()
+                # Verificar si ya existe una invitación
+                cur.execute(
+                    "SELECT id FROM invitaciones WHERE creador_id = %s",
+                    (creador_id,)
+                )
+                if cur.fetchone():
+                    print(f"⚠️ Ya existe una invitación para el creador {creador_id}.")
+                    return False
+
+                # Insertar nueva invitación mínima
+                cur.execute(
+                    """
+                    INSERT INTO invitaciones (creador_id, fecha_invitacion, usuario_invita, manager_id, estado, acepta_invitacion)
+                    VALUES (%s, now(), %s, %s, %s, %s)
+                    """,
+                    (creador_id, usuario_invita, manager_id, estado, False)
+                )
                 conn.commit()
-                if row:
-                    columns = [desc[0] for desc in cur.description]
-                    return dict(zip(columns, row))
-                return None
+                print(f"✅ Invitación mínima creada correctamente para creador {creador_id}")
+                return True
+
     except Exception as e:
-        print(f"❌ Error al crear invitación mínima para creador {creador_id}: {e}")
-        return None
+        print(f"❌ Error al crear invitación mínima para creador {creador_id}:", e)
+        return False
+
 
 
 

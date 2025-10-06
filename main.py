@@ -3696,7 +3696,8 @@ def actualizar_entrevista(
             estado_id = RESULTADO_TO_ESTADO_ID.get(resultado_norm)
 
             if estado_id is None:
-                print(f"⚠️ Resultado '{resultado_norm}' no reconocido en RESULTADO_TO_ESTADO_ID, no se actualizará estado.")
+                print(
+                    f"⚠️ Resultado '{resultado_norm}' no reconocido en RESULTADO_TO_ESTADO_ID, no se actualizará estado.")
             else:
                 print(f"🔄 Estado asignado: {estado_id} (según resultado '{resultado_norm}')")
 
@@ -3705,27 +3706,29 @@ def actualizar_entrevista(
                 print(f"✅ Estado del creador {creador_id} actualizado correctamente a {estado_id}")
 
                 # 3️⃣ Crear invitación automática si el resultado implica una invitación
-                if estado_id == 5:
+                if estado_id == 5:  # 5 = INVITACIÓN
                     try:
-                        # El usuario que invita es el mismo evaluador actual
-                        invitacion_data = {
-                            "creador_id": creador_id,
-                            "usuario_invita": usuario_id,
-                            "fecha_invitacion": date.today(),
-                            "estado": "sin programar",
-                            "observaciones": "Invitación creada automáticamente desde evaluación"
-                        }
+                        print(f"📩 Intentando crear invitación automática para creador {creador_id}...")
 
-                        invitacion_creada = crear_invitacion_minima(creador_id, invitacion_data)
+                        # Llamamos directamente con parámetros, no con dict
+                        invitacion_creada = crear_invitacion_minima(
+                            creador_id=creador_id,
+                            usuario_invita=usuario_id,
+                            manager_id=None,
+                            estado="INVITACION"
+                        )
+
                         if invitacion_creada:
-                            print(f"✅ Invitación creada automáticamente para creador {creador_id}: {invitacion_creada}")
+                            print(f"✅ Invitación creada automáticamente para creador {creador_id}")
                         else:
-                            print(f"⚠️ No se pudo crear la invitación para creador {creador_id} (posiblemente ya existe).")
+                            print(
+                                f"⚠️ No se pudo crear la invitación para creador {creador_id} (posiblemente ya existe).")
+
                     except Exception as e:
-                        print(f"❌ Error al crear invitación automática: {e}")
+                        print(f"❌ Error al crear invitación automática para creador {creador_id}: {e}")
 
     except Exception as e:
-        print(f"⚠️ Error al actualizar estado o crear invitación: {e}")
+        print(f"⚠️ Error general al actualizar estado o crear invitación: {e}")
         # No interrumpe la respuesta si algo falla
 
 
