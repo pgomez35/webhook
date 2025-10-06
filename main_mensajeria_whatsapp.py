@@ -714,7 +714,7 @@ def consolidar_perfil(telefono: str):
 # --------------------
 
 preguntas = {
-    1: "📌 ¿Cuál es tu nombre completo?",
+    1: "📌 ¿Cuál es tu nombre completo sin apellidos?",
 
     2: (
         "📌 , dime por favor en qué rango de edad te encuentras?\n"
