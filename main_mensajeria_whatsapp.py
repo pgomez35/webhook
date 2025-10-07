@@ -797,9 +797,15 @@ preguntas = {
     ),
 }
 
+# def obtener_nombre_usuario(numero: str) -> str:
+#     datos = usuarios_flujo.get(numero, {})
+#     return datos.get("nombre", None)
+
 def obtener_nombre_usuario(numero: str) -> str:
     datos = usuarios_flujo.get(numero, {})
+    assert isinstance(datos, dict), f"usuarios_flujo[{numero}] no es un dict: {type(datos)}"
     return datos.get("nombre", None)
+
 
 # --- Función de inicialización segura ---
 def asegurar_flujo(numero):
