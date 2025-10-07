@@ -850,7 +850,7 @@ Mensaje_bienvenida = (
     "Soy *Prestigio*, tu asistente de experiencia 🤖.\n"
     "Es un gusto acompañarte en este proceso de aplicación. 🚀\n\n"
     "Para comenzar, dime por favor:\n"
-    "1️⃣ ¿Cuál es tu usuario de TikTok para validar en la plataforma?"
+    "¿Cuál es tu usuario de TikTok para validar en la plataforma?"
 )
 
 def mensaje_confirmar_nombre(nombre: str) -> str:
@@ -1184,6 +1184,12 @@ async def whatsapp_webhook(request: Request):
             if paso == "esperando_usuario_tiktok" and tipo == "text":
                 usuario_tiktok = texto.strip()
                 aspirante = buscar_aspirante_por_usuario_tiktok(usuario_tiktok)
+
+                # ----- Depuración -----
+                print(f"🔍 Usuario TikTok recibido: {usuario_tiktok}")
+                print(f"🔍 Aspirante encontrado: {aspirante}")
+                print(f"🔍 usuarios_temp: {usuarios_temp}")
+                print(f"🔍 paso actual: {paso}")
 
                 if aspirante:
                     nombre = aspirante.get("nickname") or aspirante.get("nombre_real") or "(sin nombre)"
