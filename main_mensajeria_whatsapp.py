@@ -217,15 +217,38 @@ def actualizar_flujo(numero, paso):
 #             usuarios_flujo.pop(numero, None)  # 🧹 expira por inactividad
 #     return None
 
+# def obtener_flujo(numero):
+#     cache = usuarios_flujo.get(numero)
+#     if cache and isinstance(cache, tuple) and len(cache) == 2:
+#         paso, t = cache
+#         if time.time() - t < TTL:
+#             return paso
+#         else:
+#             usuarios_flujo.pop(numero, None)  # 🧹 expira por inactividad
+#     return None
+
 def obtener_flujo(numero):
     cache = usuarios_flujo.get(numero)
-    if cache and isinstance(cache, tuple) and len(cache) == 2:
-        paso, t = cache
-        if time.time() - t < TTL:
+
+    if isinstance(cache, dict):
+        paso = cache.get("paso")
+        t = cache.get("timestamp", 0)
+        if paso and time.time() - t < TTL:
             return paso
         else:
-            usuarios_flujo.pop(numero, None)  # 🧹 expira por inactividad
+            usuarios_flujo.pop(numero, None)
+            return None
+
+    if isinstance(cache, tuple) and len(cache) == 2:
+        paso, t = cache
+        if paso and time.time() - t < TTL:
+            return paso
+        else:
+            usuarios_flujo.pop(numero, None)
+
     return None
+
+
 
 def obtener_rol_usuario(numero):
     cache = usuarios_roles.get(numero)
