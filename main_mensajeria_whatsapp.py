@@ -1156,20 +1156,22 @@ async def whatsapp_webhook(request: Request):
             print(f"📍 [DEBUG] número={numero}, paso={paso}, texto='{texto_lower}'")
 
             # === 1️⃣ COMANDOS UNIVERSALES: SALUDOS / MENÚ / BRILLAR ===
-            if tipo == "text" and texto_lower in ["hola", "buenas", "quiero", "brillar", "menu", "menú"]:
-                usuarios_flujo.pop(numero, None)  # reinicia cualquier flujo activo
+            if tipo == "text":
+                palabras_clave = ["hola", "buenas", "quiero", "brilla", "brillar", "menu", "menú"]
+                if any(palabra in texto_lower for palabra in palabras_clave):
+                    usuarios_flujo.pop(numero, None)  # reinicia cualquier flujo activo
 
-                if usuario_bd:
-                    nombre = usuario_bd.get("nombre", "").split(" ")[0] or ""
-                    rol = usuario_bd.get("rol", "aspirante")
-                    enviar_mensaje(numero, f"👋 ¡Hola {nombre}! 💫 Te damos este menú de opciones.")
-                    enviar_menu_principal(numero, rol=rol, nombre=nombre)
-                else:
-                    enviar_mensaje(numero, Mensaje_bienvenida)
-                    actualizar_flujo(numero, "esperando_usuario_tiktok")
+                    if usuario_bd:
+                        nombre = usuario_bd.get("nombre", "").split(" ")[0] or ""
+                        rol = usuario_bd.get("rol", "aspirante")
+                        enviar_mensaje(numero, f"👋 ¡Hola {nombre}! 💫 Te damos este menú de opciones.")
+                        enviar_menu_principal(numero, rol=rol, nombre=nombre)
+                    else:
+                        enviar_mensaje(numero, Mensaje_bienvenida)
+                        actualizar_flujo(numero, "esperando_usuario_tiktok")
 
-                print(f"🔁 [DEBUG] Reinicio de flujo con comando '{texto_lower}' ({numero})")
-                return {"status": "ok"}
+                    print(f"🔁 [DEBUG] Reinicio de flujo con mensaje que contiene palabra clave ({numero})")
+                    return {"status": "ok"}
 
             # === 2️⃣ NUEVO USUARIO SIN REGISTRO ===
             if not usuario_bd and paso is None:
