@@ -771,6 +771,15 @@ def consolidar_perfil(telefono: str):
                 # ⬅️ AÑADIMOS el teléfono al update de perfil_creador
                 datos_update["telefono"] = telefono
 
+                # ✅ Si hay nombre, actualizamos también en la tabla creadores
+                if datos_update.get("nombre"):
+                    cur.execute("""
+                                       UPDATE creadores 
+                                       SET nombre_real=%s 
+                                       WHERE id=%s
+                                   """, (datos_update["nombre"], creador_id))
+                    print(f"🧩 Actualizado nombre_real='{datos_update['nombre']}' en creadores")
+
                 # Crear query dinámico UPDATE
                 set_clause = ", ".join([f"{k}=%s" for k in datos_update.keys()])
                 values = list(datos_update.values())
@@ -1337,10 +1346,6 @@ def manejar_respuesta(numero, texto):
 
 @router.post("/webhook")
 async def whatsapp_webhook(request: Request):
-    """
-    Webhook principal para procesar mensajes de WhatsApp Business.
-    Optimizado para rendimiento y claridad.
-    """
     data = await request.json()
     print("📩 Webhook recibido:", json.dumps(data, indent=2))
 
