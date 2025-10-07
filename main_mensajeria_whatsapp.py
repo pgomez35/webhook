@@ -854,7 +854,7 @@ Mensaje_bienvenida = (
 )
 
 def mensaje_confirmar_nombre(nombre: str) -> str:
-    return f"Veo que tu nombre o seudónimo es {nombre}. Contesta sí o no para continuar."
+    return f"Veo que tu nombre o seudónimo es {nombre}. Para continuar Contesta *sí* o *no*."
 
 def mensaje_proteccion_datos() -> str:
     return (
@@ -1109,7 +1109,7 @@ def manejar_respuesta(numero, texto):
             usuarios_flujo.pop(numero, None)
             enviar_mensaje(numero, mensaje_encuesta_final(nombre))
             consolidar_perfil(numero)
-            enviar_mensaje(numero, '✨ Para ir al menú principal escribe **"brillar"**')
+            enviar_mensaje(numero, '✨ Para ir al menú principal escribe **brillar**')
             return
 
         actualizar_flujo(numero, siguiente)
@@ -1130,7 +1130,6 @@ def manejar_respuesta(numero, texto):
             actualizar_flujo(numero, 9)
         else:
             enviar_mensaje(numero, "Por favor responde solo *sí* o *no*.")
-
 
 @router.post("/webhook")
 async def whatsapp_webhook(request: Request):
@@ -1156,33 +1155,23 @@ async def whatsapp_webhook(request: Request):
 
             print(f"📍 [DEBUG] número={numero}, paso={paso}, texto='{texto_lower}'")
 
-            # === 1️⃣ MENSAJES DE CONTROL UNIVERSALES ===
-            if tipo == "text":
-                # --- 👋 SALUDOS INICIALES ---
-                if texto_lower in ["hola", "buenas", "saludos", "brillar"]:
-                    if usuario_bd:
-                        nombre = usuario_bd.get("nombre", "").split(" ")[0] or ""
-                        rol = usuario_bd.get("rol", "aspirante")
-                        enviar_menu_principal(numero, rol=rol, nombre=nombre)
-                    else:
-                        enviar_mensaje(numero, Mensaje_bienvenida)
-                        actualizar_flujo(numero, "esperando_usuario_tiktok")
-                    return {"status": "ok"}
+            # === 1️⃣ COMANDOS UNIVERSALES: SALUDOS / MENÚ / BRILLAR ===
+            if tipo == "text" and texto_lower in ["hola", "buenas", "quiero", "brillar", "menu", "menú"]:
+                usuarios_flujo.pop(numero, None)  # reinicia cualquier flujo activo
 
-                # --- 🔄 Reinicio manual del flujo (menú principal) con saludo personalizado ---
-                if texto_lower in ["menu", "menú", "brillar"]:
-                    usuarios_flujo.pop(numero, None)
-                    if usuario_bd:
-                        nombre = usuario_bd.get("nombre", "").split(" ")[0] or ""
-                        rol = usuario_bd.get("rol", "aspirante")
-                        enviar_mensaje(numero, f"👋 ¡Hola {nombre}! Te damos nuevamente este menú de opciones:")
-                        enviar_menu_principal(numero, rol=rol, nombre=nombre)
-                    else:
-                        enviar_mensaje(numero, "✨ Has vuelto al menú principal.")
-                        enviar_menu_principal(numero, rol)
-                    return {"status": "ok"}
+                if usuario_bd:
+                    nombre = usuario_bd.get("nombre", "").split(" ")[0] or ""
+                    rol = usuario_bd.get("rol", "aspirante")
+                    enviar_mensaje(numero, f"👋 ¡Hola {nombre}! 💫 Te damos este menú de opciones.")
+                    enviar_menu_principal(numero, rol=rol, nombre=nombre)
+                else:
+                    enviar_mensaje(numero, Mensaje_bienvenida)
+                    actualizar_flujo(numero, "esperando_usuario_tiktok")
 
-            # === 2️⃣ NUEVO USUARIO ===
+                print(f"🔁 [DEBUG] Reinicio de flujo con comando '{texto_lower}' ({numero})")
+                return {"status": "ok"}
+
+            # === 2️⃣ NUEVO USUARIO SIN REGISTRO ===
             if not usuario_bd and paso is None:
                 enviar_mensaje(numero, Mensaje_bienvenida)
                 actualizar_flujo(numero, "esperando_usuario_tiktok")
@@ -1205,7 +1194,10 @@ async def whatsapp_webhook(request: Request):
 
             # === 4️⃣ CONFIRMAR NOMBRE ===
             if paso == "confirmando_nombre" and tipo == "text":
-                if texto_lower in ["si", "sí", "correcto", "yes", "ok", "sip", "acuerdo"]:
+                texto_normalizado = texto.lower().strip()
+
+                # ✅ Solo aceptamos 'sí' o 'no'
+                if texto_normalizado in ["si", "sí", "s"]:
                     aspirante = usuarios_temp.get(numero)
                     if aspirante:
                         actualizar_telefono_aspirante(aspirante["id"], numero)
@@ -1216,8 +1208,14 @@ async def whatsapp_webhook(request: Request):
                         botones=[{"id": "iniciar_encuesta", "title": "✅ Sí, quiero iniciar"}],
                     )
                     actualizar_flujo(numero, "esperando_inicio_encuesta")
+                elif texto_normalizado in ["no", "n"]:
+                    # Usuario confirma que el nombre NO es correcto
+                    enviar_mensaje(numero, "❌ Por favor verifica tu nombre o usuario de TikTok.")
+                    # Mantener el flujo en 'confirmando_nombre' para reintentar
                 else:
-                    enviar_mensaje(numero, "Por favor escribe el nombre correcto o verifica tu usuario de TikTok.")
+                    # Cualquier otra respuesta
+                    enviar_mensaje(numero, "⚠️ Por favor responde solo *sí* o *no* para continuar.")
+                    # Mantener el flujo en 'confirmando_nombre' hasta recibir respuesta válida
                 return {"status": "ok"}
 
             # === 5️⃣ ESPERANDO INICIO ENCUESTA ===
@@ -1241,21 +1239,8 @@ async def whatsapp_webhook(request: Request):
             # === 7️⃣ CHAT LIBRE ===
             if paso == "chat_libre":
                 if tipo == "text":
-                    if texto_lower in ["menu", "menú", "brillar"]:
-                        usuarios_flujo.pop(numero, None)
-                        if usuario_bd:
-                            nombre = usuario_bd.get("nombre", "").split(" ")[0] or ""
-                            rol = usuario_bd.get("rol", "aspirante")
-                            enviar_mensaje(numero, f"👋 ¡Hola {nombre}! Te damos nuevamente este menú de opciones:")
-                            enviar_menu_principal(numero, rol=rol, nombre=nombre)
-                        else:
-                            enviar_mensaje(numero, "🔙 Has vuelto al menú principal.")
-                            enviar_menu_principal(numero, rol)
-                        return {"status": "ok"}
-
                     guardar_mensaje(numero, texto, tipo="recibido", es_audio=False)
                     print(f"💬 Chat libre de {numero}: {texto}")
-
                 elif tipo == "audio":
                     audio_id = mensaje.get("audio", {}).get("id")
                     url_cloudinary = descargar_audio(audio_id, TOKEN)
@@ -1294,6 +1279,170 @@ async def whatsapp_webhook(request: Request):
         traceback.print_exc()
 
     return {"status": "ok"}
+
+
+# @router.post("/webhook")
+# async def whatsapp_webhook(request: Request):
+#     data = await request.json()
+#     print("📩 Webhook recibido:", json.dumps(data, indent=2))
+#
+#     try:
+#         cambios = data.get("entry", [])[0].get("changes", [])[0].get("value", {})
+#         mensajes = cambios.get("messages", [])
+#         if not mensajes:
+#             return {"status": "ok"}
+#
+#         for mensaje in mensajes:
+#             numero = mensaje.get("from")
+#             tipo = mensaje.get("type")
+#             texto = mensaje.get("text", {}).get("body", "").strip()
+#             texto_lower = texto.lower()
+#
+#             # --- Variables auxiliares ---
+#             paso = obtener_flujo(numero)
+#             usuario_bd = buscar_usuario_por_telefono(numero)
+#             rol = obtener_rol_usuario(numero)
+#
+#             print(f"📍 [DEBUG] número={numero}, paso={paso}, texto='{texto_lower}'")
+#
+#             # === 1️⃣ MENSAJES DE CONTROL UNIVERSALES ===
+#             if tipo == "text":
+#                 # --- 👋 SALUDOS INICIALES ---
+#                 if texto_lower in ["hola", "buenas", "saludos", "brillar"]:
+#                     if usuario_bd:
+#                         nombre = usuario_bd.get("nombre", "").split(" ")[0] or ""
+#                         rol = usuario_bd.get("rol", "aspirante")
+#                         enviar_menu_principal(numero, rol=rol, nombre=nombre)
+#                     else:
+#                         enviar_mensaje(numero, Mensaje_bienvenida)
+#                         actualizar_flujo(numero, "esperando_usuario_tiktok")
+#                     return {"status": "ok"}
+#
+#                 # --- 🔄 Reinicio manual del flujo (menú principal) con saludo personalizado ---
+#                 if texto_lower in ["menu", "menú", "brillar"]:
+#                     usuarios_flujo.pop(numero, None)
+#                     if usuario_bd:
+#                         nombre = usuario_bd.get("nombre", "").split(" ")[0] or ""
+#                         rol = usuario_bd.get("rol", "aspirante")
+#                         enviar_mensaje(numero, f"👋 ¡Hola {nombre}! Te damos nuevamente este menú de opciones:")
+#                         enviar_menu_principal(numero, rol=rol, nombre=nombre)
+#                     else:
+#                         enviar_mensaje(numero, "✨ Has vuelto al menú principal.")
+#                         enviar_menu_principal(numero, rol)
+#                     return {"status": "ok"}
+#
+#             # === 2️⃣ NUEVO USUARIO ===
+#             if not usuario_bd and paso is None:
+#                 enviar_mensaje(numero, Mensaje_bienvenida)
+#                 actualizar_flujo(numero, "esperando_usuario_tiktok")
+#                 print(f"🟢 [DEBUG] Flujo inicial -> esperando_usuario_tiktok ({numero})")
+#                 return {"status": "ok"}
+#
+#             # === 3️⃣ FLUJO DE VERIFICACIÓN USUARIO TIKTOK ===
+#             if paso == "esperando_usuario_tiktok" and tipo == "text":
+#                 usuario_tiktok = texto.strip()
+#                 aspirante = buscar_aspirante_por_usuario_tiktok(usuario_tiktok)
+#
+#                 if aspirante:
+#                     nombre = aspirante.get("nickname") or aspirante.get("nombre_real") or "(sin nombre)"
+#                     enviar_mensaje(numero, mensaje_confirmar_nombre(nombre))
+#                     actualizar_flujo(numero, "confirmando_nombre")
+#                     usuarios_temp[numero] = aspirante
+#                 else:
+#                     enviar_mensaje(numero, "❌ No encontramos ese usuario de TikTok. ¿Podrías verificarlo?")
+#                 return {"status": "ok"}
+#
+#             # === 4️⃣ CONFIRMAR NOMBRE ===
+#             if paso == "confirmando_nombre" and tipo == "text":
+#                 if texto_lower in ["si", "sí", "correcto", "yes", "ok", "sip", "acuerdo"]:
+#                     aspirante = usuarios_temp.get(numero)
+#                     if aspirante:
+#                         actualizar_telefono_aspirante(aspirante["id"], numero)
+#
+#                     enviar_botones(
+#                         numero,
+#                         texto=mensaje_proteccion_datos(),
+#                         botones=[{"id": "iniciar_encuesta", "title": "✅ Sí, quiero iniciar"}],
+#                     )
+#                     actualizar_flujo(numero, "esperando_inicio_encuesta")
+#                 else:
+#                     enviar_mensaje(numero, "Por favor escribe el nombre correcto o verifica tu usuario de TikTok.")
+#                 return {"status": "ok"}
+#
+#             # === 5️⃣ ESPERANDO INICIO ENCUESTA ===
+#             if paso == "esperando_inicio_encuesta":
+#                 interactive = mensaje.get("interactive", {})
+#                 if interactive.get("type") == "button_reply":
+#                     button_id = interactive.get("button_reply", {}).get("id")
+#                     if button_id == "iniciar_encuesta":
+#                         actualizar_flujo(numero, 1)
+#                         enviar_pregunta(numero, 1)
+#                         print(f"🟢 [DEBUG] Encuesta iniciada -> paso=1 ({numero})")
+#                         return {"status": "ok"}
+#
+#                 enviar_mensaje(numero, "Por favor usa el botón para iniciar la encuesta.")
+#                 return {"status": "ok"}
+#
+#             # === 6️⃣ ASIGNAR ROL SI FALTA ===
+#             if usuario_bd and numero not in usuarios_roles:
+#                 usuarios_roles[numero] = (usuario_bd["rol"], time.time())
+#
+#             # === 7️⃣ CHAT LIBRE ===
+#             if paso == "chat_libre":
+#                 if tipo == "text":
+#                     if texto_lower in ["menu", "menú", "brillar"]:
+#                         usuarios_flujo.pop(numero, None)
+#                         if usuario_bd:
+#                             nombre = usuario_bd.get("nombre", "").split(" ")[0] or ""
+#                             rol = usuario_bd.get("rol", "aspirante")
+#                             enviar_mensaje(numero, f"👋 ¡Hola {nombre}! Te damos nuevamente este menú de opciones:")
+#                             enviar_menu_principal(numero, rol=rol, nombre=nombre)
+#                         else:
+#                             enviar_mensaje(numero, "🔙 Has vuelto al menú principal.")
+#                             enviar_menu_principal(numero, rol)
+#                         return {"status": "ok"}
+#
+#                     guardar_mensaje(numero, texto, tipo="recibido", es_audio=False)
+#                     print(f"💬 Chat libre de {numero}: {texto}")
+#
+#                 elif tipo == "audio":
+#                     audio_id = mensaje.get("audio", {}).get("id")
+#                     url_cloudinary = descargar_audio(audio_id, TOKEN)
+#                     if url_cloudinary:
+#                         guardar_mensaje(numero, url_cloudinary, tipo="recibido", es_audio=True)
+#                         enviar_mensaje(numero, "🎧 Recibimos tu audio. Un asesor lo revisará pronto.")
+#                     else:
+#                         enviar_mensaje(numero, "⚠️ No se pudo procesar tu audio, inténtalo de nuevo.")
+#                 return {"status": "ok"}
+#
+#             # === 8️⃣ REINICIO DESDE BOTÓN “Sí, continuar” ===
+#             if paso is None and tipo == "interactive":
+#                 interactive = mensaje.get("interactive", {})
+#                 boton_texto = interactive.get("button_reply", {}).get("title", "").lower()
+#                 if boton_texto == "sí, continuar":
+#                     actualizar_flujo(numero, 1)
+#                     enviar_pregunta(numero, 1)
+#                     print(f"🟢 [DEBUG] Flujo reiniciado -> paso=1 ({numero})")
+#                     return {"status": "ok"}
+#
+#             # === 9️⃣ ACTIVAR CHAT LIBRE SEGÚN ROL ===
+#             if paso is None and tipo == "text":
+#                 rol_usuario = usuarios_roles.get(numero, ("",))[0]
+#                 if (texto_lower in ["4", "chat libre"] and rol_usuario == "aspirante") or \
+#                    (texto_lower in ["7", "chat libre"] and rol_usuario == "creador") or \
+#                    (texto_lower in ["5", "chat libre"] and rol_usuario == "admin"):
+#                     actualizar_flujo(numero, "chat_libre")
+#                     enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.")
+#                     return {"status": "ok"}
+#
+#             # === 🔟 MANEJAR RESPUESTA NORMAL (ENCUESTA) ===
+#             manejar_respuesta(numero, texto)
+#
+#     except Exception as e:
+#         print("❌ Error procesando webhook:", e)
+#         traceback.print_exc()
+#
+#     return {"status": "ok"}
 
 
 # @router.post("/webhook")
