@@ -1174,7 +1174,7 @@ async def whatsapp_webhook(request: Request):
                     return {"status": "ok"}
 
             # === 2️⃣ NUEVO USUARIO SIN REGISTRO ===
-            if not usuario_bd and paso is None:
+            if not usuario_bd and paso is None and numero not in usuarios_temp:
                 enviar_mensaje(numero, Mensaje_bienvenida)
                 actualizar_flujo(numero, "esperando_usuario_tiktok")
                 print(f"🟢 [DEBUG] Flujo inicial -> esperando_usuario_tiktok ({numero})")
