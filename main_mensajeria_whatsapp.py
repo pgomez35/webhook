@@ -846,10 +846,10 @@ preguntas = {
 # MENSAJES
 # ------------------------------------------------------------------
 Mensaje_bienvenida = (
-    "👋 Bienvenido a Prestige Agency Live.\n"
+    "👋 Bienvenido a Prestige Agency Live."
     "Soy *Prestigio*, tu asistente de experiencia 🤖.\n"
     "Es un gusto acompañarte en este proceso de aplicación. 🚀\n\n"
-    "Para comenzar, dime por favor:\n\n"
+    "Para comenzar, dime por favor:\n"
     "1️⃣ ¿Cuál es tu usuario de TikTok para validar en la plataforma?"
 )
 
@@ -1087,7 +1087,7 @@ def manejar_respuesta(numero, texto):
             # enviar_mensaje(numero, f"✅ Ciudad reconocida: {texto}")
 
         if paso == 7:
-            enviar_mensaje(numero, "🎥 ¿Tienes experiencia transmitiendo lives en TikTok? Contesta *sí* o *no*.")
+            enviar_mensaje(numero, "📌 ¿Tienes experiencia transmitiendo lives en TikTok? Contesta *sí* o *no*.")
             actualizar_flujo(numero, "7b")
             return
 
