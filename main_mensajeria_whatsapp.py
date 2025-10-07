@@ -206,7 +206,7 @@ def actualizar_flujo(numero, paso):
     usuarios_flujo[numero]['paso'] = paso
     usuarios_flujo[numero]['timestamp'] = time.time()
 
-   
+
 def obtener_flujo(numero):
     cache = usuarios_flujo.get(numero)
     if cache and isinstance(cache, tuple) and len(cache) == 2:

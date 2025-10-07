@@ -2572,7 +2572,7 @@ def buscar_usuario_por_telefono(numero: str):
                 # Si no está, buscar en admin_usuario
                 cur.execute(
                     """
-                    SELECT id, nickname, 'admin' AS rol
+                    SELECT id, nombre_Completo AS nickname, 'admin' AS rol
                     FROM admin_usuario
                     WHERE telefono = %s
                     LIMIT 1
