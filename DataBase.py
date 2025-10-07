@@ -2551,12 +2551,19 @@ def buscar_aspirante_por_usuario_tiktok(usuario_tiktok: str):
 
 def buscar_usuario_por_telefono(numero: str):
     try:
+        # Normalizar número
+        numero = numero.strip().replace(" ", "").replace("-", "")
+        if numero.startswith("+57"):
+            numero = numero[3:]
+        elif numero.startswith("57") and len(numero) > 10:
+            numero = numero[2:]
+
         with get_connection() as conn:
             with conn.cursor() as cur:
                 # Buscar en creadores con JOIN roles
                 cur.execute(
                     """
-                    SELECT c.id, c.nickname,
+                    SELECT c.id, c.nickname, c.nombre_real AS nombre,
                            COALESCE(r.nombre, 'aspirante') AS rol
                     FROM creadores c
                     LEFT JOIN roles r ON c.rol_id = r.id
@@ -2567,12 +2574,14 @@ def buscar_usuario_por_telefono(numero: str):
                 )
                 row = cur.fetchone()
                 if row:
-                    columns = [desc[0] for desc in cur.description]
-                    return dict(zip(columns, row))
-                # Si no está, buscar en admin_usuario
+                    return dict(zip([desc[0] for desc in cur.description], row))
+
+                # Buscar en admin_usuario
                 cur.execute(
                     """
-                    SELECT id, nombre_Completo AS nickname, 'admin' AS rol
+                    SELECT id, username AS nickname,
+                           nombre_completo AS nombre,
+                           'admin' AS rol
                     FROM admin_usuario
                     WHERE telefono = %s
                     LIMIT 1
@@ -2581,12 +2590,55 @@ def buscar_usuario_por_telefono(numero: str):
                 )
                 row = cur.fetchone()
                 if row:
-                    columns = [desc[0] for desc in cur.description]
-                    return dict(zip(columns, row))
+                    return dict(zip([desc[0] for desc in cur.description], row))
+
                 return None
+
     except Exception as e:
+        import traceback
         print("❌ Error al buscar usuario por teléfono:", e)
+        traceback.print_exc()
         return None
+
+
+# def buscar_usuario_por_telefono(numero: str):
+#     try:
+#         with get_connection() as conn:
+#             with conn.cursor() as cur:
+#                 # Buscar en creadores con JOIN roles
+#                 cur.execute(
+#                     """
+#                     SELECT c.id, c.nickname,c.nombre_real as nombre,
+#                            COALESCE(r.nombre, 'aspirante') AS rol
+#                     FROM creadores c
+#                     LEFT JOIN roles r ON c.rol_id = r.id
+#                     WHERE c.telefono = %s OR c.whatsapp = %s
+#                     LIMIT 1
+#                     """,
+#                     (numero, numero)
+#                 )
+#                 row = cur.fetchone()
+#                 if row:
+#                     columns = [desc[0] for desc in cur.description]
+#                     return dict(zip(columns, row))
+#                 # Si no está, buscar en admin_usuario
+#                 cur.execute(
+#                     """
+#                     SELECT id, username AS nickname,nombre_Completo AS nombre, 'admin' AS rol
+#                     FROM admin_usuario
+#                     WHERE telefono = %s
+#                     LIMIT 1
+#                     """,
+#                     (numero,)
+#                 )
+#                 row = cur.fetchone()
+#                 if row:
+#                     columns = [desc[0] for desc in cur.description]
+#                     return dict(zip(columns, row))
+#                 return None
+#     except Exception as e:
+#         print("❌ Error al buscar usuario por teléfono:", e)
+#         return None
 
 def formatear_numero(numero: str) -> str:
     # Quita espacios, guiones y paréntesis
