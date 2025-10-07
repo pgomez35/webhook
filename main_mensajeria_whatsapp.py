@@ -364,16 +364,19 @@ def guardar_respuesta(numero: str, paso: int, texto: str):
             conn.close()
         except: pass
 
-
 def enviar_diagnostico(numero: str):
-    """Envía el diagnóstico de un usuario tomando el campo observaciones de perfil_creador"""
+    """Envía el diagnóstico de un usuario tomando el campo mejoras_sugeridas de perfil_creador."""
     try:
         with psycopg2.connect(INTERNAL_DATABASE_URL) as conn:
             with conn.cursor() as cur:
-
                 # 1️⃣ Buscar el creador por su número
-                cur.execute("SELECT id, usuario, nombre_real FROM creadores WHERE whatsapp = %s", (numero,))
+                cur.execute("""
+                    SELECT id, usuario, COALESCE(nombre_real, usuario)
+                    FROM creadores
+                    WHERE whatsapp = %s
+                """, (numero,))
                 creador = cur.fetchone()
+
                 if not creador:
                     print(f"⚠️ No se encontró creador con whatsapp {numero}")
                     enviar_mensaje(numero, "No encontramos tu perfil en el sistema. Verifica tu número.")
@@ -381,22 +384,31 @@ def enviar_diagnostico(numero: str):
 
                 creador_id, usuario, nombre_real = creador
 
-                # 2️⃣ Obtener observaciones desde perfil_creador
-                cur.execute("SELECT observaciones FROM perfil_creador WHERE creador_id = %s", (creador_id,))
+                # 2️⃣ Obtener mejoras_sugeridas desde perfil_creador
+                cur.execute("""
+                    SELECT mejoras_sugeridas
+                    FROM perfil_creador
+                    WHERE creador_id = %s
+                """, (creador_id,))
                 fila = cur.fetchone()
 
-        nombre = nombre_real if nombre_real else usuario
-        if not fila or not fila[0]:
-            diagnostico = f"🔎 Diagnóstico para {nombre}:\nAún no se han registrado observaciones en tu perfil."
+        # 3️⃣ Armar el diagnóstico
+        if not fila or not fila[0] or not fila[0].strip():
+            diagnostico = (
+                f"🔎 Diagnóstico para {nombre_real}:\n"
+                "Aún estamos preparando la evaluación de tu perfil. "
+                "Te avisaremos tan pronto esté lista. ⏳"
+            )
         else:
-            diagnostico = f"🔎 Diagnóstico para {nombre}:\n\n{fila[0]}"
+            mejoras = fila[0].strip()
+            diagnostico = f"🔎 Diagnóstico para {nombre_real}:\n\n{mejoras}"
 
-        # 3️⃣ Enviar el diagnóstico
+        # 4️⃣ Enviar el diagnóstico
         enviar_mensaje(numero, diagnostico)
-        print(f"✅ Diagnóstico enviado a {numero}")
+        print(f"✅ Diagnóstico enviado correctamente a {numero} ({nombre_real})")
 
     except Exception as e:
-        print(f"❌ Error al enviar diagnóstico a {numero}:", str(e))
+        print(f"❌ Error al enviar diagnóstico a {numero}: {e}")
         enviar_mensaje(numero, "Ocurrió un error al generar tu diagnóstico. Intenta más tarde.")
 
 
@@ -3319,3 +3331,37 @@ async def whatsapp_webhook(request: Request):
 #
 #     # Actualización directa
 #     usuarios_flujo[numero] = {"paso": paso, "timestamp": ahora}
+
+# def enviar_diagnostico(numero: str):
+#     """Envía el diagnóstico de un usuario tomando el campo observaciones de perfil_creador"""
+#     try:
+#         with psycopg2.connect(INTERNAL_DATABASE_URL) as conn:
+#             with conn.cursor() as cur:
+#
+#                 # 1️⃣ Buscar el creador por su número
+#                 cur.execute("SELECT id, usuario, nombre_real FROM creadores WHERE whatsapp = %s", (numero,))
+#                 creador = cur.fetchone()
+#                 if not creador:
+#                     print(f"⚠️ No se encontró creador con whatsapp {numero}")
+#                     enviar_mensaje(numero, "No encontramos tu perfil en el sistema. Verifica tu número.")
+#                     return
+#
+#                 creador_id, usuario, nombre_real = creador
+#
+#                 # 2️⃣ Obtener observaciones desde perfil_creador
+#                 cur.execute("SELECT mejoras_sugeridas FROM perfil_creador WHERE creador_id = %s", (creador_id,))
+#                 fila = cur.fetchone()
+#
+#         nombre = nombre_real if nombre_real else usuario
+#         if not fila or not fila[0]:
+#             diagnostico = f"🔎 Diagnóstico para {nombre}:\nEstamos preparando tu evaluación de tu perfil."
+#         else:
+#             diagnostico = f"🔎 Diagnóstico para {nombre}:\n\n{fila[0]}"
+#
+#         # 3️⃣ Enviar el diagnóstico
+#         enviar_mensaje(numero, diagnostico)
+#         print(f"✅ Diagnóstico enviado a {numero}")
+#
+#     except Exception as e:
+#         print(f"❌ Error al enviar diagnóstico a {numero}:", str(e))
+#         enviar_mensaje(numero, "Ocurrió un error al generar tu diagnóstico. Intenta más tarde.")
