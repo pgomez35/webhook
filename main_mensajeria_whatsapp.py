@@ -229,24 +229,27 @@ def actualizar_flujo(numero, paso):
 
 def obtener_flujo(numero):
     cache = usuarios_flujo.get(numero)
+    ahora = time.time()
 
+    # 🧱 Nuevo formato (dict)
     if isinstance(cache, dict):
         paso = cache.get("paso")
         t = cache.get("timestamp", 0)
-        if paso and time.time() - t < TTL:
+        if paso and ahora - t < TTL:
             return paso
-        else:
-            usuarios_flujo.pop(numero, None)
-            return None
+        usuarios_flujo.pop(numero, None)
+        return None
 
+    # 🧩 Formato antiguo (tuple)
     if isinstance(cache, tuple) and len(cache) == 2:
         paso, t = cache
-        if paso and time.time() - t < TTL:
+        if paso and ahora - t < TTL:
             return paso
-        else:
-            usuarios_flujo.pop(numero, None)
+        usuarios_flujo.pop(numero, None)
+        return None
 
     return None
+
 
 
 
@@ -792,7 +795,7 @@ preguntas = {
         "1️⃣9️⃣ Venezuela\n"
         "2️⃣0️⃣ Otro (escribe tu país)",
 
-    5: "📌 , en qué Ciudad estás? (escríbela en texto)",
+    5: "📌 En qué Ciudad estás? (escríbela en texto)",
 
     6: (
         "📌 Me gustaría conocer tu Actividad actual:\n"
@@ -985,9 +988,9 @@ def manejar_respuesta(numero, texto):
                 enviar_mensaje(numero, "Opción no válida. Escribe 'menu' para ver las opciones.")
                 return
 
-   # --- FLUJO DE PREGUNTAS ---
+    # --- FLUJO DE PREGUNTAS ---
     if isinstance(paso, int):
-        # Validaciones según paso
+        # 🧩 Validaciones por paso
         if paso == 1:  # Nombre
             if len(texto.strip()) < 3:
                 enviar_mensaje(numero, "⚠️ Ingresa tu nombre completo sin apellidos (mínimo 3 caracteres).")
@@ -997,7 +1000,6 @@ def manejar_respuesta(numero, texto):
             if numero not in usuarios_flujo or not isinstance(usuarios_flujo[numero], dict):
                 usuarios_flujo[numero] = {}
             usuarios_flujo[numero].update({"paso": paso, "nombre": texto.strip()})
-
 
         elif paso == 2:  # Edad
             try:
@@ -1013,13 +1015,13 @@ def manejar_respuesta(numero, texto):
                 enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–4).")
                 return
 
-        if paso == 4:  # País
+        elif paso == 4:  # País
             opciones_paises = list(mapa_paises.keys()) + ["20"]
             if texto not in opciones_paises and texto.lower() not in [p.lower() for p in mapa_paises.values()]:
                 enviar_mensaje(numero, "⚠️ Ingresa el número de tu país o escríbelo si no está en la lista.")
                 return
 
-        if paso == 5:  # Ciudad principal
+        elif paso == 5:  # Ciudad principal
             resultado = validar_aceptar_ciudad(texto)
             if resultado["corregida"]:
                 texto = resultado["ciudad"]
@@ -1037,8 +1039,8 @@ def manejar_respuesta(numero, texto):
                 enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–5).")
                 return
 
-            # ✅ Después de la 7, se pregunta si tiene experiencia en lives
-            enviar_mensaje(numero, "🎥 ¿Tienes experiencia transmitiendo lives en TikTok?. Contesta *sí* o *no*.")
+            # ✅ Pregunta condicional: experiencia en lives
+            enviar_mensaje(numero, "🎥 ¿Tienes experiencia transmitiendo lives en TikTok? Contesta *sí* o *no*.")
             actualizar_flujo(numero, "7b")
             return
 
@@ -1061,38 +1063,39 @@ def manejar_respuesta(numero, texto):
                 enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–4).")
                 return
 
-        # Guardar respuesta válida
+        # ✅ Guardar respuesta válida en BD
         guardar_respuesta(numero, paso, texto)
 
         # --- Lógica de avance ---
-        if paso < len(preguntas):
-            siguiente = paso + 1
-            actualizar_flujo(numero, siguiente)
+        siguiente = paso + 1
 
-            # 🟢 Insertar el nombre en preguntas personalizadas
-            nombre = obtener_nombre_usuario(numero)
-            texto_pregunta = preguntas[siguiente]
-
-            if "{nombre}" in texto_pregunta:
-                texto_pregunta = texto_pregunta.format(nombre=nombre)
-
-            # 💬 Mensaje especial después de la 8
-            if paso == 8:
-                mensaje = mensaje_encuesta_final_parte1(nombre)
-                enviar_mensaje(numero, mensaje)
-
-            enviar_mensaje(numero, texto_pregunta)
-
-        else:
-            # 🏁 Fin del flujo
+        # 🚫 Si ya no hay más preguntas, finaliza el flujo
+        if siguiente not in preguntas:
             usuarios_flujo.pop(numero, None)
             nombre = obtener_nombre_usuario(numero)
             enviar_mensaje(numero, mensaje_encuesta_final(nombre))
             consolidar_perfil(numero)
             enviar_menu_principal(numero, rol)
+            return
+
+        # ✅ Avanzar al siguiente paso
+        actualizar_flujo(numero, siguiente)
+
+        # 🟢 Personalizar pregunta con nombre
+        nombre = obtener_nombre_usuario(numero)
+        texto_pregunta = preguntas[siguiente]
+        if "{nombre}" in texto_pregunta:
+            texto_pregunta = texto_pregunta.format(nombre=nombre)
+
+        # 💬 Mensaje especial después de la 8
+        if paso == 8:
+            mensaje = mensaje_encuesta_final_parte1(nombre)
+            enviar_mensaje(numero, mensaje)
+
+        enviar_mensaje(numero, texto_pregunta)
         return
 
-    # --- BLOQUE NUEVO: validación para la pregunta condicional “7b” ---
+    # --- BLOQUE NUEVO: pregunta condicional “7b” ---
     if paso == "7b":
         respuesta = texto.strip().lower()
 
@@ -1103,9 +1106,8 @@ def manejar_respuesta(numero, texto):
             return
 
         elif respuesta in ["no", "n"]:
-            # No tiene experiencia → registrar 0 y saltar a 9
+            # No tiene experiencia → registrar 0 y pasar a 9
             guardar_respuesta(numero, 8, "0")
-            enviar_mensaje(numero, "✅ Perfecto, registramos que no tienes experiencia previa en TikTok Live.")
             enviar_mensaje(numero, preguntas[9])
             actualizar_flujo(numero, 9)
             return
@@ -1113,6 +1115,136 @@ def manejar_respuesta(numero, texto):
         else:
             enviar_mensaje(numero, "Por favor responde solo *sí* o *no*.")
             return
+
+
+# # --- FLUJO DE PREGUNTAS ---
+#     if isinstance(paso, int):
+#         # Validaciones según paso
+#         if paso == 1:  # Nombre
+#             if len(texto.strip()) < 3:
+#                 enviar_mensaje(numero, "⚠️ Ingresa tu nombre completo sin apellidos (mínimo 3 caracteres).")
+#                 return
+#
+#             # Guardamos el nombre para reutilizar
+#             if numero not in usuarios_flujo or not isinstance(usuarios_flujo[numero], dict):
+   #              usuarios_flujo[numero] = {}
+   #          usuarios_flujo[numero].update({"paso": paso, "nombre": texto.strip()})
+   #
+   #
+   #      elif paso == 2:  # Edad
+   #          try:
+   #              opcion = int(texto)
+   #              if opcion not in [1, 2, 3, 4, 5]:
+   #                  raise ValueError
+   #          except:
+   #              enviar_mensaje(numero, "⚠️ Ingresa una opción válida para tu rango de edad (1-5).")
+   #              return
+   #
+   #      elif paso == 3:  # Género
+   #          if texto not in ["1", "2", "3", "4"]:
+   #              enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–4).")
+   #              return
+   #
+   #      if paso == 4:  # País
+   #          opciones_paises = list(mapa_paises.keys()) + ["20"]
+   #          if texto not in opciones_paises and texto.lower() not in [p.lower() for p in mapa_paises.values()]:
+   #              enviar_mensaje(numero, "⚠️ Ingresa el número de tu país o escríbelo si no está en la lista.")
+   #              return
+   #
+   #      if paso == 5:  # Ciudad principal
+   #          resultado = validar_aceptar_ciudad(texto)
+   #          if resultado["corregida"]:
+   #              texto = resultado["ciudad"]
+   #              enviar_mensaje(numero, f"✅ Ciudad reconocida y corregida: {texto}")
+   #          else:
+   #              enviar_mensaje(numero, f"✅ Ciudad aceptada como la escribiste: {texto}")
+   #
+   #      elif paso == 6:  # Actividad actual
+   #          if texto not in [str(i) for i in range(1, 10)]:
+   #              enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–9).")
+   #              return
+   #
+   #      elif paso == 7:  # Intención principal
+   #          if texto not in [str(i) for i in range(1, 6)]:
+   #              enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–5).")
+   #              return
+   #
+   #          # ✅ Después de la 7, se pregunta si tiene experiencia en lives
+   #          enviar_mensaje(numero, "🎥 ¿Tienes experiencia transmitiendo lives en TikTok?. Contesta *sí* o *no*.")
+   #          actualizar_flujo(numero, "7b")
+   #          return
+   #
+   #      elif paso == 8:  # Meses de experiencia
+   #          try:
+   #              meses = int(texto)
+   #              if not (0 <= meses <= 999):
+   #                  raise ValueError
+   #          except:
+   #              enviar_mensaje(numero, "⚠️ Ingresa un número válido de meses (0–999).")
+   #              return
+   #
+   #      elif paso == 9:  # Horas por día
+   #          if texto not in ["1", "2", "3"]:
+   #              enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–3).")
+   #              return
+   #
+   #      elif paso == 10:  # Días por semana
+   #          if texto not in ["1", "2", "3", "4"]:
+   #              enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–4).")
+   #              return
+   #
+   #      # Guardar respuesta válida
+   #      guardar_respuesta(numero, paso, texto)
+   #
+   #      # --- Lógica de avance ---
+   #      if paso < len(preguntas):
+   #          siguiente = paso + 1
+   #          actualizar_flujo(numero, siguiente)
+   #
+   #          # 🟢 Insertar el nombre en preguntas personalizadas
+   #          nombre = obtener_nombre_usuario(numero)
+   #          texto_pregunta = preguntas[siguiente]
+   #
+   #          if "{nombre}" in texto_pregunta:
+   #              texto_pregunta = texto_pregunta.format(nombre=nombre)
+   #
+   #          # 💬 Mensaje especial después de la 8
+   #          if paso == 8:
+   #              mensaje = mensaje_encuesta_final_parte1(nombre)
+   #              enviar_mensaje(numero, mensaje)
+   #
+   #          enviar_mensaje(numero, texto_pregunta)
+   #
+   #      else:
+   #          # 🏁 Fin del flujo
+   #          usuarios_flujo.pop(numero, None)
+   #          nombre = obtener_nombre_usuario(numero)
+   #          enviar_mensaje(numero, mensaje_encuesta_final(nombre))
+   #          consolidar_perfil(numero)
+   #          enviar_menu_principal(numero, rol)
+   #      return
+   #
+   #  # --- BLOQUE NUEVO: validación para la pregunta condicional “7b” ---
+   #  if paso == "7b":
+   #      respuesta = texto.strip().lower()
+   #
+   #      if respuesta in ["si", "sí", "s"]:
+   #          # Tiene experiencia → preguntar meses
+   #          enviar_mensaje(numero, preguntas[8])
+   #          actualizar_flujo(numero, 8)
+   #          return
+   #
+   #      elif respuesta in ["no", "n"]:
+   #          # No tiene experiencia → registrar 0 y saltar a 9
+   #          guardar_respuesta(numero, 8, "0")
+   #          # enviar_mensaje(numero, "✅ Perfecto, registramos que no tienes experiencia previa en TikTok Live.")
+   #          enviar_mensaje(numero, preguntas[9])
+   #          actualizar_flujo(numero, 9)
+   #          return
+   #
+   #      else:
+   #          enviar_mensaje(numero, "Por favor responde solo *sí* o *no*.")
+   #          return
 
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
