@@ -197,9 +197,16 @@ usuarios_roles = {}   # {numero: (rol, timestamp)}
 # Tiempo de vida en segundos (1 hora = 3600)
 TTL = 1800
 
-def actualizar_flujo(numero, paso):
-    usuarios_flujo[numero] = (paso, time.time())
+# def actualizar_flujo(numero, paso):
+#     usuarios_flujo[numero] = (paso, time.time())
 
+def actualizar_flujo(numero, paso):
+    if numero not in usuarios_flujo or not isinstance(usuarios_flujo[numero], dict):
+        usuarios_flujo[numero] = {}
+    usuarios_flujo[numero]['paso'] = paso
+    usuarios_flujo[numero]['timestamp'] = time.time()
+
+   
 def obtener_flujo(numero):
     cache = usuarios_flujo.get(numero)
     if cache and isinstance(cache, tuple) and len(cache) == 2:
