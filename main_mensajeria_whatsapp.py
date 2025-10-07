@@ -207,6 +207,16 @@ def actualizar_flujo(numero, paso):
     usuarios_flujo[numero]['timestamp'] = time.time()
 
 
+# def obtener_flujo(numero):
+#     cache = usuarios_flujo.get(numero)
+#     if cache and isinstance(cache, tuple) and len(cache) == 2:
+#         paso, t = cache
+#         if time.time() - t < TTL:
+#             return paso
+#         else:
+#             usuarios_flujo.pop(numero, None)  # 🧹 expira por inactividad
+#     return None
+
 def obtener_flujo(numero):
     cache = usuarios_flujo.get(numero)
     if cache and isinstance(cache, tuple) and len(cache) == 2:
