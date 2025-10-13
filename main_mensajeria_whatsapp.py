@@ -1552,7 +1552,9 @@ async def whatsapp_webhook(request: Request):
                     return {"status": "ok"}
 
                 # Botón para iniciar encuesta
+                print(f"[DEBUG] Revisando paso: {paso} (tipo: {type(paso)})")
                 if paso == "esperando_inicio_encuesta":
+                    print(">>> [DEBUG] mensaje recibido:", mensaje)
                     interactive = mensaje.get("interactive", {})
                     if interactive.get("type") == "button_reply":
                         button_id = interactive.get("button_reply", {}).get("id")
