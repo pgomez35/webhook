@@ -1490,6 +1490,7 @@ def manejar_encuesta(numero, texto, texto_normalizado, paso, rol):
         texto_pregunta = texto_pregunta.format(nombre=nombre)
     enviar_mensaje(numero, texto_pregunta)
 
+
 @router.post("/webhook")
 async def whatsapp_webhook(request: Request):
     data = await request.json()
@@ -1504,12 +1505,37 @@ async def whatsapp_webhook(request: Request):
         for mensaje in mensajes:
             numero = mensaje.get("from")
             tipo = mensaje.get("type")
-            texto = mensaje.get("text", {}).get("body", "").strip()
-            texto_lower = texto.lower()
             paso = obtener_flujo(numero)
             usuario_bd = buscar_usuario_por_telefono(numero)
             rol = obtener_rol_usuario(numero) if usuario_bd else None
 
+            # === 🟢 1️⃣ PRIORIDAD: MENSAJES INTERACTIVOS (botones) ===
+            if tipo == "interactive":
+                print("🔘 [DEBUG] Se recibió un mensaje interactivo:", json.dumps(mensaje, indent=2))
+
+                interactive = mensaje.get("interactive", {})
+                if interactive.get("type") == "button_reply":
+                    button_data = interactive.get("button_reply", {})
+                    button_id = button_data.get("id")
+                    button_title = button_data.get("title")
+
+                    print(f"🧩 [DEBUG] Botón presionado -> id='{button_id}', título='{button_title}'")
+                    print(f"📍 [DEBUG] Paso actual del usuario: {paso}")
+
+                    # ✅ Inicio de encuesta
+                    if paso == "esperando_inicio_encuesta" and button_id == "iniciar_encuesta":
+                        print("🚀 [DEBUG] Botón 'iniciar_encuesta' detectado. Iniciando encuesta...")
+                        actualizar_flujo(numero, 1)
+                        enviar_pregunta(numero, 1)
+                        return {"status": "ok"}
+
+                    # Aquí se pueden agregar más botones en el futuro
+                    enviar_mensaje(numero, "Este botón no es válido en este momento.")
+                    return {"status": "ok"}
+
+            # === 🟡 2️⃣ MENSAJES DE TEXTO (solo si no es interactivo) ===
+            texto = mensaje.get("text", {}).get("body", "").strip()
+            texto_lower = texto.lower()
             print(f"📍 [DEBUG] número={numero}, paso={paso}, texto='{texto_lower}'")
 
             # === 1️⃣ NUEVO USUARIO: FLUJO DE ONBOARDING Y ENCUESTA ===
@@ -1551,52 +1577,6 @@ async def whatsapp_webhook(request: Request):
                         enviar_mensaje(numero, "⚠️ Por favor responde solo *sí* o *no* para continuar.")
                     return {"status": "ok"}
 
-                # Botón para iniciar encuesta
-                # print(f"[DEBUG] Revisando paso: {paso} (tipo: {type(paso)})")
-                # if paso == "esperando_inicio_encuesta":
-                #     print(">>> [DEBUG] mensaje recibido:", mensaje)
-                #     interactive = mensaje.get("interactive", {})
-                #     if interactive.get("type") == "button_reply":
-                #         button_id = interactive.get("button_reply", {}).get("id")
-                #         if button_id == "iniciar_encuesta":
-                #             actualizar_flujo(numero, 1)
-                #             enviar_pregunta(numero, 1)
-                #             return {"status": "ok"}
-                #     enviar_mensaje(numero, "Por favor usa el botón para iniciar la encuesta.")
-                #     return {"status": "ok"}
-
-                # 🟢 Detección universal de botones interactivos antes de procesar texto
-                tipo = mensaje.get("type")
-
-                if tipo == "interactive":
-                    print("🔘 [DEBUG] Se recibió un mensaje interactivo:", json.dumps(mensaje, indent=2))
-
-                    interactive = mensaje.get("interactive", {})
-                    if interactive.get("type") == "button_reply":
-                        button_data = interactive.get("button_reply", {})
-                        button_id = button_data.get("id")
-                        button_title = button_data.get("title")
-
-                        print(f"🧩 [DEBUG] Botón presionado -> id='{button_id}', título='{button_title}'")
-
-                        paso = obtener_flujo(numero)
-                        print(f"📍 [DEBUG] Paso actual del usuario: {paso}")
-
-                        # ✅ Inicio de encuesta
-                        if paso == "esperando_inicio_encuesta" and button_id == "iniciar_encuesta":
-                            print("🚀 [DEBUG] Botón 'iniciar_encuesta' detectado. Iniciando encuesta...")
-                            actualizar_flujo(numero, 1)
-                            enviar_pregunta(numero, 1)
-                            return {"status": "ok"}
-
-                        # 🔁 Aquí puedes agregar más botones según tu flujo
-                        print("⚠️ [DEBUG] Botón recibido pero no corresponde al flujo actual.")
-                        enviar_mensaje(numero, "Este botón no es válido en este momento.")
-                        return {"status": "ok"}
-
-
-
-
                 # Flujo de encuesta: validar, guardar y avanzar
                 if isinstance(paso, int):
                     manejar_encuesta(numero, texto, texto_lower, paso, "aspirante")
@@ -1610,22 +1590,24 @@ async def whatsapp_webhook(request: Request):
                     nombre = usuario_bd.get("nombre", "").split(" ")[0] or ""
                     enviar_menu_principal(numero, rol=rol, nombre=nombre)
                     return {"status": "ok"}
+
                 # Si no ha terminado la encuesta
                 if not finalizada:
                     if texto_lower in {"brillar", "menu", "menú", "inicio"}:
                         enviar_mensaje(numero, "🚩 No has finalizado tu encuesta. Por favor continúa para acceder al menú de opciones.")
-                        # Busca la última pregunta respondida, si no tienes esa lógica, inicia desde la 1
-                        # ultimo_paso = obtener_ultimo_paso_respondido(numero) or 1
-                        ultimo_paso =  1
+                        ultimo_paso = 1
                         actualizar_flujo(numero, ultimo_paso)
                         enviar_pregunta(numero, ultimo_paso)
                         return {"status": "ok"}
+
                     # Flujo normal de encuesta
                     if isinstance(paso, int):
                         manejar_encuesta(numero, texto, texto_lower, paso, rol)
                         return {"status": "ok"}
+
                     manejar_respuesta(numero, texto)
                     return {"status": "ok"}
+
                 # Si encuesta finalizada y responde opción de menú
                 if finalizada:
                     manejar_menu(numero, texto_lower, rol)
@@ -1637,6 +1619,7 @@ async def whatsapp_webhook(request: Request):
                     nombre = usuario_bd.get("nombre", "").split(" ")[0] or ""
                     enviar_menu_principal(numero, rol=rol, nombre=nombre)
                     return {"status": "ok"}
+
                 manejar_menu(numero, texto_lower, rol)
                 return {"status": "ok"}
 
@@ -1660,6 +1643,7 @@ async def whatsapp_webhook(request: Request):
         traceback.print_exc()
 
     return {"status": "ok"}
+
 
 # @router.post("/webhook")
 # async def whatsapp_webhook(request: Request):
