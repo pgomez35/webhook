@@ -1552,18 +1552,50 @@ async def whatsapp_webhook(request: Request):
                     return {"status": "ok"}
 
                 # Botón para iniciar encuesta
-                print(f"[DEBUG] Revisando paso: {paso} (tipo: {type(paso)})")
-                if paso == "esperando_inicio_encuesta":
-                    print(">>> [DEBUG] mensaje recibido:", mensaje)
+                # print(f"[DEBUG] Revisando paso: {paso} (tipo: {type(paso)})")
+                # if paso == "esperando_inicio_encuesta":
+                #     print(">>> [DEBUG] mensaje recibido:", mensaje)
+                #     interactive = mensaje.get("interactive", {})
+                #     if interactive.get("type") == "button_reply":
+                #         button_id = interactive.get("button_reply", {}).get("id")
+                #         if button_id == "iniciar_encuesta":
+                #             actualizar_flujo(numero, 1)
+                #             enviar_pregunta(numero, 1)
+                #             return {"status": "ok"}
+                #     enviar_mensaje(numero, "Por favor usa el botón para iniciar la encuesta.")
+                #     return {"status": "ok"}
+
+                # 🟢 Detección universal de botones interactivos antes de procesar texto
+                tipo = mensaje.get("type")
+
+                if tipo == "interactive":
+                    print("🔘 [DEBUG] Se recibió un mensaje interactivo:", json.dumps(mensaje, indent=2))
+
                     interactive = mensaje.get("interactive", {})
                     if interactive.get("type") == "button_reply":
-                        button_id = interactive.get("button_reply", {}).get("id")
-                        if button_id == "iniciar_encuesta":
+                        button_data = interactive.get("button_reply", {})
+                        button_id = button_data.get("id")
+                        button_title = button_data.get("title")
+
+                        print(f"🧩 [DEBUG] Botón presionado -> id='{button_id}', título='{button_title}'")
+
+                        paso = obtener_flujo(numero)
+                        print(f"📍 [DEBUG] Paso actual del usuario: {paso}")
+
+                        # ✅ Inicio de encuesta
+                        if paso == "esperando_inicio_encuesta" and button_id == "iniciar_encuesta":
+                            print("🚀 [DEBUG] Botón 'iniciar_encuesta' detectado. Iniciando encuesta...")
                             actualizar_flujo(numero, 1)
                             enviar_pregunta(numero, 1)
                             return {"status": "ok"}
-                    enviar_mensaje(numero, "Por favor usa el botón para iniciar la encuesta.")
-                    return {"status": "ok"}
+
+                        # 🔁 Aquí puedes agregar más botones según tu flujo
+                        print("⚠️ [DEBUG] Botón recibido pero no corresponde al flujo actual.")
+                        enviar_mensaje(numero, "Este botón no es válido en este momento.")
+                        return {"status": "ok"}
+
+
+
 
                 # Flujo de encuesta: validar, guardar y avanzar
                 if isinstance(paso, int):
