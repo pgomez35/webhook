@@ -268,7 +268,7 @@ def enviar_menu_principal(numero, rol=None, nombre=None):
     # Obtener el nombre desde la base de datos si no se pasa explícitamente
     if nombre is None:
         usuario = buscar_usuario_por_telefono(numero)
-        nombre = usuario.get("nombre_real") if usuario and usuario.get("nombre_real") else ""
+        nombre = usuario.get("nombre") if usuario and usuario.get("nombre") else ""
 
     encabezado = f"👋 ¡Hola {nombre}! 📋 Te damos este menú de opciones:\n\n" if nombre else "👋 ¡Hola! 📋 Te damos este menú de opciones:\n\n"
 
@@ -820,19 +820,19 @@ preguntas = {
         "5️⃣ No estoy seguro"
     ),
 
-# ✅ Nueva pregunta condicional antes de la 8
-    "7b": "📌 ¿Tienes experiencia transmitiendo lives en TikTok? Contesta *sí* o *no*.",
+    # ✅ Nueva pregunta condicional
+    8: "📌 ¿Tienes experiencia transmitiendo lives en TikTok? Contesta *sí* o *no*.",
 
-    8: "📌 ¿Cuántos meses de experiencia tienes en TikTok Live?",
+    9: "📌 ¿Cuántos meses de experiencia tienes en TikTok Live?",
 
-    9: (
+    10: (
         "📌 ¿Cuántas horas por día tendrías disponibles para hacer lives?\n"
         "1️⃣ 0-1 hrs\n"
         "2️⃣ 1-3 hrs\n"
         "3️⃣ Más de 3 hrs"
     ),
 
-    10: (
+    11: (
         "📌 ¿Cuántos días a la semana podrías transmitir?\n"
         "1️⃣ 1-2 días\n"
         "2️⃣ 3-5 días\n"
@@ -852,6 +852,13 @@ Mensaje_bienvenida = (
     "Para comenzar, dime por favor:\n"
     "¿Cuál es tu usuario de TikTok para validar en la plataforma?"
 )
+
+Mensaje_encuesta_incompleta = (
+    "📝 Hemos detectado que aún no has finalizado tu encuesta.\n\n"
+    "Por favor, complétala para que podamos continuar con tu proceso en *Prestige Agency Live*. 💫\n\n"
+    "¿Deseas retomarla ahora?"
+)
+
 
 def mensaje_confirmar_nombre(nombre: str) -> str:
     return f"Veo que tu nombre o seudónimo es {nombre}. Para continuar Contesta *sí* o *no*."
@@ -930,7 +937,7 @@ def enviar_preguntas_frecuentes(numero):
     enviar_mensaje(numero, mensaje)
 
 
-def manejar_respuesta(numero, texto):
+def manejar_respuesta_v0(numero, texto):
     texto = texto.strip()
     texto_normalizado = texto.lower()
     paso = obtener_flujo(numero)
@@ -1131,6 +1138,358 @@ def manejar_respuesta(numero, texto):
         else:
             enviar_mensaje(numero, "Por favor responde solo *sí* o *no*.")
 
+
+def manejar_menuv0(numero, texto, paso, rol):
+    texto_normalizado = texto.strip().lower()
+    # --- SALUDOS UNIVERSALES ---
+    if texto_normalizado in {"hola", "buenas", "saludos", "brillar"}:
+        usuario_bd = buscar_usuario_por_telefono(numero)
+        if usuario_bd:
+            nombre = usuario_bd.get("nombre", "").split(" ")[0] or ""
+            rol = usuario_bd.get("rol", "aspirante")
+            enviar_menu_principal(numero, rol=rol, nombre=nombre)
+        else:
+            enviar_mensaje(numero, Mensaje_bienvenida)
+            actualizar_flujo(numero, "esperando_usuario_tiktok")
+        return True
+
+    # --- VOLVER AL MENÚ PRINCIPAL ---
+    if texto_normalizado in {"menu", "menú", "volver", "inicio"}:
+        usuarios_flujo.pop(numero, None)
+        enviar_menu_principal(numero, rol)
+        return True
+
+    # --- MENU PRINCIPAL POR ROL ---
+    if paso is None:
+        match rol:
+            case "aspirante":
+                match texto_normalizado:
+                    case "1" | "mi información" | "perfil":
+                        actualizar_flujo(numero, 1)
+                        enviar_pregunta(numero, 1)
+                    case "2" | "análisis" | "diagnóstico" | "diagnostico":
+                        actualizar_flujo(numero, "diagnostico")
+                        enviar_diagnostico(numero)
+                        usuarios_flujo.pop(numero, None)
+                    case "3" | "requisitos":
+                        actualizar_flujo(numero, "requisitos")
+                        enviar_requisitos(numero)
+                        usuarios_flujo.pop(numero, None)
+                    case "4" | "chat libre":
+                        actualizar_flujo(numero, "chat_libre")
+                        enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.")
+                    case "5" | "preguntas" | "faq":
+                        actualizar_flujo(numero, "faq")
+                        enviar_preguntas_frecuentes(numero)
+                        usuarios_flujo.pop(numero, None)
+                    case _:
+                        enviar_mensaje(numero, "Opción no válida. Escribe 'menu' para ver las opciones.")
+                return True
+            # ... otros roles igual que antes ...
+    return False  # No fue menú
+
+# =========================
+# Orquestador
+# =========================
+def manejar_respuesta(numero, texto):
+    texto = texto.strip()
+    texto_normalizado = texto.lower()
+
+    # Estado actual
+    paso = obtener_flujo(numero)              # puede ser None, int, o string (p.e. "chat_libre")
+    rol = obtener_rol_usuario(numero)
+    asegurar_flujo(numero)                    # asegura estructura en caché
+
+    # 1) Atajos globales
+    if _es_saludo(texto_normalizado):
+        _procesar_saludo(numero, rol)
+        return
+
+    if _es_volver_menu(texto_normalizado):
+        usuarios_flujo.pop(numero, None)
+        enviar_menu_principal(numero, rol)
+        return
+
+    if paso == "chat_libre":
+        # En chat libre no procesamos menú/encuesta
+        return
+
+    # 2) Delegar según estado
+    if paso is None or isinstance(paso, str):
+        manejar_menu(numero, texto_normalizado, rol)     # 👈 MENÚ
+    elif isinstance(paso, int):
+        manejar_encuesta(numero, texto, texto_normalizado, paso, rol)  # 👈 ENCUESTA
+    else:
+        enviar_mensaje(numero, "Opción no válida. Escribe 'menu' para ver las opciones.")
+
+
+# =========================
+# Utilidades simples
+# =========================
+def _es_saludo(tn: str) -> bool:
+    return tn in {"hola", "buenas", "saludos", "brillar"}
+
+def _es_volver_menu(tn: str) -> bool:
+    return tn in {"menu", "menú", "volver", "inicio"}
+
+def _procesar_saludo(numero, rol_actual):
+    usuario_bd = buscar_usuario_por_telefono(numero)
+    if usuario_bd:
+        nombre = (usuario_bd.get("nombre") or "").split(" ")[0]
+        rol = usuario_bd.get("rol", rol_actual or "aspirante")
+        enviar_menu_principal(numero, rol=rol, nombre=nombre)
+    else:
+        enviar_mensaje(numero, Mensaje_bienvenida)
+        actualizar_flujo(numero, "esperando_usuario_tiktok")
+
+
+# =========================
+#  MENÚ (por rol)
+# =========================
+def manejar_menu(numero, texto_normalizado, rol):
+    # Menús por rol
+    if rol == "aspirante":
+        if texto_normalizado in {"1", "mi información", "perfil"}:
+            actualizar_flujo(numero, 1)
+            enviar_pregunta(numero, 1)
+            return
+        if texto_normalizado in {"2", "análisis", "diagnóstico", "diagnostico"}:
+            actualizar_flujo(numero, "diagnostico")
+            enviar_diagnostico(numero)
+            usuarios_flujo.pop(numero, None)
+            return
+        if texto_normalizado in {"3", "requisitos"}:
+            actualizar_flujo(numero, "requisitos")
+            enviar_requisitos(numero)
+            usuarios_flujo.pop(numero, None)
+            return
+        if texto_normalizado in {"4", "chat libre"}:
+            actualizar_flujo(numero, "chat_libre")
+            enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.")
+            return
+        if texto_normalizado in {"5", "preguntas", "faq"}:
+            actualizar_flujo(numero, "faq")
+            enviar_preguntas_frecuentes(numero)
+            usuarios_flujo.pop(numero, None)
+            return
+        enviar_mensaje(numero, "Opción no válida. Escribe 'menu' para ver las opciones.")
+        return
+
+    if rol == "creador":
+        if texto_normalizado == "1":
+            actualizar_flujo(numero, 1)
+            enviar_pregunta(numero, 1)
+            return
+        if texto_normalizado == "3":
+            actualizar_flujo(numero, "asesoria")
+            enviar_mensaje(numero, "📌 Un asesor se pondrá en contacto contigo pronto.")
+            usuarios_flujo.pop(numero, None)
+            return
+        if texto_normalizado == "4":
+            actualizar_flujo(numero, "recursos")
+            enviar_recursos_exclusivos(numero)
+            usuarios_flujo.pop(numero, None)
+            return
+        if texto_normalizado == "5":
+            actualizar_flujo(numero, "eventos")
+            enviar_eventos(numero)
+            usuarios_flujo.pop(numero, None)
+            return
+        if texto_normalizado == "6":
+            actualizar_flujo(numero, "soporte")
+            enviar_mensaje(numero, "📩 Describe tu problema y el equipo técnico te responderá.")
+            return
+        if texto_normalizado in {"7", "chat libre"}:
+            actualizar_flujo(numero, "chat_libre")
+            enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.")
+            return
+        if texto_normalizado == "8":
+            actualizar_flujo(numero, "estadisticas")
+            enviar_estadisticas(numero)
+            usuarios_flujo.pop(numero, None)
+            return
+        if texto_normalizado == "9":
+            actualizar_flujo(numero, "baja")
+            solicitar_baja(numero)
+            usuarios_flujo.pop(numero, None)
+            return
+        enviar_mensaje(numero, "Opción no válida. Escribe 'menu' para ver las opciones.")
+        return
+
+    if rol == "admin":
+        if texto_normalizado == "1":
+            actualizar_flujo(numero, "panel")
+            enviar_panel_control(numero)
+            return
+        if texto_normalizado == "2":
+            actualizar_flujo(numero, "ver_perfiles")
+            enviar_perfiles(numero)
+            usuarios_flujo.pop(numero, None)
+            return
+        if texto_normalizado == "3":
+            actualizar_flujo(numero, "comunicado")
+            enviar_mensaje(numero, "✉️ Escribe el comunicado a enviar a creadores/aspirantes:")
+            return
+        if texto_normalizado == "4":
+            actualizar_flujo(numero, "recursos_admin")
+            gestionar_recursos(numero)
+            usuarios_flujo.pop(numero, None)
+            return
+        if texto_normalizado in {"5", "chat libre"}:
+            actualizar_flujo(numero, "chat_libre")
+            enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.")
+            return
+        enviar_mensaje(numero, "Opción no válida. Escribe 'menu' para ver las opciones.")
+        return
+
+    # Rol desconocido → menú básico
+    if texto_normalizado == "1":
+        actualizar_flujo(numero, "info")
+        enviar_info_general(numero)
+        return
+
+    enviar_mensaje(numero, "Opción no válida. Escribe 'menu' para ver las opciones.")
+
+def manejar_encuesta(numero, texto, texto_normalizado, paso, rol):
+    # — Paso 1: Nombre
+    if paso == 1:
+        if len(texto) < 3:
+            enviar_mensaje(numero, "⚠️ Ingresa tu nombre completo (mínimo 3 caracteres).")
+            return
+        flujo = asegurar_flujo(numero)
+        flujo["nombre"] = texto.title().strip()
+
+    # — Paso 2: Edad
+    if paso == 2:
+        try:
+            edad = int(texto)
+            if not (0 < edad < 120):
+                raise ValueError
+        except:
+            enviar_mensaje(numero, "⚠️ Ingresa una edad válida (1–119).")
+            return
+
+    # — Paso 3: Género
+    if paso == 3 and texto not in {"1", "2", "3", "4"}:
+        enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–4).")
+        return
+
+    # — Paso 4: País
+    if paso == 4:
+        opciones_validas = [str(i) for i in range(1, 21)]
+        if texto not in opciones_validas and len(texto) < 2:
+            enviar_mensaje(numero, "⚠️ Ingresa el número de tu país o escribe su nombre.")
+            return
+
+    # — Paso 5: Ciudad
+    if paso == 5 and len(texto) < 2:
+        enviar_mensaje(numero, "⚠️ Ingresa una ciudad válida.")
+        return
+
+    # — Paso 6: Actividad actual
+    if paso == 6 and texto not in [str(i) for i in range(1, 9)]:
+        enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–8).")
+        return
+
+    # — Paso 7: Intención principal
+    if paso == 7 and texto not in [str(i) for i in range(1, 6)]:
+        enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–5).")
+        return
+
+    # — Paso 8: ¿Tiene experiencia transmitiendo?
+    if paso == 8:
+        if texto_normalizado in {"si", "sí", "s"}:
+            texto = "sí"
+        elif texto_normalizado in {"no", "n"}:
+            texto = "no"
+        else:
+            enviar_mensaje(numero, "⚠️ Por favor responde solo *sí* o *no*.")
+            return
+
+        guardar_respuesta(numero, paso, texto)
+        nombre = (asegurar_flujo(numero).get("nombre") or "").split(" ")[0]
+
+        # 👉 Si respondió NO, salta la 9
+        if texto == "no":
+            enviar_mensaje(
+                numero,
+                f"✅ Gracias {nombre}. Para continuar en el proceso, responde estas **3 preguntas adicionales**."
+            )
+            actualizar_flujo(numero, 10)
+            enviar_mensaje(numero, preguntas[10])
+            return
+
+        # 👉 Si respondió SÍ, continúa normalmente a la 9
+        actualizar_flujo(numero, 9)
+        enviar_mensaje(numero, preguntas[9])
+        return
+
+    # — Paso 9: Meses de experiencia (solo si respondió sí)
+    if paso == 9:
+        try:
+            meses = int(texto)
+            if not (0 <= meses <= 999):
+                raise ValueError
+        except:
+            enviar_mensaje(numero, "⚠️ Ingresa un número válido de meses (0–999).")
+            return
+
+        guardar_respuesta(numero, paso, texto)
+
+        # ✅ Muestra el mensaje puente después de la 9
+        nombre = (asegurar_flujo(numero).get("nombre") or "").split(" ")[0]
+        enviar_mensaje(
+            numero,
+            f"✅ Gracias {nombre}. Para continuar en el proceso, responde estas **3 preguntas adicionales**."
+        )
+
+        # Avanza al paso 10
+        actualizar_flujo(numero, 10)
+        enviar_mensaje(numero, preguntas[10])
+        return
+
+    # — Paso 10: Horas/semana
+    if paso == 10 and texto not in {"1", "2", "3"}:
+        enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–3).")
+        return
+
+    # — Paso 11: Meta de ingresos
+    if paso == 11 and texto not in {"1", "2", "3", "4"}:
+        enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–4).")
+        return
+
+    # Guardar respuesta general
+    guardar_respuesta(numero, paso, texto)
+
+    # Determinar siguiente paso
+    siguiente = paso + 1
+    ultimo_paso = max(preguntas.keys())
+
+    # 🏁 Si terminó la encuesta
+    if siguiente > ultimo_paso:
+        usuarios_flujo.pop(numero, None)
+        nombre = (asegurar_flujo(numero).get("nombre") or "").split(" ")[0]
+        enviar_mensaje(numero, mensaje_encuesta_final(nombre))
+        consolidar_perfil(numero)
+
+        # ✅ Marcar encuesta completada en la BD
+        completada = marcar_encuesta_completada(numero)
+        if completada:
+            enviar_mensaje(numero, "📊 Tu encuesta fue registrada correctamente en el sistema.")
+        else:
+            enviar_mensaje(numero, "⚠️ No pudimos confirmar el registro en la base de datos, pero tus respuestas fueron guardadas.")
+
+        enviar_mensaje(numero, '✨ Para ir al menú principal escribe **brillar**')
+        return
+
+    # Continuar flujo normal
+    actualizar_flujo(numero, siguiente)
+    texto_pregunta = preguntas[siguiente]
+    nombre = (asegurar_flujo(numero).get("nombre") or "").split(" ")[0]
+    if "{nombre}" in texto_pregunta:
+        texto_pregunta = texto_pregunta.format(nombre=nombre)
+    enviar_mensaje(numero, texto_pregunta)
+
 @router.post("/webhook")
 async def whatsapp_webhook(request: Request):
     data = await request.json()
@@ -1147,108 +1506,110 @@ async def whatsapp_webhook(request: Request):
             tipo = mensaje.get("type")
             texto = mensaje.get("text", {}).get("body", "").strip()
             texto_lower = texto.lower()
-
-            # --- Variables auxiliares ---
             paso = obtener_flujo(numero)
             usuario_bd = buscar_usuario_por_telefono(numero)
-            rol = obtener_rol_usuario(numero)
+            rol = obtener_rol_usuario(numero) if usuario_bd else None
 
             print(f"📍 [DEBUG] número={numero}, paso={paso}, texto='{texto_lower}'")
 
-            # === 1️⃣ COMANDOS UNIVERSALES: SALUDOS / MENÚ / BRILLAR ===
-            if tipo == "text":
-                palabras_clave = ["hola", "buenas", "quiero", "brilla", "brillar", "menu", "menú"]
-                if any(palabra in texto_lower for palabra in palabras_clave):
-                    usuarios_flujo.pop(numero, None)  # reinicia cualquier flujo activo
-
-                    if usuario_bd:
-                        nombre = usuario_bd.get("nombre", "").split(" ")[0] or ""
-                        rol = usuario_bd.get("rol", "aspirante")
-                        enviar_mensaje(numero, f"👋 ¡Hola {nombre}! 💫 Te damos este menú de opciones.")
-                        enviar_menu_principal(numero, rol=rol, nombre=nombre)
-                    else:
-                        enviar_mensaje(numero, Mensaje_bienvenida)
-                        actualizar_flujo(numero, "esperando_usuario_tiktok")
-
-                    print(f"🔁 [DEBUG] Reinicio de flujo con mensaje que contiene palabra clave ({numero})")
+            # === 1️⃣ NUEVO USUARIO: FLUJO DE ONBOARDING Y ENCUESTA ===
+            if tipo == "text" and not usuario_bd:
+                # Si no hay flujo, enviar bienvenida y pedir usuario TikTok
+                if paso is None:
+                    enviar_mensaje(numero, Mensaje_bienvenida)
+                    actualizar_flujo(numero, "esperando_usuario_tiktok")
                     return {"status": "ok"}
 
-            # === 2️⃣ NUEVO USUARIO SIN REGISTRO ===
-            if not usuario_bd and paso is None and numero not in usuarios_temp:
-                enviar_mensaje(numero, Mensaje_bienvenida)
-                actualizar_flujo(numero, "esperando_usuario_tiktok")
-                print(f"🟢 [DEBUG] Flujo inicial -> esperando_usuario_tiktok ({numero})")
-                return {"status": "ok"}
-
-            # === 3️⃣ FLUJO DE VERIFICACIÓN USUARIO TIKTOK ===
-            if paso == "esperando_usuario_tiktok" and tipo == "text":
-                usuario_tiktok = texto.strip()
-                aspirante = buscar_aspirante_por_usuario_tiktok(usuario_tiktok)
-
-                # ----- Depuración -----
-                print(f"🔍 Usuario TikTok recibido: {usuario_tiktok}")
-                print(f"🔍 Aspirante encontrado: {aspirante}")
-                print(f"🔍 usuarios_temp: {usuarios_temp}")
-                print(f"🔍 paso actual: {paso}")
-
-                if aspirante:
-                    nombre = aspirante.get("nickname") or aspirante.get("nombre_real") or "(sin nombre)"
-                    enviar_mensaje(numero, mensaje_confirmar_nombre(nombre))
-                    actualizar_flujo(numero, "confirmando_nombre")
-                    usuarios_temp[numero] = aspirante
-                else:
-                    enviar_mensaje(numero, "❌ No encontramos ese usuario de TikTok. ¿Podrías verificarlo?")
-                return {"status": "ok"}
-
-            # === 4️⃣ CONFIRMAR NOMBRE ===
-            if paso == "confirmando_nombre" and tipo == "text":
-                texto_normalizado = texto.lower().strip()
-
-                # ✅ Solo aceptamos 'sí' o 'no'
-                if texto_normalizado in ["si", "sí", "s"]:
-                    aspirante = usuarios_temp.get(numero)
+                # Se espera usuario de TikTok
+                if paso == "esperando_usuario_tiktok":
+                    usuario_tiktok = texto.strip()
+                    aspirante = buscar_aspirante_por_usuario_tiktok(usuario_tiktok)
                     if aspirante:
-                        actualizar_telefono_aspirante(aspirante["id"], numero)
+                        nombre = aspirante.get("nickname") or aspirante.get("nombre_real") or "(sin nombre)"
+                        enviar_mensaje(numero, mensaje_confirmar_nombre(nombre))
+                        actualizar_flujo(numero, "confirmando_nombre")
+                        usuarios_temp[numero] = aspirante
+                    else:
+                        enviar_mensaje(numero, "❌ No encontramos ese usuario de TikTok. ¿Podrías verificarlo?")
+                    return {"status": "ok"}
 
-                    enviar_botones(
-                        numero,
-                        texto=mensaje_proteccion_datos(),
-                        botones=[{"id": "iniciar_encuesta", "title": "✅ Sí, quiero iniciar"}],
-                    )
-                    actualizar_flujo(numero, "esperando_inicio_encuesta")
-                elif texto_normalizado in ["no", "n"]:
-                    # Usuario confirma que el nombre NO es correcto
-                    enviar_mensaje(numero, "❌ Por favor verifica tu nombre o usuario de TikTok.")
-                    # Mantener el flujo en 'confirmando_nombre' para reintentar
-                else:
-                    # Cualquier otra respuesta
-                    enviar_mensaje(numero, "⚠️ Por favor responde solo *sí* o *no* para continuar.")
-                    # Mantener el flujo en 'confirmando_nombre' hasta recibir respuesta válida
-                return {"status": "ok"}
+                # Confirmar nickname y actualizar teléfono
+                if paso == "confirmando_nombre":
+                    if texto_lower in ["si", "sí", "s"]:
+                        aspirante = usuarios_temp.get(numero)
+                        if aspirante:
+                            actualizar_telefono_aspirante(aspirante["id"], numero)
+                        enviar_botones(
+                            numero,
+                            texto=mensaje_proteccion_datos(),
+                            botones=[{"id": "iniciar_encuesta", "title": "✅ Sí, quiero iniciar"}]
+                        )
+                        actualizar_flujo(numero, "esperando_inicio_encuesta")
+                    elif texto_lower in ["no", "n"]:
+                        enviar_mensaje(numero, "❌ Por favor verifica tu nombre o usuario de TikTok.")
+                    else:
+                        enviar_mensaje(numero, "⚠️ Por favor responde solo *sí* o *no* para continuar.")
+                    return {"status": "ok"}
 
-            # === 5️⃣ ESPERANDO INICIO ENCUESTA ===
-            if paso == "esperando_inicio_encuesta":
-                interactive = mensaje.get("interactive", {})
-                if interactive.get("type") == "button_reply":
-                    button_id = interactive.get("button_reply", {}).get("id")
-                    if button_id == "iniciar_encuesta":
-                        actualizar_flujo(numero, 1)
-                        enviar_pregunta(numero, 1)
-                        print(f"🟢 [DEBUG] Encuesta iniciada -> paso=1 ({numero})")
+                # Botón para iniciar encuesta
+                if paso == "esperando_inicio_encuesta":
+                    interactive = mensaje.get("interactive", {})
+                    if interactive.get("type") == "button_reply":
+                        button_id = interactive.get("button_reply", {}).get("id")
+                        if button_id == "iniciar_encuesta":
+                            actualizar_flujo(numero, 1)
+                            enviar_pregunta(numero, 1)
+                            return {"status": "ok"}
+                    enviar_mensaje(numero, "Por favor usa el botón para iniciar la encuesta.")
+                    return {"status": "ok"}
+
+                # Flujo de encuesta: validar, guardar y avanzar
+                if isinstance(paso, int):
+                    manejar_encuesta(numero, texto, texto_lower, paso, "aspirante")
+                    return {"status": "ok"}
+
+            # === 2️⃣ ASPIRANTE EN BASE DE DATOS ===
+            if usuario_bd and rol == "aspirante":
+                finalizada = encuesta_finalizada(numero)
+                # Si encuesta finalizada y escribe comando de menú
+                if finalizada and texto_lower in {"brillar", "menu", "menú", "inicio"}:
+                    nombre = usuario_bd.get("nombre", "").split(" ")[0] or ""
+                    enviar_menu_principal(numero, rol=rol, nombre=nombre)
+                    return {"status": "ok"}
+                # Si no ha terminado la encuesta
+                if not finalizada:
+                    if texto_lower in {"brillar", "menu", "menú", "inicio"}:
+                        enviar_mensaje(numero, "🚩 No has finalizado tu encuesta. Por favor continúa para acceder al menú de opciones.")
+                        # Busca la última pregunta respondida, si no tienes esa lógica, inicia desde la 1
+                        # ultimo_paso = obtener_ultimo_paso_respondido(numero) or 1
+                        ultimo_paso =  1
+                        actualizar_flujo(numero, ultimo_paso)
+                        enviar_pregunta(numero, ultimo_paso)
                         return {"status": "ok"}
+                    # Flujo normal de encuesta
+                    if isinstance(paso, int):
+                        manejar_encuesta(numero, texto, texto_lower, paso, rol)
+                        return {"status": "ok"}
+                    manejar_respuesta(numero, texto)
+                    return {"status": "ok"}
+                # Si encuesta finalizada y responde opción de menú
+                if finalizada:
+                    manejar_menu(numero, texto_lower, rol)
+                    return {"status": "ok"}
 
-                enviar_mensaje(numero, "Por favor usa el botón para iniciar la encuesta.")
+            # === 3️⃣ ADMIN O CREADOR EN BD ===
+            if usuario_bd and rol in ("admin", "creador", "creadores"):
+                if texto_lower in {"brillar", "menu", "menú", "inicio"}:
+                    nombre = usuario_bd.get("nombre", "").split(" ")[0] or ""
+                    enviar_menu_principal(numero, rol=rol, nombre=nombre)
+                    return {"status": "ok"}
+                manejar_menu(numero, texto_lower, rol)
                 return {"status": "ok"}
 
-            # === 6️⃣ ASIGNAR ROL SI FALTA ===
-            if usuario_bd and numero not in usuarios_roles:
-                usuarios_roles[numero] = (usuario_bd["rol"], time.time())
-
-            # === 7️⃣ CHAT LIBRE ===
+            # === 4️⃣ CHAT LIBRE ===
             if paso == "chat_libre":
                 if tipo == "text":
                     guardar_mensaje(numero, texto, tipo="recibido", es_audio=False)
-                    print(f"💬 Chat libre de {numero}: {texto}")
                 elif tipo == "audio":
                     audio_id = mensaje.get("audio", {}).get("id")
                     url_cloudinary = descargar_audio(audio_id, TOKEN)
@@ -1259,34 +1620,169 @@ async def whatsapp_webhook(request: Request):
                         enviar_mensaje(numero, "⚠️ No se pudo procesar tu audio, inténtalo de nuevo.")
                 return {"status": "ok"}
 
-            # === 8️⃣ REINICIO DESDE BOTÓN “Sí, continuar” ===
-            if paso is None and tipo == "interactive":
-                interactive = mensaje.get("interactive", {})
-                boton_texto = interactive.get("button_reply", {}).get("title", "").lower()
-                if boton_texto == "sí, continuar":
-                    actualizar_flujo(numero, 1)
-                    enviar_pregunta(numero, 1)
-                    print(f"🟢 [DEBUG] Flujo reiniciado -> paso=1 ({numero})")
-                    return {"status": "ok"}
-
-            # === 9️⃣ ACTIVAR CHAT LIBRE SEGÚN ROL ===
-            if paso is None and tipo == "text":
-                rol_usuario = usuarios_roles.get(numero, ("",))[0]
-                if (texto_lower in ["4", "chat libre"] and rol_usuario == "aspirante") or \
-                   (texto_lower in ["7", "chat libre"] and rol_usuario == "creador") or \
-                   (texto_lower in ["5", "chat libre"] and rol_usuario == "admin"):
-                    actualizar_flujo(numero, "chat_libre")
-                    enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.")
-                    return {"status": "ok"}
-
-            # === 🔟 MANEJAR RESPUESTA NORMAL (ENCUESTA) ===
-            manejar_respuesta(numero, texto)
-
     except Exception as e:
         print("❌ Error procesando webhook:", e)
+        import traceback
         traceback.print_exc()
 
     return {"status": "ok"}
+
+# @router.post("/webhook")
+# async def whatsapp_webhook(request: Request):
+#     data = await request.json()
+#     print("📩 Webhook recibido:", json.dumps(data, indent=2))
+#
+#     try:
+#         cambios = data.get("entry", [])[0].get("changes", [])[0].get("value", {})
+#         mensajes = cambios.get("messages", [])
+#         if not mensajes:
+#             return {"status": "ok"}
+#
+#         for mensaje in mensajes:
+#             numero = mensaje.get("from")
+#             tipo = mensaje.get("type")
+#             texto = mensaje.get("text", {}).get("body", "").strip()
+#             texto_lower = texto.lower()
+#
+#             # --- Variables auxiliares ---
+#             paso = obtener_flujo(numero)
+#             usuario_bd = buscar_usuario_por_telefono(numero)
+#             rol = obtener_rol_usuario(numero)
+#
+#             print(f"📍 [DEBUG] número={numero}, paso={paso}, texto='{texto_lower}'")
+#
+#             # === 1️⃣ COMANDOS UNIVERSALES: SALUDOS / MENÚ / BRILLAR ===
+#             if tipo == "text":
+#                 palabras_clave = ["hola","buenas","brilla", "menu"]
+#                 if any(palabra in texto_lower for palabra in palabras_clave):
+#                     usuarios_flujo.pop(numero, None)  # reinicia cualquier flujo activo
+#
+#                     if usuario_bd:
+#                         nombre = usuario_bd.get("nombre", "").split(" ")[0] or ""
+#                         rol = usuario_bd.get("rol", "aspirante")
+#                         enviar_mensaje(numero, f"👋 ¡Hola {nombre}! 💫 Te damos este menú de opciones.")
+#                         enviar_menu_principal(numero, rol=rol, nombre=nombre)
+#                     else:
+#                         enviar_mensaje(numero, Mensaje_bienvenida)
+#                         actualizar_flujo(numero, "esperando_usuario_tiktok")
+#
+#                     print(f"🔁 [DEBUG] Reinicio de flujo con mensaje que contiene palabra clave ({numero})")
+#                     return {"status": "ok"}
+#
+#             # === 2️⃣ NUEVO USUARIO SIN REGISTRO ===
+#             if not usuario_bd and paso is None:
+#                 enviar_mensaje(numero, Mensaje_bienvenida)
+#                 actualizar_flujo(numero, "esperando_usuario_tiktok")
+#                 print(f"🟢 [DEBUG] Flujo inicial -> esperando_usuario_tiktok ({numero})")
+#                 return {"status": "ok"}
+#
+#             # === 3️⃣ FLUJO DE VERIFICACIÓN USUARIO TIKTOK ===
+#             if paso == "esperando_usuario_tiktok" and tipo == "text":
+#                 usuario_tiktok = texto.strip()
+#                 aspirante = buscar_aspirante_por_usuario_tiktok(usuario_tiktok)
+#
+#                 # ----- Depuración -----
+#                 print(f"🔍 Usuario TikTok recibido: {usuario_tiktok}")
+#                 print(f"🔍 Aspirante encontrado: {aspirante}")
+#                 print(f"🔍 usuarios_temp: {usuarios_temp}")
+#                 print(f"🔍 paso actual: {paso}")
+#
+#                 if aspirante:
+#                     nombre = aspirante.get("nickname") or aspirante.get("nombre_real") or "(sin nombre)"
+#                     enviar_mensaje(numero, mensaje_confirmar_nombre(nombre))
+#                     actualizar_flujo(numero, "confirmando_nombre")
+#                     usuarios_temp[numero] = aspirante
+#                 else:
+#                     enviar_mensaje(numero, "❌ No encontramos ese usuario de TikTok. ¿Podrías verificarlo?")
+#                 return {"status": "ok"}
+#
+#             # === 4️⃣ CONFIRMAR NOMBRE ===
+#             if paso == "confirmando_nombre" and tipo == "text":
+#                 texto_normalizado = texto.lower().strip()
+#
+#                 # ✅ Solo aceptamos 'sí' o 'no'
+#                 if texto_normalizado in ["si", "sí", "s"]:
+#                     aspirante = usuarios_temp.get(numero)
+#                     if aspirante:
+#                         actualizar_telefono_aspirante(aspirante["id"], numero)
+#
+#                     enviar_botones(
+#                         numero,
+#                         texto=mensaje_proteccion_datos(),
+#                         botones=[{"id": "iniciar_encuesta", "title": "✅ Sí, quiero iniciar"}],
+#                     )
+#                     actualizar_flujo(numero, "esperando_inicio_encuesta")
+#                 elif texto_normalizado in ["no", "n"]:
+#                     # Usuario confirma que el nombre NO es correcto
+#                     enviar_mensaje(numero, "❌ Por favor verifica tu nombre o usuario de TikTok.")
+#                     # Mantener el flujo en 'confirmando_nombre' para reintentar
+#                 else:
+#                     # Cualquier otra respuesta
+#                     enviar_mensaje(numero, "⚠️ Por favor responde solo *sí* o *no* para continuar.")
+#                     # Mantener el flujo en 'confirmando_nombre' hasta recibir respuesta válida
+#                 return {"status": "ok"}
+#
+#             # === 5️⃣ ESPERANDO INICIO ENCUESTA ===
+#             if paso == "esperando_inicio_encuesta":
+#                 interactive = mensaje.get("interactive", {})
+#                 if interactive.get("type") == "button_reply":
+#                     button_id = interactive.get("button_reply", {}).get("id")
+#                     if button_id == "iniciar_encuesta":
+#                         actualizar_flujo(numero, 1)
+#                         enviar_pregunta(numero, 1)
+#                         print(f"🟢 [DEBUG] Encuesta iniciada -> paso=1 ({numero})")
+#                         return {"status": "ok"}
+#
+#                 enviar_mensaje(numero, "Por favor usa el botón para iniciar la encuesta.")
+#                 return {"status": "ok"}
+#
+#             # === 6️⃣ ASIGNAR ROL SI FALTA ===
+#             if usuario_bd and numero not in usuarios_roles:
+#                 usuarios_roles[numero] = (usuario_bd["rol"], time.time())
+#
+#             # === 7️⃣ CHAT LIBRE ===
+#             if paso == "chat_libre":
+#                 if tipo == "text":
+#                     guardar_mensaje(numero, texto, tipo="recibido", es_audio=False)
+#                     print(f"💬 Chat libre de {numero}: {texto}")
+#                 elif tipo == "audio":
+#                     audio_id = mensaje.get("audio", {}).get("id")
+#                     url_cloudinary = descargar_audio(audio_id, TOKEN)
+#                     if url_cloudinary:
+#                         guardar_mensaje(numero, url_cloudinary, tipo="recibido", es_audio=True)
+#                         enviar_mensaje(numero, "🎧 Recibimos tu audio. Un asesor lo revisará pronto.")
+#                     else:
+#                         enviar_mensaje(numero, "⚠️ No se pudo procesar tu audio, inténtalo de nuevo.")
+#                 return {"status": "ok"}
+#
+#             # === 8️⃣ REINICIO DESDE PLANTILLA ENVIADA PARA QUE ASPIRANTE CONTESTE UNA ENCUESTA CON BOTÓN “Sí, continuar” ===
+#             if paso is None and tipo == "interactive":
+#                 interactive = mensaje.get("interactive", {})
+#                 boton_texto = interactive.get("button_reply", {}).get("title", "").lower()
+#                 if boton_texto == "sí, continuar":
+#                     actualizar_flujo(numero, 1)
+#                     enviar_pregunta(numero, 1)
+#                     print(f"🟢 [DEBUG] Flujo reiniciado -> paso=1 ({numero})")
+#                     return {"status": "ok"}
+#
+#             # === 9️⃣ ACTIVAR CHAT LIBRE SEGÚN ROL ===
+#             if paso is None and tipo == "text":
+#                 rol_usuario = usuarios_roles.get(numero, ("",))[0]
+#                 if (texto_lower in ["4", "chat libre"] and rol_usuario == "aspirante") or \
+#                    (texto_lower in ["7", "chat libre"] and rol_usuario == "creador") or \
+#                    (texto_lower in ["5", "chat libre"] and rol_usuario == "admin"):
+#                     actualizar_flujo(numero, "chat_libre")
+#                     enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.")
+#                     return {"status": "ok"}
+#
+#             # === 🔟 MANEJAR RESPUESTA NORMAL (ENCUESTA) ===
+#             manejar_respuesta(numero, texto)
+#
+#     except Exception as e:
+#         print("❌ Error procesando webhook:", e)
+#         traceback.print_exc()
+#
+#     return {"status": "ok"}
 
 
 # @router.post("/webhook")

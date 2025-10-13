@@ -2549,49 +2549,46 @@ def buscar_aspirante_por_usuario_tiktok(usuario_tiktok: str):
         print("❌ Error al buscar creador por usuario de TikTok:", e)
         return None
 
+
+import re
+
+def normalizar_numero(numero: str) -> str:
+    numero = numero.strip().replace(" ", "").replace("-", "")
+    numero = numero.replace("+", "").replace("@c.us", "").replace("@wa.me", "")
+    numero = re.sub(r"\D", "", numero)  # elimina cualquier otro símbolo no numérico
+    return numero
+
+
 def buscar_usuario_por_telefono(numero: str):
     try:
-        # Normalizar número
-        numero = numero.strip().replace(" ", "").replace("-", "")
-        if numero.startswith("+57"):
-            numero = numero[3:]
-        elif numero.startswith("57") and len(numero) > 10:
-            numero = numero[2:]
-
+        numero = normalizar_numero(numero)
         with get_connection() as conn:
             with conn.cursor() as cur:
-                # Buscar en creadores con JOIN roles
-                cur.execute(
-                    """
+                # Buscar en creadores
+                cur.execute("""
                     SELECT c.id, c.nickname, c.nombre_real AS nombre,
                            COALESCE(r.nombre, 'aspirante') AS rol
                     FROM creadores c
                     LEFT JOIN roles r ON c.rol_id = r.id
                     WHERE c.telefono = %s OR c.whatsapp = %s
-                    LIMIT 1
-                    """,
-                    (numero, numero)
-                )
+                    LIMIT 1;
+                """, (numero, numero))
                 row = cur.fetchone()
                 if row:
                     return dict(zip([desc[0] for desc in cur.description], row))
 
                 # Buscar en admin_usuario
-                cur.execute(
-                    """
+                cur.execute("""
                     SELECT id, username AS nickname,
                            nombre_completo AS nombre,
                            'admin' AS rol
                     FROM admin_usuario
                     WHERE telefono = %s
-                    LIMIT 1
-                    """,
-                    (numero,)
-                )
+                    LIMIT 1;
+                """, (numero,))
                 row = cur.fetchone()
                 if row:
                     return dict(zip([desc[0] for desc in cur.description], row))
-
                 return None
 
     except Exception as e:
@@ -2599,6 +2596,81 @@ def buscar_usuario_por_telefono(numero: str):
         print("❌ Error al buscar usuario por teléfono:", e)
         traceback.print_exc()
         return None
+
+
+def marcar_encuesta_completada(numero: str) -> bool:
+    """Marca la encuesta como completada en la tabla creadores."""
+    try:
+        numero = normalizar_numero(numero)
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE creadores
+                    SET encuesta_terminada = TRUE
+                    WHERE telefono = %s OR whatsapp = %s
+                    RETURNING id;
+                """, (numero, numero))
+                row = cur.fetchone()
+                conn.commit()
+
+                if row:
+                    print(f"✅ Encuesta marcada como completada para ID {row[0]}")
+                    return True
+                print("⚠️ No se encontró usuario para actualizar encuesta.")
+                return False
+
+    except Exception as e:
+        import traceback
+        print("❌ Error al marcar encuesta como completada:", e)
+        traceback.print_exc()
+        return False
+
+
+def encuesta_finalizada(numero: str) -> bool:
+    """Retorna True si el usuario completó la encuesta, False en caso contrario."""
+    try:
+        numero = normalizar_numero(numero)
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT encuesta_terminada
+                    FROM creadores
+                    WHERE telefono = %s OR whatsapp = %s
+                    LIMIT 1;
+                """, (numero, numero))
+                row = cur.fetchone()
+                if row:
+                    estado = bool(row[0])
+                    print(f"🔎 Encuesta finalizada ({numero}): {estado}")
+                    return estado
+                return False
+    except Exception as e:
+        import traceback
+        print("❌ Error al verificar encuesta terminada:", e)
+        traceback.print_exc()
+        return False
+
+def obtener_ultimo_paso_respondido(numero: str) -> int | None:
+
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT MAX(paso)
+                    FROM perfil_creador_flujo_temp
+                    WHERE telefono = %s
+                    """,
+                    (numero,)
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    return int(row[0])
+                return None
+    except Exception as e:
+        print("❌ Error al obtener último paso respondido:", e)
+        return None
+
 
 
 # def buscar_usuario_por_telefono(numero: str):
