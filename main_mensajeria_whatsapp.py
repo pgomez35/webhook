@@ -1658,7 +1658,7 @@ async def whatsapp_webhook(request: Request):
                 # Si no ha terminado la encuesta
                 if not finalizada:
                     if texto_lower in {"brillar", "menu", "menú", "inicio"}:
-                        enviar_mensaje(numero, "🚩 No has finalizado tu encuesta. Por favor continúa para acceder al menú de opciones.")
+                        enviar_mensaje(numero, "🚩 No has finalizado tu encuesta. Por favor continúa para completar la información.")
                         ultimo_paso = 1
                         actualizar_flujo(numero, ultimo_paso)
                         enviar_pregunta(numero, ultimo_paso)
