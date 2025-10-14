@@ -1427,7 +1427,13 @@ def manejar_encuesta(numero, texto, texto_normalizado, paso, rol):
     # — Paso 5: Ciudad
     if paso == 5 and len(texto) < 2:
         enviar_mensaje(numero, "⚠️ Ingresa una ciudad válida.")
+    else:
+        resultado = validar_aceptar_ciudad(texto)
+        if resultado["corregida"]:
+            texto = resultado["ciudad"]
+            enviar_mensaje(numero, f"✅ Ciudad reconocida y corregida: {texto}")
         return
+
 
     # — Paso 6: Actividad actual
     if paso == 6 and texto not in [str(i) for i in range(1, 9)]:
