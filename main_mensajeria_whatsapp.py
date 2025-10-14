@@ -364,6 +364,33 @@ def guardar_respuesta(numero: str, paso: int, texto: str):
             conn.close()
         except: pass
 
+def eliminar_flujo_temp(numero: str):
+    """Elimina todos los datos temporales de la encuesta para un número."""
+    try:
+        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("""
+            DELETE FROM perfil_creador_flujo_temp
+            WHERE telefono = %s
+        """, (numero,))
+        conn.commit()
+        print(f"🗑️ Datos temporales eliminados para {numero}")
+    except Exception as e:
+        if 'conn' in locals():
+            conn.rollback()
+        print("❌ Error eliminando flujo temporal:", e)
+    finally:
+        try:
+            cur.close()
+        except:
+            pass
+        try:
+            conn.close()
+        except:
+            pass
+
+
+
 def enviar_diagnostico(numero: str):
     """Envía el diagnóstico de un usuario tomando el campo mejoras_sugeridas de perfil_creador."""
     try:
@@ -1253,6 +1280,7 @@ def manejar_menu(numero, texto_normalizado, rol):
             enviar_mensaje(numero, "✏️ Perfecto. Vamos a actualizar tu información. Empecemos...")
             # Marcar encuesta como NO finalizada para reiniciar el flujo de preguntas
             marcar_encuesta_no_finalizada(numero)
+            eliminar_flujo_temp(numero)
             # Iniciar desde la pregunta 1
             actualizar_flujo(numero, 1)
             enviar_pregunta(numero, 1)
