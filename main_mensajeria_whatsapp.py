@@ -792,86 +792,90 @@ def consolidar_perfil(telefono: str):
 # --------------------
 
 preguntas = {
-    1: "📌 ¿Cuál es tu nombre completo sin apellidos?",
+    1: "👤✨ ¿Cuál es tu nombre completo sin apellidos?",
 
     2: (
-        "📌 {nombre}, dime por favor en qué rango de edad te encuentras?\n"
-        "1️⃣ Menos de 18 años\n"
-        "2️⃣ 18 - 24 años\n"
-        "3️⃣ 25 - 34 años\n"
-        "4️⃣ 35 - 45 años\n"
-        "5️⃣ Más de 45 años"
+        "🎂 {nombre}, dime por favor en qué rango de edad te encuentras:\n"
+        "1️⃣ 👶 Menos de 18 años\n"
+        "2️⃣ 🧑 18 - 24 años\n"
+        "3️⃣ 👨‍🦱 25 - 34 años\n"
+        "4️⃣ 👩‍🦳 35 - 45 años\n"
+        "5️⃣ 🧓 Más de 45 años"
     ),
 
     3: (
-        "📌 Qué Género eres?:\n"
-        "1️⃣ Masculino\n"
-        "2️⃣ Femenino\n"
-        "3️⃣ Otro\n"
-        "4️⃣ Prefiero no decir"
+        "🚻 ¿Qué género eres?:\n"
+        "1️⃣ ♂️ Masculino\n"
+        "2️⃣ ♀️ Femenino\n"
+        "3️⃣ 🌈 Otro\n"
+        "4️⃣ 🙊 Prefiero no decir"
     ),
 
-    4: "📌 {nombre}, es importante conocer en qué País te encuentras para continuar en el proceso:\n"
-        "1️⃣ Argentina 2️⃣ Bolivia\n"
-        "3️⃣ Chile   4️⃣ Colombia\n"
-        "5️⃣ Costa Rica 6️⃣ Cuba\n"
-        "7️⃣ Ecuador\n"
-        "8️⃣ El Salvador\n"
-        "9️⃣ Guatemala\n"
-        "🔟 Honduras\n"
-        "1️⃣1️⃣ México\n"
-        "1️⃣2️⃣ Nicaragua\n"
-        "1️⃣3️⃣ Panamá\n"
-        "1️⃣4️⃣ Paraguay\n"
-        "1️⃣5️⃣ Perú\n"
-        "1️⃣6️⃣ Puerto Rico\n"
-        "1️⃣7️⃣ República Dominicana\n"
-        "1️⃣8️⃣ Uruguay\n"
-        "1️⃣9️⃣ Venezuela\n"
-        "2️⃣0️⃣ Otro (escribe tu país)",
+    4: (
+        "🌎 {nombre}, es importante conocer en qué país te encuentras para continuar en el proceso:\n"
+        "1️⃣ 🇦🇷 Argentina\n"
+        "2️⃣ 🇧🇴 Bolivia\n"
+        "3️⃣ 🇨🇱 Chile\n"
+        "4️⃣ 🇨🇴 Colombia\n"
+        "5️⃣ 🇨🇷 Costa Rica\n"
+        "6️⃣ 🇨🇺 Cuba\n"
+        "7️⃣ 🇪🇨 Ecuador\n"
+        "8️⃣ 🇸🇻 El Salvador\n"
+        "9️⃣ 🇬🇹 Guatemala\n"
+        "🔟 🇭🇳 Honduras\n"
+        "1️⃣1️⃣ 🇲🇽 México\n"
+        "1️⃣2️⃣ 🇳🇮 Nicaragua\n"
+        "1️⃣3️⃣ 🇵🇦 Panamá\n"
+        "1️⃣4️⃣ 🇵🇾 Paraguay\n"
+        "1️⃣5️⃣ 🇵🇪 Perú\n"
+        "1️⃣6️⃣ 🇵🇷 Puerto Rico\n"
+        "1️⃣7️⃣ 🇩🇴 República Dominicana\n"
+        "1️⃣8️⃣ 🇺🇾 Uruguay\n"
+        "1️⃣9️⃣ 🇻🇪 Venezuela\n"
+        "2️⃣0️⃣ 🌍 Otro (escribe tu país)"
+    ),
 
-    5: "📌 En qué Ciudad estás? (escríbela en texto)",
+    5: "🏙️ ¿En qué ciudad estás? (escríbela en texto)",
 
     6: (
-        "📌 Me gustaría conocer tu Actividad actual:\n"
-        "1️⃣ Estudia tiempo completo\n"
-        "2️⃣ Estudia medio tiempo\n"
-        "3️⃣ Trabaja tiempo completo\n"
-        "4️⃣ Trabaja medio tiempo\n"
-        "5️⃣ Buscando empleo\n"
-        "6️⃣ Emprendiendo\n"
-        "7️⃣ Trabaja o emprende medio tiempo y estudia medio tiempo\n"
-        "8️⃣ Disponible tiempo completo\n"
-        "9️⃣ Otro"
+        "👔 Me gustaría conocer tu actividad actual:\n"
+        "1️⃣ 🎓 Estudia tiempo completo\n"
+        "2️⃣ 📚 Estudia medio tiempo\n"
+        "3️⃣ 💼 Trabaja tiempo completo\n"
+        "4️⃣ 🕒 Trabaja medio tiempo\n"
+        "5️⃣ 🔍 Buscando empleo\n"
+        "6️⃣ 🚀 Emprendiendo\n"
+        "7️⃣ ⏳ Trabaja/emprende medio tiempo y estudia medio tiempo\n"
+        "8️⃣ 🟢 Disponible tiempo completo\n"
+        "9️⃣ ❓ Otro"
     ),
 
     7: (
-        "📌 {nombre}, dime cuál es tu Objetivo principal en la plataforma tiktok?\n"
-        "1️⃣ Fuente de ingresos principal\n"
-        "2️⃣ Fuente de ingresos secundaria\n"
-        "3️⃣ Hobby, pero me gustaría profesionalizarlo\n"
-        "4️⃣ Diversión, sin intención profesional\n"
-        "5️⃣ No estoy seguro"
+        "🌟 {nombre}, dime cuál es tu objetivo principal en la plataforma TikTok:\n"
+        "1️⃣ 💰 Fuente de ingresos principal\n"
+        "2️⃣ 🪙 Fuente de ingresos secundaria\n"
+        "3️⃣ 🎭 Hobby, pero me gustaría profesionalizarlo\n"
+        "4️⃣ 😄 Diversión, sin intención profesional\n"
+        "5️⃣ 🤔 No estoy seguro"
     ),
 
-    # ✅ Nueva pregunta condicional
-    8: "📌 ¿Tienes experiencia transmitiendo lives en TikTok? Contesta *sí* o *no*.",
+    8: "📺 ¿Tienes experiencia transmitiendo lives en TikTok? Contesta *sí* o *no*.",
 
-    9: "📌 ¿Cuántos meses de experiencia tienes en TikTok Live?",
+    9: "⏱️ ¿Cuántos meses de experiencia tienes en TikTok Live?",
 
     10: (
-        "📌 ¿ Cuanto tiempo en horas, estarías dispuesto/a por dia para hacer lives?\n"
-        "1️⃣ 0-1 hrs\n"
-        "2️⃣ 1-3 hrs\n"
-        "3️⃣ Más de 3 hrs"
+        "🕰️ ¿Cuánto tiempo en horas estarías dispuesto/a por día para hacer lives?\n"
+        "1️⃣ ⏳ 0-1 hrs\n"
+        "2️⃣ ⏰ 1-3 hrs\n"
+        "3️⃣ 🕺 Más de 3 hrs"
     ),
 
     11: (
-        "📌 ¿Cuántos días a la semana podrías transmitir?\n"
+        "📅 ¿Cuántos días a la semana podrías transmitir?\n"
         "1️⃣ 1-2 días\n"
         "2️⃣ 3-5 días\n"
-        "3️⃣ Todos los días\n"
-        "4️⃣ Ninguno"
+        "3️⃣ 🌞 Todos los días\n"
+        "4️⃣ 🚫 Ninguno"
     ),
 }
 
@@ -1417,7 +1421,7 @@ def manejar_encuesta(numero, texto, texto_normalizado, paso, rol):
     if paso == 4:
         opciones_validas = [str(i) for i in range(1, 21)]
         if texto not in opciones_validas and len(texto) < 2:
-            enviar_mensaje(numero, "⚠️ Ingresa el número de tu país o escribe su nombre.")
+            enviar_mensaje(numero, "⚠️ Ingresa el número de tu país.")
             return
 
     # — Paso 5: Ciudad
