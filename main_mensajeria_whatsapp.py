@@ -1490,6 +1490,12 @@ def manejar_encuesta(numero, texto, texto_normalizado, paso, rol):
         texto_pregunta = texto_pregunta.format(nombre=nombre)
     enviar_mensaje(numero, texto_pregunta)
 
+def eliminar_flujo(numero: str):
+    """Reinicia cualquier flujo o estado temporal del usuario."""
+    usuarios_flujo.pop(numero, None)
+    usuarios_temp.pop(numero, None)
+    print(f"🧹 Flujo reiniciado para {numero}")
+
 
 @router.post("/webhook")
 async def whatsapp_webhook(request: Request):
@@ -1540,7 +1546,13 @@ async def whatsapp_webhook(request: Request):
 
             # === 1️⃣ NUEVO USUARIO: FLUJO DE ONBOARDING Y ENCUESTA ===
             if tipo == "text" and not usuario_bd:
-                # Si no hay flujo, enviar bienvenida y pedir usuario TikTok
+                # Si el paso guardado no tiene sentido, reiniciamos el flujo
+                if paso not in [None, "esperando_usuario_tiktok", "confirmando_nombre", "esperando_inicio_encuesta"]:
+                    print(f"⚠️ Reiniciando flujo para {numero}, paso anterior: {paso}")
+                    eliminar_flujo(numero)  # limpia memoria o caché
+                    paso = None
+
+                # === Inicio del flujo ===
                 if paso is None:
                     enviar_mensaje(numero, Mensaje_bienvenida)
                     actualizar_flujo(numero, "esperando_usuario_tiktok")
@@ -1577,7 +1589,27 @@ async def whatsapp_webhook(request: Request):
                         enviar_mensaje(numero, "⚠️ Por favor responde solo *sí* o *no* para continuar.")
                     return {"status": "ok"}
 
-                # Flujo de encuesta: validar, guardar y avanzar
+                # Si el usuario está esperando iniciar la encuesta pero escribe texto
+                if paso == "esperando_inicio_encuesta":
+                    if texto_lower in ["sí", "si", "ok", "dale", "listo", "empezar", "continuar"]:
+                        print("🚀 [DEBUG] Usuario escribió 'sí' o equivalente, iniciando encuesta manualmente.")
+                        actualizar_flujo(numero, 1)
+                        enviar_pregunta(numero, 1)
+                        return {"status": "ok"}
+
+                    if texto_lower in ["hola", "buenas", "hey", "saludos", "brillar"]:
+                        print("💬 [DEBUG] Usuario saludó, repitiendo bienvenida.")
+                        enviar_mensaje(
+                            numero,
+                            "👋 ¡Hola! Aún no has iniciado la encuesta. "
+                            "Por favor presiona el botón *✅ Sí, quiero iniciar* o escribe *sí* para comenzar 🚀"
+                        )
+                        return {"status": "ok"}
+
+                    enviar_mensaje(numero, "💬 Escribe *sí* o presiona el botón para comenzar la encuesta 📋")
+                    return {"status": "ok"}
+
+                # Flujo de encuesta
                 if isinstance(paso, int):
                     manejar_encuesta(numero, texto, texto_lower, paso, "aspirante")
                     return {"status": "ok"}
