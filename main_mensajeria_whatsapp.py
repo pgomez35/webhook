@@ -276,7 +276,7 @@ def enviar_menu_principal(numero, rol=None, nombre=None):
     if rol == "aspirante":
         mensaje = (
             f"{encabezado}"
-            "1️⃣ Mi información de perfil\n"
+            "1️⃣ Actualizar mi información de perfil\n"
             "2️⃣ Análisis y diagnóstico de mi perfil\n"
             "3️⃣ Requisitos para ingresar a la agencia\n"
             "4️⃣ Chat libre con un asesor\n"
@@ -1250,7 +1250,10 @@ def manejar_menu(numero, texto_normalizado, rol):
     # Menús por rol
     if rol == "aspirante":
         if texto_normalizado in {"1", "mi información", "perfil"}:
-            actualizar_flujo(numero, 1)
+            # actualizar_flujo(numero, 1)
+            # enviar_pregunta(numero, 1)
+            enviar_mensaje(numero, "✏️ Perfecto. Vamos a actualizar tu información. Empecemos...")
+            actualizar_flujo(numero, "editando_perfil")
             enviar_pregunta(numero, 1)
             return
         if texto_normalizado in {"2", "análisis", "diagnóstico", "diagnostico"}:
@@ -1617,6 +1620,12 @@ async def whatsapp_webhook(request: Request):
             # === 2️⃣ ASPIRANTE EN BASE DE DATOS ===
             if usuario_bd and rol == "aspirante":
                 finalizada = encuesta_finalizada(numero)
+
+                # 🟢 Si está editando perfil, tratamos las respuestas como parte de la encuesta
+                if paso == "editando_perfil":
+                    manejar_encuesta(numero, texto, texto_lower, paso, rol)
+                    return {"status": "ok"}
+
                 # Si encuesta finalizada y escribe comando de menú
                 if finalizada and texto_lower in {"brillar", "menu", "menú", "inicio"}:
                     nombre = usuario_bd.get("nombre", "").split(" ")[0] or ""
