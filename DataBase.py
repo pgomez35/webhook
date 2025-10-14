@@ -2625,6 +2625,32 @@ def marcar_encuesta_completada(numero: str) -> bool:
         traceback.print_exc()
         return False
 
+def marcar_encuesta_no_finalizada(numero: str) -> bool:
+    """Marca la encuesta como completada en la tabla creadores."""
+    try:
+        numero = normalizar_numero(numero)
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE creadores
+                    SET encuesta_terminada = FALSE
+                    WHERE telefono = %s OR whatsapp = %s
+                    RETURNING id;
+                """, (numero, numero))
+                row = cur.fetchone()
+                conn.commit()
+
+                if row:
+                    print(f"✅ Encuesta marcada como completada para ID {row[0]}")
+                    return True
+                print("⚠️ No se encontró usuario para actualizar encuesta.")
+                return False
+
+    except Exception as e:
+        import traceback
+        print("❌ Error al marcar encuesta como completada:", e)
+        traceback.print_exc()
+        return False
 
 def encuesta_finalizada(numero: str) -> bool:
     """Retorna True si el usuario completó la encuesta, False en caso contrario."""
@@ -2649,6 +2675,7 @@ def encuesta_finalizada(numero: str) -> bool:
         print("❌ Error al verificar encuesta terminada:", e)
         traceback.print_exc()
         return False
+
 
 def obtener_ultimo_paso_respondido(numero: str) -> int | None:
 
