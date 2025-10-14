@@ -563,10 +563,10 @@ map_actividad = {
     "4": "trabajo_medio_tiempo",
     "5": "buscando_empleo",
     "6": "emprendiendo",
-    "7": "disponible_total",
-    "8": "otro"
+    "7": "work_medio_study_medio",  # ← Nuevo valor según tu frontend
+    "8": "disponible_total",
+    "9": "otro"
 }
-
 #  opcionesHorarios = [{value: "manana", label: ...}, ...]
 map_horario = {
     "1": "Mañana (6am–12pm)",
@@ -579,8 +579,8 @@ map_horario = {
 
 #  opcionesIntencionTrabajo = [{value: "trabajo_principal", label: ...}, ...]
 map_intencion = {
-    "1": "trabajo principal",
-    "2": "trabajo secundario",
+    "1": "Fuente de ingresos principal",
+    "2": "Fuente de ingresos secundario",
     "3": "Hobby, pero me gustaría profesionalizarlo",
     "4": "diversión, sin intención profesional",
     "5": "No estoy seguro"
@@ -700,9 +700,8 @@ def procesar_respuestas(respuestas):
     datos["ciudad"] = respuestas.get(5)
     datos["actividad_actual"] = map_actividad.get(respuestas.get(6))
     datos["intencion_trabajo"] = map_intencion.get(respuestas.get(7))
-    datos["tiempo_disponible"] = int(respuestas.get(9)) if respuestas.get(9) else None
-    datos["frecuencia_lives"] = int(respuestas.get(10)) if respuestas.get(10) else None
-
+    datos["tiempo_disponible"] = int(respuestas.get(10)) if respuestas.get(10) and respuestas.get(10).isdigit() else None
+    datos["frecuencia_lives"] = int(respuestas.get(11)) if respuestas.get(11) and respuestas.get(11).isdigit() else None
 
     # ⬇️ NUEVO: zona_horaria con base al país
     if datos.get("pais"):
@@ -710,9 +709,17 @@ def procesar_respuestas(respuestas):
         if tz:
             datos["zona_horaria"] = tz
 
-    # Experiencia plataformas principales (solo TikTok Live, las demás fijas en 0)
+        # Experiencia TikTok Live (paso 8 y 9)
+    experiencia_tiktok = 0
+    if respuestas.get(8, "").lower() in {"si", "sí", "s"}:
+        try:
+            meses = int(respuestas.get(9, 0))
+            experiencia_tiktok = round(meses / 12, 1)
+        except:
+            experiencia_tiktok = 0
+
     experiencia = {
-        "TikTok Live": redondear_a_un_decimal(int(respuestas.get(8, 0)) / 12) if respuestas.get(8) else 0,
+        "TikTok Live": experiencia_tiktok,
         "Bigo Live": 0,
         "NimoTV": 0,
         "Twitch": 0,
@@ -853,7 +860,7 @@ preguntas = {
     9: "📌 ¿Cuántos meses de experiencia tienes en TikTok Live?",
 
     10: (
-        "📌 ¿Cuántas horas por día tendrías disponibles para hacer lives?\n"
+        "📌 ¿ Cuanto tiempo en horas, estarías dispuesto/a por dia para hacer lives?\n"
         "1️⃣ 0-1 hrs\n"
         "2️⃣ 1-3 hrs\n"
         "3️⃣ Más de 3 hrs"
@@ -1441,14 +1448,14 @@ def manejar_encuesta(numero, texto, texto_normalizado, paso, rol):
         guardar_respuesta(numero, paso, texto)
         nombre = (asegurar_flujo(numero).get("nombre") or "").split(" ")[0]
 
-        # 👉 Si respondió NO, salta la 9
+        # 👉 Si respondió NO, salta la 10
         if texto == "no":
             enviar_mensaje(
                 numero,
                 f"✅ Gracias {nombre}. Para continuar en el proceso, responde estas **3 preguntas adicionales**."
             )
             actualizar_flujo(numero, 10)
-            enviar_mensaje(numero, preguntas[10])
+            enviar_mensaje(numero, preguntas[10].format(nombre=nombre))
             return
 
         # 👉 Si respondió SÍ, continúa normalmente a la 9
@@ -1477,18 +1484,20 @@ def manejar_encuesta(numero, texto, texto_normalizado, paso, rol):
 
         # Avanza al paso 10
         actualizar_flujo(numero, 10)
-        enviar_mensaje(numero, preguntas[10])
+        enviar_mensaje(numero, preguntas[10].format(nombre=nombre))
         return
 
-    # — Paso 10: Horas/semana
-    if paso == 10 and texto not in {"1", "2", "3"}:
-        enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–3).")
-        return
+    # — Paso 10: Horas/día
+    if paso == 10:
+        if texto not in {"1", "2", "3"}:
+            enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–3).")
+            return
 
-    # — Paso 11: Meta de ingresos
-    if paso == 11 and texto not in {"1", "2", "3", "4"}:
-        enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–4).")
-        return
+    # — Paso 11: Días a la semana para transmitir
+    if paso == 11:
+        if texto not in {"1", "2", "3", "4"}:
+            enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–4).")
+            return
 
     # Guardar respuesta general
     guardar_respuesta(numero, paso, texto)
