@@ -1540,11 +1540,11 @@ preguntas = {
 import traceback  # colócalo al inicio del archivo (si no está ya importado)
 
 
-def enviar_pregunta(numero: str, paso: int):
+def enviar_pregunta1(numero: str, paso: int):
     texto = preguntas[paso]
     return enviar_mensaje(numero, texto)
 
-def enviar_pregunta1(numero: str, paso: int):
+def enviar_pregunta(numero: str, paso: int):
     """
     Envía la pregunta correspondiente al paso. Si la pregunta contiene {nombre},
     intenta sustituirlo por el primer nombre guardado en el flujo del usuario.
