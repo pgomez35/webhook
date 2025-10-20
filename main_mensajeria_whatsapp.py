@@ -1537,6 +1537,7 @@ preguntas = {
     ),
 }
 
+import traceback  # colócalo al inicio del archivo (si no está ya importado)
 
 def enviar_pregunta(numero: str, paso: int):
     """
@@ -1574,6 +1575,7 @@ def enviar_pregunta(numero: str, paso: int):
                 texto = texto.replace("{nombre}", "").strip()
 
         return enviar_mensaje(numero, texto)
+
     except Exception as e:
         print(f"[ERROR] Excepción en enviar_pregunta para {numero}, paso={paso}: {e}")
         traceback.print_exc()
@@ -1582,8 +1584,7 @@ def enviar_pregunta(numero: str, paso: int):
         except:
             return None
 
-
- def manejar_encuesta(numero, texto, texto_normalizado, paso, rol):
+def manejar_encuesta(numero, texto, texto_normalizado, paso, rol):
     # Aseguramos la estructura del flujo y el objeto de usuario
     flujo = asegurar_flujo(numero)
 
@@ -1763,8 +1764,6 @@ def enviar_pregunta(numero: str, paso: int):
     enviar_mensaje(numero, "⚠️ Ocurrió un error con el paso de la encuesta. Por favor escribe 'menu' para volver a empezar.")
     # Opcional: limpiar flujo o setear a un paso seguro
     # eliminar_flujo(numero)
-
-
 
 def eliminar_flujo(numero: str):
     """Reinicia cualquier flujo o estado temporal del usuario."""
