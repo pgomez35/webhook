@@ -1589,6 +1589,7 @@ def enviar_pregunta1(numero: str, paso: int):
         except:
             return None
 
+
 def manejar_encuesta(numero, texto, texto_normalizado, paso, rol):
     import traceback
     try:
@@ -1804,6 +1805,7 @@ def manejar_encuesta(numero, texto, texto_normalizado, paso, rol):
             enviar_mensaje(numero, "⚠️ Ocurrió un error interno procesando tu respuesta. Por favor intenta de nuevo más tarde.")
         except:
             pass
+
 
 def eliminar_flujo(numero: str):
     """Reinicia cualquier flujo o estado temporal del usuario."""
