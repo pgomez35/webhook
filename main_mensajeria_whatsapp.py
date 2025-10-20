@@ -719,11 +719,13 @@ def procesar_respuestas(respuestas):
 
     # Experiencia TikTok Live (paso 8 y 9)
     experiencia_tiktok = 0
-    if respuestas.get(8, "").lower() in {"si", "sí", "s"}:
+    respuesta_8 = respuestas.get(8, "").strip().lower()
+    # Considera "sí", "si", "s" o "1" como afirmativo
+    if respuesta_8 in {"si", "sí", "s", "1"}:
         try:
             meses = int(respuestas.get(9, 0))
             experiencia_tiktok = round(meses / 12, 1)
-        except:
+        except Exception:
             experiencia_tiktok = 0
 
     experiencia = {
