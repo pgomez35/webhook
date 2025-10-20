@@ -1539,7 +1539,12 @@ preguntas = {
 
 import traceback  # colócalo al inicio del archivo (si no está ya importado)
 
+
 def enviar_pregunta(numero: str, paso: int):
+    texto = preguntas[paso]
+    return enviar_mensaje(numero, texto)
+
+def enviar_pregunta1(numero: str, paso: int):
     """
     Envía la pregunta correspondiente al paso. Si la pregunta contiene {nombre},
     intenta sustituirlo por el primer nombre guardado en el flujo del usuario.
@@ -1585,116 +1590,159 @@ def enviar_pregunta(numero: str, paso: int):
             return None
 
 def manejar_encuesta(numero, texto, texto_normalizado, paso, rol):
-    # Aseguramos la estructura del flujo y el objeto de usuario
-    flujo = asegurar_flujo(numero)
+    import traceback
+    try:
+        # Normalizar inputs y asegurar estructura
+        texto = (texto or "").strip()
+        texto_normalizado = (texto_normalizado or texto.lower()).strip()
+        flujo = asegurar_flujo(numero)  # asegura la estructura en caché
+        print(f"[ENCUESTA] número={numero} paso={paso} texto={texto!r} texto_norm={texto_normalizado!r}")
 
-    # Normalmente guardamos el valor final que queremos persistir en `valor_guardar`
-    valor_guardar = texto
+        # Valor por defecto que guardaremos (se puede sobrescribir por cada paso)
+        valor_guardar = texto
 
-    # — Paso 1: Nombre
-    if paso == 1:
-        if len(texto.strip()) < 3:
-            enviar_mensaje(numero, "⚠️ Ingresa tu nombre completo (mínimo 3 caracteres).")
-            return
-        flujo["nombre"] = texto.title().strip()
-        valor_guardar = flujo["nombre"]
-        guardar_respuesta(numero, paso, valor_guardar)
-        siguiente = 2
-        actualizar_flujo(numero, siguiente)
-        enviar_pregunta(numero, siguiente)
-        return
+        # ---------- Paso 1: Nombre ----------
+        if paso == 1:
+            if len(texto) < 3:
+                enviar_mensaje(numero, "⚠️ Ingresa tu nombre completo (mínimo 3 caracteres).")
+                return
+            nombre_formateado = texto.title().strip()
+            flujo["nombre"] = nombre_formateado
+            valor_guardar = nombre_formateado
 
-    # — Paso 2: Edad
-    if paso == 2:
-        try:
-            edad = int(texto)
-            if not (0 < edad < 120):
-                raise ValueError
-        except:
-            enviar_mensaje(numero, "⚠️ Ingresa una edad válida (1–119).")
-            return
-        valor_guardar = str(edad)
-        guardar_respuesta(numero, paso, valor_guardar)
-        siguiente = 3
-        actualizar_flujo(numero, siguiente)
-        enviar_pregunta(numero, siguiente)
-        return
-
-    # — Paso 3: Género (1..4)
-    if paso == 3:
-        if texto not in {"1", "2", "3", "4"}:
-            enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–4).")
-            return
-        guardar_respuesta(numero, paso, texto)
-        actualizar_flujo(numero, 4)
-        enviar_pregunta(numero, 4)
-        return
-
-    # — Paso 4: País (validar número entre 1..20)
-    if paso == 4:
-        opciones_validas = {str(i) for i in range(1, 21)}
-        if texto not in opciones_validas:
-            enviar_mensaje(numero, "⚠️ Ingresa el número de tu país (1–20).")
-            return
-        guardar_respuesta(numero, paso, texto)
-        actualizar_flujo(numero, 5)
-        enviar_pregunta(numero, 5)
-        return
-
-    # — Paso 5: Ciudad (aceptar texto libre, con corrección posible)
-    if paso == 5:
-        if len(texto.strip()) < 2:
-            enviar_mensaje(numero, "⚠️ Ingresa una ciudad válida.")
+            guardar_respuesta(numero, paso, valor_guardar)
+            siguiente = 2
+            actualizar_flujo(numero, siguiente)
+            print(f"[ENCUESTA] {numero} paso 1 -> guardado nombre='{valor_guardar}', avanzando a {siguiente}")
+            enviar_pregunta(numero, siguiente)
             return
 
-        resultado = validar_aceptar_ciudad(texto)
-        if resultado and resultado.get("corregida"):
-            texto_corregido = resultado.get("ciudad")
-            valor_guardar = texto_corregido
-            enviar_mensaje(numero, f"✅ Ciudad reconocida y corregida: {texto_corregido}")
-        else:
-            valor_guardar = texto.strip()
-
-        guardar_respuesta(numero, paso, valor_guardar)
-        actualizar_flujo(numero, 6)
-        enviar_pregunta(numero, 6)
-        return
-
-    # — Paso 6: Actividad actual (1..8)
-    if paso == 6:
-        if texto not in {str(i) for i in range(1, 9)}:
-            enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–8).")
-            return
-        guardar_respuesta(numero, paso, texto)
-        actualizar_flujo(numero, 7)
-        enviar_pregunta(numero, 7)
-        return
-
-    # — Paso 7: Intención principal (1..5)
-    if paso == 7:
-        if texto not in {str(i) for i in range(1, 6)}:
-            enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–5).")
-            return
-        guardar_respuesta(numero, paso, texto)
-        actualizar_flujo(numero, 8)
-        enviar_pregunta(numero, 8)
-        return
-
-    # — Paso 8: ¿Tiene experiencia transmitiendo? (sí/no)
-    if paso == 8:
-        if texto_normalizado in {"si", "sí", "s"}:
-            texto_resp = "sí"
-        elif texto_normalizado in {"no", "n"}:
-            texto_resp = "no"
-        else:
-            enviar_mensaje(numero, "⚠️ Por favor responde solo *sí* o *no*.")
+        # ---------- Paso 2: Edad ----------
+        if paso == 2:
+            try:
+                edad = int(texto)
+                if not (0 < edad < 120):
+                    raise ValueError
+            except:
+                enviar_mensaje(numero, "⚠️ Ingresa una edad válida (1–119).")
+                return
+            valor_guardar = str(edad)
+            guardar_respuesta(numero, paso, valor_guardar)
+            siguiente = 3
+            actualizar_flujo(numero, siguiente)
+            enviar_pregunta(numero, siguiente)
             return
 
-        guardar_respuesta(numero, paso, texto_resp)
-        nombre = (flujo.get("nombre") or "").split(" ")[0]
+        # ---------- Paso 3: Género (1..4) ----------
+        if paso == 3:
+            if texto not in {"1", "2", "3", "4"}:
+                enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–4).")
+                return
+            guardar_respuesta(numero, paso, texto)
+            siguiente = 4
+            actualizar_flujo(numero, siguiente)
+            enviar_pregunta(numero, siguiente)
+            return
 
-        # Si respondió NO, saltar a 10
-        if texto_resp == "no":
+        # ---------- Paso 4: País (1..20) ----------
+        if paso == 4:
+            opciones_validas = {str(i) for i in range(1, 21)}
+            if texto not in opciones_validas:
+                enviar_mensaje(numero, "⚠️ Ingresa el número de tu país (1–20).")
+                return
+            guardar_respuesta(numero, paso, texto)
+            siguiente = 5
+            actualizar_flujo(numero, siguiente)
+            enviar_pregunta(numero, siguiente)
+            return
+
+        # ---------- Paso 5: Ciudad ----------
+        if paso == 5:
+            if len(texto) < 2:
+                enviar_mensaje(numero, "⚠️ Ingresa una ciudad válida.")
+                return
+
+            try:
+                resultado = validar_aceptar_ciudad(texto) or {}
+            except Exception as e:
+                print(f"[ENCUESTA] Error en validar_aceptar_ciudad: {e}")
+                resultado = {}
+
+            if resultado.get("corregida"):
+                texto_corregido = resultado.get("ciudad") or texto.strip()
+                valor_guardar = texto_corregido
+                enviar_mensaje(numero, f"✅ Ciudad reconocida y corregida: {texto_corregido}")
+            else:
+                valor_guardar = texto.strip()
+
+            guardar_respuesta(numero, paso, valor_guardar)
+            siguiente = 6
+            actualizar_flujo(numero, siguiente)
+            enviar_pregunta(numero, siguiente)
+            return
+
+        # ---------- Paso 6: Actividad actual (1..8) ----------
+        if paso == 6:
+            if texto not in {str(i) for i in range(1, 9)}:
+                enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–8).")
+                return
+            guardar_respuesta(numero, paso, texto)
+            siguiente = 7
+            actualizar_flujo(numero, siguiente)
+            enviar_pregunta(numero, siguiente)
+            return
+
+        # ---------- Paso 7: Intención principal (1..5) ----------
+        if paso == 7:
+            if texto not in {str(i) for i in range(1, 6)}:
+                enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–5).")
+                return
+            guardar_respuesta(numero, paso, texto)
+            siguiente = 8
+            actualizar_flujo(numero, siguiente)
+            enviar_pregunta(numero, siguiente)
+            return
+
+        # ---------- Paso 8: ¿Tiene experiencia transmitiendo? (sí/no) ----------
+        if paso == 8:
+            if texto_normalizado in {"si", "sí", "s"}:
+                texto_resp = "sí"
+            elif texto_normalizado in {"no", "n"}:
+                texto_resp = "no"
+            else:
+                enviar_mensaje(numero, "⚠️ Por favor responde solo *sí* o *no*.")
+                return
+
+            guardar_respuesta(numero, paso, texto_resp)
+            nombre = (flujo.get("nombre") or "").split(" ")[0] or ""
+
+            # Si respondió NO -> saltar a 10
+            if texto_resp == "no":
+                enviar_mensaje(
+                    numero,
+                    f"✅ Gracias {nombre}. Para continuar en el proceso, responde estas **3 preguntas adicionales**."
+                )
+                actualizar_flujo(numero, 10)
+                enviar_pregunta(numero, 10)
+                return
+
+            # Si respondió SÍ -> continuar a 9
+            actualizar_flujo(numero, 9)
+            enviar_pregunta(numero, 9)
+            return
+
+        # ---------- Paso 9: Meses de experiencia ----------
+        if paso == 9:
+            try:
+                meses = int(texto)
+                if not (0 <= meses <= 999):
+                    raise ValueError
+            except:
+                enviar_mensaje(numero, "⚠️ Ingresa un número válido de meses (0–999).")
+                return
+
+            guardar_respuesta(numero, paso, str(meses))
+            nombre = (flujo.get("nombre") or "").split(" ")[0] or ""
             enviar_mensaje(
                 numero,
                 f"✅ Gracias {nombre}. Para continuar en el proceso, responde estas **3 preguntas adicionales**."
@@ -1703,67 +1751,59 @@ def manejar_encuesta(numero, texto, texto_normalizado, paso, rol):
             enviar_pregunta(numero, 10)
             return
 
-        # Si respondió SÍ, continuar a 9
-        actualizar_flujo(numero, 9)
-        enviar_pregunta(numero, 9)
-        return
+        # ---------- Paso 10: Horas/día (1..3) ----------
+        if paso == 10:
+            if texto not in {"1", "2", "3"}:
+                enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–3).")
+                return
+            guardar_respuesta(numero, paso, texto)
+            siguiente = 11
+            actualizar_flujo(numero, siguiente)
+            enviar_pregunta(numero, siguiente)
+            return
 
-    # — Paso 9: Meses de experiencia (solo si respondió sí antes)
-    if paso == 9:
+        # ---------- Paso 11: Días a la semana (1..4) ----------
+        if paso == 11:
+            if texto not in {"1", "2", "3", "4"}:
+                enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–4).")
+                return
+            guardar_respuesta(numero, paso, texto)
+
+            # Finalizar encuesta
+            usuarios_flujo.pop(numero, None)
+            nombre = (flujo.get("nombre") or "").split(" ")[0] or ""
+            enviar_mensaje(numero, mensaje_encuesta_final(nombre))
+            try:
+                consolidar_perfil(numero)
+            except Exception as e:
+                print(f"[ENCUESTA] Error consolidando perfil: {e}")
+
+            # Marcar completada en BD
+            try:
+                completada = marcar_encuesta_completada(numero)
+            except Exception as e:
+                print(f"[ENCUESTA] Error marcando encuesta completada: {e}")
+                completada = False
+
+            if completada:
+                enviar_mensaje(numero, "📊 Tu encuesta fue registrada correctamente en el sistema.")
+            else:
+                enviar_mensaje(numero, "⚠️ No pudimos confirmar el registro en la base de datos, pero tus respuestas fueron guardadas.")
+            enviar_mensaje(numero, '✨ Para ir al menú principal escribe **brillar**')
+            return
+
+        # Si el paso no es reconocido
+        enviar_mensaje(numero, "⚠️ Ocurrió un error con el paso de la encuesta. Por favor escribe 'menu' para volver a empezar.")
+        print(f"[ENCUESTA] Paso desconocido para {numero}: {paso}")
+
+    except Exception as e:
+        print(f"❌ Excepción en manejar_encuesta para {numero}: {e}")
+        traceback.print_exc()
+        # Notificar al usuario de forma genérica y no romper el webhook
         try:
-            meses = int(texto)
-            if not (0 <= meses <= 999):
-                raise ValueError
+            enviar_mensaje(numero, "⚠️ Ocurrió un error interno procesando tu respuesta. Por favor intenta de nuevo más tarde.")
         except:
-            enviar_mensaje(numero, "⚠️ Ingresa un número válido de meses (0–999).")
-            return
-        guardar_respuesta(numero, paso, str(meses))
-
-        nombre = (flujo.get("nombre") or "").split(" ")[0]
-        enviar_mensaje(
-            numero,
-            f"✅ Gracias {nombre}. Para continuar en el proceso, responde estas **3 preguntas adicionales**."
-        )
-        actualizar_flujo(numero, 10)
-        enviar_pregunta(numero, 10)
-        return
-
-    # — Paso 10: Horas/día (1..3)
-    if paso == 10:
-        if texto not in {"1", "2", "3"}:
-            enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–3).")
-            return
-        guardar_respuesta(numero, paso, texto)
-        actualizar_flujo(numero, 11)
-        enviar_pregunta(numero, 11)
-        return
-
-    # — Paso 11: Días a la semana para transmitir (1..4)
-    if paso == 11:
-        if texto not in {"1", "2", "3", "4"}:
-            enviar_mensaje(numero, "⚠️ Ingresa solo el número (1–4).")
-            return
-        guardar_respuesta(numero, paso, texto)
-
-        # Chequeo final: terminar encuesta
-        usuarios_flujo.pop(numero, None)
-        nombre = (flujo.get("nombre") or "").split(" ")[0]
-        enviar_mensaje(numero, mensaje_encuesta_final(nombre))
-        consolidar_perfil(numero)
-
-        # Marcar encuesta completada en la BD
-        completada = marcar_encuesta_completada(numero)
-        if completada:
-            enviar_mensaje(numero, "📊 Tu encuesta fue registrada correctamente en el sistema.")
-        else:
-            enviar_mensaje(numero, "⚠️ No pudimos confirmar el registro en la base de datos, pero tus respuestas fueron guardadas.")
-        enviar_mensaje(numero, '✨ Para ir al menú principal escribe **brillar**')
-        return
-
-    # Si no cae en ningún caso conocido:
-    enviar_mensaje(numero, "⚠️ Ocurrió un error con el paso de la encuesta. Por favor escribe 'menu' para volver a empezar.")
-    # Opcional: limpiar flujo o setear a un paso seguro
-    # eliminar_flujo(numero)
+            pass
 
 def eliminar_flujo(numero: str):
     """Reinicia cualquier flujo o estado temporal del usuario."""
