@@ -1317,16 +1317,32 @@ def _procesar_saludo(numero, rol_actual):
 # =========================
 #  MENÚ (por rol)
 # =========================
+
+
 def manejar_menu(numero, texto_normalizado, rol):
     # Menús por rol
 
     if rol == "aspirante":
         if texto_normalizado in {"1", "actualizar mi información", "perfil"}:
-            enviar_mensaje(numero, "✏️ Perfecto. Vamos a actualizar tu información. Empecemos...")
             marcar_encuesta_no_finalizada(numero)
             eliminar_flujo_temp(numero)
             actualizar_flujo(numero, 1)
-            enviar_pregunta(numero, 1)
+
+            # 1) PARA ACTUALIZAR INFO DESDE WHATSAPP DESMARCAR 1 Y MARCAR 2:
+            # -------------------------------------------------
+            # enviar_pregunta(numero, 1)
+            # enviar_mensaje(numero, "✏️ Perfecto. Vamos a actualizar tu información. Empecemos...")
+            # -------------------------------------------------
+
+            # 2) PARA ACTUALIZAR INFO DESDE REACT DESMARCAR 2 Y MARCAR 1:
+            # -------------------------------------------------
+            url_web = f"https://talentum-digital.vercel.app/actualizar-perfil?numero={numero}"
+            enviar_mensaje(
+                numero,
+                f"✏️ Para actualizar tu información de perfil, haz clic en este enlace:\n{url_web}\n\nPuedes hacerlo desde tu celular o computadora."
+            )
+            # -------------------------------------------------
+
             return
         if texto_normalizado in {"2", "análisis", "diagnóstico", "diagnostico"}:
             actualizar_flujo(numero, "diagnostico")
