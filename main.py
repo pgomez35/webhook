@@ -238,7 +238,8 @@ def obtener_eventos() -> List[EventoOut]:
         logger.error(f"❌ Error al obtener el servicio de Calendar: {str(e)}")
         raise
 
-    time_min = (datetime.utcnow() - timedelta(days=31)).isoformat() + 'Z'
+    # time_min = (datetime.utcnow() - timedelta(days=31)).isoformat() + 'Z'
+    time_min = datetime.utcnow().isoformat() + 'Z'
     time_max = (datetime.utcnow() + timedelta(days=31)).isoformat() + 'Z'
 
     try:
@@ -275,20 +276,24 @@ def obtener_eventos() -> List[EventoOut]:
                         break
 
             # Obtener participantes desde la base de datos
-            conn = get_connection()
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT c.id, c.nombre_real as nombre, c.nickname
-                FROM agendamientos_participantes ap
-                JOIN creadores c ON c.id = ap.creador_id
-                JOIN agendamientos a ON a.id = ap.agendamiento_id
-                WHERE a.google_event_id = %s
-            """, (event_id,))
-            participantes = cur.fetchall()
-            participantes_ids = [p[0] for p in participantes]
-            participantes_out = [{"id": p[0], "nombre": p[1], "nickname": p[2]} for p in participantes]
-            cur.close()
-            conn.close()
+            # conn = get_connection()
+            # cur = conn.cursor()
+            # cur.execute("""
+            #     SELECT c.id, c.nombre_real as nombre, c.nickname
+            #     FROM agendamientos_participantes ap
+            #     JOIN creadores c ON c.id = ap.creador_id
+            #     JOIN agendamientos a ON a.id = ap.agendamiento_id
+            #     WHERE a.google_event_id = %s
+            # """, (event_id,))
+            # participantes = cur.fetchall()
+            # participantes_ids = [p[0] for p in participantes]
+            # participantes_out = [{"id": p[0], "nombre": p[1], "nickname": p[2]} for p in participantes]
+            # cur.close()
+            # conn.close()
+
+            participantes_ids = []
+            participantes_out = []
+
 
             if inicio and fin:
                 resultado.append(EventoOut(
