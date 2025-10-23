@@ -238,15 +238,7 @@ from typing import List, Dict
 from dateutil.parser import isoparse
 
 def obtener_eventos(time_min: datetime = None, time_max: datetime = None, max_results: int = 100) -> List[EventoOut]:
-    """
-    Versión optimizada:
-    - usa fields para limitar el payload de Google Calendar
-    - itera paginación (nextPageToken)
-    - recoge todos los event_ids y hace UNA sola consulta SQL para obtener participantes
-    - reutiliza una conexión DB fuera del loop
-    - parsea fechas y arma salida
-    - devuelve lista de EventoOut
-    """
+
     start_time = time.time()
     try:
         service = get_calendar_service()
@@ -256,9 +248,9 @@ def obtener_eventos(time_min: datetime = None, time_max: datetime = None, max_re
 
     # Default range: 30 días atrás hasta 1 año adelante (puedes ajustar según vista del calendario)
     if time_min is None:
-        time_min = datetime.utcnow() - timedelta(days=30)
+        time_min = datetime.utcnow() - timedelta(days=31)
     if time_max is None:
-        time_max = datetime.utcnow() + timedelta(days=365)
+        time_max = datetime.utcnow() + timedelta(days=31)
 
     time_min_iso = time_min.isoformat() + "Z"
     time_max_iso = time_max.isoformat() + "Z"
@@ -571,15 +563,30 @@ def obtener_evento(evento_id: str):
         cur.close()
         conn.close()
 
-
 @app.get("/api/eventos", response_model=List[EventoOut])
-def listar_eventos():
+def listar_eventos(
+    time_min: Optional[datetime] = None,
+    time_max: Optional[datetime] = None,
+    max_results: Optional[int] = 100
+):
     try:
-        return obtener_eventos()
+        return obtener_eventos(
+            time_min=time_min,
+            time_max=time_max,
+            max_results=max_results)
     except Exception as e:
         logger.error(f"❌ Error al obtener eventos: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
+
+# @app.get("/api/eventos", response_model=List[EventoOut])
+# def listar_eventos():
+#     try:
+#         return obtener_eventos()
+#     except Exception as e:
+#         logger.error(f"❌ Error al obtener eventos: {str(e)}")
+#         logger.error(traceback.format_exc())
+#         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/sync")
 def sincronizar():
