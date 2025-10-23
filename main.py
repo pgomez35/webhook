@@ -246,11 +246,11 @@ def obtener_eventos(time_min: datetime = None, time_max: datetime = None, max_re
         logger.error(f"❌ Error al obtener el servicio de Calendar: {e}")
         raise
 
-    # Default range: 30 días atrás hasta 1 año adelante (puedes ajustar según vista del calendario)
+    # Default range: 31 días atrás y 31 hacia adelante (puedes ajustar según vista del calendario)
     if time_min is None:
-        time_min = datetime.utcnow() - timedelta(days=31)
+        time_min = datetime.utcnow() - timedelta(days=30)
     if time_max is None:
-        time_max = datetime.utcnow() + timedelta(days=31)
+        time_max = datetime.utcnow() + timedelta(days=30)
 
     time_min_iso = time_min.isoformat() + "Z"
     time_max_iso = time_max.isoformat() + "Z"
@@ -781,10 +781,11 @@ def crear_evento(evento: EventoIn, usuario_actual: dict = Depends(obtener_usuari
             resumen=evento.titulo,
             descripcion=evento.descripcion or "",
             fecha_inicio=evento.inicio,
-            fecha_fin=evento.fin
+            fecha_fin=evento.fin,
+            requiere_meet=evento.requiere_meet  # ✅ nuevo parámetro
         )
 
-        link_meet = google_event.get("hangoutLink")
+        link_meet = google_event.get("hangoutLink") if evento.requiere_meet else None
         google_event_id = google_event.get("id")
 
         # 2. Insertar agendamiento principal
@@ -847,10 +848,13 @@ def crear_evento(evento: EventoIn, usuario_actual: dict = Depends(obtener_usuari
         cur.close()
         conn.close()
 
-def crear_evento_google(resumen, descripcion, fecha_inicio, fecha_fin):
+# from uuid import uuid4
+# from datetime import datetime
+
+def crear_evento_google(resumen, descripcion, fecha_inicio, fecha_fin, requiere_meet=False):
     service = get_calendar_service()
 
-    # 1️⃣ Construir evento con Meet incluido
+    # 🧱 Estructura base del evento
     evento = {
         'summary': resumen,
         'description': descripcion,
@@ -862,25 +866,65 @@ def crear_evento_google(resumen, descripcion, fecha_inicio, fecha_fin):
             'dateTime': fecha_fin.isoformat(),
             'timeZone': 'America/Bogota',
         },
-        'conferenceData': {
+    }
+
+    # ✅ Si requiere Meet, agregamos conferenceData
+    if requiere_meet:
+        evento['conferenceData'] = {
             'createRequest': {
                 'requestId': str(uuid4()),
                 'conferenceSolutionKey': {'type': 'hangoutsMeet'},
             }
         }
-    }
 
-    # 2️⃣ Crear evento en Google Calendar con Meet
+    # ⚙️ Insertar evento en Google Calendar
     evento_creado = service.events().insert(
         calendarId=CALENDAR_ID,
         body=evento,
-        conferenceDataVersion=1
+        conferenceDataVersion=1 if requiere_meet else 0  # Solo activa el modo Meet si se requiere
     ).execute()
 
     logger.info(f"✅ Evento creado: {evento_creado.get('htmlLink')}")
-    logger.info(f"🔗 Meet: {evento_creado.get('hangoutLink')}")
+    if requiere_meet:
+        logger.info(f"🔗 Meet: {evento_creado.get('hangoutLink')}")
 
     return evento_creado
+
+
+# def crear_evento_google(resumen, descripcion, fecha_inicio, fecha_fin):
+#     service = get_calendar_service()
+#
+#     # 1️⃣ Construir evento con Meet incluido
+#     evento = {
+#         'summary': resumen,
+#         'description': descripcion,
+#         'start': {
+#             'dateTime': fecha_inicio.isoformat(),
+#             'timeZone': 'America/Bogota',
+#         },
+#         'end': {
+#             'dateTime': fecha_fin.isoformat(),
+#             'timeZone': 'America/Bogota',
+#         },
+#         'conferenceData': {
+#             'createRequest': {
+#                 'requestId': str(uuid4()),
+#                 'conferenceSolutionKey': {'type': 'hangoutsMeet'},
+#             }
+#         }
+#     }
+#
+#     # 2️⃣ Crear evento en Google Calendar con Meet
+#     evento_creado = service.events().insert(
+#         calendarId=CALENDAR_ID,
+#         body=evento,
+#         conferenceDataVersion=1
+#     ).execute()
+#
+#     logger.info(f"✅ Evento creado: {evento_creado.get('htmlLink')}")
+#     logger.info(f"🔗 Meet: {evento_creado.get('hangoutLink')}")
+#
+#     return evento_creado
 
 # def crear_evento_google(resumen, descripcion, fecha_inicio, fecha_fin):
 #     service = get_calendar_service()
