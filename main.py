@@ -231,7 +231,168 @@ def get_calendar_service_():
         logger.error(traceback.format_exc())
         raise
 
-def obtener_eventos() -> List[EventoOut]:
+import time
+import traceback
+from datetime import datetime, timedelta
+from typing import List, Dict
+from dateutil.parser import isoparse
+
+def obtener_eventos(time_min: datetime = None, time_max: datetime = None, max_results: int = 100) -> List[EventoOut]:
+    """
+    Versión optimizada:
+    - usa fields para limitar el payload de Google Calendar
+    - itera paginación (nextPageToken)
+    - recoge todos los event_ids y hace UNA sola consulta SQL para obtener participantes
+    - reutiliza una conexión DB fuera del loop
+    - parsea fechas y arma salida
+    - devuelve lista de EventoOut
+    """
+    start_time = time.time()
+    try:
+        service = get_calendar_service()
+    except Exception as e:
+        logger.error(f"❌ Error al obtener el servicio de Calendar: {e}")
+        raise
+
+    # Default range: 30 días atrás hasta 1 año adelante (puedes ajustar según vista del calendario)
+    if time_min is None:
+        time_min = datetime.utcnow() - timedelta(days=30)
+    if time_max is None:
+        time_max = datetime.utcnow() + timedelta(days=365)
+
+    time_min_iso = time_min.isoformat() + "Z"
+    time_max_iso = time_max.isoformat() + "Z"
+
+    # Pedir solo campos necesarios para reducir payload
+    fields = "items(id,summary,description,start,end,conferenceData),nextPageToken"
+
+    events = []
+    page_token = None
+    try:
+        while True:
+            resp = service.events().list(
+                calendarId=CALENDAR_ID,
+                timeMin=time_min_iso,
+                timeMax=time_max_iso,
+                maxResults=max_results,
+                singleEvents=True,
+                orderBy="startTime",
+                fields=fields,
+                pageToken=page_token
+            ).execute()
+            items = resp.get("items", [])
+            events.extend(items)
+            page_token = resp.get("nextPageToken")
+            if not page_token:
+                break
+    except Exception as e:
+        logger.error(f"❌ Error al obtener eventos de Google Calendar API: {e}")
+        logger.error(traceback.format_exc())
+        raise
+
+    logger.debug(f"[TIMING] Google events fetched: count={len(events)} time={(time.time()-start_time):.2f}s")
+
+    # Si no hay eventos, salir rápido
+    if not events:
+        logger.info("✅ No hay eventos en el rango solicitado")
+        return []
+
+    # Recolectar todos los event_ids para una sola consulta a la BD
+    event_ids = [e.get("id") for e in events if e.get("id")]
+    unique_event_ids = list(set(event_ids))
+    participantes_por_evento: Dict[str, List[Dict]] = {}
+
+    # Una sola conexión y una sola consulta para traer todos los participantes
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+
+        # Construir query con IN - usa adapt o placeholders del driver para seguridad
+        # Ejemplo para psycopg2:
+        if not unique_event_ids:
+            unique_event_ids = []
+
+        # Evitar IN () vacío
+        if unique_event_ids:
+            # Preparar placeholders según driver: aquí asumimos psycopg2 (%s,...)
+            placeholders = ",".join(["%s"] * len(unique_event_ids))
+            sql = f"""
+                SELECT a.google_event_id, c.id, c.nombre_real as nombre, c.nickname
+                FROM agendamientos_participantes ap
+                JOIN creadores c ON c.id = ap.creador_id
+                JOIN agendamientos a ON a.id = ap.agendamiento_id
+                WHERE a.google_event_id IN ({placeholders})
+            """
+            cur.execute(sql, tuple(unique_event_ids))
+            rows = cur.fetchall()
+            # rows: list of tuples (google_event_id, creador_id, nombre, nickname)
+            for gid, creador_id, nombre_real, nickname in rows:
+                participantes_por_evento.setdefault(gid, []).append({
+                    "id": creador_id,
+                    "nombre": nombre_real,
+                    "nickname": nickname
+                })
+        cur.close()
+    except Exception as e:
+        logger.error(f"❌ Error obteniendo participantes: {e}")
+        logger.error(traceback.format_exc())
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
+        # no rompemos: continuamos sin participantes
+        participantes_por_evento = {}
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
+
+    # Construir resultado final
+    resultado: List[EventoOut] = []
+    for event in events:
+        try:
+            event_id = event.get("id")
+            start_dt = (event.get("start") or {}).get("dateTime")
+            end_dt = (event.get("end") or {}).get("dateTime")
+            if not start_dt or not end_dt:
+                # saltar eventos con formato distinto (all-day) o manejar date en lugar de dateTime si quieres
+                continue
+
+            titulo = event.get("summary", "Sin título")
+            descripcion = event.get("description", "")
+            meet_link = None
+            conf = event.get("conferenceData") or {}
+            entry_points = conf.get("entryPoints", []) if conf else []
+            for ep in entry_points:
+                if ep.get("entryPointType") == "video":
+                    meet_link = ep.get("uri")
+                    break
+
+            part_list = participantes_por_evento.get(event_id, [])
+            participantes_ids = [p["id"] for p in part_list]
+
+            resultado.append(EventoOut(
+                id=event_id,
+                titulo=titulo,
+                inicio=isoparse(start_dt),
+                fin=isoparse(end_dt),
+                descripcion=descripcion,
+                link_meet=meet_link,
+                participantes_ids=participantes_ids,
+                participantes=part_list,
+                origen="google_calendar"
+            ))
+        except Exception as e:
+            logger.warning(f"⚠️ Saltando evento con error: {event.get('id', 'unknown')} - {e}")
+
+    logger.info(f"✅ Se obtuvieron {len(resultado)} eventos de Google Calendar en {(time.time()-start_time):.2f}s")
+    return resultado
+
+def obtener_eventosV0() -> List[EventoOut]:
     try:
         service = get_calendar_service()
     except Exception as e:
@@ -276,23 +437,20 @@ def obtener_eventos() -> List[EventoOut]:
                         break
 
             # Obtener participantes desde la base de datos
-            # conn = get_connection()
-            # cur = conn.cursor()
-            # cur.execute("""
-            #     SELECT c.id, c.nombre_real as nombre, c.nickname
-            #     FROM agendamientos_participantes ap
-            #     JOIN creadores c ON c.id = ap.creador_id
-            #     JOIN agendamientos a ON a.id = ap.agendamiento_id
-            #     WHERE a.google_event_id = %s
-            # """, (event_id,))
-            # participantes = cur.fetchall()
-            # participantes_ids = [p[0] for p in participantes]
-            # participantes_out = [{"id": p[0], "nombre": p[1], "nickname": p[2]} for p in participantes]
-            # cur.close()
-            # conn.close()
-
-            participantes_ids = []
-            participantes_out = []
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT c.id, c.nombre_real as nombre, c.nickname
+                FROM agendamientos_participantes ap
+                JOIN creadores c ON c.id = ap.creador_id
+                JOIN agendamientos a ON a.id = ap.agendamiento_id
+                WHERE a.google_event_id = %s
+            """, (event_id,))
+            participantes = cur.fetchall()
+            participantes_ids = [p[0] for p in participantes]
+            participantes_out = [{"id": p[0], "nombre": p[1], "nickname": p[2]} for p in participantes]
+            cur.close()
+            conn.close()
 
 
             if inicio and fin:
