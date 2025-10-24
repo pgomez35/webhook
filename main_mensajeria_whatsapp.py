@@ -1336,7 +1336,7 @@ def manejar_menu(numero, texto_normalizado, rol):
 
             # 2) PARA ACTUALIZAR INFO DESDE REACT DESMARCAR 2 Y MARCAR 1:
             # -------------------------------------------------
-            url_web = f"https://talentum-digital.vercel.app/actualizar-perfil?numero={numero}"
+            url_web = f"https://talentum-manager.vercel.app/actualizar-perfil?numero={numero}"
             enviar_mensaje(
                 numero,
                 f"✏️ Para actualizar tu información de perfil, haz clic en este enlace:\n{url_web}\n\nPuedes hacerlo desde tu celular o computadora."

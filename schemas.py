@@ -23,7 +23,7 @@ class EventoIn(BaseModel):
     fin: datetime
     participantes_ids: List[int] = []  # << agregar esta línea
     link_meet: Optional[str] = None  # ← agregar esto si quieres permitir edición manual
-    requiere_meet: Optional[bool] = True  # ✅ nuevo flag
+    requiere_meet: Optional[bool] = False  # ✅ nuevo flag
 
 
 class EventoOut(EventoIn):
