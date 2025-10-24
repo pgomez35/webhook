@@ -238,7 +238,6 @@ from typing import List, Dict
 from dateutil.parser import isoparse
 
 def obtener_eventos(time_min: datetime = None, time_max: datetime = None, max_results: int = 100) -> List[EventoOut]:
-
     start_time = time.time()
     try:
         service = get_calendar_service()
@@ -246,16 +245,16 @@ def obtener_eventos(time_min: datetime = None, time_max: datetime = None, max_re
         logger.error(f"❌ Error al obtener el servicio de Calendar: {e}")
         raise
 
-    # Default range: 31 días atrás y 31 hacia adelante (puedes ajustar según vista del calendario)
+    # Rango por defecto: 30 días atrás y 30 adelante
     if time_min is None:
         time_min = datetime.utcnow() - timedelta(days=30)
     if time_max is None:
         time_max = datetime.utcnow() + timedelta(days=30)
 
-    time_min_iso = time_min.isoformat() + "Z"
-    time_max_iso = time_max.isoformat() + "Z"
+    # ✅ Formato ISO correcto (sin microsegundos ni doble zona horaria)
+    time_min_iso = time_min.replace(microsecond=0).isoformat() + "Z"
+    time_max_iso = time_max.replace(microsecond=0).isoformat() + "Z"
 
-    # Pedir solo campos necesarios para reducir payload
     fields = "items(id,summary,description,start,end,conferenceData),nextPageToken"
 
     events = []
@@ -284,33 +283,29 @@ def obtener_eventos(time_min: datetime = None, time_max: datetime = None, max_re
 
     logger.debug(f"[TIMING] Google events fetched: count={len(events)} time={(time.time()-start_time):.2f}s")
 
-    # Si no hay eventos, salir rápido
     if not events:
         logger.info("✅ No hay eventos en el rango solicitado")
         return []
 
-    # Recolectar todos los event_ids para una sola consulta a la BD
     event_ids = [e.get("id") for e in events if e.get("id")]
     unique_event_ids = list(set(event_ids))
     participantes_por_evento: Dict[str, List[Dict]] = {}
+    responsables_por_evento: Dict[str, int] = {}  # ✅ NUEVO diccionario para responsable_id
 
-    # Una sola conexión y una sola consulta para traer todos los participantes
     conn = None
     try:
         conn = get_connection()
         cur = conn.cursor()
 
-        # Construir query con IN - usa adapt o placeholders del driver para seguridad
-        # Ejemplo para psycopg2:
-        if not unique_event_ids:
-            unique_event_ids = []
-
-        # Evitar IN () vacío
         if unique_event_ids:
-            # Preparar placeholders según driver: aquí asumimos psycopg2 (%s,...)
             placeholders = ",".join(["%s"] * len(unique_event_ids))
             sql = f"""
-                SELECT a.google_event_id, c.id, c.nombre_real as nombre, c.nickname
+                SELECT 
+                    a.google_event_id,
+                    a.responsable_id,
+                    c.id,
+                    COALESCE(NULLIF(c.nombre_real, ''), c.nickname) AS nombre,
+                    c.nickname
                 FROM agendamientos_participantes ap
                 JOIN creadores c ON c.id = ap.creador_id
                 JOIN agendamientos a ON a.id = ap.agendamiento_id
@@ -318,23 +313,23 @@ def obtener_eventos(time_min: datetime = None, time_max: datetime = None, max_re
             """
             cur.execute(sql, tuple(unique_event_ids))
             rows = cur.fetchall()
-            # rows: list of tuples (google_event_id, creador_id, nombre, nickname)
-            for gid, creador_id, nombre_real, nickname in rows:
-                participantes_por_evento.setdefault(gid, []).append({
+
+            # ✅ Ajuste: recorremos filas y guardamos tanto participantes como responsable
+            for google_event_id, responsable_id, creador_id, nombre, nickname in rows:
+                # Registrar participantes
+                participantes_por_evento.setdefault(google_event_id, []).append({
                     "id": creador_id,
-                    "nombre": nombre_real,
+                    "nombre": nombre,
                     "nickname": nickname
                 })
+                # Registrar responsable (una sola vez por evento)
+                if google_event_id not in responsables_por_evento:
+                    responsables_por_evento[google_event_id] = responsable_id
+
         cur.close()
     except Exception as e:
         logger.error(f"❌ Error obteniendo participantes: {e}")
         logger.error(traceback.format_exc())
-        if conn:
-            try:
-                conn.close()
-            except:
-                pass
-        # no rompemos: continuamos sin participantes
         participantes_por_evento = {}
     finally:
         if conn:
@@ -343,7 +338,7 @@ def obtener_eventos(time_min: datetime = None, time_max: datetime = None, max_re
             except:
                 pass
 
-    # Construir resultado final
+    # ✅ Construcción final incluyendo responsable_id
     resultado: List[EventoOut] = []
     for event in events:
         try:
@@ -351,7 +346,6 @@ def obtener_eventos(time_min: datetime = None, time_max: datetime = None, max_re
             start_dt = (event.get("start") or {}).get("dateTime")
             end_dt = (event.get("end") or {}).get("dateTime")
             if not start_dt or not end_dt:
-                # saltar eventos con formato distinto (all-day) o manejar date en lugar de dateTime si quieres
                 continue
 
             titulo = event.get("summary", "Sin título")
@@ -366,6 +360,7 @@ def obtener_eventos(time_min: datetime = None, time_max: datetime = None, max_re
 
             part_list = participantes_por_evento.get(event_id, [])
             participantes_ids = [p["id"] for p in part_list]
+            responsable_id = responsables_por_evento.get(event_id)  # ✅ NUEVO
 
             resultado.append(EventoOut(
                 id=event_id,
@@ -376,6 +371,7 @@ def obtener_eventos(time_min: datetime = None, time_max: datetime = None, max_re
                 link_meet=meet_link,
                 participantes_ids=participantes_ids,
                 participantes=part_list,
+                responsable_id=responsable_id,  # ✅ Incluido
                 origen="google_calendar"
             ))
         except Exception as e:
@@ -383,6 +379,7 @@ def obtener_eventos(time_min: datetime = None, time_max: datetime = None, max_re
 
     logger.info(f"✅ Se obtuvieron {len(resultado)} eventos de Google Calendar en {(time.time()-start_time):.2f}s")
     return resultado
+
 
 def obtener_eventosV0() -> List[EventoOut]:
     try:

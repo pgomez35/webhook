@@ -30,6 +30,7 @@ class EventoOut(EventoIn):
     id: str
     link_meet: Optional[str] = None
     origen: Optional[str] = "google_calendar"  # Para distinguir fuentes
+    responsable_id: Optional[int] = None
     participantes: Optional[List[dict]] = None  # ← para devolver nombres, roles, etc
 
 # ===============================
