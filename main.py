@@ -1,5 +1,5 @@
 # ✅ main.py
-from fastapi import FastAPI, HTTPException, Path, Body, Request, UploadFile, Form,File
+from fastapi import FastAPI, HTTPException, Path, Body, Request,Response, UploadFile, Form,File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import pandas as pd
@@ -3995,6 +3995,14 @@ def actualizar_entrevista(
         evaluacion_global=actualizado.get("evaluacion_global"),
     )
 
+@app.middleware("http")
+async def disable_range_header(request, call_next):
+    response = await call_next(request)
+    # Si la respuesta es 206, cámbiala a 200
+    if response.status_code == 206:
+        content = await response.body()
+        return Response(content=content, status_code=200, headers=response.headers)
+    return response
 
 
 
