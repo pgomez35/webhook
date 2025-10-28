@@ -3995,13 +3995,30 @@ def actualizar_entrevista(
         evaluacion_global=actualizado.get("evaluacion_global"),
     )
 
+from fastapi.responses import StreamingResponse
+
 @app.middleware("http")
-async def disable_range_header(request, call_next):
+async def disable_partial_content(request: Request, call_next):
     response = await call_next(request)
-    # Si la respuesta es 206, cámbiala a 200
+
+    # Solo actuar si la respuesta es 206
     if response.status_code == 206:
-        content = await response.body()
-        return Response(content=content, status_code=200, headers=response.headers)
+        # Si es un StreamingResponse, debemos consumir el contenido
+        if isinstance(response, StreamingResponse):
+            body = b"".join([chunk async for chunk in response.body_iterator])
+            headers = dict(response.headers)
+            headers.pop("content-range", None)
+            headers.pop("accept-ranges", None)
+            return Response(content=body, status_code=200, headers=headers)
+
+        # Si es respuesta normal
+        body = getattr(response, "body", None)
+        if body:
+            headers = dict(response.headers)
+            headers.pop("content-range", None)
+            headers.pop("accept-ranges", None)
+            return Response(content=body, status_code=200, headers=headers)
+
     return response
 
 
