@@ -17,6 +17,15 @@ The `main.py` file has been updated to serve static files from the `public` dire
 PUBLIC_DIR = "public"
 os.makedirs(PUBLIC_DIR, exist_ok=True)
 app.mount("/public", StaticFiles(directory=PUBLIC_DIR, html=True), name="public")
+
+# Direct endpoint for privacy policy
+@app.get("/privacy-policy/")
+async def get_privacy_policy():
+    """Sirve la página de política de privacidad"""
+    privacy_policy_path = os.path.join(PUBLIC_DIR, "privacy-policy", "index.html")
+    if os.path.exists(privacy_policy_path):
+        return FileResponse(privacy_policy_path, media_type="text/html")
+    raise HTTPException(status_code=404, detail="Privacy policy page not found")
 ```
 
 ### 3. Vercel Configuration
@@ -32,20 +41,14 @@ A `vercel.json` file has been created to configure the Vercel deployment:
   ],
   "routes": [
     {
-      "src": "/public/privacy-policy/(.*)",
-      "dest": "/public/privacy-policy/$1"
-    },
-    {
-      "src": "/public/(.*)",
-      "dest": "/public/$1"
-    },
-    {
       "src": "/(.*)",
       "dest": "main.py"
     }
   ]
 }
 ```
+
+All routing is handled by the FastAPI application, which serves both the API endpoints and static files.
 
 ## Deploying to Vercel
 
@@ -101,12 +104,17 @@ vercel --prod
 
 After deployment, the privacy policy page will be accessible at:
 ```
+https://your-domain.vercel.app/privacy-policy/
+```
+
+Or via the mounted static files route:
+```
 https://your-domain.vercel.app/public/privacy-policy/
 ```
 
-Or:
+With custom domain (e.g., talentum-manager.com):
 ```
-https://your-domain.vercel.app/public/privacy-policy/index.html
+https://talentum-manager.com/privacy-policy/
 ```
 
 ## Local Testing
@@ -126,6 +134,11 @@ uvicorn main:app --reload
 ```
 
 4. Access the privacy policy at:
+```
+http://localhost:8000/privacy-policy/
+```
+
+Or:
 ```
 http://localhost:8000/public/privacy-policy/
 ```

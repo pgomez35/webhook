@@ -45,8 +45,9 @@ http://localhost:8000/docs
 ## Privacy Policy
 
 The privacy policy page is available at:
-- Local: `http://localhost:8000/public/privacy-policy/`
-- Production: `https://your-domain.vercel.app/public/privacy-policy/`
+- Local: `http://localhost:8000/privacy-policy/` or `http://localhost:8000/public/privacy-policy/`
+- Production: `https://your-domain.vercel.app/privacy-policy/` or `https://your-domain.vercel.app/public/privacy-policy/`
+- Custom Domain: `https://talentum-manager.com/privacy-policy/`
 
 ## Deployment
 
