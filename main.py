@@ -84,6 +84,11 @@ os.makedirs(AUDIO_DIR, exist_ok=True)
 # ✅ Montar ruta para servir archivos estáticos desde /audios
 app.mount("/audios", StaticFiles(directory=AUDIO_DIR), name="audios")
 
+# ✅ Montar ruta para servir archivos estáticos públicos (privacy-policy)
+PUBLIC_DIR = "public"
+os.makedirs(PUBLIC_DIR, exist_ok=True)
+app.mount("/public", StaticFiles(directory=PUBLIC_DIR, html=True), name="public")
+
 # Configurar CORS para permitir peticiones del frontend
 app.add_middleware(
     CORSMiddleware,
