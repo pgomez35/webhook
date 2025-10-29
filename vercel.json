@@ -8,14 +8,6 @@
   ],
   "routes": [
     {
-      "src": "/public/privacy-policy/(.*)",
-      "dest": "/public/privacy-policy/$1"
-    },
-    {
-      "src": "/public/(.*)",
-      "dest": "/public/$1"
-    },
-    {
       "src": "/(.*)",
       "dest": "main.py"
     }
