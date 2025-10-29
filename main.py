@@ -6,7 +6,7 @@ import pandas as pd
 import io
 
 # Respuestas personalizadas (usa solo si las necesitas)
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, FileResponse
 
 from dotenv import load_dotenv  # Solo si usas variables de entorno
 import os
@@ -83,6 +83,11 @@ os.makedirs(AUDIO_DIR, exist_ok=True)
 
 # ✅ Montar ruta para servir archivos estáticos desde /audios
 app.mount("/audios", StaticFiles(directory=AUDIO_DIR), name="audios")
+
+# ✅ Montar ruta para servir archivos estáticos públicos (privacy-policy)
+PUBLIC_DIR = "public"
+os.makedirs(PUBLIC_DIR, exist_ok=True)
+app.mount("/public", StaticFiles(directory=PUBLIC_DIR, html=True), name="public")
 
 # Configurar CORS para permitir peticiones del frontend
 app.add_middleware(
@@ -1060,6 +1065,16 @@ def get_version():
         "google-auth-version": google.auth.__version__,
         "user_credentials_methods": dir(UserCredentials)
     }
+
+# ✅ Ruta para servir la política de privacidad en /privacy-policy/
+@app.get("/privacy-policy/")
+async def get_privacy_policy():
+    """Sirve la página de política de privacidad"""
+    privacy_policy_path = os.path.join(PUBLIC_DIR, "privacy-policy", "index.html")
+    if os.path.exists(privacy_policy_path):
+        return FileResponse(privacy_policy_path, media_type="text/html")
+    raise HTTPException(status_code=404, detail="Privacy policy page not found")
+
 # ==================== FIN PROYECTO CALENDAR =======================
 
 # 🔊 Función para descargar audio desde WhatsApp Cloud API
