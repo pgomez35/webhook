@@ -51,8 +51,12 @@ cloudinary.config(
 # 🔄 Cargar variables de entorno
 load_dotenv()
 API_KEY = os.getenv("OPENAI_API_KEY")
-TOKEN = os.getenv("WHATSAPP_TOKEN")
-PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_ID")
+# TOKEN = os.getenv("WHATSAPP_TOKEN")
+# PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_ID")
+
+TOKEN = os.getenv("WHATSAPP_TOKEN_PRESTIGE")
+PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_ID_PRESTIGE")
+
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "142848PITUFO")
 CHROMA_DIR = "./chroma_faq_openai"
 
