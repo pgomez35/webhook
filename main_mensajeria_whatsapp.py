@@ -14,8 +14,12 @@ import psycopg2
 load_dotenv()
 
 # Configuración
-TOKEN = os.getenv("WHATSAPP_TOKEN")
-PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_ID")
+# TOKEN = os.getenv("WHATSAPP_TOKEN")
+# PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_ID")
+
+TOKEN = os.getenv("WHATSAPP_TOKEN_PRESTIGE")
+PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_ID_PRESTIGE")
+
 INTERNAL_DATABASE_URL = os.getenv("INTERNAL_DATABASE_URL")  # 🔹 corregido nombre
 
 router = APIRouter()
