@@ -4052,10 +4052,70 @@ META_REDIRECT_URL = os.getenv("META_REDIRECT_URL")
 #
 #     return {"status": "ok"}
 
-@app.post("/meta/exchange_code")
-async def exchange_code(payload: dict):
-    logging.info(f"📥 Recibido payload: {payload}")
-    code = payload.get("code")
+# @app.post("/meta/exchange_code")
+# async def exchange_code(payload: dict):
+#     logging.info(f"📥 Recibido payload: {payload}")
+#     code = payload.get("code")
+#
+#     if not code:
+#         logging.error("❌ No se recibió 'code'")
+#         return {"error": "missing_code"}
+#
+#     token_exchange_url = "https://graph.facebook.com/v21.0/oauth/access_token"
+#     params = {
+#         "code": code,
+#         "client_id": META_APP_ID,
+#         "client_secret": META_APP_SECRET,
+#         "redirect_uri": META_REDIRECT_URL,
+#     }
+#
+#     try:
+#         r = requests.get(token_exchange_url, params=params)
+#         data = r.json()
+#         logging.info(f"🔁 Respuesta Meta: {data}")
+#     except Exception as e:
+#         logging.exception("❌ Error al hacer request a Meta")
+#         return {"error": str(e)}
+#
+#     access_token = data.get("access_token")
+#     if not access_token:
+#         logging.error("❌ No se recibió access_token de Meta")
+#         return {"error": "no_access_token", "meta_response": data}
+#
+#     # 🔹 Consultar información del WABA
+#     try:
+#         url = f"https://graph.facebook.com/v21.0/me?fields=id,name,whatsapp_business_account&access_token={access_token}"
+#         r = requests.get(url)
+#         info = r.json()
+#         logging.info(f"📦 Info de cuenta: {info}")
+#
+#         waba_id = info.get("whatsapp_business_account", {}).get("id")
+#         business_id = info.get("id")
+#
+#         if not waba_id:
+#             logging.warning("⚠️ No se encontró whatsapp_business_account en la respuesta.")
+#             return {"warning": "no_waba_found", "info": info}
+#
+#         # ✅ Guardar en DB
+#         save_whatsapp_business_account(access_token, waba_id, business_id)
+#
+#         return {"status": "ok", "waba_id": waba_id}
+#
+#     except Exception as e:
+#         logging.exception("❌ Error al consultar WABA info")
+#         return {"error": str(e)}
+
+from fastapi import Request
+
+@app.api_route("/meta/exchange_code", methods=["GET", "POST"])
+async def exchange_code(request: Request):
+    if request.method == "GET":
+        code = request.query_params.get("code")
+    else:
+        payload = await request.json()
+        code = payload.get("code")
+
+    logging.info(f"📥 Recibido code: {code}")
 
     if not code:
         logging.error("❌ No se recibió 'code'")
@@ -4069,38 +4129,18 @@ async def exchange_code(payload: dict):
         "redirect_uri": META_REDIRECT_URL,
     }
 
-    try:
-        r = requests.get(token_exchange_url, params=params)
-        data = r.json()
-        logging.info(f"🔁 Respuesta Meta: {data}")
-    except Exception as e:
-        logging.exception("❌ Error al hacer request a Meta")
-        return {"error": str(e)}
+    r = requests.get(token_exchange_url, params=params)
+    data = r.json()
+    logging.info(f"📤 Respuesta Meta: {data}")
 
     access_token = data.get("access_token")
+    waba_info = data.get("whatsapp_business_account", {})
+
     if not access_token:
-        logging.error("❌ No se recibió access_token de Meta")
-        return {"error": "no_access_token", "meta_response": data}
+        logging.error("❌ No se recibió access_token")
+        return {"error": "no_access_token"}
 
-    # 🔹 Consultar información del WABA
-    try:
-        url = f"https://graph.facebook.com/v21.0/me?fields=id,name,whatsapp_business_account&access_token={access_token}"
-        r = requests.get(url)
-        info = r.json()
-        logging.info(f"📦 Info de cuenta: {info}")
+    waba_id = waba_info.get("id")
+    save_whatsapp_business_account(access_token, waba_id)
 
-        waba_id = info.get("whatsapp_business_account", {}).get("id")
-        business_id = info.get("id")
-
-        if not waba_id:
-            logging.warning("⚠️ No se encontró whatsapp_business_account en la respuesta.")
-            return {"warning": "no_waba_found", "info": info}
-
-        # ✅ Guardar en DB
-        save_whatsapp_business_account(access_token, waba_id, business_id)
-
-        return {"status": "ok", "waba_id": waba_id}
-
-    except Exception as e:
-        logging.exception("❌ Error al consultar WABA info")
-        return {"error": str(e)}
+    return {"status": "ok"}
