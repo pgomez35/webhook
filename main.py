@@ -4105,7 +4105,7 @@ META_REDIRECT_URL = os.getenv("META_REDIRECT_URL")
 #         logging.exception("❌ Error al consultar WABA info")
 #         return {"error": str(e)}
 
-from fastapi import Request
+
 
 # @app.api_route("/meta/exchange_code", methods=["GET", "POST"])
 # async def exchange_code(request: Request):
@@ -4164,7 +4164,7 @@ async def exchange_code(request: Request):
         token_params = {
             "client_id": META_APP_ID,
             "client_secret": META_APP_SECRET,
-            "redirect_uri": REDIRECT_URI,
+            "redirect_uri": META_REDIRECT_URL,
             "code": code,
         }
 
