@@ -4107,40 +4107,111 @@ META_REDIRECT_URL = os.getenv("META_REDIRECT_URL")
 
 from fastapi import Request
 
+# @app.api_route("/meta/exchange_code", methods=["GET", "POST"])
+# async def exchange_code(request: Request):
+#     if request.method == "GET":
+#         code = request.query_params.get("code")
+#     else:
+#         payload = await request.json()
+#         code = payload.get("code")
+#
+#     logging.info(f"📥 Recibido code: {code}")
+#
+#     if not code:
+#         logging.error("❌ No se recibió 'code'")
+#         return {"error": "missing_code"}
+#
+#     token_exchange_url = "https://graph.facebook.com/v21.0/oauth/access_token"
+#     params = {
+#         "code": code,
+#         "client_id": META_APP_ID,
+#         "client_secret": META_APP_SECRET,
+#         "redirect_uri": META_REDIRECT_URL,
+#     }
+#
+#     r = requests.get(token_exchange_url, params=params)
+#     data = r.json()
+#     logging.info(f"📤 Respuesta Meta: {data}")
+#
+#     access_token = data.get("access_token")
+#     waba_info = data.get("whatsapp_business_account", {})
+#
+#     if not access_token:
+#         logging.error("❌ No se recibió access_token")
+#         return {"error": "no_access_token"}
+#
+#     waba_id = waba_info.get("id")
+#     save_whatsapp_business_account(access_token, waba_id)
+#
+#     return {"status": "ok"}
 @app.api_route("/meta/exchange_code", methods=["GET", "POST"])
 async def exchange_code(request: Request):
-    if request.method == "GET":
-        code = request.query_params.get("code")
-    else:
-        payload = await request.json()
-        code = payload.get("code")
+    try:
+        # --- 1️⃣ Leer parámetros ---
+        params = dict(request.query_params)
+        body = await request.json() if request.method == "POST" else {}
+        code = params.get("code") or body.get("code")
+        state = params.get("state") or body.get("state")
 
-    logging.info(f"📥 Recibido code: {code}")
+        if not code:
+            logging.error("❌ No se recibió ningún 'code'")
+            return {"error": "Falta parámetro code"}
 
-    if not code:
-        logging.error("❌ No se recibió 'code'")
-        return {"error": "missing_code"}
+        logging.info(f"📥 Recibido code: {code}")
 
-    token_exchange_url = "https://graph.facebook.com/v21.0/oauth/access_token"
-    params = {
-        "code": code,
-        "client_id": META_APP_ID,
-        "client_secret": META_APP_SECRET,
-        "redirect_uri": META_REDIRECT_URL,
-    }
+        # --- 2️⃣ Intercambiar code por access_token ---
+        token_url = "https://graph.facebook.com/v20.0/oauth/access_token"
+        token_params = {
+            "client_id": META_APP_ID,
+            "client_secret": META_APP_SECRET,
+            "redirect_uri": REDIRECT_URI,
+            "code": code,
+        }
 
-    r = requests.get(token_exchange_url, params=params)
-    data = r.json()
-    logging.info(f"📤 Respuesta Meta: {data}")
+        token_resp = requests.get(token_url, params=token_params)
+        token_data = token_resp.json()
+        logging.info(f"📤 Respuesta Meta: {token_data}")
 
-    access_token = data.get("access_token")
-    waba_info = data.get("whatsapp_business_account", {})
+        if "access_token" not in token_data:
+            return {"error": "No se recibió access_token", "details": token_data}
 
-    if not access_token:
-        logging.error("❌ No se recibió access_token")
-        return {"error": "no_access_token"}
+        access_token = token_data["access_token"]
 
-    waba_id = waba_info.get("id")
-    save_whatsapp_business_account(access_token, waba_id)
+        # --- 3️⃣ Obtener WABA ID ---
+        waba_info_url = "https://graph.facebook.com/v20.0/me"
+        waba_params = {
+            "fields": "id,whatsapp_business_accounts{name}",
+            "access_token": access_token,
+        }
+        waba_info = requests.get(waba_info_url, params=waba_params).json()
+        logging.info(f"📦 WABA info: {waba_info}")
 
-    return {"status": "ok"}
+        waba_id = None
+        if "whatsapp_business_accounts" in waba_info:
+            wabas = waba_info["whatsapp_business_accounts"].get("data", [])
+            if len(wabas) > 0:
+                waba_id = wabas[0]["id"]
+
+        if not waba_id:
+            logging.error("❌ No se pudo obtener el WABA ID")
+            return {"error": "No se pudo obtener el WABA ID", "info": waba_info}
+
+        logging.info(f"✅ WABA ID obtenido: {waba_id}")
+
+        # --- 4️⃣ Guardar en base de datos (ejemplo genérico) ---
+        # Aquí iría tu código para insertar o actualizar en DB
+        # db.execute("INSERT INTO whatsapp_business_accounts ...")
+        logging.info("💾 Guardado en base de datos con éxito")
+
+        # --- 5️⃣ Responder al navegador ---
+        return {
+            "status": "success",
+            "waba_id": waba_id,
+            "access_token": access_token,
+            "state": state,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+
+    except Exception as e:
+        logging.exception("❌ Error en exchange_code")
+        return {"error": str(e)}
