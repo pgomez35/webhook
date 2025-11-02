@@ -2845,3 +2845,24 @@ def obtener_invitacion_por_creador(creador_id: int):
         return None
 
 
+def save_whatsapp_business_account(access_token: str, waba_id: str):
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute("""
+            INSERT INTO whatsapp_business_accounts (waba_id, access_token)
+            VALUES (%s, %s)
+            ON CONFLICT (waba_id) DO UPDATE
+            SET access_token = EXCLUDED.access_token,
+                updated_at = NOW();
+        """, (waba_id, access_token))
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        print("✅ WABA guardada/actualizada en la BD")
+
+    except Exception as e:
+        print("❌ Error guardando WABA:", e)

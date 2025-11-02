@@ -51,11 +51,10 @@ cloudinary.config(
 # 🔄 Cargar variables de entorno
 load_dotenv()
 API_KEY = os.getenv("OPENAI_API_KEY")
-# TOKEN = os.getenv("WHATSAPP_TOKEN")
-# PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_ID")
 
-TOKEN = os.getenv("WHATSAPP_TOKEN_PRESTIGE")
-PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_ID_PRESTIGE")
+TOKEN = os.getenv("WHATSAPP_TOKEN")
+PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_ID")
+
 
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "142848PITUFO")
 CHROMA_DIR = "./chroma_faq_openai"
@@ -4025,5 +4024,31 @@ async def disable_partial_content(request: Request, call_next):
 
     return response
 
+META_APP_ID = os.getenv("META_APP_ID")
+META_APP_SECRET = os.getenv("META_APP_SECRET")
+META_REDIRECT_URL = os.getenv("META_REDIRECT_URL")
 
+@app.post("/meta/exchange_code")
+async def exchange_code(payload: dict):
+    code = payload.get("code")
+
+    token_exchange_url = "https://graph.facebook.com/v21.0/oauth/access_token"
+
+    params = {
+        "code": code,
+        "client_id": META_APP_ID,
+        "client_secret": META_APP_SECRET,
+        "redirect_uri": META_REDIRECT_URL,
+    }
+
+    r = requests.get(token_exchange_url, params=params)
+    data = r.json()
+
+    access_token = data["access_token"]
+    whatsapp_business_account_id = data["whatsapp_business_account"]["id"]
+
+    # Guarda en DB (cuenta WABA, token, teléfono, etc.)
+    save_whatsapp_business_account(access_token, whatsapp_business_account_id)
+
+    return {"status": "ok"}
 
