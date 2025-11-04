@@ -4144,74 +4144,90 @@ META_REDIRECT_URL = os.getenv("META_REDIRECT_URL")
 #     save_whatsapp_business_account(access_token, waba_id)
 #
 #     return {"status": "ok"}
-@app.api_route("/meta/exchange_code", methods=["GET", "POST"])
+# @app.api_route("/meta/exchange_code", methods=["GET", "POST"])
+# async def exchange_code(request: Request):
+#     try:
+#         # --- 1️⃣ Leer parámetros ---
+#         params = dict(request.query_params)
+#         body = await request.json() if request.method == "POST" else {}
+#         code = params.get("code") or body.get("code")
+#         state = params.get("state") or body.get("state")
+#
+#         if not code:
+#             logging.error("❌ No se recibió ningún 'code'")
+#             return {"error": "Falta parámetro code"}
+#
+#         logging.info(f"📥 Recibido code: {code}")
+#
+#         # --- 2️⃣ Intercambiar code por access_token ---
+#         token_url = "https://graph.facebook.com/v20.0/oauth/access_token"
+#         token_params = {
+#             "client_id": META_APP_ID,
+#             "client_secret": META_APP_SECRET,
+#             "redirect_uri": META_REDIRECT_URL,
+#             "code": code,
+#         }
+#
+#         token_resp = requests.get(token_url, params=token_params)
+#         token_data = token_resp.json()
+#         logging.info(f"📤 Respuesta Meta: {token_data}")
+#
+#         if "access_token" not in token_data:
+#             return {"error": "No se recibió access_token", "details": token_data}
+#
+#         access_token = token_data["access_token"]
+#
+#         # --- 3️⃣ Obtener WABA ID ---
+#         waba_info_url = "https://graph.facebook.com/v20.0/me"
+#         waba_params = {
+#             "fields": "id,whatsapp_business_accounts{name}",
+#             "access_token": access_token,
+#         }
+#         waba_info = requests.get(waba_info_url, params=waba_params).json()
+#         logging.info(f"📦 WABA info: {waba_info}")
+#
+#         waba_id = None
+#         if "whatsapp_business_accounts" in waba_info:
+#             wabas = waba_info["whatsapp_business_accounts"].get("data", [])
+#             if len(wabas) > 0:
+#                 waba_id = wabas[0]["id"]
+#
+#         if not waba_id:
+#             logging.error("❌ No se pudo obtener el WABA ID")
+#             return {"error": "No se pudo obtener el WABA ID", "info": waba_info}
+#
+#         logging.info(f"✅ WABA ID obtenido: {waba_id}")
+#
+#         # --- 4️⃣ Guardar en base de datos (ejemplo genérico) ---
+#         # Aquí iría tu código para insertar o actualizar en DB
+#         # db.execute("INSERT INTO whatsapp_business_accounts ...")
+#         logging.info("💾 Guardado en base de datos con éxito")
+#
+#         # --- 5️⃣ Responder al navegador ---
+#         return {
+#             "status": "success",
+#             "waba_id": waba_id,
+#             "access_token": access_token,
+#             "state": state,
+#             "timestamp": datetime.utcnow().isoformat(),
+#         }
+#
+#     except Exception as e:
+#         logging.exception("❌ Error en exchange_code")
+#         return {"error": str(e)}
+
+@app.post("/meta/exchange_code")
 async def exchange_code(request: Request):
-    try:
-        # --- 1️⃣ Leer parámetros ---
-        params = dict(request.query_params)
-        body = await request.json() if request.method == "POST" else {}
-        code = params.get("code") or body.get("code")
-        state = params.get("state") or body.get("state")
+    data = await request.json()
+    code = data.get("code")
 
-        if not code:
-            logging.error("❌ No se recibió ningún 'code'")
-            return {"error": "Falta parámetro code"}
+    if not code:
+        return {"error": "No llegó code desde Meta"}
 
-        logging.info(f"📥 Recibido code: {code}")
+    logging.info(f"📥 Code recibido desde onboarding: {code}")
 
-        # --- 2️⃣ Intercambiar code por access_token ---
-        token_url = "https://graph.facebook.com/v20.0/oauth/access_token"
-        token_params = {
-            "client_id": META_APP_ID,
-            "client_secret": META_APP_SECRET,
-            "redirect_uri": META_REDIRECT_URL,
-            "code": code,
-        }
-
-        token_resp = requests.get(token_url, params=token_params)
-        token_data = token_resp.json()
-        logging.info(f"📤 Respuesta Meta: {token_data}")
-
-        if "access_token" not in token_data:
-            return {"error": "No se recibió access_token", "details": token_data}
-
-        access_token = token_data["access_token"]
-
-        # --- 3️⃣ Obtener WABA ID ---
-        waba_info_url = "https://graph.facebook.com/v20.0/me"
-        waba_params = {
-            "fields": "id,whatsapp_business_accounts{name}",
-            "access_token": access_token,
-        }
-        waba_info = requests.get(waba_info_url, params=waba_params).json()
-        logging.info(f"📦 WABA info: {waba_info}")
-
-        waba_id = None
-        if "whatsapp_business_accounts" in waba_info:
-            wabas = waba_info["whatsapp_business_accounts"].get("data", [])
-            if len(wabas) > 0:
-                waba_id = wabas[0]["id"]
-
-        if not waba_id:
-            logging.error("❌ No se pudo obtener el WABA ID")
-            return {"error": "No se pudo obtener el WABA ID", "info": waba_info}
-
-        logging.info(f"✅ WABA ID obtenido: {waba_id}")
-
-        # --- 4️⃣ Guardar en base de datos (ejemplo genérico) ---
-        # Aquí iría tu código para insertar o actualizar en DB
-        # db.execute("INSERT INTO whatsapp_business_accounts ...")
-        logging.info("💾 Guardado en base de datos con éxito")
-
-        # --- 5️⃣ Responder al navegador ---
-        return {
-            "status": "success",
-            "waba_id": waba_id,
-            "access_token": access_token,
-            "state": state,
-            "timestamp": datetime.utcnow().isoformat(),
-        }
-
-    except Exception as e:
-        logging.exception("❌ Error en exchange_code")
-        return {"error": str(e)}
+    # Por ahora solo regresamos confirmación
+    return {
+        "status": "received",
+        "code": code
+    }
