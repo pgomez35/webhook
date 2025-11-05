@@ -4027,6 +4027,7 @@ async def disable_partial_content(request: Request, call_next):
 META_APP_ID = os.getenv("META_APP_ID")
 META_APP_SECRET = os.getenv("META_APP_SECRET")
 META_REDIRECT_URL = os.getenv("META_REDIRECT_URL")
+GRAPH_API_VERSION = os.getenv("GRAPH_API_VERSION")
 
 # @app.post("/meta/exchange_code")
 # async def exchange_code(payload: dict):
@@ -4235,7 +4236,7 @@ async def exchange_code(request: Request):
             )
 
         # Intercambiar code por access_token
-        token_exchange_url = "https://graph.facebook.com/v21.0/oauth/access_token"
+        token_exchange_url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/oauth/access_token"
         params = {
             "code": code,
             "client_id": META_APP_ID,
