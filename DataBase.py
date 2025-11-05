@@ -6,7 +6,6 @@ import re
 import gspread
 from google.oauth2.service_account import Credentials
 from gspread.worksheet import JSONResponse
-from uvicorn import logging
 
 from schemas import ActualizacionContactoInfo
 from psycopg2.extras import RealDictCursor
@@ -2845,6 +2844,7 @@ def obtener_invitacion_por_creador(creador_id: int):
         print(f"❌ Error al consultar invitación de creador {creador_id}: {e}")
         return None
 
+import logging
 
 def save_whatsapp_business_account(
         access_token: str,
