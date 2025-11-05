@@ -4299,7 +4299,7 @@ async def exchange_code(request: Request):
         if access_token and waba_id_from_response:
             try:
                 # Obtener información del WABA desde Graph API
-                waba_info_url = f"https://graph.facebook.com/v21.0/{waba_id_from_response}"
+                waba_info_url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{waba_id_from_response}"
                 waba_params = {
                     "fields": "name,timezone_id",
                     "access_token": access_token
