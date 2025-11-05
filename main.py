@@ -4213,11 +4213,20 @@ async def exchange_code(request: Request):
             code = request.query_params.get("code")
             waba_id = request.query_params.get("waba_id")
             phone_id = request.query_params.get("phone_id")
+            redirect_uri = request.query_params.get("redirect_uri")  # ✅ Nuevo
         else:
             payload = await request.json()
             code = payload.get("code")
             waba_id = payload.get("waba_id")
             phone_id = payload.get("phone_id")
+            redirect_uri = payload.get("redirect_uri")  # ✅ Nuevo - usar el del frontend
+
+        # ✅ Usar redirect_uri del frontend si está disponible, sino usar el configurado
+        if not redirect_uri:
+            redirect_uri = META_REDIRECT_URL  # Fallback a la configuración por defecto
+            logging.warning(f"⚠️ No se recibió redirect_uri, usando por defecto: {redirect_uri}")
+        else:
+            logging.info(f"✅ Usando redirect_uri del frontend: {redirect_uri}")
 
         # Logging mejorado (enmascarar código parcialmente)
         code_masked = f"{code[:6]}...{code[-6:]}" if code and len(code) > 12 else "***"
@@ -4241,12 +4250,12 @@ async def exchange_code(request: Request):
             "code": code,
             "client_id": META_APP_ID,
             "client_secret": META_APP_SECRET,
-            "redirect_uri": META_REDIRECT_URL,
+            "redirect_uri": redirect_uri,  # ✅ Usar el redirect_uri del frontend
         }
 
         # ✅ Logging de parámetros (sin secrets)
         logging.info(f"🔄 Intercambiando code con Meta API...")
-        logging.info(f"📍 Redirect URI: {META_REDIRECT_URL}")
+        logging.info(f"📍 Redirect URI: {redirect_uri}")  # ✅ Mostrar el que se está usando
         logging.info(f"🔑 Client ID: {META_APP_ID}")
 
         try:
@@ -4284,12 +4293,13 @@ async def exchange_code(request: Request):
 
                 # ✅ Casos comunes de error 400
                 if error_code == 100:
-                    logging.error("   ⚠️ Error 100: Código inválido o ya usado")
+                    logging.error("   ⚠️ Error 100: Código inválido o redirect_uri no coincide")
+                    logging.error(f"   ⚠️ Redirect URI usado: {redirect_uri}")
                 elif error_code == 190:
                     logging.error("   ⚠️ Error 190: Token o código expirado")
                 elif "redirect_uri" in error_message.lower():
                     logging.error("   ⚠️ El redirect_uri no coincide con el configurado en Meta")
-                    logging.error(f"   ⚠️ Redirect URI enviado: {META_REDIRECT_URL}")
+                    logging.error(f"   ⚠️ Redirect URI enviado: {redirect_uri}")
 
             except:
                 logging.error(f"❌ Error parseando respuesta de error: {r.text[:500]}")
