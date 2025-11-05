@@ -4105,45 +4105,6 @@ META_REDIRECT_URL = os.getenv("META_REDIRECT_URL")
 #         logging.exception("❌ Error al consultar WABA info")
 #         return {"error": str(e)}
 
-
-
-# @app.api_route("/meta/exchange_code", methods=["GET", "POST"])
-# async def exchange_code(request: Request):
-#     if request.method == "GET":
-#         code = request.query_params.get("code")
-#     else:
-#         payload = await request.json()
-#         code = payload.get("code")
-#
-#     logging.info(f"📥 Recibido code: {code}")
-#
-#     if not code:
-#         logging.error("❌ No se recibió 'code'")
-#         return {"error": "missing_code"}
-#
-#     token_exchange_url = "https://graph.facebook.com/v21.0/oauth/access_token"
-#     params = {
-#         "code": code,
-#         "client_id": META_APP_ID,
-#         "client_secret": META_APP_SECRET,
-#         "redirect_uri": META_REDIRECT_URL,
-#     }
-#
-#     r = requests.get(token_exchange_url, params=params)
-#     data = r.json()
-#     logging.info(f"📤 Respuesta Meta: {data}")
-#
-#     access_token = data.get("access_token")
-#     waba_info = data.get("whatsapp_business_account", {})
-#
-#     if not access_token:
-#         logging.error("❌ No se recibió access_token")
-#         return {"error": "no_access_token"}
-#
-#     waba_id = waba_info.get("id")
-#     save_whatsapp_business_account(access_token, waba_id)
-#
-#     return {"status": "ok"}
 # @app.api_route("/meta/exchange_code", methods=["GET", "POST"])
 # async def exchange_code(request: Request):
 #     try:
@@ -4216,18 +4177,173 @@ META_REDIRECT_URL = os.getenv("META_REDIRECT_URL")
 #         logging.exception("❌ Error en exchange_code")
 #         return {"error": str(e)}
 
-@app.post("/meta/exchange_code")
+# @app.post("/meta/exchange_code")
+# async def exchange_code(request: Request):
+#     data = await request.json()
+#     code = data.get("code")
+#
+#     if not code:
+#         return {"error": "No llegó code desde Meta"}
+#
+#     logging.info(f"📥 Code recibido desde onboarding: {code}")
+#
+#     # Por ahora solo regresamos confirmación
+#     return {
+#         "status": "received",
+#         "code": code
+#     }
+
+@app.api_route("/meta/exchange_code", methods=["GET", "POST", "OPTIONS"])
 async def exchange_code(request: Request):
-    data = await request.json()
-    code = data.get("code")
+    # Manejar preflight CORS
+    if request.method == "OPTIONS":
+        return JSONResponse(
+            status_code=200,
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            },
+        )
 
-    if not code:
-        return {"error": "No llegó code desde Meta"}
+    try:
+        # Extraer parámetros según el método
+        if request.method == "GET":
+            code = request.query_params.get("code")
+            waba_id = request.query_params.get("waba_id")
+            phone_id = request.query_params.get("phone_id")  # phone_number_id del frontend
+        else:
+            payload = await request.json()
+            code = payload.get("code")
+            waba_id = payload.get("waba_id")
+            phone_id = payload.get("phone_id")  # phone_number_id del frontend
 
-    logging.info(f"📥 Code recibido desde onboarding: {code}")
+        # Logging mejorado (enmascarar código parcialmente)
+        code_masked = f"{code[:6]}...{code[-6:]}" if code and len(code) > 12 else "***"
+        logging.info(f"📥 Code recibido desde onboarding: {code_masked}")
+        if waba_id:
+            logging.info(f"📱 WABA ID recibido: {waba_id}")
+        if phone_id:
+            logging.info(f"📞 Phone ID recibido: {phone_id}")
 
-    # Por ahora solo regresamos confirmación
-    return {
-        "status": "received",
-        "code": code
-    }
+        # Validar que existe code
+        if not code:
+            logging.error("❌ No se recibió 'code'")
+            return JSONResponse(
+                status_code=400,
+                content={"error": "missing_code", "message": "El parámetro 'code' es requerido"}
+            )
+
+        # Intercambiar code por access_token
+        token_exchange_url = "https://graph.facebook.com/v21.0/oauth/access_token"
+        params = {
+            "code": code,
+            "client_id": META_APP_ID,
+            "client_secret": META_APP_SECRET,
+            "redirect_uri": META_REDIRECT_URL,
+        }
+
+        try:
+            r = requests.get(token_exchange_url, params=params, timeout=30)
+            r.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            logging.error(f"❌ Error en request a Meta API: {str(e)}")
+            return JSONResponse(
+                status_code=500,
+                content={"error": "meta_api_error", "message": f"Error al comunicarse con Meta: {str(e)}"}
+            )
+
+        # Validar respuesta JSON
+        try:
+            data = r.json()
+        except ValueError as e:
+            logging.error(f"❌ Error parseando respuesta JSON de Meta: {str(e)}")
+            logging.error(f"📄 Respuesta recibida: {r.text[:500]}")
+            return JSONResponse(
+                status_code=500,
+                content={"error": "invalid_json_response", "message": "La respuesta de Meta no es JSON válido"}
+            )
+
+        logging.info(f"📤 Respuesta Meta: {json.dumps(data, indent=2)}")
+
+        # Verificar errores en la respuesta de Meta
+        if "error" in data:
+            error_code = data.get("error", {}).get("code", "unknown")
+            error_message = data.get("error", {}).get("message", "Error desconocido")
+            logging.error(f"❌ Error de Meta API: {error_code} - {error_message}")
+            return JSONResponse(
+                status_code=400,
+                content={"error": "meta_api_error", "code": error_code, "message": error_message}
+            )
+
+        # Extraer access_token
+        access_token = data.get("access_token")
+        if not access_token:
+            logging.error("❌ No se recibió access_token en la respuesta")
+            logging.error(f"📄 Respuesta completa: {json.dumps(data, indent=2)}")
+            return JSONResponse(
+                status_code=400,
+                content={"error": "no_access_token", "message": "No se recibió access_token en la respuesta de Meta"}
+            )
+
+        # Extraer información de WABA de la respuesta de Meta
+        waba_info = data.get("whatsapp_business_account", {})
+        waba_id_from_response = waba_info.get("id") or waba_id
+
+        # Intentar obtener información adicional del WABA usando el access_token
+        # (opcional: para obtener business_name, phone_number, etc.)
+        business_name = None
+        phone_number = None
+
+        if access_token and waba_id_from_response:
+            try:
+                # Obtener información del WABA desde Graph API
+                waba_info_url = f"https://graph.facebook.com/v21.0/{waba_id_from_response}"
+                waba_params = {
+                    "fields": "name,timezone_id",
+                    "access_token": access_token
+                }
+                waba_response = requests.get(waba_info_url, params=waba_params, timeout=10)
+                if waba_response.status_code == 200:
+                    waba_data = waba_response.json()
+                    business_name = waba_data.get("name")
+                    logging.info(f"📋 Business Name obtenido: {business_name}")
+            except Exception as e:
+                logging.warning(f"⚠️ No se pudo obtener información adicional del WABA: {str(e)}")
+
+        # Logging de éxito
+        logging.info(f"✅ Access token obtenido exitosamente")
+        logging.info(f"✅ WABA ID: {waba_id_from_response}")
+
+        # Guardar información en la BD
+        success = save_whatsapp_business_account(
+            access_token=access_token,
+            waba_id=waba_id_from_response,
+            phone_number_id=phone_id,  # ✅ Mapear phone_id del frontend a phone_number_id
+            phone_number=phone_number,  # Se puede obtener más adelante si es necesario
+            business_name=business_name
+        )
+
+        if not success:
+            logging.warning("⚠️ WABA no se pudo guardar en BD, pero el access_token fue obtenido")
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "ok",
+                "waba_id": waba_id_from_response,
+                "phone_id": phone_id,
+            },
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            }
+        )
+
+    except Exception as e:
+        logging.exception(f"❌ Error inesperado en exchange_code: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": "internal_error", "message": f"Error interno del servidor: {str(e)}"}
+        )

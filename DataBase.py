@@ -6,6 +6,7 @@ import re
 import gspread
 from google.oauth2.service_account import Credentials
 from gspread.worksheet import JSONResponse
+from uvicorn import logging
 
 from schemas import ActualizacionContactoInfo
 from psycopg2.extras import RealDictCursor
@@ -2845,24 +2846,56 @@ def obtener_invitacion_por_creador(creador_id: int):
         return None
 
 
-def save_whatsapp_business_account(access_token: str, waba_id: str):
+def save_whatsapp_business_account(
+        access_token: str,
+        waba_id: str,
+        phone_number_id: str = None,
+        phone_number: str = None,
+        business_name: str = None
+):
+    if not access_token or not waba_id:
+        logging.error("❌ Error: access_token o waba_id están vacíos")
+        return False
+
     try:
         conn = get_connection()
         cur = conn.cursor()
 
-        cur.execute("""
-            INSERT INTO whatsapp_business_accounts (waba_id, access_token)
-            VALUES (%s, %s)
-            ON CONFLICT (waba_id) DO UPDATE
-            SET access_token = EXCLUDED.access_token,
-                updated_at = NOW();
-        """, (waba_id, access_token))
+        # Construir la query dinámicamente según qué campos están disponibles
+        if phone_number_id:
+            cur.execute("""
+                INSERT INTO whatsapp_business_accounts 
+                    (waba_id, access_token, phone_number_id, phone_number, business_name, status)
+                VALUES (%s, %s, %s, %s, %s, 'connected')
+                ON CONFLICT (waba_id) DO UPDATE
+                SET access_token = EXCLUDED.access_token,
+                    phone_number_id = COALESCE(EXCLUDED.phone_number_id, whatsapp_business_accounts.phone_number_id),
+                    phone_number = COALESCE(EXCLUDED.phone_number, whatsapp_business_accounts.phone_number),
+                    business_name = COALESCE(EXCLUDED.business_name, whatsapp_business_accounts.business_name),
+                    status = 'connected',
+                    updated_at = NOW();
+            """, (waba_id, access_token, phone_number_id, phone_number, business_name))
+            logging.info(f"✅ WABA guardada/actualizada: {waba_id}, Phone ID: {phone_number_id}")
+        else:
+            cur.execute("""
+                INSERT INTO whatsapp_business_accounts 
+                    (waba_id, access_token, phone_number, business_name, status)
+                VALUES (%s, %s, %s, %s, 'connected')
+                ON CONFLICT (waba_id) DO UPDATE
+                SET access_token = EXCLUDED.access_token,
+                    phone_number = COALESCE(EXCLUDED.phone_number, whatsapp_business_accounts.phone_number),
+                    business_name = COALESCE(EXCLUDED.business_name, whatsapp_business_accounts.business_name),
+                    status = 'connected',
+                    updated_at = NOW();
+            """, (waba_id, access_token, phone_number, business_name))
+            logging.info(f"✅ WABA guardada/actualizada: {waba_id}")
 
         conn.commit()
         cur.close()
         conn.close()
 
-        print("✅ WABA guardada/actualizada en la BD")
+        return True
 
     except Exception as e:
-        print("❌ Error guardando WABA:", e)
+        logging.exception(f"❌ Error guardando WABA {waba_id}: {str(e)}")
+        return False
