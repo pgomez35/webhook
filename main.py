@@ -4246,11 +4246,16 @@ async def exchange_code(request: Request):
 
         # Intercambiar code por access_token
         token_exchange_url = "https://graph.facebook.com/v21.0/oauth/access_token"
+        # params = {
+        #     "code": code,
+        #     "client_id": META_APP_ID,
+        #     "client_secret": META_APP_SECRET,
+        #     "redirect_uri": redirect_uri,  # ✅ Usar el redirect_uri del frontend
+        # }
         params = {
             "code": code,
             "client_id": META_APP_ID,
-            "client_secret": META_APP_SECRET,
-            "redirect_uri": redirect_uri,  # ✅ Usar el redirect_uri del frontend
+            "client_secret": META_APP_SECRET
         }
 
         # ✅ Logging de parámetros (sin secrets)
