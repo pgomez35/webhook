@@ -4212,12 +4212,12 @@ async def exchange_code(request: Request):
         if request.method == "GET":
             code = request.query_params.get("code")
             waba_id = request.query_params.get("waba_id")
-            phone_id = request.query_params.get("phone_id")  # phone_number_id del frontend
+            phone_id = request.query_params.get("phone_id")
         else:
             payload = await request.json()
             code = payload.get("code")
             waba_id = payload.get("waba_id")
-            phone_id = payload.get("phone_id")  # phone_number_id del frontend
+            phone_id = payload.get("phone_id")
 
         # Logging mejorado (enmascarar código parcialmente)
         code_masked = f"{code[:6]}...{code[-6:]}" if code and len(code) > 12 else "***"
@@ -4236,7 +4236,7 @@ async def exchange_code(request: Request):
             )
 
         # Intercambiar code por access_token
-        token_exchange_url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/oauth/access_token"
+        token_exchange_url = "https://graph.facebook.com/v21.0/oauth/access_token"
         params = {
             "code": code,
             "client_id": META_APP_ID,
@@ -4244,9 +4244,66 @@ async def exchange_code(request: Request):
             "redirect_uri": META_REDIRECT_URL,
         }
 
+        # ✅ Logging de parámetros (sin secrets)
+        logging.info(f"🔄 Intercambiando code con Meta API...")
+        logging.info(f"📍 Redirect URI: {META_REDIRECT_URL}")
+        logging.info(f"🔑 Client ID: {META_APP_ID}")
+
         try:
             r = requests.get(token_exchange_url, params=params, timeout=30)
+
+            # ✅ Logging de status code ANTES de raise_for_status
+            logging.info(f"📡 Status Code de Meta API: {r.status_code}")
+
+            # ✅ Intentar parsear respuesta incluso si hay error
+            try:
+                response_data = r.json()
+                logging.info(f"📤 Respuesta completa de Meta: {json.dumps(response_data, indent=2)}")
+            except:
+                logging.error(f"❌ Respuesta no es JSON: {r.text[:500]}")
+
+            # ✅ Lanzar excepción si hay error HTTP
             r.raise_for_status()
+
+        except requests.exceptions.HTTPError as e:
+            # ✅ Capturar y loguear el error HTTP específico
+            error_response = {}
+            try:
+                error_response = r.json()
+                error_code = error_response.get("error", {}).get("code", "unknown")
+                error_message = error_response.get("error", {}).get("message", "Error desconocido")
+                error_type = error_response.get("error", {}).get("type", "unknown")
+                error_subcode = error_response.get("error", {}).get("error_subcode")
+
+                logging.error(f"❌ Error HTTP {r.status_code} de Meta API:")
+                logging.error(f"   Code: {error_code}")
+                logging.error(f"   Type: {error_type}")
+                logging.error(f"   Message: {error_message}")
+                if error_subcode:
+                    logging.error(f"   Subcode: {error_subcode}")
+
+                # ✅ Casos comunes de error 400
+                if error_code == 100:
+                    logging.error("   ⚠️ Error 100: Código inválido o ya usado")
+                elif error_code == 190:
+                    logging.error("   ⚠️ Error 190: Token o código expirado")
+                elif "redirect_uri" in error_message.lower():
+                    logging.error("   ⚠️ El redirect_uri no coincide con el configurado en Meta")
+                    logging.error(f"   ⚠️ Redirect URI enviado: {META_REDIRECT_URL}")
+
+            except:
+                logging.error(f"❌ Error parseando respuesta de error: {r.text[:500]}")
+
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": "meta_api_error",
+                    "code": error_response.get("error", {}).get("code", "unknown"),
+                    "message": error_response.get("error", {}).get("message", str(e)),
+                    "type": error_response.get("error", {}).get("type", "unknown")
+                }
+            )
+
         except requests.exceptions.RequestException as e:
             logging.error(f"❌ Error en request a Meta API: {str(e)}")
             return JSONResponse(
@@ -4254,24 +4311,14 @@ async def exchange_code(request: Request):
                 content={"error": "meta_api_error", "message": f"Error al comunicarse con Meta: {str(e)}"}
             )
 
-        # Validar respuesta JSON
-        try:
-            data = r.json()
-        except ValueError as e:
-            logging.error(f"❌ Error parseando respuesta JSON de Meta: {str(e)}")
-            logging.error(f"📄 Respuesta recibida: {r.text[:500]}")
-            return JSONResponse(
-                status_code=500,
-                content={"error": "invalid_json_response", "message": "La respuesta de Meta no es JSON válido"}
-            )
+        # Si llegamos aquí, la respuesta fue exitosa
+        data = response_data  # Ya lo parseamos arriba
 
-        logging.info(f"📤 Respuesta Meta: {json.dumps(data, indent=2)}")
-
-        # Verificar errores en la respuesta de Meta
+        # Verificar errores en la respuesta JSON (aunque status sea 200)
         if "error" in data:
             error_code = data.get("error", {}).get("code", "unknown")
             error_message = data.get("error", {}).get("message", "Error desconocido")
-            logging.error(f"❌ Error de Meta API: {error_code} - {error_message}")
+            logging.error(f"❌ Error en respuesta JSON de Meta: {error_code} - {error_message}")
             return JSONResponse(
                 status_code=400,
                 content={"error": "meta_api_error", "code": error_code, "message": error_message}
@@ -4287,42 +4334,20 @@ async def exchange_code(request: Request):
                 content={"error": "no_access_token", "message": "No se recibió access_token en la respuesta de Meta"}
             )
 
-        # Extraer información de WABA de la respuesta de Meta
+        # Extraer información de WABA
         waba_info = data.get("whatsapp_business_account", {})
         waba_id_from_response = waba_info.get("id") or waba_id
 
-        # Intentar obtener información adicional del WABA usando el access_token
-        # (opcional: para obtener business_name, phone_number, etc.)
-        business_name = None
-        phone_number = None
-
-        if access_token and waba_id_from_response:
-            try:
-                # Obtener información del WABA desde Graph API
-                waba_info_url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{waba_id_from_response}"
-                waba_params = {
-                    "fields": "name,timezone_id",
-                    "access_token": access_token
-                }
-                waba_response = requests.get(waba_info_url, params=waba_params, timeout=10)
-                if waba_response.status_code == 200:
-                    waba_data = waba_response.json()
-                    business_name = waba_data.get("name")
-                    logging.info(f"📋 Business Name obtenido: {business_name}")
-            except Exception as e:
-                logging.warning(f"⚠️ No se pudo obtener información adicional del WABA: {str(e)}")
-
-        # Logging de éxito
         logging.info(f"✅ Access token obtenido exitosamente")
         logging.info(f"✅ WABA ID: {waba_id_from_response}")
 
-        # Guardar información en la BD
+        # Guardar información
         success = save_whatsapp_business_account(
             access_token=access_token,
             waba_id=waba_id_from_response,
-            phone_number_id=phone_id,  # ✅ Mapear phone_id del frontend a phone_number_id
-            phone_number=phone_number,  # Se puede obtener más adelante si es necesario
-            business_name=business_name
+            phone_number_id=phone_id,
+            phone_number=None,
+            business_name=None
         )
 
         if not success:
