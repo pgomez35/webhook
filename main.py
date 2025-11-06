@@ -4467,10 +4467,62 @@ async def exchange_code(request: Request):
             content={"error": "internal_error", "message": str(e)}
         )
 
-TEMP_TOKEN = None
 
-def save_temp_access_token(token: str):
-    global TEMP_TOKEN
-    TEMP_TOKEN = token
-    logging.info("💾 Access token temporal guardado para asociar cuando llegue el webhook.")
 
+# @router.post("/webhook")
+# async def whatsapp_webhook(request: Request):
+#     data = await request.json()
+#     print("📩 Webhook recibido:", data)
+#
+#     try:
+#         # Validar si el evento es PARTNER_APP_INSTALLED
+#         changes = data.get("entry", [])[0].get("changes", [])
+#         for change in changes:
+#             value = change.get("value", {})
+#             if value.get("event") == "PARTNER_APP_INSTALLED":
+#                 waba_id = value["waba_info"]["waba_id"]
+#                 print(f"✅ WABA ID detectado: {waba_id}")
+#
+#                 # TODO: guardar waba_id en la base de datos
+#
+#         return {"status": "ok"}
+#
+#     except Exception as e:
+#         print("❌ Error procesando webhook:", e)
+#         return {"error": "webhook processing failed"}
+
+# @app.post("/webhook/meta")
+# async def meta_webhook(request: Request):
+#     global TEMP_TOKEN
+#
+#     body = await request.json()
+#     logging.info(f"📩 Webhook Meta recibido: {json.dumps(body, indent=2)}")
+#
+#     try:
+#         entry = body.get("entry", [])[0]
+#         changes = entry.get("changes", [])[0]
+#         value = changes.get("value", {})
+#         field = changes.get("field")
+#
+#         # ✅ Detectar instalación de la Partner App
+#         if field == "whatsapp_business_account" and "id" in value:
+#             waba_id = value["id"]
+#             business_id = entry.get("id")
+#
+#             phone_id = value.get("message_template_namespace") or None  # Meta a veces lo manda ahí
+#
+#             if TEMP_TOKEN:
+#                 logging.info(f"✅ Guardando WABA {waba_id} con token temporal")
+#                 save_whatsapp_business_account(
+#                     access_token=TEMP_TOKEN,
+#                     waba_id=waba_id,
+#                     phone_number_id=phone_id
+#                 )
+#                 TEMP_TOKEN = None
+#             else:
+#                 logging.error("⚠️ No hay token temporal almacenado para asociar al WABA")
+#
+#     except Exception as e:
+#         logging.exception(f"❌ Error procesando webhook: {str(e)}")
+#
+#     return {"status": "ok"}

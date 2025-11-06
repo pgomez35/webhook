@@ -1836,6 +1836,21 @@ async def whatsapp_webhook(request: Request):
     print("📩 Webhook recibido:", json.dumps(data, indent=2))
 
     try:
+        # -------------------------------------------------------
+        # AGREGADO 6 NOV
+        # -------------------------------------------------------
+        entry = data.get("entry", [])[0]
+        change = entry.get("changes", [])[0]
+        value = change.get("value", {})
+        event = value.get("event")
+
+        resultado = procesar_evento_partner_instalado(entry, change, value, event)
+        if resultado.get("status") in ("waba_linked", "missing_token", "error_getting_number"):
+            return resultado  # detenemos el flujo si es evento de instalación
+        # -------------------------------------------------------
+        # AGREGADO 6 NOV
+        # -------------------------------------------------------
+
         cambios = data.get("entry", [])[0].get("changes", [])[0].get("value", {})
         mensajes = cambios.get("messages", [])
         if not mensajes:
@@ -2000,6 +2015,14 @@ async def whatsapp_webhook(request: Request):
         traceback.print_exc()
 
     return {"status": "ok"}
+
+
+
+
+
+
+
+
 
 from pydantic import BaseModel
 
