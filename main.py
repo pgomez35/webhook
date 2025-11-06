@@ -4391,6 +4391,11 @@ GRAPH_API_VERSION = os.getenv("GRAPH_API_VERSION")
 
 @app.api_route("/meta/exchange_code", methods=["GET", "POST", "OPTIONS"])
 async def exchange_code(request: Request):
+    """Intercambia el 'code' OAuth de Meta por un access_token temporal.
+    Si el WABA ID ya está en caché, completa la vinculación automáticamente.
+    """
+
+    # ✅ Manejo de preflight (CORS)
     if request.method == "OPTIONS":
         return JSONResponse(
             status_code=200,
@@ -4402,17 +4407,14 @@ async def exchange_code(request: Request):
         )
 
     try:
-        # GET/POST
+        # ✅ Obtener parámetros según método
         if request.method == "GET":
             code = request.query_params.get("code")
-            redirect_uri = request.query_params.get("redirect_uri")
+            redirect_uri = request.query_params.get("redirect_uri", META_REDIRECT_URL)
         else:
             payload = await request.json()
             code = payload.get("code")
-            redirect_uri = payload.get("redirect_uri")
-
-        if not redirect_uri:
-            redirect_uri = META_REDIRECT_URL
+            redirect_uri = payload.get("redirect_uri", META_REDIRECT_URL)
 
         if not code:
             return JSONResponse(
@@ -4420,28 +4422,22 @@ async def exchange_code(request: Request):
                 content={"error": "missing_code", "message": "El parámetro 'code' es requerido"}
             )
 
-        code_masked = f"{code[:6]}...{code[-6:]}" if len(code) > 12 else "***"
-        logging.info(f"📥 Código OAuth recibido: {code_masked}")
+        logging.info(f"📥 Código OAuth recibido: {code[:6]}...{code[-6:]}")
+        logging.info("🔄 Intercambiando code con Meta...")
 
+        # ✅ Solicitud a Meta
         token_url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/oauth/access_token"
         params = {
             "code": code,
             "client_id": META_APP_ID,
             "client_secret": META_APP_SECRET
         }
-
-        logging.info("🔄 Intercambiando code con Meta...")
         r = requests.get(token_url, params=params, timeout=30)
+        data = r.json()
 
-        try:
-            data = r.json()
-            logging.info(f"📤 Respuesta Meta: {json.dumps(data, indent=2)}")
-        except:
-            logging.error(f"❌ Meta no devolvió JSON: {r.text}")
-            raise
+        logging.info(f"📤 Respuesta Meta: {json.dumps(data, indent=2)}")
 
-        r.raise_for_status()
-
+        # ✅ Validar respuesta
         access_token = data.get("access_token")
         if not access_token:
             return JSONResponse(
@@ -4449,11 +4445,47 @@ async def exchange_code(request: Request):
                 content={"error": "no_access_token", "message": "Meta no devolvió access_token"}
             )
 
-        # ✅ Guardar token hasta que llegue WABA por webhook
+        # ✅ Guardar token temporal
         save_temp_access_token(access_token)
+        logging.info("💾 Token temporal guardado.")
 
-        logging.info("✅ Access token recibido correctamente (WABA llegará por webhook)")
+        # 🚀 Si ya hay un WABA ID temporal guardado, completar automáticamente el vínculo
+        waba_id = tokens_temporales.get("ultimo_waba_id")
+        if waba_id:
+            logging.info(f"⚡ Vinculando automáticamente WABA ya recibido ({waba_id})...")
 
+            try:
+                phone_info = obtener_phone_number_info(waba_id, access_token)
+                if phone_info:
+                    phone_number_id = phone_info["id"]
+                    phone_number = phone_info["display_phone_number"]
+
+                    guardar_waba_info(waba_id, phone_number_id, phone_number, access_token)
+                    clear_temp_access_token()
+                    clear_temp_waba_id()
+
+                    logging.info(f"✅ WABA {waba_id} vinculada automáticamente con {phone_number}")
+                    return JSONResponse(
+                        status_code=200,
+                        content={
+                            "status": "linked",
+                            "message": f"WABA {waba_id} vinculada automáticamente",
+                            "phone_number": phone_number
+                        },
+                        headers={"Access-Control-Allow-Origin": "*"}
+                    )
+                else:
+                    logging.warning("⚠️ No se pudo obtener información del número asociado.")
+            except Exception as e:
+                logging.exception("❌ Error al completar vínculo automático:")
+                return JSONResponse(
+                    status_code=500,
+                    content={"error": "auto_link_failed", "message": str(e)},
+                    headers={"Access-Control-Allow-Origin": "*"}
+                )
+
+        # ✅ Si no hay WABA en caché, esperar webhook
+        logging.info("✅ Token recibido correctamente (esperando webhook de instalación).")
         return JSONResponse(
             status_code=200,
             content={"status": "ok", "message": "Token recibido. Esperando webhook de instalación."},
@@ -4461,11 +4493,92 @@ async def exchange_code(request: Request):
         )
 
     except Exception as e:
-        logging.exception(f"❌ Error inesperado: {str(e)}")
+        logging.exception("❌ Error inesperado en /meta/exchange_code")
         return JSONResponse(
             status_code=500,
-            content={"error": "internal_error", "message": str(e)}
+            content={"error": "internal_error", "message": str(e)},
+            headers={"Access-Control-Allow-Origin": "*"}
         )
+
+
+
+# @app.api_route("/meta/exchange_code", methods=["GET", "POST", "OPTIONS"])
+# async def exchange_code(request: Request):
+#     if request.method == "OPTIONS":
+#         return JSONResponse(
+#             status_code=200,
+#             headers={
+#                 "Access-Control-Allow-Origin": "*",
+#                 "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+#                 "Access-Control-Allow-Headers": "Content-Type",
+#             },
+#         )
+#
+#     try:
+#         # GET/POST
+#         if request.method == "GET":
+#             code = request.query_params.get("code")
+#             redirect_uri = request.query_params.get("redirect_uri")
+#         else:
+#             payload = await request.json()
+#             code = payload.get("code")
+#             redirect_uri = payload.get("redirect_uri")
+#
+#         if not redirect_uri:
+#             redirect_uri = META_REDIRECT_URL
+#
+#         if not code:
+#             return JSONResponse(
+#                 status_code=400,
+#                 content={"error": "missing_code", "message": "El parámetro 'code' es requerido"}
+#             )
+#
+#         code_masked = f"{code[:6]}...{code[-6:]}" if len(code) > 12 else "***"
+#         logging.info(f"📥 Código OAuth recibido: {code_masked}")
+#
+#         token_url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/oauth/access_token"
+#         params = {
+#             "code": code,
+#             "client_id": META_APP_ID,
+#             "client_secret": META_APP_SECRET
+#         }
+#
+#         logging.info("🔄 Intercambiando code con Meta...")
+#         r = requests.get(token_url, params=params, timeout=30)
+#
+#         try:
+#             data = r.json()
+#             logging.info(f"📤 Respuesta Meta: {json.dumps(data, indent=2)}")
+#         except:
+#             logging.error(f"❌ Meta no devolvió JSON: {r.text}")
+#             raise
+#
+#         r.raise_for_status()
+#
+#         access_token = data.get("access_token")
+#         if not access_token:
+#             return JSONResponse(
+#                 status_code=400,
+#                 content={"error": "no_access_token", "message": "Meta no devolvió access_token"}
+#             )
+#
+#         # ✅ Guardar token hasta que llegue WABA por webhook
+#         save_temp_access_token(access_token)
+#
+#         logging.info("✅ Access token recibido correctamente (WABA llegará por webhook)")
+#
+#         return JSONResponse(
+#             status_code=200,
+#             content={"status": "ok", "message": "Token recibido. Esperando webhook de instalación."},
+#             headers={"Access-Control-Allow-Origin": "*"}
+#         )
+#
+#     except Exception as e:
+#         logging.exception(f"❌ Error inesperado: {str(e)}")
+#         return JSONResponse(
+#             status_code=500,
+#             content={"error": "internal_error", "message": str(e)}
+#         )
 
 
 

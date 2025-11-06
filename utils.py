@@ -160,22 +160,26 @@ def enviar_info_general(numero: str):
 # -------------------------------------------------------------------
 import logging
 
-# 🧠 Caché temporal (puedes cambiarla a BD más adelante)
-tokens_temporales = {
-    "ultimo_token": None
-}
+tokens_temporales = {"ultimo_token": None, "ultimo_waba_id": None}
+
 def save_temp_access_token(token: str):
-
     tokens_temporales["ultimo_token"] = token
-    logging.info("💾 Token temporal guardado correctamente.")
+    print("💾 Token temporal guardado correctamente.")
 
-def get_temp_access_token() -> str:
+def get_temp_access_token():
     return tokens_temporales.get("ultimo_token")
 
 def clear_temp_access_token():
     tokens_temporales["ultimo_token"] = None
-    logging.info("🧹 Token temporal limpiado de caché.")
+    print("🧹 Token temporal limpiado.")
 
+def clear_temp_waba_id():
+    tokens_temporales.pop("ultimo_waba_id", None)
+    print("🧹 WABA temporal limpiado.")
+
+def save_temp_waba_id(waba_id: str):
+    tokens_temporales["ultimo_waba_id"] = waba_id
+    print("💾 WABA temporal guardado correctamente.")
 
 def obtener_phone_number_info(waba_id: str, access_token: str):
     url = f"https://graph.facebook.com/v21.0/{waba_id}/phone_numbers"
@@ -197,9 +201,9 @@ def obtener_phone_number_info(waba_id: str, access_token: str):
         print("❌ Error obteniendo phone_number_info:", e)
     return None
 
-
 from DataBase import guardar_waba_info
 
+# --- Función principal ajustada ---
 def procesar_evento_partner_instalado(entry, change, value, event):
     if event != "PARTNER_APP_INSTALLED":
         return {"status": "ignored", "reason": "no_partner_event"}
@@ -207,15 +211,20 @@ def procesar_evento_partner_instalado(entry, change, value, event):
     try:
         waba_info = value.get("waba_info", {})
         waba_id = waba_info.get("waba_id")
-
         print(f"🧩 WABA instalado detectado: {waba_id}")
+
+        # Guarda el WABA temporalmente
+        save_temp_waba_id(waba_id)
+
+        # Intenta recuperar el token temporal
         access_token = get_temp_access_token()
 
+        # Si aún no hay token, espera a que llegue por /meta/exchange_code
         if not access_token:
-            print("⚠️ No hay token temporal guardado. No se puede asociar WABA.")
-            return {"status": "missing_token"}
+            print("⚠️ No hay token temporal guardado aún. Esperando que llegue de /meta/exchange_code.")
+            return {"status": "waiting_token", "waba_id": waba_id}
 
-        # Obtener phone_number_id y número real
+        # Obtener phone_number_id y número real desde Meta
         phone_info = obtener_phone_number_info(waba_id, access_token)
         if phone_info:
             phone_number_id = phone_info["id"]
@@ -224,13 +233,57 @@ def procesar_evento_partner_instalado(entry, change, value, event):
 
             # Guarda en base de datos o estructura permanente
             guardar_waba_info(waba_id, phone_number_id, phone_number, access_token)
+
+            # Limpieza de caché una vez emparejado exitosamente
             clear_temp_access_token()
-            return {"status": "waba_linked", "waba_id": waba_id, "phone_number": phone_number}
+            clear_temp_waba_id()
+
+            return {
+                "status": "waba_linked",
+                "waba_id": waba_id,
+                "phone_number": phone_number
+            }
 
         else:
-            print("❌ No se pudo obtener información del número asociado.")
-            return {"status": "error_getting_number"}
+            print("❌ No se pudo obtener información del número asociado al WABA.")
+            return {"status": "error_getting_number", "waba_id": waba_id}
 
     except Exception as e:
         print("❌ Error procesando evento PARTNER_APP_INSTALLED:", e)
         return {"status": "exception", "error": str(e)}
+
+
+# def procesar_evento_partner_instalado(entry, change, value, event):
+#     if event != "PARTNER_APP_INSTALLED":
+#         return {"status": "ignored", "reason": "no_partner_event"}
+#
+#     try:
+#         waba_info = value.get("waba_info", {})
+#         waba_id = waba_info.get("waba_id")
+#
+#         print(f"🧩 WABA instalado detectado: {waba_id}")
+#         access_token = get_temp_access_token()
+#
+#         if not access_token:
+#             print("⚠️ No hay token temporal guardado. No se puede asociar WABA.")
+#             return {"status": "missing_token"}
+#
+#         # Obtener phone_number_id y número real
+#         phone_info = obtener_phone_number_info(waba_id, access_token)
+#         if phone_info:
+#             phone_number_id = phone_info["id"]
+#             phone_number = phone_info["display_phone_number"]
+#             print(f"✅ Asociado WABA {waba_id} → {phone_number} (ID: {phone_number_id})")
+#
+#             # Guarda en base de datos o estructura permanente
+#             guardar_waba_info(waba_id, phone_number_id, phone_number, access_token)
+#             clear_temp_access_token()
+#             return {"status": "waba_linked", "waba_id": waba_id, "phone_number": phone_number}
+#
+#         else:
+#             print("❌ No se pudo obtener información del número asociado.")
+#             return {"status": "error_getting_number"}
+#
+#     except Exception as e:
+#         print("❌ Error procesando evento PARTNER_APP_INSTALLED:", e)
+#         return {"status": "exception", "error": str(e)}
