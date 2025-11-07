@@ -2844,31 +2844,140 @@ def obtener_invitacion_por_creador(creador_id: int):
         print(f"❌ Error al consultar invitación de creador {creador_id}: {e}")
         return None
 
-def guardar_waba_info(waba_id: str, phone_number_id: str, phone_number: str, token: str) -> bool:
 
+def guardar_o_actualizar_waba_db(session_id: str | None, waba_id: str):
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # 🔍 Buscar si existe registro previo con token pero sin WABA
+                cur.execute("""
+                    SELECT id, access_token
+                    FROM whatsapp_business_accounts
+                    WHERE session_id = %s
+                      AND waba_id IS NULL
+                      AND access_token IS NOT NULL
+                      AND created_at >= NOW() - INTERVAL '10 minutes'
+                    ORDER BY created_at DESC
+                    LIMIT 1;
+                """, (session_id,))
+                existente = cur.fetchone()
+
+                if existente:
+                    # 🔄 Actualizar el waba_id
+                    cur.execute("""
+                        UPDATE whatsapp_business_accounts
+                        SET waba_id = %s,
+                            updated_at = NOW()
+                        WHERE id = %s;
+                    """, (waba_id, existente["id"]))
+                    conn.commit()
+
+                    print(f"🔄 WABA actualizado en DB (ID: {existente['id']}) → {waba_id}")
+                    return {
+                        "status": "completado",
+                        "id": existente["id"],
+                        "access_token": existente.get("access_token"),
+                        "waba_id": waba_id
+                    }
+
+                # 🆕 Si no existe, insertar nuevo registro
+                cur.execute("""
+                    INSERT INTO whatsapp_business_accounts (
+                        waba_id, session_id, created_at, updated_at
+                    ) VALUES (%s, %s, NOW(), NOW())
+                    RETURNING id, waba_id;
+                """, (waba_id, session_id))
+                nuevo = cur.fetchone()
+                conn.commit()
+
+                print(f"🆕 Nuevo WABA guardado en DB (ID: {nuevo['id']}) → {waba_id}")
+                return {"status": "inserted", "id": nuevo["id"], "waba_id": nuevo["waba_id"]}
+
+    except Exception as e:
+        print("❌ Error en guardar_o_actualizar_waba_db:", e)
+        return {"status": "error", "error": str(e)}
+
+
+def guardar_o_actualizar_token_db(session_id: str, token: str):
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # 🔍 Buscar registro con WABA pero sin token aún
+                cur.execute("""
+                    SELECT id, waba_id
+                    FROM whatsapp_business_accounts
+                    WHERE session_id = %s
+                      AND waba_id IS NOT NULL
+                      AND access_token IS NULL
+                      AND created_at >= NOW() - INTERVAL '10 minutes'
+                    ORDER BY created_at DESC
+                    LIMIT 1;
+                """, (session_id,))
+                existente = cur.fetchone()
+
+                if existente:
+                    # 🔄 Actualizar el token
+                    cur.execute("""
+                        UPDATE whatsapp_business_accounts
+                        SET access_token = %s,
+                            updated_at = NOW()
+                        WHERE id = %s
+                        RETURNING id, waba_id, access_token;
+                    """, (token, existente["id"]))
+                    actualizado = cur.fetchone()
+                    conn.commit()
+
+                    print(f"🔑 Token actualizado para registro ID: {actualizado['id']}")
+                    return {
+                        "status": "completado",
+                        "id": actualizado["id"],
+                        "access_token": actualizado["access_token"],
+                        "waba_id": actualizado["waba_id"]
+                    }
+
+                # 🆕 Si no existe, insertar nuevo registro
+                cur.execute("""
+                    INSERT INTO whatsapp_business_accounts (
+                        access_token, session_id, created_at, updated_at
+                    ) VALUES (%s, %s, NOW(), NOW())
+                    RETURNING id, access_token;
+                """, (token, session_id))
+                nuevo = cur.fetchone()
+                conn.commit()
+
+                print(f"🆕 Nuevo token guardado (registro ID: {nuevo['id']})")
+                return {"status": "inserted", "id": nuevo["id"], "access_token": nuevo["access_token"]}
+
+    except Exception as e:
+        print("❌ Error en guardar_o_actualizar_token_db:", e)
+        return {"status": "error", "error": str(e)}
+
+
+
+def actualizar_phone_info_db(
+    id: int,
+    phone_number: str | None = None,
+    phone_number_id: str | None = None,
+    status: str = "connected"
+) -> bool:
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO public.whatsapp_business_accounts (
-                        waba_id, access_token, phone_number, phone_number_id, status, created_at, updated_at
-                    )
-                    VALUES (%s, %s, %s, %s, 'connected', NOW(), NOW())
-                    ON CONFLICT (waba_id) DO UPDATE
-                    SET access_token = EXCLUDED.access_token,
-                        phone_number = EXCLUDED.phone_number,
-                        phone_number_id = EXCLUDED.phone_number_id,
-                        status = 'connected',
-                        updated_at = NOW();
-                    """,
-                    (waba_id, token, phone_number, phone_number_id)
-                )
+                cur.execute("""
+                    UPDATE public.whatsapp_business_accounts
+                    SET
+                        phone_number = %s,
+                        phone_number_id = %s,
+                        status = %s,
+                        updated_at = NOW()
+                    WHERE id = %s;
+                """, (phone_number, phone_number_id, status, id))
                 conn.commit()
-                print(f"✅ WABA {waba_id} guardado o actualizado correctamente.")
-                return True
+
+        print(f"✅ Registro WABA (id={id}) actualizado correctamente.")
+        return True
 
     except Exception as e:
-        print(f"❌ Error al guardar WABA {waba_id}:", e)
+        print("❌ Error al actualizar información WABA en la base de datos:", e)
         return False
 
