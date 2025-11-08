@@ -2952,8 +2952,6 @@ def guardar_o_actualizar_token_db(session_id: str, token: str):
         print("❌ Error en guardar_o_actualizar_token_db:", e)
         return {"status": "error", "error": str(e)}
 
-
-
 def actualizar_phone_info_db(
     id: int,
     phone_number: str | None = None,
@@ -2961,6 +2959,10 @@ def actualizar_phone_info_db(
     status: str = "connected"
 ) -> bool:
     try:
+
+        # 🔹 Normalizar número: solo dígitos
+        phone_number = re.sub(r'\D', '', phone_number or "")
+
         with get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
@@ -2981,3 +2983,92 @@ def actualizar_phone_info_db(
         print("❌ Error al actualizar información WABA en la base de datos:", e)
         return False
 
+def obtener_cuenta_por_phone_id(phone_number_id: str) -> dict | None:
+    """Busca en la base de datos la cuenta de WhatsApp correspondiente al phone_number_id."""
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT 
+                        id,
+                        waba_id,
+                        access_token,
+                        phone_number,
+                        phone_number_id,
+                        business_name,
+                        status
+                    FROM public.whatsapp_business_accounts
+                    WHERE phone_number_id = %s
+                    LIMIT 1;
+                """, (phone_number_id,))
+                row = cur.fetchone()
+
+        if not row:
+            print(f"⚠️ No se encontró cuenta para phone_number_id={phone_number_id}")
+            return None
+
+        cuenta = {
+            "id": row[0],
+            "waba_id": row[1],
+            "access_token": row[2],
+            "phone_number": row[3],
+            "phone_number_id": row[4],
+            "business_name": row[5],
+            "status": row[6],
+        }
+
+        print(f"✅ Cuenta WABA encontrada: {cuenta['business_name']} ({cuenta['phone_number']})")
+        return cuenta
+
+    except Exception as e:
+        print(f"❌ Error al obtener cuenta WhatsApp (phone_number_id={phone_number_id}):", e)
+        return None
+
+def obtener_cuenta_por_phone_number(phone_number: str) -> dict | None:
+    """Busca en la base de datos la cuenta de WhatsApp correspondiente al phone_number."""
+    try:
+
+        # 🔹 Normalizar número: solo dígitos
+        phone_number_normalizado = re.sub(r'\D', '', phone_number or "")
+
+        if not phone_number_normalizado:
+            print("⚠️ Número de teléfono vacío o inválido.")
+            return None
+
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT 
+                        id,
+                        waba_id,
+                        access_token,
+                        phone_number,
+                        phone_number_id,
+                        business_name,
+                        status
+                    FROM public.whatsapp_business_accounts
+                    WHERE phone_number = %s
+                    LIMIT 1;
+                """, (phone_number,))
+                row = cur.fetchone()
+
+        if not row:
+            print(f"⚠️ No se encontró cuenta para phone_number={phone_number}")
+            return None
+
+        cuenta = {
+            "id": row[0],
+            "waba_id": row[1],
+            "access_token": row[2],
+            "phone_number": row[3],
+            "phone_number_id": row[4],
+            "business_name": row[5],
+            "status": row[6],
+        }
+
+        print(f"✅ Cuenta WABA encontrada: {cuenta['business_name']} ({cuenta['phone_number']})")
+        return cuenta
+
+    except Exception as e:
+        print(f"❌ Error al obtener cuenta WhatsApp (phone_number={phone_number}):", e)
+        return None
