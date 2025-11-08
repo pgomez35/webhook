@@ -68,16 +68,17 @@ CALENDAR_ID = os.getenv("CALENDAR_ID")
 
 from main_mensajeria_whatsapp import router as perfil_creador_router
 from mainCargarAspirantes import router as aspirantes_router
-# from mainEntrevistas import router as entrevistas_router  # 👈 importa el router de entrevistas
+from middleware_tenant import TenantMiddleware   # 👈 importa tu middleware
 
 # ⚙️ Inicializar FastAPI
 app = FastAPI()
 
+# 👇 Registrar Middleware
+app.add_middleware(TenantMiddleware)
 
 # Incluir las rutas del módulo perfil_creador_whatsapp
 app.include_router(perfil_creador_router, tags=["Perfil Creador WhatsApp"])
 app.include_router(aspirantes_router, tags=["Cargar Aspirantes"])
-# app.include_router(entrevistas_router, tags=["Entrevistas"])  # 👈 lo agregas igual
 
 
 # ✅ Crear carpeta persistente de audios si no existe
@@ -4687,3 +4688,10 @@ async def exchange_code(request: Request):
 #         logging.exception(f"❌ Error procesando webhook: {str(e)}")
 #
 #     return {"status": "ok"}
+
+
+from tenant import current_tenant
+
+@app.get("/debug")
+async def debug():
+    return {"tenant": current_tenant.get()}
