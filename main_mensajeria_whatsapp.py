@@ -1014,7 +1014,7 @@ def manejar_respuesta(numero, texto,token_cliente,phone_id_cliente):
 
     # 1) Atajos globales
     if _es_saludo(texto_normalizado):
-        _procesar_saludo(numero, rol)
+        _procesar_saludo(numero, rol,token_cliente,phone_id_cliente)
         return
 
     if _es_volver_menu(texto_normalizado):
