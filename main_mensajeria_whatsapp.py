@@ -10,7 +10,7 @@ import unicodedata
 import traceback
 
 import psycopg2
-from tenant import current_tenant, current_token, current_phone_id
+from tenant import current_tenant, current_token, current_phone_id,current_business_name
 
 from DataBase import *
 import psycopg2
@@ -62,7 +62,8 @@ def enviar_botones(numero: str, texto: str, botones: list):
         botones=botones
     )
 
-def enviar_inicio_encuesta(numero: str, nombre_agencia: str):
+def enviar_inicio_encuesta(numero: str):
+    nombre_agencia=current_business_name.get()
     parametros = [
         nombre_agencia,     # Llene {{1}} del body
         numero              # Llene {{2}} del botón dinámico
@@ -1880,16 +1881,20 @@ async def whatsapp_webhook(request: Request):
             # Extraer info de la cuenta
         token_cliente = cuenta["access_token"]
         phone_id_cliente = cuenta["phone_number_id"]
-        tenant_name = cuenta["business_name"]
+        tenant_name = cuenta["subdominio"]
+        business_name = cuenta["business_name"]
 
         # ✅ Asignar valores de contexto
         current_token.set(token_cliente)
         current_phone_id.set(phone_id_cliente)
         current_tenant.set(tenant_name)
+        current_business_name.set(business_name)
+
 
         print(f"🌐 Tenant actual: {current_tenant.get()}")
         print(f"🔑 Token actual: {current_token.get()}")
         print(f"📞 phone_id actual: {current_phone_id.get()}")
+        print(f"📞business_name: {current_business_name.get()}")
 
         # 💬 Procesar el mensaje con el tenant correcto
 
@@ -1999,11 +2004,12 @@ async def whatsapp_webhook(request: Request):
                         aspirante = usuarios_temp.get(numero)
                         if aspirante:
                             actualizar_telefono_aspirante(aspirante["id"], numero)
-                        enviar_botones(
-                            numero,
-                            texto=mensaje_proteccion_datos(),
-                            botones=[{"id": "iniciar_encuesta", "title": "✅ Sí, quiero iniciar"}]
-                        )
+                        # enviar_botones(
+                        #     numero,
+                        #     texto=mensaje_proteccion_datos(),
+                        #     botones=[{"id": "iniciar_encuesta", "title": "✅ Sí, quiero iniciar"}]
+                        # )
+                        enviar_inicio_encuesta(numero)
                         actualizar_flujo(numero, "esperando_inicio_encuesta")
                     elif texto_lower in ["no", "n"]:
                         enviar_mensaje(numero, "❌ Por favor verifica tu nombre o usuario de TikTok.")
@@ -2078,16 +2084,14 @@ async def whatsapp_webhook(request: Request):
     return {"status": "ok"}
 
 
-def send_profile_link(nro: str):
-    url_web = f"https://talentum-manager/actualizar-perfil?numero={nro}"
-    texto_link = (
-        "Perfecto ✅\n"
-        "Para completar tu perfil y continuar, abre el siguiente enlace en tu navegador:\n\n"
-        f"{url_web}\n\n"
-        "Si tienes problemas para abrir el enlace, responde aquí y te ayudamos."
+def send_profile_link(numero: str):
+    url_web = f"https://talentum-manager.vercel.app/actualizar-perfil?numero={numero}"
+    enviar_mensaje(
+        numero,
+        f"✏️ Para continuar, haz clic en este enlace:\n{url_web}\n\nPuedes hacerlo desde tu celular o computadora."
     )
-    enviar_mensaje(nro, texto_link)
-    print(f"🔗 Enviado link de perfil a {nro}: {url_web}")
+    print(f"🔗 Enviado link de perfil a {numero}: {url_web}")
+
 
 
 
