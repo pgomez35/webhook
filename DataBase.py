@@ -1,7 +1,6 @@
 import os
 import psycopg2
 from dotenv import load_dotenv
-from datetime import datetime
 import re
 import gspread
 from google.oauth2.service_account import Credentials
@@ -10,7 +9,8 @@ from gspread.worksheet import JSONResponse
 from schemas import ActualizacionContactoInfo
 from psycopg2.extras import RealDictCursor
 
-from datetime import date
+from datetime import date,datetime, timedelta
+from typing import Optional
 
 # Para hash de contraseñas (instalar con: pip install bcrypt)
 try:
@@ -27,17 +27,46 @@ INTERNAL_DATABASE_URL = os.getenv("EXTERNAL_DATABASE_URL")
 
 EXTERNAL_DATABASE_URL = os.getenv("EXTERNAL_DATABASE_URL")
 
-from typing import Optional
-import psycopg2
+from tenant import current_tenant
 
-from datetime import datetime, timedelta
+# def get_connection():
+#     conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+#     return conn
 
+_SCHEMA_RE = re.compile(r"^[a-z0-9_]+$")  # validación para schema
 
-from datetime import datetime, timedelta
-
+def _sanitize_schema(schema: str) -> str:
+    """
+    Asegura que schema solo contenga caracteres válidos.
+    Si no es válido, devuelva 'public' como fallback.
+    """
+    if not schema:
+        return "public"
+    # Si pasaste 'agencia_xxx' puede validar con prefijo
+    if schema.startswith("agencia_"):
+        candidate = schema.split("agencia_", 1)[1]
+        if _SCHEMA_RE.fullmatch(candidate):
+            return schema
+    # fallback
+    return "public"
 
 def get_connection():
+    """
+    Obtiene conexión y ajusta el search_path al tenant actual.
+    Devuelve una conexión psycopg2 normal (no pool).
+    """
+    tenant_schema = current_tenant.get()
+    tenant_schema = _sanitize_schema(tenant_schema)
+
     conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+    conn.autocommit = False  # o lo que uses en tu app
+
+    # Establecer search_path para la sesión/connection
+    with conn.cursor() as cur:
+        # NOTA: usamos identificador seguro (no interpolamos sin validar)
+        # como ya validamos tenant_schema con regex, esta interpolación es aceptable.
+        cur.execute(f"SET search_path TO {tenant_schema}, public;")
+
     return conn
 
 def limpiar_telefono(telefono):
@@ -2966,7 +2995,7 @@ def actualizar_phone_info_db(
         with get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    UPDATE public.whatsapp_business_accounts
+                    UPDATE whatsapp_business_accounts
                     SET
                         phone_number = %s,
                         phone_number_id = %s,
@@ -2997,7 +3026,7 @@ def obtener_cuenta_por_phone_id(phone_number_id: str) -> dict | None:
                         phone_number_id,
                         business_name,
                         status
-                    FROM public.whatsapp_business_accounts
+                    FROM whatsapp_business_accounts
                     WHERE phone_number_id = %s
                     LIMIT 1;
                 """, (phone_number_id,))
@@ -3046,7 +3075,7 @@ def obtener_cuenta_por_phone_number(phone_number: str) -> dict | None:
                         phone_number_id,
                         business_name,
                         status
-                    FROM public.whatsapp_business_accounts
+                    FROM whatsapp_business_accounts
                     WHERE phone_number = %s
                     LIMIT 1;
                 """, (phone_number,))
