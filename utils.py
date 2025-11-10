@@ -217,7 +217,8 @@ def obtener_phone_number_info(waba_id: str, access_token: str):
 # --- Función principal ajustada ---
 def procesar_evento_partner_instalado(entry, change, value, event):
     """Procesa el evento PARTNER_APP_INSTALLED emitido por Meta."""
-    if event != "PARTNER_APP_INSTALLED":
+    allowed_events = ("PARTNER_APP_INSTALLED", "PARTNER_ADDED")
+    if event not in allowed_events:
         return {"status": "ignored", "reason": "no_partner_event"}
 
     try:

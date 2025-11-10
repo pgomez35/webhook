@@ -1868,17 +1868,41 @@ async def whatsapp_webhook(request: Request):
     try:
 
         entry = data.get("entry", [])[0]
-        value = entry.get("changes", [])[0].get("value", {})
+        change = entry.get("changes", [])[0]
+        value = change.get("value", {})
+        field = change.get("field")
+        event = value.get("event")
+
+        # ✅ si es evento de instalación de partner/app o asignación de WABA
+
+        # === CASO 1: EVENTOS DE WHATSAPP BUSINESS ACCOUNT (account_update)
+        if field == "account_update":
+            waba_info = value.get("waba_info", {})
+            waba_id = waba_info.get("waba_id")
+            owner_id = waba_info.get("owner_business_id")
+            partner_app_id = waba_info.get("partner_app_id")
+
+            print(f"🟦 Evento de cuenta detectado ({value.get('event')}):")
+            print(f"➡️ WABA_ID: {waba_id}")
+            print(f"➡️ OWNER_ID: {owner_id}")
+            print(f"➡️ PARTNER_APP_ID: {partner_app_id}")
+
+            resultado = procesar_evento_partner_instalado(entry, change, value, event)
+            if resultado.get("status") in ("waba_linked", "missing_token", "error_getting_number"):
+                return resultado  # detenemos el flujo si es evento de instalación
+
+            return {"status": "ok"}
+
+        # === CASO 2: MENSAJES NORMALES CON PHONE_NUMBER_ID
         metadata = value.get("metadata", {})
         phone_number_id = metadata.get("phone_number_id")
 
-        # 🔍 Buscar cuenta del cliente
         cuenta = obtener_cuenta_por_phone_id(phone_number_id)
         if not cuenta:
             print(f"⚠️ No se encontró cuenta asociada al número {phone_number_id}")
             return {"status": "ignored"}
 
-            # Extraer info de la cuenta
+        # Extraer info de la cuenta
         token_cliente = cuenta["access_token"]
         phone_id_cliente = cuenta["phone_number_id"]
         tenant_name = cuenta["subdominio"]
@@ -1890,29 +1914,10 @@ async def whatsapp_webhook(request: Request):
         current_tenant.set(tenant_name)
         current_business_name.set(business_name)
 
-
         print(f"🌐 Tenant actual: {current_tenant.get()}")
         print(f"🔑 Token actual: {current_token.get()}")
         print(f"📞 phone_id actual: {current_phone_id.get()}")
         print(f"📞business_name: {current_business_name.get()}")
-
-        # 💬 Procesar el mensaje con el tenant correcto
-
-
-        # -------------------------------------------------------
-        # AGREGADO 6 NOV
-        # -------------------------------------------------------
-        entry = data.get("entry", [])[0]
-        change = entry.get("changes", [])[0]
-        value = change.get("value", {})
-        event = value.get("event")
-
-        resultado = procesar_evento_partner_instalado(entry, change, value, event)
-        if resultado.get("status") in ("waba_linked", "missing_token", "error_getting_number"):
-            return resultado  # detenemos el flujo si es evento de instalación
-        # -------------------------------------------------------
-        # AGREGADO 6 NOV
-        # -------------------------------------------------------
 
         cambios = data.get("entry", [])[0].get("changes", [])[0].get("value", {})
         mensajes = cambios.get("messages", [])
@@ -2091,8 +2096,6 @@ def send_profile_link(numero: str):
         f"✏️ Para continuar, haz clic en este enlace:\n{url_web}\n\nPuedes hacerlo desde tu celular o computadora."
     )
     print(f"🔗 Enviado link de perfil a {numero}: {url_web}")
-
-
 
 
 from pydantic import BaseModel
