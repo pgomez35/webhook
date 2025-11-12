@@ -61,13 +61,14 @@ def _init_pools():
     if _public_pool is None:
         with _pool_lock:
             if _public_pool is None:
-                # Pool para conexiones públicas: min 1, max 10 conexiones
+                # Pool para conexiones públicas: min 2, max 50 conexiones
+                # Aumentado para manejar múltiples webhooks concurrentes
                 _public_pool = pool.ThreadedConnectionPool(
-                    minconn=1,
-                    maxconn=10,
+                    minconn=2,
+                    maxconn=50,
                     dsn=INTERNAL_DATABASE_URL
                 )
-                print("✅ Connection pool público inicializado")
+                print("✅ Connection pool público inicializado (max 50 conexiones)")
 
 # Inicializar pools al importar el módulo
 _init_pools()
@@ -3022,9 +3023,20 @@ def obtener_invitacion_por_creador(creador_id: int):
         return None
 
 
+# ============================
+# CACHE PARA CUENTAS WHATSAPP
+# ============================
+# Cache simple para cuentas WhatsApp (TTL: 5 minutos)
+# Evita consultas repetidas a la base de datos cuando hay múltiples webhooks
+_whatsapp_account_cache = {}
+_cache_lock = threading.Lock()
+_cache_ttl = 300  # 5 minutos en segundos
+
+
 def guardar_o_actualizar_waba_db(session_id: str | None, waba_id: str):
     try:
-        with get_connection_public() as conn:
+        # Usar context manager para asegurar que la conexión se devuelva al pool
+        with get_connection_public_context() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # 🔍 Buscar si existe registro previo con token pero sin WABA
                 cur.execute("""
@@ -3048,6 +3060,16 @@ def guardar_o_actualizar_waba_db(session_id: str | None, waba_id: str):
                         WHERE id = %s;
                     """, (waba_id, existente["id"]))
                     conn.commit()
+                    
+                    # Limpiar cache si existe
+                    with _cache_lock:
+                        # Buscar y limpiar cualquier entrada en cache relacionada
+                        keys_to_remove = [
+                            k for k in _whatsapp_account_cache.keys()
+                            if _whatsapp_account_cache[k][0].get("id") == existente["id"]
+                        ]
+                        for k in keys_to_remove:
+                            del _whatsapp_account_cache[k]
 
                     print(f"🔄 WABA actualizado en DB (ID: {existente['id']}) → {waba_id}")
                     return {
@@ -3072,12 +3094,15 @@ def guardar_o_actualizar_waba_db(session_id: str | None, waba_id: str):
 
     except Exception as e:
         print("❌ Error en guardar_o_actualizar_waba_db:", e)
+        import traceback
+        traceback.print_exc()
         return {"status": "error", "error": str(e)}
 
 
 def guardar_o_actualizar_token_db(session_id: str, token: str):
     try:
-        with get_connection_public() as conn:
+        # Usar context manager para asegurar que la conexión se devuelva al pool
+        with get_connection_public_context() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # 🔍 Buscar registro con WABA pero sin token aún
                 cur.execute("""
@@ -3103,6 +3128,15 @@ def guardar_o_actualizar_token_db(session_id: str, token: str):
                     """, (token, existente["id"]))
                     actualizado = cur.fetchone()
                     conn.commit()
+                    
+                    # Limpiar cache si existe
+                    with _cache_lock:
+                        keys_to_remove = [
+                            k for k in _whatsapp_account_cache.keys()
+                            if _whatsapp_account_cache[k][0].get("id") == existente["id"]
+                        ]
+                        for k in keys_to_remove:
+                            del _whatsapp_account_cache[k]
 
                     print(f"🔑 Token actualizado para registro ID: {actualizado['id']}")
                     return {
@@ -3127,6 +3161,8 @@ def guardar_o_actualizar_token_db(session_id: str, token: str):
 
     except Exception as e:
         print("❌ Error en guardar_o_actualizar_token_db:", e)
+        import traceback
+        traceback.print_exc()
         return {"status": "error", "error": str(e)}
 
 def actualizar_phone_info_db(
@@ -3136,11 +3172,11 @@ def actualizar_phone_info_db(
     status: str = "connected"
 ) -> bool:
     try:
-
         # 🔹 Normalizar número: solo dígitos
         phone_number = re.sub(r'\D', '', phone_number or "")
-
-        with get_connection_public() as conn:
+        
+        # Usar context manager para asegurar que la conexión se devuelva al pool
+        with get_connection_public_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
                     UPDATE whatsapp_business_accounts
@@ -3152,18 +3188,49 @@ def actualizar_phone_info_db(
                     WHERE id = %s;
                 """, (phone_number, phone_number_id, status, id))
                 conn.commit()
+                
+        # Limpiar cache si se actualizó phone_number_id
+        if phone_number_id:
+            with _cache_lock:
+                if phone_number_id in _whatsapp_account_cache:
+                    del _whatsapp_account_cache[phone_number_id]
+                # También limpiar por ID si existe en cache
+                keys_to_remove = [
+                    k for k in _whatsapp_account_cache.keys()
+                    if _whatsapp_account_cache[k][0].get("id") == id
+                ]
+                for k in keys_to_remove:
+                    del _whatsapp_account_cache[k]
 
         print(f"✅ Registro WABA (id={id}) actualizado correctamente.")
         return True
 
     except Exception as e:
         print("❌ Error al actualizar información WABA en la base de datos:", e)
+        import traceback
+        traceback.print_exc()
         return False
+
 
 def obtener_cuenta_por_phone_id(phone_number_id: str) -> dict | None:
     """Busca en la base de datos la cuenta de WhatsApp correspondiente al phone_number_id."""
+    if not phone_number_id:
+        return None
+    
+    # Verificar cache primero
+    with _cache_lock:
+        cached = _whatsapp_account_cache.get(phone_number_id)
+        if cached:
+            cached_data, cached_time = cached
+            if time() - cached_time < _cache_ttl:
+                return cached_data
+            else:
+                # Cache expirado, eliminar
+                del _whatsapp_account_cache[phone_number_id]
+    
     try:
-        with get_connection_public() as conn:
+        # Usar context manager para asegurar que la conexión se devuelva al pool
+        with get_connection_public_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT 
@@ -3197,6 +3264,19 @@ def obtener_cuenta_por_phone_id(phone_number_id: str) -> dict | None:
             "status": row[7],
         }
 
+        # Guardar en cache
+        with _cache_lock:
+            _whatsapp_account_cache[phone_number_id] = (cuenta, time())
+            # Limpiar cache antiguo si hay más de 100 entradas
+            if len(_whatsapp_account_cache) > 100:
+                current_time = time()
+                expired_keys = [
+                    k for k, (_, t) in _whatsapp_account_cache.items()
+                    if current_time - t >= _cache_ttl
+                ]
+                for k in expired_keys:
+                    del _whatsapp_account_cache[k]
+
         print(
             f"✅ Cuenta WABA encontrada: {cuenta.get('business_name')} "
             f"({cuenta.get('phone_number')}) - Tenant/Subdominio: {cuenta.get('subdominio')}"
@@ -3206,14 +3286,19 @@ def obtener_cuenta_por_phone_id(phone_number_id: str) -> dict | None:
 
     except Exception as e:
         print(f"❌ Error al obtener cuenta WhatsApp (phone_number_id={phone_number_id}): {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
 def obtener_cuenta_por_subdominio(subdominio: str) -> dict | None:
     """Busca en la base de datos la cuenta de WhatsApp correspondiente al phone_number."""
+    if not subdominio:
+        return None
+    
     try:
-
-        with get_connection_public() as conn:
+        # Usar context manager para asegurar que la conexión se devuelva al pool
+        with get_connection_public_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT 
@@ -3255,6 +3340,8 @@ def obtener_cuenta_por_subdominio(subdominio: str) -> dict | None:
 
     except Exception as e:
         print(f"❌ Error al obtener cuenta WhatsApp (phone_number={subdominio}): {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
