@@ -145,6 +145,112 @@ def enviar_audio_base64(token, numero_id, telefono_destino, ruta_audio, mimetype
 #
 #     return response_send.status_code, response_send.json()
 
+import json
+import re
+import requests
+from typing import List, Tuple, Optional
+
+def _normalize_phone(phone: str) -> str:
+    """Devuelve solo dígitos (útil para pasar a Meta o para tu lógica interna)."""
+    return re.sub(r'\D', '', phone or "")
+
+def enviar_plantilla_generica_parametros(
+    token: str,
+    phone_number_id: str,
+    numero_destino: str,
+    nombre_plantilla: str,
+    codigo_idioma: str = "es_CO",
+    parametros: Optional[List[str]] = None,
+    body_vars_count: Optional[int] = None,
+) -> Tuple[int, dict]:
+
+    url = f"https://graph.facebook.com/v19.0/{phone_number_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    numero_destino_norm = _normalize_phone(numero_destino)
+    if not numero_destino_norm:
+        raise ValueError("numero_destino inválido o vacío después de normalizar.")
+
+    data = {
+        "messaging_product": "whatsapp",
+        "to": numero_destino_norm,
+        "type": "template",
+        "template": {
+            "name": nombre_plantilla,
+            "language": {"code": codigo_idioma}
+        }
+    }
+
+    # Construcción de components (si hay parametros)
+    if parametros:
+        # determinar como dividir parametros entre body y posible url param
+        total = len(parametros)
+        if body_vars_count is not None:
+            if body_vars_count < 0 or body_vars_count > total:
+                raise ValueError("body_vars_count fuera de rango.")
+            n_body = body_vars_count
+        else:
+            # por defecto: si hay >=2 parametros -> ultimo es url param; else todo body
+            n_body = total - 1 if total >= 2 else total
+
+        body_params = parametros[:n_body]
+        extra_params = parametros[n_body:]  # usualmente len(extra_params) == 0 o 1 (url param)
+
+        components = []
+
+        # Componente body
+        if body_params:
+            components.append({
+                "type": "body",
+                "parameters": [
+                    {"type": "text", "text": str(p)} for p in body_params
+                ]
+            })
+
+        # Si hay extra_params (p.ej. url param), lo usamos como parámetro del botón URL (index 0)
+        if extra_params:
+            # solo tomo el primero de extra_params como el que llenará el placeholder del botón
+            url_param = extra_params[0]
+            components.append({
+                "type": "button",
+                "sub_type": "url",
+                "index": "0",
+                "parameters": [
+                    {"type": "text", "text": str(url_param)}
+                ]
+            })
+
+        if components:
+            data["template"]["components"] = components
+
+    # Logs
+    print("📤 Enviando plantilla:", nombre_plantilla)
+    print("📨 A:", numero_destino_norm)
+    print(f"🌐 Idioma: {codigo_idioma}")
+    print("📦 Data preparada:", json.dumps(data, indent=2, ensure_ascii=False))
+
+    # Petición
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=15)
+    except requests.RequestException as e:
+        print("❌ Error al llamar a la API de Meta:", e)
+        return 0, {"error": "request_exception", "detail": str(e)}
+
+    print("✅ Código de estado:", response.status_code)
+    try:
+        respuesta_json = response.json()
+    except json.JSONDecodeError:
+        respuesta_json = {"error": "invalid_json", "raw": response.text}
+
+    print("📡 Respuesta de la API:", respuesta_json)
+    return response.status_code, respuesta_json
+
+
+
+
 def enviar_plantilla_generica(token: str, phone_number_id: str, numero_destino: str,
                               nombre_plantilla: str, codigo_idioma: str = "es_CO",
                               parametros: list = None):
