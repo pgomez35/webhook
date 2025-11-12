@@ -1242,7 +1242,7 @@ def manejar_menu(numero, texto_normalizado, rol, token: str | None = None, numer
             # -------------------------------------------------
             if token is None or numero_id is None:
                 token, numero_id = obtener_tokens_por_tenant()
-            url_web = f"https://talentum-manager.vercel.app/actualizar-perfil?numero={numero}"
+            url_web = f"https://talentum-manager.com/actualizar-perfil?numero={numero}"
             mensaje_url = f"✏️ Para actualizar tu información de perfil, haz clic en este enlace:\n{url_web}\n\nPuedes hacerlo desde tu celular o computadora."
             if background_tasks:
                 background_tasks.add_task(_enviar_mensaje_background, numero, mensaje_url, token, numero_id)
@@ -1643,7 +1643,9 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
                 # Si el usuario está esperando iniciar la encuesta pero escribe texto
                 if paso == "esperando_inicio_encuesta":
                     if texto_lower.strip() != "":
-                        background_tasks.add_task(_enviar_mensaje_background, numero, "💬 Haz clic en el enlace para comenzar la encuesta 📋", token_cliente, phone_id_cliente)
+                        url_web = f"https://{tenant_name}.talentum-manager.com/actualizar-perfil?numero={numero}"
+                        mensaje = ("💬 Haz clic en el enlace para comenzar la encuesta 📋\n\n"f"{url_web}\n\n""Puedes hacerlo desde tu celular o computadora.")
+                        background_tasks.add_task(_enviar_mensaje_background,numero,mensaje,token_cliente,phone_id_cliente)
                         return {"status": "ok"}
 
             # === 2️⃣ ASPIRANTE EN BASE DE DATOS ===
@@ -1699,7 +1701,7 @@ def enviar_inicio_encuesta(numero: str, token: str, numero_id: str):
     # Elimina datos temporales si existen del numero
     eliminar_flujo_temp(numero)
 
-    url_web = f"https://{tenant_name}.talentum-manager/actualizar-perfil?numero={numero}"
+    url_web = f"https://{tenant_name}.talentum-manager.com/actualizar-perfil?numero={numero}"
 
     mensaje = (
         f"{mensaje_inicio_encuesta()}\n\n"
