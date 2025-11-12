@@ -1088,7 +1088,21 @@ def mensaje_proteccion_datos() -> str:
 
 
 def mensaje_encuesta_final(nombre: str | None = None) -> str:
-    nombre_agencia = current_business_name.get()
+    """
+    Genera el mensaje final de la encuesta.
+    
+    Args:
+        nombre: Nombre del usuario (opcional)
+    
+    Returns:
+        Mensaje final de la encuesta
+    """
+    # Obtener nombre de la agencia, con fallback si no está disponible
+    try:
+        nombre_agencia = current_business_name.get()
+    except LookupError:
+        # Si current_business_name no está disponible, usar un valor por defecto
+        nombre_agencia = "la agencia"
 
     if nombre:
         return (
@@ -1769,9 +1783,12 @@ def consolidar_perfil_web(data: ConsolidarInput):
 
         token_cliente = cuenta["access_token"]
         phone_id_cliente = cuenta["phone_number_id"]
+        business_name = cuenta.get("business_name", "la agencia")
 
+        # ✅ Establecer valores de contexto para que las funciones puedan usarlos
         current_token.set(token_cliente)
         current_phone_id.set(phone_id_cliente)
+        current_business_name.set(business_name)
 
         # Procesar diccionario de respuestas directamente
         # Formato: {1: "Ricardo", 2: "5", 3: "1", ...}
@@ -1796,12 +1813,23 @@ def consolidar_perfil_web(data: ConsolidarInput):
         consolidar_perfil(data.numero, respuestas_dict=respuestas_dict, tenant_schema=subdominio)
         eliminar_flujo(data.numero, tenant_schema=subdominio)
         eliminar_flujo_temp(data.numero, tenant_schema=subdominio)
+        
+        # Generar mensaje final ANTES de crear el thread (para que current_business_name esté disponible)
+        # Obtener nombre del usuario si está disponible
+        try:
+            usuario_bd = buscar_usuario_por_telefono(data.numero)
+            nombre_usuario = usuario_bd.get("nombre") if usuario_bd else None
+        except:
+            nombre_usuario = None
+        
+        mensaje_final = mensaje_encuesta_final(nombre=nombre_usuario)
+        
         # Enviar mensaje de cierre en background (no bloquea la respuesta)
         # Nota: /consolidar no tiene background_tasks, pero podemos usar threading
         import threading
         threading.Thread(
             target=_enviar_mensaje_background,
-            args=(data.numero, mensaje_encuesta_final(), token_cliente, phone_id_cliente),
+            args=(data.numero, mensaje_final, token_cliente, phone_id_cliente),
             daemon=True
         ).start()
         print(f"✅ Perfil consolidado y mensaje final enviado a {data.numero}")
