@@ -1531,7 +1531,7 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
         if not mensajes:
             return {"status": "ok"}
 
-            for mensaje in mensajes:
+        for mensaje in mensajes:
             numero = mensaje.get("from")
             tipo = mensaje.get("type")
             paso = obtener_flujo(numero, tenant_schema)
