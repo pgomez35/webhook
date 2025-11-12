@@ -312,7 +312,20 @@ FLOW_STATE_TTL = timedelta(seconds=TTL)
 
 def _load_flow_state(numero: str, tenant_schema: Optional[str] = None):
     try:
+        # Debug: mostrar qué tenant se está usando
+        if tenant_schema is None:
+            tenant_actual = current_tenant.get()
+            print(f"🔍 [DEBUG] _load_flow_state: usando tenant de current_tenant: {tenant_actual}")
+        else:
+            print(f"🔍 [DEBUG] _load_flow_state: usando tenant explícito: {tenant_schema}")
+        
         with get_connection_context(tenant_schema) as conn:
+            # Verificar el search_path actual
+            with conn.cursor() as cur:
+                cur.execute("SHOW search_path")
+                search_path = cur.fetchone()[0]
+                print(f"🔍 [DEBUG] _load_flow_state: search_path actual: {search_path}")
+            
             with conn.cursor() as cur:
                 cur.execute(
                     f"SELECT estado, actualizado_en FROM {FLOW_STATE_TABLE} WHERE telefono = %s",
@@ -321,13 +334,17 @@ def _load_flow_state(numero: str, tenant_schema: Optional[str] = None):
                 row = cur.fetchone()
             conn.commit()
             if not row:
+                print(f"🔍 [DEBUG] _load_flow_state: No se encontró estado para {numero} en el schema actual")
                 return None, None
             estado, actualizado_en = row
             if isinstance(estado, str):
                 estado = json.loads(estado)
+            print(f"🔍 [DEBUG] _load_flow_state: Estado encontrado para {numero}: paso={estado.get('paso') if estado else None}")
             return estado or {}, actualizado_en
     except Exception as exc:
         print(f"❌ Error cargando estado de flujo para {numero}: {exc}")
+        import traceback
+        traceback.print_exc()
         return None, None
 
 
@@ -1537,7 +1554,10 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
             tipo = mensaje.get("type")
             # obtener_flujo usará current_tenant.get() si tenant_schema es None,
             # y _sanitize_schema() agregará el prefijo 'agencia_' automáticamente
+            tenant_actual = current_tenant.get()
+            print(f"🔍 [DEBUG] Tenant antes de obtener_flujo: {tenant_actual}")
             paso = obtener_flujo(numero, tenant_schema=None)
+            print(f"🔍 [DEBUG] Paso obtenido: {paso}")
             usuario_bd = buscar_usuario_por_telefono(numero)
             rol = obtener_rol_usuario(numero) if usuario_bd else None
 

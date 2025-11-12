@@ -124,7 +124,11 @@ def get_connection(tenant_schema: Optional[str] = None):
     """
     if tenant_schema is None:
         tenant_schema = current_tenant.get()
+        print(f"🔍 [DEBUG] get_connection: tenant_schema obtenido de current_tenant: {tenant_schema}")
+    tenant_schema_original = tenant_schema
     tenant_schema = _sanitize_schema(tenant_schema)
+    if tenant_schema_original != tenant_schema:
+        print(f"🔍 [DEBUG] get_connection: schema sanitizado: '{tenant_schema_original}' -> '{tenant_schema}'")
 
     # Obtener conexión del pool
     conn = _tenant_pool.getconn()
