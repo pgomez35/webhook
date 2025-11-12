@@ -8,7 +8,7 @@ from google.oauth2.service_account import Credentials
 from gspread.worksheet import JSONResponse
 import threading
 from functools import lru_cache
-from time import time
+import time
 
 from schemas import ActualizacionContactoInfo
 from psycopg2.extras import RealDictCursor
@@ -3237,7 +3237,7 @@ def obtener_cuenta_por_phone_id(phone_number_id: str) -> dict | None:
         cached = _whatsapp_account_cache.get(phone_number_id)
         if cached:
             cached_data, cached_time = cached
-            if time() - cached_time < _cache_ttl:
+            if time.time() - cached_time < _cache_ttl:
                 return cached_data
             else:
                 # Cache expirado, eliminar
@@ -3281,10 +3281,10 @@ def obtener_cuenta_por_phone_id(phone_number_id: str) -> dict | None:
 
         # Guardar en cache
         with _cache_lock:
-            _whatsapp_account_cache[phone_number_id] = (cuenta, time())
+            _whatsapp_account_cache[phone_number_id] = (cuenta, time.time())
             # Limpiar cache antiguo si hay más de 100 entradas
             if len(_whatsapp_account_cache) > 100:
-                current_time = time()
+                current_time = time.time()
                 expired_keys = [
                     k for k, (_, t) in _whatsapp_account_cache.items()
                     if current_time - t >= _cache_ttl
