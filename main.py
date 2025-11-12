@@ -69,12 +69,25 @@ CALENDAR_ID = os.getenv("CALENDAR_ID")
 from main_mensajeria_whatsapp import router as perfil_creador_router
 from mainCargarAspirantes import router as aspirantes_router
 from middleware_tenant import TenantMiddleware   # 👈 importa tu middleware
+from middleware_rate_limit import RateLimitMiddleware  # 👈 Rate limiting por tenant
 
 # ⚙️ Inicializar FastAPI
 app = FastAPI()
 
-# 👇 Registrar Middleware
+# 👇 Registrar Middlewares (orden importante: Tenant primero, luego RateLimit)
 app.add_middleware(TenantMiddleware)
+# Rate limiting DESPUÉS del TenantMiddleware para que el tenant ya esté resuelto
+app.add_middleware(
+    RateLimitMiddleware,
+    enabled=True,  # Habilitar rate limiting
+    exempt_paths=[
+        "/health",  # Endpoint de health check (si existe)
+        "/metrics",  # Endpoint de métricas (si existe)
+        "/docs",  # Documentación de FastAPI
+        "/openapi.json",  # OpenAPI schema
+        "/redoc",  # ReDoc
+    ]
+)
 
 # Incluir las rutas del módulo perfil_creador_whatsapp
 app.include_router(perfil_creador_router, tags=["Perfil Creador WhatsApp"])
@@ -88,14 +101,20 @@ os.makedirs(AUDIO_DIR, exist_ok=True)
 # ✅ Montar ruta para servir archivos estáticos desde /audios
 app.mount("/audios", StaticFiles(directory=AUDIO_DIR), name="audios")
 
-# Configurar CORS para permitir peticiones del frontend
+# ✅ Configurar correctamente CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://talentum-manager.com",
+        "https://test.talentum-manager.com",
+        "https://prestige.talentum-manager.com",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*", "X-Tenant-Name"],
 )
+
+
 
 # 🧠 Inicializar búsqueda semántica
 client, collection = inicializar_busqueda(API_KEY, persist_dir=CHROMA_DIR)
@@ -4691,7 +4710,141 @@ async def exchange_code(request: Request):
 
 
 from tenant import current_tenant
+from rate_limiter import get_rate_limiter
 
 @app.get("/debug")
 async def debug():
     return {"tenant": current_tenant.get()}
+
+
+# ==================== RATE LIMITING ENDPOINTS ===========================
+class RateLimitConfigRequest(BaseModel):
+    """Modelo para configurar rate limits por tenant"""
+    max_requests: int = 100
+    window_seconds: int = 60
+    burst_allowance: int = 10
+
+
+@app.post("/api/rate-limit/config")
+async def configurar_rate_limit(
+    config: RateLimitConfigRequest,
+    tenant_schema: Optional[str] = Body(None, description="Schema del tenant (opcional, usa el del contexto si no se especifica)")
+):
+    """
+    Configura rate limits personalizados para un tenant.
+    Requiere permisos de admin en producción.
+    """
+    if tenant_schema is None:
+        tenant_schema = current_tenant.get()
+    
+    if not tenant_schema:
+        raise HTTPException(
+            status_code=400,
+            detail="No se pudo determinar el tenant"
+        )
+    
+    rate_limiter = get_rate_limiter()
+    rate_limiter.set_tenant_config(
+        tenant_schema=tenant_schema,
+        max_requests=config.max_requests,
+        window_seconds=config.window_seconds,
+        burst_allowance=config.burst_allowance
+    )
+    
+    return {
+        "status": "ok",
+        "message": f"Rate limit configurado para {tenant_schema}",
+        "config": {
+            "max_requests": config.max_requests,
+            "window_seconds": config.window_seconds,
+            "burst_allowance": config.burst_allowance
+        }
+    }
+
+
+@app.get("/api/rate-limit/stats")
+async def obtener_estadisticas_rate_limit(
+    tenant_schema: Optional[str] = None
+):
+    """
+    Obtiene estadísticas de rate limiting.
+    Si no se especifica tenant, retorna todas las estadísticas.
+    """
+    rate_limiter = get_rate_limiter()
+    
+    if tenant_schema is None:
+        tenant_schema = current_tenant.get()
+    
+    stats = rate_limiter.get_stats(tenant_schema)
+    
+    # Obtener configuración actual
+    if tenant_schema:
+        config = rate_limiter.get_tenant_config(tenant_schema)
+        return {
+            "tenant": tenant_schema,
+            "config": {
+                "max_requests": config.max_requests,
+                "window_seconds": config.window_seconds,
+                "burst_allowance": config.burst_allowance
+            },
+            "stats": stats
+        }
+    else:
+        return {
+            "all_tenants": stats
+        }
+
+
+@app.post("/api/rate-limit/reset")
+async def resetear_rate_limit(
+    tenant_schema: Optional[str] = Body(None, description="Schema del tenant (opcional, usa el del contexto si no se especifica)")
+):
+    """
+    Resetea el rate limit para un tenant (útil para testing).
+    Requiere permisos de admin en producción.
+    """
+    if tenant_schema is None:
+        tenant_schema = current_tenant.get()
+    
+    if not tenant_schema:
+        raise HTTPException(
+            status_code=400,
+            detail="No se pudo determinar el tenant"
+        )
+    
+    rate_limiter = get_rate_limiter()
+    rate_limiter.reset_tenant(tenant_schema)
+    
+    return {
+        "status": "ok",
+        "message": f"Rate limit reseteado para {tenant_schema}"
+    }
+
+
+@app.get("/health")
+async def health_check():
+    """
+    Endpoint de health check que incluye información de rate limiting.
+    Este endpoint está exento del rate limiting.
+    """
+    rate_limiter = get_rate_limiter()
+    tenant_schema = current_tenant.get()
+    
+    health_info = {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "rate_limiting": {
+            "enabled": True,
+            "tenant": tenant_schema or "not_set"
+        }
+    }
+    
+    if tenant_schema:
+        config = rate_limiter.get_tenant_config(tenant_schema)
+        health_info["rate_limiting"]["config"] = {
+            "max_requests": config.max_requests,
+            "window_seconds": config.window_seconds,
+            "burst_allowance": config.burst_allowance
+        }
+    
+    return health_info

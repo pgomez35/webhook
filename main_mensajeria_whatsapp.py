@@ -5,11 +5,15 @@ import unicodedata
 import traceback
 import time
 import traceback  # colócalo al inicio del archivo (si no está ya importado)
+import logging
+import threading
+from datetime import datetime, timezone, timedelta
+from typing import Optional
 
 from dotenv import load_dotenv
 from rapidfuzz import process, fuzz
 from decimal import Decimal, ROUND_HALF_UP
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 
 from tenant import current_tenant, current_token, current_phone_id,current_business_name
@@ -18,6 +22,7 @@ from enviar_msg_wp import enviar_plantilla_generica, enviar_mensaje_texto_simple
 from main import guardar_mensaje
 from utils import *
 
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -29,49 +34,132 @@ INTERNAL_DATABASE_URL = os.getenv("INTERNAL_DATABASE_URL")  # 🔹 corregido nom
 
 router = APIRouter()
 
-# Estado del flujo en memoria
-usuarios_flujo = {}    # { numero: paso_actual }
-respuestas = {}        # { numero: {campo: valor} }
-usuarios_temp = {}
+
+# ============================
+# CACHE DE TOKENS POR TENANT
+# ============================
+_token_cache: dict[str, tuple[str, str, float]] = {}  # {subdominio: (token, phone_id, timestamp)}
+_cache_lock = threading.Lock()
+_TOKEN_CACHE_TTL = 300  # 5 minutos
+
+def _get_cached_tokens(subdominio: str) -> Optional[tuple[str, str]]:
+    """Obtiene tokens del cache si aún son válidos."""
+    with _cache_lock:
+        if subdominio in _token_cache:
+            token, phone_id, timestamp = _token_cache[subdominio]
+            if time.time() - timestamp < _TOKEN_CACHE_TTL:
+                return token, phone_id
+            else:
+                # Token expirado, eliminar del cache
+                del _token_cache[subdominio]
+    return None
+
+def _set_cached_tokens(subdominio: str, token: str, phone_id: str):
+    """Guarda tokens en el cache."""
+    with _cache_lock:
+        _token_cache[subdominio] = (token, phone_id, time.time())
 
 # ============================
 # ENVIAR MENSAJES INICIO
 # ============================
 
-def enviar_mensaje(numero: str, texto: str):
+def obtener_tokens_por_tenant(subdominio: str | None = None) -> tuple[str, str]:
+    """
+    Obtiene los tokens (access_token, phone_number_id) para un tenant.
+    Usa cache para evitar consultas repetidas a la BD.
+    Si no se proporciona subdominio, usa el tenant actual del contexto.
+    """
+    if subdominio is None:
+        subdominio = current_tenant.get()
+    
+    # Intentar obtener del cache primero
+    cached = _get_cached_tokens(subdominio)
+    if cached:
+        return cached
+    
+    # Si no está en cache, consultar BD
+    cuenta = obtener_cuenta_por_subdominio(subdominio)
+    if not cuenta:
+        raise ValueError(f"No se encontraron credenciales para {subdominio}")
+    
+    token = cuenta["access_token"]
+    phone_id = cuenta["phone_number_id"]
+    
+    # Guardar en cache
+    _set_cached_tokens(subdominio, token, phone_id)
+    
+    return token, phone_id
+
+def enviar_mensaje(numero: str, texto: str, token: str, numero_id: str):
+    """
+    Envía un mensaje de texto a un número de WhatsApp.
+    
+    Args:
+        numero: Número de teléfono destino
+        texto: Texto del mensaje
+        token: Access token de WhatsApp (obligatorio)
+        numero_id: Phone number ID de WhatsApp (obligatorio)
+    """
     return enviar_mensaje_texto_simple(
-        token=current_token.get(),
-        numero_id=current_phone_id.get(),
+        token=token,
+        numero_id=numero_id,
         telefono_destino=numero,
         texto=texto
     )
 
-def enviar_boton_iniciar(numero: str, texto: str):
+def enviar_boton_iniciar(numero: str, texto: str, token: str, numero_id: str):
+    """
+    Envía un botón de inicio a un número de WhatsApp.
+    
+    Args:
+        numero: Número de teléfono destino
+        texto: Texto del mensaje
+        token: Access token de WhatsApp (obligatorio)
+        numero_id: Phone number ID de WhatsApp (obligatorio)
+    """
     return enviar_boton_iniciar_Completa(
-        token=current_token.get(),
-        numero_id=current_phone_id.get(),
+        token=token,
+        numero_id=numero_id,
         telefono_destino=numero,
         texto=texto
     )
 
-def enviar_botones(numero: str, texto: str, botones: list):
+def enviar_botones(numero: str, texto: str, botones: list, token: str, numero_id: str):
+    """
+    Envía botones interactivos a un número de WhatsApp.
+    
+    Args:
+        numero: Número de teléfono destino
+        texto: Texto del mensaje
+        botones: Lista de botones
+        token: Access token de WhatsApp (obligatorio)
+        numero_id: Phone number ID de WhatsApp (obligatorio)
+    """
     return enviar_botones_Completa(
-        token=current_token.get(),
-        numero_id=current_phone_id.get(),
+        token=token,
+        numero_id=numero_id,
         telefono_destino=numero,
         texto=texto,
         botones=botones
     )
 
-def enviar_inicio_encuesta_plantilla(numero: str):
-    nombre_agencia=current_business_name.get()
+def enviar_inicio_encuesta_plantilla(numero: str, token: str, numero_id: str):
+    """
+    Envía una plantilla de inicio de encuesta a un número de WhatsApp.
+    
+    Args:
+        numero: Número de teléfono destino
+        token: Access token de WhatsApp (obligatorio)
+        numero_id: Phone number ID de WhatsApp (obligatorio)
+    """
+    nombre_agencia = current_business_name.get()
     parametros = [
         nombre_agencia,     # Llene {{1}} del body
         numero              # Llene {{2}} del botón dinámico
     ]
     return enviar_plantilla_generica_parametros(
-        token=current_token.get(),
-        phone_number_id=current_phone_id.get(),
+        token=token,
+        phone_number_id=numero_id,
         numero_destino=numero,
         nombre_plantilla="inicio_encuesta",
         codigo_idioma="es_CO",
@@ -214,81 +302,319 @@ def validar_opciones_multiples(texto, opciones_validas):
     return seleccion if seleccion else None
 
 
-
-# 🗂️ Cachés en memoria con timestamp
-usuarios_flujo = {}   # {numero: (paso, timestamp)}
-usuarios_roles = {}   # {numero: (rol, timestamp)}
-
-# Tiempo de vida en segundos (1 hora = 3600)
+FLOW_STATE_TABLE = "whatsapp_flow_state"
+TEMP_DATA_TABLE = "whatsapp_temp_data"
 TTL = 1800
+FLOW_STATE_TTL = timedelta(seconds=TTL)
 
 
-def actualizar_flujo(numero, paso):
-    """Actualiza el paso del flujo sin perder otros datos del usuario."""
-    if numero not in usuarios_flujo or not isinstance(usuarios_flujo[numero], dict):
-        usuarios_flujo[numero] = {}
-    usuarios_flujo[numero]["paso"] = paso
-    usuarios_flujo[numero]["timestamp"] = time.time()
+def _load_flow_state(numero: str, tenant_schema: Optional[str] = None):
+    try:
+        with get_connection_context(tenant_schema) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT estado, actualizado_en FROM {FLOW_STATE_TABLE} WHERE telefono = %s",
+                    (numero,),
+                )
+                row = cur.fetchone()
+            conn.commit()
+            if not row:
+                return None, None
+            estado, actualizado_en = row
+            if isinstance(estado, str):
+                estado = json.loads(estado)
+            return estado or {}, actualizado_en
+    except Exception as exc:
+        print(f"❌ Error cargando estado de flujo para {numero}: {exc}")
+        return None, None
 
 
-def obtener_flujo(numero):
+def _save_flow_state(numero: str, estado: dict, tenant_schema: Optional[str] = None):
+    try:
+        with get_connection_context(tenant_schema) as conn:
+            payload = json.dumps(estado)
+            now = datetime.now(timezone.utc)
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    INSERT INTO {FLOW_STATE_TABLE} (telefono, estado, actualizado_en)
+                    VALUES (%s, %s::jsonb, %s)
+                    ON CONFLICT (telefono)
+                    DO UPDATE SET estado = EXCLUDED.estado, actualizado_en = EXCLUDED.actualizado_en
+                    """,
+                    (numero, payload, now),
+                )
+            conn.commit()
+    except Exception as exc:
+        print(f"❌ Error guardando estado de flujo para {numero}: {exc}")
 
-    cache = usuarios_flujo.get(numero)
-    ahora = time.time()
 
-    if not cache:
+def _set_temp_data(numero: str, clave: str, valor, tenant_schema: Optional[str] = None) -> None:
+    try:
+        with get_connection_context(tenant_schema) as conn:
+            now = datetime.now(timezone.utc)
+            payload = json.dumps(valor)
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    INSERT INTO {TEMP_DATA_TABLE} (telefono, clave, valor, actualizado_en)
+                    VALUES (%s, %s, %s::jsonb, %s)
+                    ON CONFLICT (telefono, clave)
+                    DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = EXCLUDED.actualizado_en
+                    """,
+                    (numero, clave, payload, now),
+                )
+            conn.commit()
+    except Exception as exc:
+        print(f"❌ Error guardando dato temporal '{clave}' para {numero}: {exc}")
+
+
+def _get_temp_data(numero: str, clave: str, tenant_schema: Optional[str] = None):
+    try:
+        with get_connection_context(tenant_schema) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT valor FROM {TEMP_DATA_TABLE} WHERE telefono = %s AND clave = %s",
+                    (numero, clave),
+                )
+                row = cur.fetchone()
+            conn.commit()
+            if not row:
+                return None
+            valor = row[0]
+            if isinstance(valor, str):
+                return json.loads(valor)
+            return valor
+    except Exception as exc:
+        print(f"❌ Error obteniendo dato temporal '{clave}' para {numero}: {exc}")
         return None
 
-    # ✅ Formato nuevo (dict)
-    if isinstance(cache, dict):
-        t = cache.get("timestamp", 0)
-        if ahora - t < TTL:
-            return cache.get("paso")
 
-    # ⚙️ Compatibilidad con formato antiguo (tuple)
-    elif isinstance(cache, tuple) and len(cache) == 2:
-        paso, t = cache
-        if ahora - t < TTL:
-            return paso
+def _clear_temp_data(numero: str, clave: str | None = None, tenant_schema: Optional[str] = None) -> None:
+    try:
+        with get_connection_context(tenant_schema) as conn:
+            with conn.cursor() as cur:
+                if clave:
+                    cur.execute(
+                        f"DELETE FROM {TEMP_DATA_TABLE} WHERE telefono = %s AND clave = %s",
+                        (numero, clave),
+                    )
+                else:
+                    cur.execute(
+                        f"DELETE FROM {TEMP_DATA_TABLE} WHERE telefono = %s",
+                        (numero,),
+                    )
+            conn.commit()
+    except Exception as exc:
+        print(f"❌ Error limpiando datos temporales para {numero}: {exc}")
 
-    # 🧹 Limpieza automática si expiró o no coincide formato
-    usuarios_flujo.pop(numero, None)
-    return None
 
-def asegurar_flujo(numero: str) -> dict:
-    if numero not in usuarios_flujo or not isinstance(usuarios_flujo[numero], dict):
-        usuarios_flujo[numero] = {"timestamp": time.time()}
-    return usuarios_flujo[numero]
+def actualizar_flujo(numero, paso, tenant_schema: Optional[str] = None):
+    estado, _ = _load_flow_state(numero, tenant_schema)
+    if not isinstance(estado, dict):
+        estado = {}
+    estado["paso"] = paso
+    estado["timestamp"] = datetime.now(timezone.utc).isoformat()
+    _save_flow_state(numero, estado, tenant_schema)
 
-def eliminar_flujo(numero: str):
-    """Reinicia cualquier flujo o estado temporal del usuario."""
-    usuarios_flujo.pop(numero, None)
-    usuarios_temp.pop(numero, None)
+
+def obtener_flujo(numero, tenant_schema: Optional[str] = None):
+    estado, actualizado_en = _load_flow_state(numero, tenant_schema)
+    if not estado:
+        return None
+    if actualizado_en:
+        diferencia = datetime.now(timezone.utc) - actualizado_en
+        if diferencia > FLOW_STATE_TTL:
+            eliminar_flujo(numero, tenant_schema)
+            return None
+    return estado.get("paso")
+
+
+def asegurar_flujo(numero: str, tenant_schema: Optional[str] = None) -> dict:
+    estado, _ = _load_flow_state(numero, tenant_schema)
+    if not isinstance(estado, dict):
+        estado = {}
+    if "timestamp" not in estado:
+        estado["timestamp"] = datetime.now(timezone.utc).isoformat()
+    _save_flow_state(numero, estado, tenant_schema)
+    return estado
+
+
+def eliminar_flujo(numero: str, tenant_schema: Optional[str] = None):
+    try:
+        with get_connection_context(tenant_schema) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"DELETE FROM {FLOW_STATE_TABLE} WHERE telefono = %s",
+                    (numero,),
+                )
+            conn.commit()
+    except Exception as exc:
+        print(f"❌ Error reiniciando flujo para {numero}: {exc}")
+    _clear_temp_data(numero, tenant_schema=tenant_schema)
     print(f"🧹 Flujo reiniciado para {numero}")
 
 
-def obtener_rol_usuario(numero):
-    cache = usuarios_roles.get(numero)
-    now = time.time()
-    # Verifica que el cache sea una tupla (rol, tiempo) y esté vigente
-    if cache and isinstance(cache, tuple) and len(cache) == 2:
-        rol, cached_at = cache
-        if now - cached_at < TTL:
-            return rol
+def guardar_respuesta(numero: str, paso: int, texto: str, tenant_schema: Optional[str] = None) -> bool:
+    try:
+        with get_connection_context(tenant_schema) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO perfil_creador_flujo_temp (telefono, paso, respuesta)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (telefono, paso)
+                        DO UPDATE SET respuesta = EXCLUDED.respuesta
+                    """,
+                    (numero, paso, texto),
+                )
+
+        logger.info("✅ Respuesta guardada: numero=%s paso=%s", numero, paso)
+        return True
+
+    except Exception as e:
+        logger.exception("❌ Error guardando respuesta: numero=%s paso=%s error=%s", numero, paso, e)
+        return False
+
+def eliminar_flujo_temp(numero: str, tenant_schema: Optional[str] = None) -> bool:
+    try:
+        with get_connection_context(tenant_schema) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    DELETE FROM perfil_creador_flujo_temp
+                    WHERE telefono = %s
+                    """,
+                    (numero,),
+                )
+
+        logger.info("🗑️ Datos temporales eliminados para %s", numero)
+        return True
+
+    except Exception as e:
+        logger.exception("❌ Error eliminando flujo temporal para %s: %s", numero, e)
+        return False
+
+
+def enviar_diagnostico(numero: str) -> bool:
+
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                # 1️⃣ Buscar el creador por su número
+                cur.execute(
+                    """
+                    SELECT id, usuario, COALESCE(nombre_real, usuario) AS nombre_real
+                    FROM creadores
+                    WHERE whatsapp = %s
+                    LIMIT 1;
+                    """,
+                    (numero,),
+                )
+                row = cur.fetchone()
+
+                if not row:
+                    logger.warning("No se encontró creador con whatsapp %s", numero)
+                    token, numero_id = obtener_tokens_por_tenant()
+                    enviar_mensaje(numero, "No encontramos tu perfil en el sistema. Verifica tu número.", token, numero_id)
+                    return False
+
+                creador_id, usuario, nombre_real = row
+
+                # 2️⃣ Obtener mejoras_sugeridas desde perfil_creador
+                cur.execute(
+                    """
+                    SELECT mejoras_sugeridas
+                    FROM perfil_creador
+                    WHERE creador_id = %s
+                    LIMIT 1;
+                    """,
+                    (creador_id,),
+                )
+                fila = cur.fetchone()
+
+        # 3️⃣ Armar el diagnóstico fuera del contexto de conexión
+        if not fila or not fila[0] or not str(fila[0]).strip():
+            diagnostico = (
+                f"🔎 Diagnóstico para {nombre_real}:\n"
+                "Aún estamos preparando la evaluación de tu perfil. "
+                "Te avisaremos tan pronto esté lista. ⏳"
+            )
         else:
-            usuarios_roles.pop(numero, None)  # Expira por tiempo
-    else:
-        usuarios_roles.pop(numero, None)  # Limpia formatos incorrectos
+            mejoras = str(fila[0]).strip()
+            diagnostico = f"🔎 Diagnóstico para {nombre_real}:\n\n{mejoras}"
 
-    # Consulta en la base de datos si no hay cache válido
-    usuario = buscar_usuario_por_telefono(numero)
-    if usuario:
-        rol = usuario.get("rol", "aspirante")
-    else:
-        rol = "aspirante"
+        # 4️⃣ Enviar el diagnóstico
+        token, numero_id = obtener_tokens_por_tenant()
+        enviar_mensaje(numero, diagnostico, token, numero_id)
+        logger.info("Diagnóstico enviado correctamente a %s (%s)", numero, nombre_real)
+        return True
 
-    usuarios_roles[numero] = (rol, now)
-    return rol
+    except Exception as e:
+        logger.exception("Error al enviar diagnóstico a %s: %s", numero, e)
+        try:
+            token, numero_id = obtener_tokens_por_tenant()
+            enviar_mensaje(numero, "Ocurrió un error al generar tu diagnóstico. Intenta más tarde.", token, numero_id)
+        except Exception:
+            logger.exception("Error adicional al intentar notificar al usuario %s", numero)
+        return False
+
+
+def consolidar_perfil(telefono: str, respuestas_dict: dict | None = None, tenant_schema: Optional[str] = None):
+    """Procesa y actualiza un solo número en perfil_creador con manejo de errores
+    
+    Args:
+        telefono: Número de teléfono del usuario
+        respuestas_dict: Diccionario opcional con respuestas {paso: respuesta}.
+                        Si es None, se leen de la tabla perfil_creador_flujo_temp
+        tenant_schema: Schema del tenant. Si es None, usa current_tenant.get()
+    """
+    try:
+        with get_connection_context(tenant_schema) as conn:
+            with conn.cursor() as cur:
+                # Buscar creador por número
+                cur.execute("SELECT id, usuario, nombre_real, whatsapp FROM creadores WHERE whatsapp=%s", (telefono,))
+                creador = cur.fetchone()
+                if not creador:
+                    print(f"⚠️ No se encontró creador con whatsapp {telefono}")
+                    return
+
+                creador_id = creador[0]
+
+                # Procesar respuestas
+                datos_update = procesar_respuestas(respuestas_dict)
+
+                # ⬅️ AÑADIMOS el teléfono al update de perfil_creador
+                datos_update["telefono"] = telefono
+
+                # ✅ Si hay nombre, actualizamos también en la tabla creadores
+                if datos_update.get("nombre"):
+                    cur.execute("""
+                        UPDATE creadores 
+                        SET nombre_real=%s 
+                        WHERE id=%s
+                    """, (datos_update["nombre"], creador_id))
+                    print(f"🧩 Actualizado nombre_real='{datos_update['nombre']}' en creadores")
+
+                # Crear query dinámico UPDATE
+                set_clause = ", ".join([f"{k}=%s" for k in datos_update.keys()])
+                values = list(datos_update.values())
+                values.append(creador_id)
+
+                query = f"UPDATE perfil_creador SET {set_clause} WHERE creador_id=%s"
+                cur.execute(query, values)
+                conn.commit()
+
+                print(f"✅ Actualizado perfil_creador para creador_id={creador_id} ({telefono})")
+
+    except Exception as e:
+        print(f"❌ Error al procesar número {telefono}: {str(e)}")
+
+    return {"status": "ok"}
+
+
+def obtener_rol_usuario(numero):
+    return consultar_rol_bd(numero)
 
 def consultar_rol_bd(numero):
     usuario = buscar_usuario_por_telefono(numero)
@@ -350,7 +676,8 @@ def enviar_menu_principal(numero, rol=None, nombre=None):
             "2️⃣ Chat libre"
         )
 
-    enviar_mensaje(numero, mensaje)
+    token, numero_id = obtener_tokens_por_tenant()
+    enviar_mensaje(numero, mensaje, token, numero_id)
 
 
 def normalizar_texto(texto):
@@ -378,102 +705,6 @@ def validar_aceptar_ciudad(usuario_ciudad, ciudades=CIUDADES_LATAM, score_minimo
     else:
         return {"ciudad": usuario_ciudad.strip(), "corregida": False}
 
-def guardar_respuesta(numero: str, paso: int, texto: str):
-    try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO perfil_creador_flujo_temp (telefono, paso, respuesta)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (telefono, paso) DO UPDATE SET respuesta = EXCLUDED.respuesta
-        """, (numero, paso, texto))
-        conn.commit()
-    except Exception as e:
-        if 'conn' in locals():
-            conn.rollback()
-        print("❌ Error guardando respuesta:", e)
-    finally:
-        try:
-            cur.close()
-        except: pass
-        try:
-            conn.close()
-        except: pass
-
-def eliminar_flujo_temp(numero: str):
-    """Elimina todos los datos temporales de la encuesta para un número."""
-    try:
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("""
-            DELETE FROM perfil_creador_flujo_temp
-            WHERE telefono = %s
-        """, (numero,))
-        conn.commit()
-        print(f"🗑️ Datos temporales eliminados para {numero}")
-    except Exception as e:
-        if 'conn' in locals():
-            conn.rollback()
-        print("❌ Error eliminando flujo temporal:", e)
-    finally:
-        try:
-            cur.close()
-        except:
-            pass
-        try:
-            conn.close()
-        except:
-            pass
-
-
-
-def enviar_diagnostico(numero: str):
-    """Envía el diagnóstico de un usuario tomando el campo mejoras_sugeridas de perfil_creador."""
-    try:
-        with psycopg2.connect(INTERNAL_DATABASE_URL) as conn:
-            with conn.cursor() as cur:
-                # 1️⃣ Buscar el creador por su número
-                cur.execute("""
-                    SELECT id, usuario, COALESCE(nombre_real, usuario)
-                    FROM creadores
-                    WHERE whatsapp = %s
-                """, (numero,))
-                creador = cur.fetchone()
-
-                if not creador:
-                    print(f"⚠️ No se encontró creador con whatsapp {numero}")
-                    enviar_mensaje(numero, "No encontramos tu perfil en el sistema. Verifica tu número.")
-                    return
-
-                creador_id, usuario, nombre_real = creador
-
-                # 2️⃣ Obtener mejoras_sugeridas desde perfil_creador
-                cur.execute("""
-                    SELECT mejoras_sugeridas
-                    FROM perfil_creador
-                    WHERE creador_id = %s
-                """, (creador_id,))
-                fila = cur.fetchone()
-
-        # 3️⃣ Armar el diagnóstico
-        if not fila or not fila[0] or not fila[0].strip():
-            diagnostico = (
-                f"🔎 Diagnóstico para {nombre_real}:\n"
-                "Aún estamos preparando la evaluación de tu perfil. "
-                "Te avisaremos tan pronto esté lista. ⏳"
-            )
-        else:
-            mejoras = fila[0].strip()
-            diagnostico = f"🔎 Diagnóstico para {nombre_real}:\n\n{mejoras}"
-
-        # 4️⃣ Enviar el diagnóstico
-        enviar_mensaje(numero, diagnostico)
-        print(f"✅ Diagnóstico enviado correctamente a {numero} ({nombre_real})")
-
-    except Exception as e:
-        print(f"❌ Error al enviar diagnóstico a {numero}: {e}")
-        enviar_mensaje(numero, "Ocurrió un error al generar tu diagnóstico. Intenta más tarde.")
-
 
 def enviar_requisitos(numero):
     requisitos = (
@@ -487,7 +718,8 @@ def enviar_requisitos(numero):
         "7️⃣ Cumplir con las políticas y normas internas de la Agencia.\n"
         "\n¿Tienes dudas? Responde este mensaje y te ayudamos. Puedes volver al *menú principal* escribiendo 'menu'."
     )
-    enviar_mensaje(numero, requisitos)
+    token, numero_id = obtener_tokens_por_tenant()
+    enviar_mensaje(numero, requisitos, token, numero_id)
 
 # ================== MAPEOS ==================
 map_genero = {
@@ -708,9 +940,9 @@ def procesar_respuestas(respuestas):
 
     # Experiencia TikTok Live (paso 8 y 9)
     experiencia_tiktok = 0
-    respuesta_8 = respuestas.get(8, "").strip().lower()
-    # Considera "sí", "si", "s" o "1" como afirmativo
-    if respuesta_8 in {"si", "sí", "s", "1"}:
+    respuesta_8 = respuestas.get(8, "0")
+    # Ahora acepta 0/1 (0=no, 1=sí)
+    if str(respuesta_8).strip() in {"1", "si", "sí", "s"}:
         try:
             meses = int(respuestas.get(9, 0))
             experiencia_tiktok = round(meses / 12, 1)
@@ -727,62 +959,6 @@ def procesar_respuestas(respuestas):
     datos["experiencia_otras_plataformas"] = json.dumps(experiencia)
 
     return datos
-
-
-def consolidar_perfil(telefono: str):
-    """Procesa y actualiza un solo número en perfil_creador con manejo de errores"""
-    try:
-        with psycopg2.connect(INTERNAL_DATABASE_URL) as conn:
-            with conn.cursor() as cur:
-                # Buscar creador por número
-                cur.execute("SELECT id, usuario, nombre_real, whatsapp FROM creadores WHERE whatsapp=%s", (telefono,))
-                creador = cur.fetchone()
-                if not creador:
-                    print(f"⚠️ No se encontró creador con whatsapp {telefono}")
-                    return
-
-                creador_id = creador[0]
-
-                # Obtener respuestas de flujo temporal
-                cur.execute("""
-                    SELECT paso, respuesta 
-                    FROM perfil_creador_flujo_temp 
-                    WHERE telefono=%s 
-                    ORDER BY paso ASC
-                """, (telefono,))
-                rows = cur.fetchall()
-                respuestas = {int(p): r for p, r in rows}
-
-                # Procesar respuestas
-                datos_update = procesar_respuestas(respuestas)
-
-                # ⬅️ AÑADIMOS el teléfono al update de perfil_creador
-                datos_update["telefono"] = telefono
-
-                # ✅ Si hay nombre, actualizamos también en la tabla creadores
-                if datos_update.get("nombre"):
-                    cur.execute("""
-                                       UPDATE creadores 
-                                       SET nombre_real=%s 
-                                       WHERE id=%s
-                                   """, (datos_update["nombre"], creador_id))
-                    print(f"🧩 Actualizado nombre_real='{datos_update['nombre']}' en creadores")
-
-                # Crear query dinámico UPDATE
-                set_clause = ", ".join([f"{k}=%s" for k in datos_update.keys()])
-                values = list(datos_update.values())
-                values.append(creador_id)
-
-                query = f"UPDATE perfil_creador SET {set_clause} WHERE creador_id=%s"
-                cur.execute(query, values)
-                conn.commit()
-
-                print(f"✅ Actualizado perfil_creador para creador_id={creador_id} ({telefono})")
-
-    except Exception as e:
-        print(f"❌ Error al procesar número {telefono}: {str(e)}")
-
-    return {"status": "ok"}
 
 
 
@@ -927,11 +1103,11 @@ def mensaje_encuesta_final(nombre: str | None = None) -> str:
 
 
 def obtener_nombre_usuario(numero: str) -> str | None:
-    datos = usuarios_flujo.get(numero)
-    if isinstance(datos, dict):
-        return datos.get("nombre")
-    # Limpieza automática si el valor es inválido
-    usuarios_flujo.pop(numero, None)
+    estado, _ = _load_flow_state(numero)
+    if isinstance(estado, dict):
+        nombre = estado.get("nombre")
+        if nombre:
+            return nombre
     return None
 
 def enviar_preguntas_frecuentes(numero):
@@ -953,25 +1129,30 @@ def enviar_preguntas_frecuentes(numero):
         "Uno de nuestros managers o asesores de reclutamiento te acompañará paso a paso.\n\n"
         "✨ Si deseas volver al menú principal, escribe *menu*."
     )
-    enviar_mensaje(numero, mensaje)
+    token, numero_id = obtener_tokens_por_tenant()
+    enviar_mensaje(numero, mensaje, token, numero_id)
 
-def manejar_respuesta(numero, texto):
+def manejar_respuesta(numero, texto, token: str | None = None, numero_id: str | None = None, tenant_schema: Optional[str] = None, background_tasks: BackgroundTasks | None = None):
     texto = texto.strip()
     texto_normalizado = texto.lower()
 
     # Estado actual
-    paso = obtener_flujo(numero)              # puede ser None, int, o string (p.e. "chat_libre")
+    paso = obtener_flujo(numero, tenant_schema)              # puede ser None, int, o string (p.e. "chat_libre")
     rol = obtener_rol_usuario(numero)
-    asegurar_flujo(numero)                    # asegura estructura en caché
+    asegurar_flujo(numero, tenant_schema)                    # asegura estructura en caché
 
     # 1) Atajos globales
     if _es_saludo(texto_normalizado):
-        _procesar_saludo(numero, rol)
+        _procesar_saludo(numero, rol, background_tasks, tenant_schema)
         return
 
     if _es_volver_menu(texto_normalizado):
-        usuarios_flujo.pop(numero, None)
-        enviar_menu_principal(numero, rol)
+        eliminar_flujo(numero, tenant_schema)
+        if background_tasks:
+            # Enviar menú en background si hay background_tasks disponible
+            background_tasks.add_task(_enviar_menu_principal_background, numero, rol)
+        else:
+            enviar_menu_principal(numero, rol)
         return
 
     if paso == "chat_libre":
@@ -980,11 +1161,16 @@ def manejar_respuesta(numero, texto):
 
     # 2) Delegar según estado
     if paso is None or isinstance(paso, str):
-        manejar_menu(numero, texto_normalizado, rol)     # 👈 MENÚ
+        manejar_menu(numero, texto_normalizado, rol, token, numero_id, tenant_schema, background_tasks)     # 👈 MENÚ
     # elif isinstance(paso, int):
     #     manejar_encuesta(numero, texto, texto_normalizado, paso, rol)  # 👈 ENCUESTA
     else:
-        enviar_mensaje(numero, "Opción no válida. Escribe 'menu' para ver las opciones.")
+        if not token or not numero_id:
+            token, numero_id = obtener_tokens_por_tenant()
+        if background_tasks:
+            background_tasks.add_task(_enviar_mensaje_background, numero, "Opción no válida. Escribe 'menu' para ver las opciones.", token, numero_id)
+        else:
+            enviar_mensaje(numero, "Opción no válida. Escribe 'menu' para ver las opciones.", token, numero_id)
 
 
 # =========================
@@ -996,15 +1182,21 @@ def _es_saludo(tn: str) -> bool:
 def _es_volver_menu(tn: str) -> bool:
     return tn in {"menu", "menú", "volver", "inicio"}
 
-def _procesar_saludo(numero, rol_actual):
+def _procesar_saludo(numero, rol_actual, background_tasks: BackgroundTasks | None = None, tenant_schema: Optional[str] = None):
     usuario_bd = buscar_usuario_por_telefono(numero)
-    if usuario_bd:
-        nombre = (usuario_bd.get("nombre") or "").split(" ")[0]
-        rol = usuario_bd.get("rol", rol_actual or "aspirante")
-        enviar_menu_principal(numero, rol=rol, nombre=nombre)
+    if background_tasks:
+        # Procesar en background
+        background_tasks.add_task(_procesar_saludo_background, numero, rol_actual, usuario_bd, tenant_schema)
     else:
-        enviar_mensaje(numero, Mensaje_bienvenida)
-        actualizar_flujo(numero, "esperando_usuario_tiktok")
+        # Procesar síncronamente (compatibilidad hacia atrás)
+        if usuario_bd:
+            nombre = (usuario_bd.get("nombre") or "").split(" ")[0]
+            rol = usuario_bd.get("rol", rol_actual or "aspirante")
+            enviar_menu_principal(numero, rol=rol, nombre=nombre)
+        else:
+            token, numero_id = obtener_tokens_por_tenant()
+            enviar_mensaje(numero, Mensaje_bienvenida, token, numero_id)
+            actualizar_flujo(numero, "esperando_usuario_tiktok", tenant_schema)
 
 
 # =========================
@@ -1012,14 +1204,14 @@ def _procesar_saludo(numero, rol_actual):
 # =========================
 
 
-def manejar_menu(numero, texto_normalizado, rol):
+def manejar_menu(numero, texto_normalizado, rol, token: str | None = None, numero_id: str | None = None, tenant_schema: Optional[str] = None, background_tasks: BackgroundTasks | None = None):
     # Menús por rol
 
     if rol == "aspirante":
         if texto_normalizado in {"1", "actualizar mi información", "perfil"}:
             marcar_encuesta_no_finalizada(numero)
-            eliminar_flujo_temp(numero)
-            actualizar_flujo(numero, 1)
+            eliminar_flujo_temp(numero, tenant_schema)
+            actualizar_flujo(numero, 1, tenant_schema)
 
             # 1) PARA ACTUALIZAR INFO DESDE WHATSAPP DESMARCAR 1 Y MARCAR 2:
             # -------------------------------------------------
@@ -1029,76 +1221,107 @@ def manejar_menu(numero, texto_normalizado, rol):
 
             # 2) PARA ACTUALIZAR INFO DESDE REACT DESMARCAR 2 Y MARCAR 1:
             # -------------------------------------------------
+            if token is None or numero_id is None:
+                token, numero_id = obtener_tokens_por_tenant()
             url_web = f"https://talentum-manager.vercel.app/actualizar-perfil?numero={numero}"
-            enviar_mensaje(
-                numero,
-                f"✏️ Para actualizar tu información de perfil, haz clic en este enlace:\n{url_web}\n\nPuedes hacerlo desde tu celular o computadora."
-            )
+            mensaje_url = f"✏️ Para actualizar tu información de perfil, haz clic en este enlace:\n{url_web}\n\nPuedes hacerlo desde tu celular o computadora."
+            if background_tasks:
+                background_tasks.add_task(_enviar_mensaje_background, numero, mensaje_url, token, numero_id)
+            else:
+                enviar_mensaje(numero, mensaje_url, token, numero_id)
             # -------------------------------------------------
 
             return
         if texto_normalizado in {"2", "análisis", "diagnóstico", "diagnostico"}:
-            actualizar_flujo(numero, "diagnostico")
+            actualizar_flujo(numero, "diagnostico", tenant_schema)
             enviar_diagnostico(numero)
-            usuarios_flujo.pop(numero, None)
+            eliminar_flujo(numero, tenant_schema)
             return
         if texto_normalizado in {"3", "requisitos"}:
-            actualizar_flujo(numero, "requisitos")
+            actualizar_flujo(numero, "requisitos", tenant_schema)
             enviar_requisitos(numero)
-            usuarios_flujo.pop(numero, None)
+            eliminar_flujo(numero, tenant_schema)
             return
         if texto_normalizado in {"4", "chat libre"}:
-            actualizar_flujo(numero, "chat_libre")
-            enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.")
+            actualizar_flujo(numero, "chat_libre", tenant_schema)
+            if token is None or numero_id is None:
+                token, numero_id = obtener_tokens_por_tenant()
+            if background_tasks:
+                background_tasks.add_task(_enviar_mensaje_background, numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.", token, numero_id)
+            else:
+                enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.", token, numero_id)
             return
         if texto_normalizado in {"5", "preguntas", "faq"}:
-            actualizar_flujo(numero, "faq")
+            actualizar_flujo(numero, "faq", tenant_schema)
             enviar_preguntas_frecuentes(numero)
-            usuarios_flujo.pop(numero, None)
+            eliminar_flujo(numero, tenant_schema)
             return
         # Si no es una opción válida: muestra SIEMPRE el menú principal de aspirante
         nombre = buscar_usuario_por_telefono(numero).get("nombre", "").split(" ")[0] or ""
-        enviar_menu_principal(numero, rol=rol, nombre=nombre)
+        if background_tasks:
+            background_tasks.add_task(_enviar_menu_principal_background, numero, rol, nombre)
+        else:
+            enviar_menu_principal(numero, rol=rol, nombre=nombre)
         return
 
     if rol == "creador":
         if texto_normalizado == "1":
-            actualizar_flujo(numero, 1)
+            actualizar_flujo(numero, 1, tenant_schema)
             # enviar_pregunta(numero, 1)
-            enviar_inicio_encuesta(numero)
+            if token is None or numero_id is None:
+                token, numero_id = obtener_tokens_por_tenant()
+            if background_tasks:
+                background_tasks.add_task(_enviar_inicio_encuesta_background, numero, token, numero_id)
+            else:
+                enviar_inicio_encuesta(numero, token, numero_id)
             return
         if texto_normalizado == "3":
-            actualizar_flujo(numero, "asesoria")
-            enviar_mensaje(numero, "📌 Un asesor se pondrá en contacto contigo pronto.")
-            usuarios_flujo.pop(numero, None)
+            actualizar_flujo(numero, "asesoria", tenant_schema)
+            if token is None or numero_id is None:
+                token, numero_id = obtener_tokens_por_tenant()
+            if background_tasks:
+                background_tasks.add_task(_enviar_mensaje_background, numero, "📌 Un asesor se pondrá en contacto contigo pronto.", token, numero_id)
+            else:
+                enviar_mensaje(numero, "📌 Un asesor se pondrá en contacto contigo pronto.", token, numero_id)
+            eliminar_flujo(numero, tenant_schema)
             return
         if texto_normalizado == "4":
-            actualizar_flujo(numero, "recursos")
+            actualizar_flujo(numero, "recursos", tenant_schema)
             enviar_recursos_exclusivos(numero)
-            usuarios_flujo.pop(numero, None)
+            eliminar_flujo(numero, tenant_schema)
             return
         if texto_normalizado == "5":
-            actualizar_flujo(numero, "eventos")
+            actualizar_flujo(numero, "eventos", tenant_schema)
             enviar_eventos(numero)
-            usuarios_flujo.pop(numero, None)
+            eliminar_flujo(numero, tenant_schema)
             return
         if texto_normalizado == "6":
-            actualizar_flujo(numero, "soporte")
-            enviar_mensaje(numero, "📩 Describe tu problema y el equipo técnico te responderá.")
+            actualizar_flujo(numero, "soporte", tenant_schema)
+            if token is None or numero_id is None:
+                token, numero_id = obtener_tokens_por_tenant()
+            if background_tasks:
+                background_tasks.add_task(_enviar_mensaje_background, numero, "📩 Describe tu problema y el equipo técnico te responderá.", token, numero_id)
+            else:
+                enviar_mensaje(numero, "📩 Describe tu problema y el equipo técnico te responderá.", token, numero_id)
             return
         if texto_normalizado in {"7", "chat libre"}:
-            actualizar_flujo(numero, "chat_libre")
-            enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.")
+            actualizar_flujo(numero, "chat_libre", tenant_schema)
+            if token is None or numero_id is None:
+                token, numero_id = obtener_tokens_por_tenant()
+            if background_tasks:
+                background_tasks.add_task(_enviar_mensaje_background, numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.", token, numero_id)
+            else:
+                enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.", token, numero_id)
             return
         if texto_normalizado == "8":
             actualizar_flujo(numero, "estadisticas")
             enviar_estadisticas(numero)
-            usuarios_flujo.pop(numero, None)
+            eliminar_flujo(numero)
             return
         if texto_normalizado == "9":
             actualizar_flujo(numero, "baja")
             solicitar_baja(numero)
-            usuarios_flujo.pop(numero, None)
+            eliminar_flujo(numero)
             return
         # Si no es una opción válida: muestra SIEMPRE el menú principal de creador
         nombre = buscar_usuario_por_telefono(numero).get("nombre", "").split(" ")[0] or ""
@@ -1113,20 +1336,24 @@ def manejar_menu(numero, texto_normalizado, rol):
         if texto_normalizado == "2":
             actualizar_flujo(numero, "ver_perfiles")
             enviar_perfiles(numero)
-            usuarios_flujo.pop(numero, None)
+            eliminar_flujo(numero)
             return
         if texto_normalizado == "3":
             actualizar_flujo(numero, "comunicado")
-            enviar_mensaje(numero, "✉️ Escribe el comunicado a enviar a creadores/aspirantes:")
+            if token is None or numero_id is None:
+                token, numero_id = obtener_tokens_por_tenant()
+            enviar_mensaje(numero, "✉️ Escribe el comunicado a enviar a creadores/aspirantes:", token, numero_id)
             return
         if texto_normalizado == "4":
             actualizar_flujo(numero, "recursos_admin")
             gestionar_recursos(numero)
-            usuarios_flujo.pop(numero, None)
+            eliminar_flujo(numero)
             return
         if texto_normalizado in {"5", "chat libre"}:
             actualizar_flujo(numero, "chat_libre")
-            enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.")
+            if token is None or numero_id is None:
+                token, numero_id = obtener_tokens_por_tenant()
+            enviar_mensaje(numero, "🟢 Estás en chat libre. Puedes escribir o enviar audios.", token, numero_id)
             return
         # Si no es una opción válida: muestra SIEMPRE el menú principal de admin
         nombre = buscar_usuario_por_telefono(numero).get("nombre", "").split(" ")[0] or ""
@@ -1156,11 +1383,88 @@ from typing import Optional
 # validar_aceptar_ciudad(texto) -> dict con keys "corregida" y "ciudad"
 # consolidar_perfil(numero)
 # marcar_encuesta_completada(numero) -> bool
-# usuarios_flujo: dict (cache en memoria)
+# El estado del flujo se persiste en la tabla whatsapp_flow_state (por tenant)
 # -------------------------------------------------------------------------
 
+# ============================
+# BACKGROUND TASKS HELPERS
+# ============================
+
+def _enviar_mensaje_background(numero: str, texto: str, token: str, numero_id: str):
+    """
+    Función helper para enviar mensajes en background.
+    Maneja errores internamente para no afectar el flujo principal.
+    """
+    try:
+        enviar_mensaje(numero, texto, token, numero_id)
+    except Exception as e:
+        print(f"❌ Error enviando mensaje en background a {numero}: {e}")
+
+def _procesar_audio_background(numero: str, audio_id: str, token: str, phone_id: str):
+    """
+    Función helper para procesar audios en background.
+    Descarga el audio, lo guarda y envía confirmación.
+    """
+    try:
+        from utils import descargar_audio
+        url_cloudinary = descargar_audio(audio_id, token)
+        if url_cloudinary:
+            guardar_mensaje(numero, url_cloudinary, tipo="recibido", es_audio=True)
+            enviar_mensaje(numero, "🎧 Recibimos tu audio. Un asesor lo revisará pronto.", token, phone_id)
+        else:
+            enviar_mensaje(numero, "⚠️ No se pudo procesar tu audio, inténtalo de nuevo.", token, phone_id)
+    except Exception as e:
+        print(f"❌ Error procesando audio en background para {numero}: {e}")
+        try:
+            enviar_mensaje(numero, "⚠️ Ocurrió un error al procesar tu audio. Intenta más tarde.", token, phone_id)
+        except:
+            pass
+
+def _guardar_mensaje_background(numero: str, texto: str, tipo: str = "recibido", es_audio: bool = False):
+    """
+    Función helper para guardar mensajes en background.
+    """
+    try:
+        guardar_mensaje(numero, texto, tipo=tipo, es_audio=es_audio)
+    except Exception as e:
+        print(f"❌ Error guardando mensaje en background para {numero}: {e}")
+
+def _enviar_inicio_encuesta_background(numero: str, token: str, phone_id: str):
+    """
+    Función helper para enviar inicio de encuesta en background.
+    """
+    try:
+        enviar_inicio_encuesta(numero, token, phone_id)
+    except Exception as e:
+        print(f"❌ Error enviando inicio de encuesta en background a {numero}: {e}")
+
+def _enviar_menu_principal_background(numero: str, rol: str, nombre: str = ""):
+    """
+    Función helper para enviar menú principal en background.
+    """
+    try:
+        enviar_menu_principal(numero, rol=rol, nombre=nombre)
+    except Exception as e:
+        print(f"❌ Error enviando menú principal en background a {numero}: {e}")
+
+def _procesar_saludo_background(numero: str, rol: str, usuario_bd: dict | None, tenant_schema: Optional[str] = None):
+    """
+    Función helper para procesar saludo en background.
+    """
+    try:
+        if usuario_bd:
+            nombre = (usuario_bd.get("nombre") or "").split(" ")[0]
+            rol_actual = usuario_bd.get("rol", rol or "aspirante")
+            enviar_menu_principal(numero, rol=rol_actual, nombre=nombre)
+        else:
+            token, numero_id = obtener_tokens_por_tenant()
+            enviar_mensaje(numero, Mensaje_bienvenida, token, numero_id)
+            actualizar_flujo(numero, "esperando_usuario_tiktok", tenant_schema)
+    except Exception as e:
+        print(f"❌ Error procesando saludo en background para {numero}: {e}")
+
 @router.post("/webhook")
-async def whatsapp_webhook(request: Request):
+async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
     data = await request.json()
     print("📩 Webhook recibido:", json.dumps(data, indent=2))
 
@@ -1206,11 +1510,15 @@ async def whatsapp_webhook(request: Request):
         phone_id_cliente = cuenta["phone_number_id"]
         tenant_name = cuenta["subdominio"]
         business_name = cuenta["business_name"]
+        
+        # Construir schema name desde tenant_name (mismo formato que middleware)
+        from middleware_tenant import TenantMiddleware
+        tenant_schema = TenantMiddleware._build_schema_name(tenant_name)
 
         # ✅ Asignar valores de contexto
         current_token.set(token_cliente)
         current_phone_id.set(phone_id_cliente)
-        current_tenant.set(tenant_name)
+        current_tenant.set(tenant_schema)
         current_business_name.set(business_name)
 
         print(f"🌐 Tenant actual: {current_tenant.get()}")
@@ -1223,10 +1531,10 @@ async def whatsapp_webhook(request: Request):
         if not mensajes:
             return {"status": "ok"}
 
-        for mensaje in mensajes:
+            for mensaje in mensajes:
             numero = mensaje.get("from")
             tipo = mensaje.get("type")
-            paso = obtener_flujo(numero)
+            paso = obtener_flujo(numero, tenant_schema)
             usuario_bd = buscar_usuario_por_telefono(numero)
             rol = obtener_rol_usuario(numero) if usuario_bd else None
 
@@ -1237,15 +1545,12 @@ async def whatsapp_webhook(request: Request):
             # === 4️⃣ CHAT LIBRE ===  (Esto va primero)
             if paso == "chat_libre":
                 if tipo == "text":
-                    guardar_mensaje(numero, texto, tipo="recibido", es_audio=False)
+                    # Guardar mensaje en background (no bloquea respuesta)
+                    background_tasks.add_task(_guardar_mensaje_background, numero, texto, "recibido", False)
                 elif tipo == "audio":
+                    # Procesar audio en background (operación pesada)
                     audio_id = mensaje.get("audio", {}).get("id")
-                    url_cloudinary = descargar_audio(audio_id, current_token.get())
-                    if url_cloudinary:
-                        guardar_mensaje(numero, url_cloudinary, tipo="recibido", es_audio=True)
-                        enviar_mensaje(numero, "🎧 Recibimos tu audio. Un asesor lo revisará pronto.")
-                    else:
-                        enviar_mensaje(numero, "⚠️ No se pudo procesar tu audio, inténtalo de nuevo.")
+                    background_tasks.add_task(_procesar_audio_background, numero, audio_id, token_cliente, phone_id_cliente)
                 return {"status": "ok"}
 
             # === 🟢 1️⃣ PRIORIDAD: MENSAJES INTERACTIVOS (botones) ===
@@ -1262,7 +1567,7 @@ async def whatsapp_webhook(request: Request):
                     print(f"📍 [DEBUG] Paso actual del usuario: {paso}")
 
                     # Aquí se pueden agregar más botones en el futuro
-                    enviar_mensaje(numero, "Este botón no es válido en este momento.")
+                    background_tasks.add_task(_enviar_mensaje_background, numero, "Este botón no es válido en este momento.", token_cliente, phone_id_cliente)
                     return {"status": "ok"}
 
             print(f"📍 [DEBUG] número={numero}, paso={paso}, texto='{texto_lower}'")
@@ -1272,13 +1577,14 @@ async def whatsapp_webhook(request: Request):
                 # Si el paso guardado no tiene sentido, reiniciamos el flujo
                 if paso not in [None, "esperando_usuario_tiktok", "confirmando_nombre", "esperando_inicio_encuesta"]:
                     print(f"⚠️ Reiniciando flujo para {numero}, paso anterior: {paso}")
-                    eliminar_flujo(numero)  # limpia memoria o caché
+                    eliminar_flujo(numero, tenant_schema)  # limpia memoria o caché
                     paso = None
 
                 # === Inicio del flujo ===
                 if paso is None:
-                    enviar_mensaje(numero, Mensaje_bienvenida)
-                    actualizar_flujo(numero, "esperando_usuario_tiktok")
+                    # Actualizar flujo primero (crítico), luego enviar mensaje en background
+                    actualizar_flujo(numero, "esperando_usuario_tiktok", tenant_schema)
+                    background_tasks.add_task(_enviar_mensaje_background, numero, Mensaje_bienvenida, token_cliente, phone_id_cliente)
                     return {"status": "ok"}
 
                 # Se espera usuario de TikTok
@@ -1287,36 +1593,34 @@ async def whatsapp_webhook(request: Request):
                     aspirante = buscar_aspirante_por_usuario_tiktok(usuario_tiktok)
                     if aspirante:
                         nombre = aspirante.get("nickname") or aspirante.get("nombre_real") or "(sin nombre)"
-                        enviar_mensaje(numero, mensaje_confirmar_nombre(nombre))
-                        actualizar_flujo(numero, "confirmando_nombre")
-                        usuarios_temp[numero] = aspirante
+                        # Actualizar estado primero, luego enviar mensaje en background
+                        actualizar_flujo(numero, "confirmando_nombre", tenant_schema)
+                        _set_temp_data(numero, "aspirante", aspirante, tenant_schema)
+                        background_tasks.add_task(_enviar_mensaje_background, numero, mensaje_confirmar_nombre(nombre), token_cliente, phone_id_cliente)
                     else:
-                        enviar_mensaje(numero, "❌ No encontramos ese usuario de TikTok. ¿Podrías verificarlo?")
+                        background_tasks.add_task(_enviar_mensaje_background, numero, "❌ No encontramos ese usuario de TikTok. ¿Podrías verificarlo?", token_cliente, phone_id_cliente)
                     return {"status": "ok"}
 
                 # Confirmar nickname y actualizar teléfono
                 if paso == "confirmando_nombre":
                     if texto_lower in ["si", "sí", "s"]:
-                        aspirante = usuarios_temp.get(numero)
+                        aspirante = _get_temp_data(numero, "aspirante", tenant_schema)
                         if aspirante:
                             actualizar_telefono_aspirante(aspirante["id"], numero)
-                        # enviar_botones(
-                        #     numero,
-                        #     texto=mensaje_proteccion_datos(),
-                        #     botones=[{"id": "iniciar_encuesta", "title": "✅ Sí, quiero iniciar"}]
-                        # )
-                        enviar_inicio_encuesta(numero)
-                        actualizar_flujo(numero, "esperando_inicio_encuesta")
+                        _clear_temp_data(numero, "aspirante", tenant_schema)
+                        actualizar_flujo(numero, "esperando_inicio_encuesta", tenant_schema)
+                        # Enviar inicio de encuesta en background (puede ser pesado)
+                        background_tasks.add_task(_enviar_inicio_encuesta_background, numero, token_cliente, phone_id_cliente)
                     elif texto_lower in ["no", "n"]:
-                        enviar_mensaje(numero, "❌ Por favor verifica tu nombre o usuario de TikTok.")
+                        background_tasks.add_task(_enviar_mensaje_background, numero, "❌ Por favor verifica tu nombre o usuario de TikTok.", token_cliente, phone_id_cliente)
                     else:
-                        enviar_mensaje(numero, "⚠️ Por favor responde solo *sí* o *no* para continuar.")
+                        background_tasks.add_task(_enviar_mensaje_background, numero, "⚠️ Por favor responde solo *sí* o *no* para continuar.", token_cliente, phone_id_cliente)
                     return {"status": "ok"}
 
                 # Si el usuario está esperando iniciar la encuesta pero escribe texto
                 if paso == "esperando_inicio_encuesta":
                     if texto_lower.strip() != "":
-                        enviar_mensaje(numero, "💬 Haz clic en el enlace para comenzar la encuesta 📋")
+                        background_tasks.add_task(_enviar_mensaje_background, numero, "💬 Haz clic en el enlace para comenzar la encuesta 📋", token_cliente, phone_id_cliente)
                         return {"status": "ok"}
 
             # === 2️⃣ ASPIRANTE EN BASE DE DATOS ===
@@ -1324,25 +1628,26 @@ async def whatsapp_webhook(request: Request):
                 finalizada = encuesta_finalizada(numero)
                 # Si encuesta finalizada, SIEMPRE muestra el menú para cualquier mensaje
                 if finalizada:
-                    manejar_menu(numero, texto_lower, rol)
+                    manejar_menu(numero, texto_lower, rol, token_cliente, phone_id_cliente, tenant_schema, background_tasks)
                     return {"status": "ok"}
 
                 # Si no ha terminado la encuesta
                 if not finalizada:
                     if texto_lower in {"brillar", "menu", "menú", "inicio"}:
-                        enviar_mensaje(numero, "🚩 No has finalizado tu encuesta. Por favor continúa para completar la información.")
                         ultimo_paso = 1
-                        actualizar_flujo(numero, ultimo_paso)
-                        enviar_inicio_encuesta(numero)
+                        actualizar_flujo(numero, ultimo_paso, tenant_schema)
+                        # Enviar mensajes en background
+                        background_tasks.add_task(_enviar_mensaje_background, numero, "🚩 No has finalizado tu encuesta. Por favor continúa para completar la información.", token_cliente, phone_id_cliente)
+                        background_tasks.add_task(_enviar_inicio_encuesta_background, numero, token_cliente, phone_id_cliente)
                         return {"status": "ok"}
 
 
-                    manejar_respuesta(numero, texto)
+                    manejar_respuesta(numero, texto, token_cliente, phone_id_cliente, tenant_schema, background_tasks)
                     return {"status": "ok"}
 
             # === 3️⃣ ADMIN O CREADOR EN BD ===
             if usuario_bd and rol in ("admin", "creador", "creadores"):
-                manejar_menu(numero, texto_lower, rol)
+                manejar_menu(numero, texto_lower, rol, token_cliente, phone_id_cliente, tenant_schema, background_tasks)
                 return {"status": "ok"}
 
             print(f"🟣 DEBUG CHAT LIBRE - paso actual: {paso}")
@@ -1363,10 +1668,13 @@ def mensaje_inicio_encuesta() -> str:
         "Si aceptas y deseas iniciar la encuesta, haz clic en el siguiente enlace 👇"
     )
 
-def enviar_inicio_encuesta(numero: str):
+def enviar_inicio_encuesta(numero: str, token: str, numero_id: str):
     tenant_name = current_tenant.get()  # ✅ Obtenemos el tenant actual
     if not tenant_name:
         tenant_name = "default"  # Valor por defecto si no hay tenant activo
+
+    # Elimina datos temporales si existen del numero
+    eliminar_flujo_temp(numero)
 
     url_web = f"https://{tenant_name}.talentum-manager/actualizar-perfil?numero={numero}"
 
@@ -1376,19 +1684,21 @@ def enviar_inicio_encuesta(numero: str):
         "Puedes hacerlo desde tu celular o computadora."
     )
 
-    enviar_mensaje(numero, mensaje)
+    enviar_mensaje(numero, mensaje, token, numero_id)
     print(f"🔗 Enviado mensaje de inicio de encuesta a {numero}: {url_web}")
 
 
 from pydantic import BaseModel
 
-class RespuestaInput(BaseModel):
-    numero: str
-    paso: int
-    respuesta: str
+# ⚠️ DEPRECADO: Ya no se usa. Las respuestas se envían todas juntas a /consolidar
+# class RespuestaInput(BaseModel):
+#     numero: str
+#     paso: int
+#     respuesta: str
 
 class ConsolidarInput(BaseModel):
     numero: str
+    respuestas: dict  # Diccionario: {1: "Ricardo", 2: "5", 3: "1", ...}
 
 
 @router.post("/enviar_solicitud_informacion")
@@ -1438,13 +1748,14 @@ async def api_enviar_solicitar_informacion(data: dict):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@router.post("/respuesta")
-def guardar_respuesta_web(data: RespuestaInput):
-    try:
-        guardar_respuesta(data.numero, data.paso, data.respuesta)
-        return {"ok": True, "msg": "Respuesta guardada"}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+# ⚠️ DEPRECADO: Ya no se usa. Las respuestas se envían todas juntas a /consolidar
+# @router.post("/respuesta")
+# def guardar_respuesta_web(data: RespuestaInput):
+#     try:
+#         guardar_respuesta(data.numero, data.paso, data.respuesta)
+#         return {"ok": True, "msg": "Respuesta guardada"}
+#     except Exception as e:
+#         return {"ok": False, "error": str(e)}
 
 @router.post("/consolidar")
 def consolidar_perfil_web(data: ConsolidarInput):
@@ -1460,16 +1771,43 @@ def consolidar_perfil_web(data: ConsolidarInput):
         current_token.set(token_cliente)
         current_phone_id.set(phone_id_cliente)
 
+        # Procesar diccionario de respuestas directamente
+        # Formato: {1: "Ricardo", 2: "5", 3: "1", ...}
+        respuestas_dict = {}
+        for key, valor in data.respuestas.items():
+            # Convertir claves a int si vienen como string
+            key_int = int(key) if isinstance(key, str) and key.isdigit() else key
+            # Normalizar valores: convertir "no"/"si" a "0"/"1" para pregunta 8
+            if key_int == 8:
+                valor_str = str(valor).strip().lower()
+                if valor_str in {"no", "n", "0"}:
+                    respuestas_dict[key_int] = "0"
+                elif valor_str in {"si", "sí", "s", "yes", "y", "1"}:
+                    respuestas_dict[key_int] = "1"
+                else:
+                    respuestas_dict[key_int] = str(valor)
+            else:
+                respuestas_dict[key_int] = str(valor) if valor else ""
+
         print(f"🔗 Iniciando consolidación de perfil en subdominio: {subdominio}")
-        consolidar_perfil(data.numero)
-        usuarios_flujo.pop(data.numero, None)
-        # Enviar mensaje de cierre
-        enviar_mensaje(data.numero, mensaje_encuesta_final())
+        print(f"📋 Respuestas recibidas: {respuestas_dict}")
+        consolidar_perfil(data.numero, respuestas_dict=respuestas_dict, tenant_schema=subdominio)
+        eliminar_flujo(data.numero, tenant_schema=subdominio)
+        eliminar_flujo_temp(data.numero, tenant_schema=subdominio)
+        # Enviar mensaje de cierre en background (no bloquea la respuesta)
+        # Nota: /consolidar no tiene background_tasks, pero podemos usar threading
+        import threading
+        threading.Thread(
+            target=_enviar_mensaje_background,
+            args=(data.numero, mensaje_encuesta_final(), token_cliente, phone_id_cliente),
+            daemon=True
+        ).start()
         print(f"✅ Perfil consolidado y mensaje final enviado a {data.numero}")
         return {"ok": True, "msg": "Perfil consolidado correctamente"}
 
     except Exception as e:
         print(f"❌ Error consolidando perfil: {e}")
+        traceback.print_exc()
         return {"ok": False, "error": str(e)}
 
 

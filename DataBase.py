@@ -1,10 +1,14 @@
 import os
 import psycopg2
+from psycopg2 import pool
 from dotenv import load_dotenv
 import re
 import gspread
 from google.oauth2.service_account import Credentials
 from gspread.worksheet import JSONResponse
+import threading
+from functools import lru_cache
+from time import time
 
 from schemas import ActualizacionContactoInfo
 from psycopg2.extras import RealDictCursor
@@ -29,6 +33,45 @@ EXTERNAL_DATABASE_URL = os.getenv("EXTERNAL_DATABASE_URL")
 
 from tenant import current_tenant
 
+# ============================
+# CONNECTION POOLING
+# ============================
+# Pool global para conexiones de tenant
+_tenant_pool: Optional[pool.ThreadedConnectionPool] = None
+_pool_lock = threading.Lock()
+
+# Pool global para conexiones públicas
+_public_pool: Optional[pool.ThreadedConnectionPool] = None
+
+def _init_pools():
+    """Inicializa los connection pools si no existen."""
+    global _tenant_pool, _public_pool
+    
+    if _tenant_pool is None:
+        with _pool_lock:
+            if _tenant_pool is None:
+                # Pool para conexiones de tenant: min 2, max 20 conexiones
+                _tenant_pool = pool.ThreadedConnectionPool(
+                    minconn=2,
+                    maxconn=20,
+                    dsn=INTERNAL_DATABASE_URL
+                )
+                print("✅ Connection pool para tenants inicializado")
+    
+    if _public_pool is None:
+        with _pool_lock:
+            if _public_pool is None:
+                # Pool para conexiones públicas: min 1, max 10 conexiones
+                _public_pool = pool.ThreadedConnectionPool(
+                    minconn=1,
+                    maxconn=10,
+                    dsn=INTERNAL_DATABASE_URL
+                )
+                print("✅ Connection pool público inicializado")
+
+# Inicializar pools al importar el módulo
+_init_pools()
+
 # def get_connection():
 #     conn = psycopg2.connect(INTERNAL_DATABASE_URL)
 #     return conn
@@ -50,16 +93,26 @@ def _sanitize_schema(schema: str) -> str:
     # fallback
     return "public"
 
-def get_connection():
+def get_connection(tenant_schema: Optional[str] = None):
     """
-    Obtiene conexión y ajusta el search_path al tenant actual.
-    Devuelve una conexión psycopg2 normal (no pool).
+    Obtiene conexión del pool y ajusta el search_path al tenant.
+    
+    Args:
+        tenant_schema: Schema del tenant. Si es None, usa current_tenant.get()
+    
+    Returns:
+        Conexión del pool configurada para el tenant
     """
-    tenant_schema = current_tenant.get()
+    if tenant_schema is None:
+        tenant_schema = current_tenant.get()
     tenant_schema = _sanitize_schema(tenant_schema)
 
-    conn = psycopg2.connect(INTERNAL_DATABASE_URL)
-    conn.autocommit = False  # o lo que uses en tu app
+    # Obtener conexión del pool
+    conn = _tenant_pool.getconn()
+    if conn is None:
+        raise Exception("No se pudo obtener conexión del pool")
+    
+    conn.autocommit = False
 
     # Establecer search_path para la sesión/connection
     with conn.cursor() as cur:
@@ -68,6 +121,103 @@ def get_connection():
         cur.execute(f"SET search_path TO {tenant_schema}, public;")
 
     return conn
+
+def return_connection(conn):
+    """
+    Devuelve una conexión al pool.
+    
+    Args:
+        conn: Conexión a devolver
+    """
+    if conn:
+        try:
+            _tenant_pool.putconn(conn)
+        except Exception as e:
+            print(f"⚠️ Error devolviendo conexión al pool: {e}")
+            try:
+                conn.close()
+            except:
+                pass
+
+def get_connection_public():
+    """
+    Retorna una conexión del pool público asegurando que el search_path sea 'public'
+    ignorando el tenant multitenant actual.
+
+    Ideal para consultas sobre tablas globales (sin esquema por tenant).
+    """
+    conn = _public_pool.getconn()
+    if conn is None:
+        raise Exception("No se pudo obtener conexión del pool público")
+    
+    conn.autocommit = False
+
+    with conn.cursor() as cur:
+        # Forzar uso de schema public (sin dependencia del tenant)
+        cur.execute("SET search_path TO public;")
+
+    return conn
+
+def return_connection_public(conn):
+    """
+    Devuelve una conexión pública al pool.
+    
+    Args:
+        conn: Conexión a devolver
+    """
+    if conn:
+        try:
+            _public_pool.putconn(conn)
+        except Exception as e:
+            print(f"⚠️ Error devolviendo conexión pública al pool: {e}")
+            try:
+                conn.close()
+            except:
+                pass
+
+# ============================
+# CONTEXT MANAGERS PARA POOLS
+# ============================
+from contextlib import contextmanager
+
+@contextmanager
+def get_connection_context(tenant_schema: Optional[str] = None):
+    """
+    Context manager para obtener y devolver conexiones del pool automáticamente.
+    
+    Usage:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT ...")
+                conn.commit()
+    """
+    conn = None
+    try:
+        conn = get_connection(tenant_schema)
+        yield conn
+    finally:
+        if conn:
+            return_connection(conn)
+
+@contextmanager
+def get_connection_public_context():
+    """
+    Context manager para obtener y devolver conexiones públicas del pool automáticamente.
+    
+    Usage:
+        with get_connection_public_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT ...")
+                conn.commit()
+    """
+    conn = None
+    try:
+        conn = get_connection_public()
+        yield conn
+    finally:
+        if conn:
+            return_connection_public(conn)
+
 
 def limpiar_telefono(telefono):
     telefono = telefono.strip().replace("+", "").replace(" ", "")
@@ -2837,8 +2987,6 @@ def crear_invitacion_minima(creador_id: int, usuario_invita: int, manager_id: in
         print(f"❌ Error al crear invitación mínima para creador {creador_id}:", e)
         return None
 
-
-
 def obtener_invitacion_por_creador(creador_id: int):
     try:
         with get_connection() as conn:
@@ -2876,7 +3024,7 @@ def obtener_invitacion_por_creador(creador_id: int):
 
 def guardar_o_actualizar_waba_db(session_id: str | None, waba_id: str):
     try:
-        with get_connection() as conn:
+        with get_connection_public() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # 🔍 Buscar si existe registro previo con token pero sin WABA
                 cur.execute("""
@@ -2929,7 +3077,7 @@ def guardar_o_actualizar_waba_db(session_id: str | None, waba_id: str):
 
 def guardar_o_actualizar_token_db(session_id: str, token: str):
     try:
-        with get_connection() as conn:
+        with get_connection_public() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # 🔍 Buscar registro con WABA pero sin token aún
                 cur.execute("""
@@ -2992,7 +3140,7 @@ def actualizar_phone_info_db(
         # 🔹 Normalizar número: solo dígitos
         phone_number = re.sub(r'\D', '', phone_number or "")
 
-        with get_connection() as conn:
+        with get_connection_public() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
                     UPDATE whatsapp_business_accounts
@@ -3015,7 +3163,7 @@ def actualizar_phone_info_db(
 def obtener_cuenta_por_phone_id(phone_number_id: str) -> dict | None:
     """Busca en la base de datos la cuenta de WhatsApp correspondiente al phone_number_id."""
     try:
-        with get_connection() as conn:
+        with get_connection_public() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT 
@@ -3061,18 +3209,11 @@ def obtener_cuenta_por_phone_id(phone_number_id: str) -> dict | None:
         return None
 
 
-def obtener_cuenta_por_phone_number(phone_number: str) -> dict | None:
+def obtener_cuenta_por_subdominio(subdominio: str) -> dict | None:
     """Busca en la base de datos la cuenta de WhatsApp correspondiente al phone_number."""
-
     try:
-        # 🔹 Normalizar número: solo dígitos
-        phone_number_normalizado = re.sub(r'\D', '', phone_number or "")
 
-        if not phone_number_normalizado:
-            print("⚠️ Número de teléfono vacío o inválido.")
-            return None
-
-        with get_connection() as conn:
+        with get_connection_public() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT 
@@ -3085,14 +3226,14 @@ def obtener_cuenta_por_phone_number(phone_number: str) -> dict | None:
                         subdominio,   -- ✅ ahora incluido
                         status
                     FROM whatsapp_business_accounts
-                    WHERE phone_number = %s
+                    WHERE subdominio = %s
                     LIMIT 1;
-                """, (phone_number_normalizado,))
+                """, (subdominio,))
 
                 row = cur.fetchone()
 
         if not row:
-            print(f"⚠️ No se encontró cuenta para phone_number={phone_number_normalizado}")
+            print(f"⚠️ No se encontró cuenta para subdominio={subdominio}")
             return None
 
         cuenta = {
@@ -3113,6 +3254,9 @@ def obtener_cuenta_por_phone_number(phone_number: str) -> dict | None:
         return cuenta
 
     except Exception as e:
-        print(f"❌ Error al obtener cuenta WhatsApp (phone_number={phone_number}): {e}")
+        print(f"❌ Error al obtener cuenta WhatsApp (phone_number={subdominio}): {e}")
         return None
+
+
+
 
