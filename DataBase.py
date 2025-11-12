@@ -81,17 +81,35 @@ _SCHEMA_RE = re.compile(r"^[a-z0-9_]+$")  # validación para schema
 
 def _sanitize_schema(schema: str) -> str:
     """
-    Asegura que schema solo contenga caracteres válidos.
+    Asegura que schema solo contenga caracteres válidos y tenga el prefijo 'agencia_'.
     Si no es válido, devuelva 'public' como fallback.
+    
+    Args:
+        schema: Nombre del schema (puede venir con o sin prefijo 'agencia_')
+    
+    Returns:
+        Schema name con prefijo 'agencia_' si es válido, 'public' como fallback
     """
     if not schema:
         return "public"
-    # Si pasaste 'agencia_xxx' puede validar con prefijo
-    if schema.startswith("agencia_"):
-        candidate = schema.split("agencia_", 1)[1]
-        if _SCHEMA_RE.fullmatch(candidate):
-            return schema
-    # fallback
+    
+    # Normalizar: convertir guiones a guiones bajos
+    normalized = schema.replace("-", "_").lower().strip()
+    
+    # Si ya tiene el prefijo 'agencia_', validar y retornar
+    SCHEMA_PREFIX = "agencia_"
+    if normalized.startswith(SCHEMA_PREFIX):
+        candidate = normalized[len(SCHEMA_PREFIX):]
+        if candidate and _SCHEMA_RE.fullmatch(normalized):
+            return normalized
+    
+    # Si no tiene el prefijo, agregarlo y validar
+    if normalized:
+        schema_with_prefix = f"{SCHEMA_PREFIX}{normalized}"
+        if _SCHEMA_RE.fullmatch(schema_with_prefix):
+            return schema_with_prefix
+    
+    # Fallback a public si no es válido
     return "public"
 
 def get_connection(tenant_schema: Optional[str] = None):

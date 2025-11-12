@@ -1510,17 +1510,16 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
         # Extraer info de la cuenta
         token_cliente = cuenta["access_token"]
         phone_id_cliente = cuenta["phone_number_id"]
-        tenant_name = cuenta["subdominio"]
+        tenant_name = cuenta["subdominio"]  # tenant_name sin prefijo (ej: "test")
         business_name = cuenta["business_name"]
         
-        # Construir schema name desde tenant_name (mismo formato que middleware)
-        from middleware_tenant import TenantMiddleware
-        tenant_schema = TenantMiddleware._build_schema_name(tenant_name)
-
         # ✅ Asignar valores de contexto
+        # IMPORTANTE: Guardamos tenant_name (sin prefijo) en current_tenant
+        # para que las URLs funcionen correctamente. El prefijo 'agencia_' 
+        # se agregará automáticamente en _sanitize_schema() cuando sea necesario para la BD
         current_token.set(token_cliente)
         current_phone_id.set(phone_id_cliente)
-        current_tenant.set(tenant_schema)
+        current_tenant.set(tenant_name)  # ✅ Guardar sin prefijo para URLs
         current_business_name.set(business_name)
 
         print(f"🌐 Tenant actual: {current_tenant.get()}")
@@ -1536,7 +1535,9 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
         for mensaje in mensajes:
             numero = mensaje.get("from")
             tipo = mensaje.get("type")
-            paso = obtener_flujo(numero, tenant_schema)
+            # obtener_flujo usará current_tenant.get() si tenant_schema es None,
+            # y _sanitize_schema() agregará el prefijo 'agencia_' automáticamente
+            paso = obtener_flujo(numero, tenant_schema=None)
             usuario_bd = buscar_usuario_por_telefono(numero)
             rol = obtener_rol_usuario(numero) if usuario_bd else None
 
@@ -1579,13 +1580,13 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
                 # Si el paso guardado no tiene sentido, reiniciamos el flujo
                 if paso not in [None, "esperando_usuario_tiktok", "confirmando_nombre", "esperando_inicio_encuesta"]:
                     print(f"⚠️ Reiniciando flujo para {numero}, paso anterior: {paso}")
-                    eliminar_flujo(numero, tenant_schema)  # limpia memoria o caché
+                    eliminar_flujo(numero)  # usa current_tenant.get() automáticamente
                     paso = None
 
                 # === Inicio del flujo ===
                 if paso is None:
                     # Actualizar flujo primero (crítico), luego enviar mensaje en background
-                    actualizar_flujo(numero, "esperando_usuario_tiktok", tenant_schema)
+                    actualizar_flujo(numero, "esperando_usuario_tiktok")
                     background_tasks.add_task(_enviar_mensaje_background, numero, Mensaje_bienvenida, token_cliente, phone_id_cliente)
                     return {"status": "ok"}
 
@@ -1596,8 +1597,8 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
                     if aspirante:
                         nombre = aspirante.get("nickname") or aspirante.get("nombre_real") or "(sin nombre)"
                         # Actualizar estado primero, luego enviar mensaje en background
-                        actualizar_flujo(numero, "confirmando_nombre", tenant_schema)
-                        _set_temp_data(numero, "aspirante", aspirante, tenant_schema)
+                        actualizar_flujo(numero, "confirmando_nombre")
+                        _set_temp_data(numero, "aspirante", aspirante)
                         background_tasks.add_task(_enviar_mensaje_background, numero, mensaje_confirmar_nombre(nombre), token_cliente, phone_id_cliente)
                     else:
                         background_tasks.add_task(_enviar_mensaje_background, numero, "❌ No encontramos ese usuario de TikTok. ¿Podrías verificarlo?", token_cliente, phone_id_cliente)
@@ -1606,11 +1607,11 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
                 # Confirmar nickname y actualizar teléfono
                 if paso == "confirmando_nombre":
                     if texto_lower in ["si", "sí", "s"]:
-                        aspirante = _get_temp_data(numero, "aspirante", tenant_schema)
+                        aspirante = _get_temp_data(numero, "aspirante")
                         if aspirante:
                             actualizar_telefono_aspirante(aspirante["id"], numero)
-                        _clear_temp_data(numero, "aspirante", tenant_schema)
-                        actualizar_flujo(numero, "esperando_inicio_encuesta", tenant_schema)
+                        _clear_temp_data(numero, "aspirante")
+                        actualizar_flujo(numero, "esperando_inicio_encuesta")
                         # Enviar inicio de encuesta en background (puede ser pesado)
                         background_tasks.add_task(_enviar_inicio_encuesta_background, numero, token_cliente, phone_id_cliente)
                     elif texto_lower in ["no", "n"]:
@@ -1630,26 +1631,26 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
                 finalizada = encuesta_finalizada(numero)
                 # Si encuesta finalizada, SIEMPRE muestra el menú para cualquier mensaje
                 if finalizada:
-                    manejar_menu(numero, texto_lower, rol, token_cliente, phone_id_cliente, tenant_schema, background_tasks)
+                    manejar_menu(numero, texto_lower, rol, token_cliente, phone_id_cliente, None, background_tasks)
                     return {"status": "ok"}
 
                 # Si no ha terminado la encuesta
                 if not finalizada:
                     if texto_lower in {"brillar", "menu", "menú", "inicio"}:
                         ultimo_paso = 1
-                        actualizar_flujo(numero, ultimo_paso, tenant_schema)
+                        actualizar_flujo(numero, ultimo_paso)
                         # Enviar mensajes en background
                         background_tasks.add_task(_enviar_mensaje_background, numero, "🚩 No has finalizado tu encuesta. Por favor continúa para completar la información.", token_cliente, phone_id_cliente)
                         background_tasks.add_task(_enviar_inicio_encuesta_background, numero, token_cliente, phone_id_cliente)
                         return {"status": "ok"}
 
 
-                    manejar_respuesta(numero, texto, token_cliente, phone_id_cliente, tenant_schema, background_tasks)
+                    manejar_respuesta(numero, texto, token_cliente, phone_id_cliente, None, background_tasks)
                     return {"status": "ok"}
 
             # === 3️⃣ ADMIN O CREADOR EN BD ===
             if usuario_bd and rol in ("admin", "creador", "creadores"):
-                manejar_menu(numero, texto_lower, rol, token_cliente, phone_id_cliente, tenant_schema, background_tasks)
+                manejar_menu(numero, texto_lower, rol, token_cliente, phone_id_cliente, None, background_tasks)
                 return {"status": "ok"}
 
             print(f"🟣 DEBUG CHAT LIBRE - paso actual: {paso}")
