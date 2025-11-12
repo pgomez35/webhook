@@ -50,14 +50,13 @@ def _init_pools():
     if _tenant_pool is None:
         with _pool_lock:
             if _tenant_pool is None:
-                # Pool para conexiones de tenant: min 2, max 100 conexiones
-                # Aumentado significativamente para manejar múltiples webhooks concurrentes
+                # Pool para conexiones de tenant: min 2, max 20 conexiones
                 _tenant_pool = pool.ThreadedConnectionPool(
                     minconn=2,
-                    maxconn=100,
+                    maxconn=20,
                     dsn=INTERNAL_DATABASE_URL
                 )
-                print("✅ Connection pool para tenants inicializado (max 100 conexiones)")
+                print("✅ Connection pool para tenants inicializado")
     
     if _public_pool is None:
         with _pool_lock:
@@ -117,76 +116,44 @@ def get_connection(tenant_schema: Optional[str] = None):
     
     Returns:
         Conexión del pool configurada para el tenant
-    
-    Raises:
-        Exception: Si no se puede obtener conexión del pool o si el pool está agotado
     """
     if tenant_schema is None:
         tenant_schema = current_tenant.get()
     tenant_schema = _sanitize_schema(tenant_schema)
 
-    try:
-        # Obtener conexión del pool
-        conn = _tenant_pool.getconn()
-        if conn is None:
-            # Verificar estado del pool para diagnóstico
-            pool_size = getattr(_tenant_pool, 'maxconn', 'unknown')
-            raise Exception(
-                f"No se pudo obtener conexión del pool de tenant. "
-                f"Pool máximo: {pool_size} conexiones, "
-                f"Schema: {tenant_schema}. "
-                f"El pool puede estar agotado. Intenta reducir la carga o aumentar el tamaño del pool."
-            )
-        
-        # Configurar conexión
-        conn.autocommit = False
+    # Obtener conexión del pool
+    conn = _tenant_pool.getconn()
+    if conn is None:
+        raise Exception("No se pudo obtener conexión del pool")
+    
+    conn.autocommit = False
 
-        # Establecer search_path para la sesión/connection
-        # IMPORTANTE: Solo usar el schema del tenant, SIN public, para evitar leer datos de otros tenants
-        with conn.cursor() as cur:
-            # NOTA: usamos identificador seguro (no interpolamos sin validar)
-            # como ya validamos tenant_schema con regex, esta interpolación es aceptable.
-            # NO incluir 'public' en el search_path para forzar que solo busque en el schema del tenant
-            cur.execute(f"SET search_path TO {tenant_schema};")
+    # Establecer search_path para la sesión/connection
+    # IMPORTANTE: Solo usar el schema del tenant, SIN public, para evitar leer datos de otros tenants
+    with conn.cursor() as cur:
+        # NOTA: usamos identificador seguro (no interpolamos sin validar)
+        # como ya validamos tenant_schema con regex, esta interpolación es aceptable.
+        # NO incluir 'public' en el search_path para forzar que solo busque en el schema del tenant
+        cur.execute(f"SET search_path TO {tenant_schema};")
 
-        return conn
-    except Exception as e:
-        # Log del error para diagnóstico
-        import traceback
-        print(f"❌ Error obteniendo conexión del pool (tenant={tenant_schema}): {e}")
-        traceback.print_exc()
-        raise
+    return conn
 
 def return_connection(conn):
     """
     Devuelve una conexión al pool.
-    Asegura que la conexión se devuelva correctamente, incluso si hay errores.
     
     Args:
         conn: Conexión a devolver
     """
-    if not conn:
-        return
-    
-    try:
-        # Verificar que la conexión no esté cerrada
-        if conn.closed:
-            # Si la conexión está cerrada, no intentar devolverla al pool
-            return
-        
-        # Devolver conexión al pool
-        # psycopg2 pool maneja automáticamente el estado de la conexión
-        _tenant_pool.putconn(conn)
-    except Exception as e:
-        print(f"⚠️ Error devolviendo conexión al pool: {e}")
-        import traceback
-        traceback.print_exc()
-        # Si no se puede devolver al pool, cerrar la conexión para evitar fugas
+    if conn:
         try:
-            if not conn.closed:
+            _tenant_pool.putconn(conn)
+        except Exception as e:
+            print(f"⚠️ Error devolviendo conexión al pool: {e}")
+            try:
                 conn.close()
-        except:
-            pass
+            except:
+                pass
 
 def get_connection_public():
     """
@@ -233,7 +200,6 @@ from contextlib import contextmanager
 def get_connection_context(tenant_schema: Optional[str] = None):
     """
     Context manager para obtener y devolver conexiones del pool automáticamente.
-    Asegura que las conexiones siempre se devuelvan al pool, incluso si hay errores.
     
     Usage:
         with get_connection_context() as conn:
@@ -245,14 +211,7 @@ def get_connection_context(tenant_schema: Optional[str] = None):
     try:
         conn = get_connection(tenant_schema)
         yield conn
-    except Exception as e:
-        # Log del error pero no lo suprimimos
-        import traceback
-        print(f"❌ Error en get_connection_context (tenant={tenant_schema}): {e}")
-        traceback.print_exc()
-        raise
     finally:
-        # Asegurar que la conexión siempre se devuelva al pool
         if conn:
             return_connection(conn)
 
@@ -2796,14 +2755,9 @@ def normalizar_numero(numero: str) -> str:
 
 
 def buscar_usuario_por_telefono(numero: str):
-    """
-    Busca un usuario por teléfono en las tablas públicas (creadores, admin_usuario).
-    Usa el pool público porque consulta tablas en el schema 'public'.
-    """
     try:
         numero = normalizar_numero(numero)
-        # ✅ Usar pool público porque las tablas están en el schema 'public'
-        with get_connection_public_context() as conn:
+        with get_connection() as conn:
             with conn.cursor() as cur:
                 # Buscar en creadores
                 cur.execute("""
@@ -2834,7 +2788,7 @@ def buscar_usuario_por_telefono(numero: str):
 
     except Exception as e:
         import traceback
-        print(f"❌ Error al buscar usuario por teléfono {numero}: {e}")
+        print("❌ Error al buscar usuario por teléfono:", e)
         traceback.print_exc()
         return None
 
