@@ -77,15 +77,17 @@ app = FastAPI()
 # 👇 Registrar Middlewares (orden importante: Tenant primero, luego RateLimit)
 app.add_middleware(TenantMiddleware)
 # Rate limiting DESPUÉS del TenantMiddleware para que el tenant ya esté resuelto
+# ✅ FASE 0: DESHABILITADO - Implementación gradual pendiente
 app.add_middleware(
     RateLimitMiddleware,
-    enabled=True,  # Habilitar rate limiting
+    enabled=False,  # ✅ DESHABILITADO - Ver PLAN_IMPLEMENTACION_GRADUAL.md
     exempt_paths=[
         "/health",  # Endpoint de health check (si existe)
         "/metrics",  # Endpoint de métricas (si existe)
         "/docs",  # Documentación de FastAPI
         "/openapi.json",  # OpenAPI schema
         "/redoc",  # ReDoc
+        "/webhook",  # Webhook de WhatsApp (siempre exento)
     ]
 )
 
