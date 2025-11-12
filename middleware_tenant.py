@@ -7,7 +7,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from tenant import current_tenant
 
 TENANT_HEADER = "x-tenant-name"
-SCHEMA_PREFIX = "agencia_"
 INVALID_TENANT_MESSAGE = (
     "No se pudo determinar el tenant. Envía el encabezado X-Tenant-Name o usa un subdominio válido."
 )
@@ -17,6 +16,7 @@ BLACKLISTED_SUBDOMAINS = {"www", "api"}
 class TenantMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         tenant_name = self._resolve_tenant_name(request)
+        # Normalizar tenant_name para usarlo como schema (sin prefijo 'agencia_')
         tenant_schema = self._build_schema_name(tenant_name)
 
         current_tenant.set(tenant_schema)
@@ -71,25 +71,36 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
     @staticmethod
     def _build_schema_name(tenant_name: str) -> str:
-        normalized = tenant_name.replace("-", "_")
-        if normalized.startswith(SCHEMA_PREFIX):
-            normalized = normalized[len(SCHEMA_PREFIX) :]
-
+        """
+        Construye el nombre del schema a partir del tenant_name.
+        Los schemas en PostgreSQL NO tienen prefijo 'agencia_'.
+        
+        Args:
+            tenant_name: Nombre del tenant (ej: "test", "prestige")
+        
+        Returns:
+            Nombre del schema normalizado (ej: "test", "prestige")
+        """
+        # Normalizar: convertir guiones a guiones bajos y minúsculas
+        normalized = tenant_name.replace("-", "_").lower().strip()
+        
+        # Si viene con prefijo 'agencia_', eliminarlo (para compatibilidad)
+        if normalized.startswith("agencia_"):
+            normalized = normalized[len("agencia_"):]
+        
         if not normalized:
             raise HTTPException(
                 status_code=400,
                 detail="Nombre de tenant inválido. Debe contener caracteres alfanuméricos.",
             )
 
-        schema = f"{SCHEMA_PREFIX}{normalized}"
-
-        if not re.fullmatch(r"[a-z0-9_]+", schema):
+        if not re.fullmatch(r"[a-z0-9_]+", normalized):
             raise HTTPException(
                 status_code=400,
                 detail="Nombre de tenant inválido. Usa solo letras, números y guiones bajos.",
             )
 
-        return schema
+        return normalized
 
     @staticmethod
     def _validate_tenant_value(value: str) -> None:

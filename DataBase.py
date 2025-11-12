@@ -81,33 +81,28 @@ _SCHEMA_RE = re.compile(r"^[a-z0-9_]+$")  # validación para schema
 
 def _sanitize_schema(schema: str) -> str:
     """
-    Asegura que schema solo contenga caracteres válidos y tenga el prefijo 'agencia_'.
+    Asegura que schema solo contenga caracteres válidos.
     Si no es válido, devuelva 'public' como fallback.
     
     Args:
-        schema: Nombre del schema (puede venir con o sin prefijo 'agencia_')
+        schema: Nombre del schema (ej: "test", "prestige")
     
     Returns:
-        Schema name con prefijo 'agencia_' si es válido, 'public' como fallback
+        Schema name normalizado si es válido, 'public' como fallback
     """
     if not schema:
         return "public"
     
-    # Normalizar: convertir guiones a guiones bajos
+    # Normalizar: convertir guiones a guiones bajos y minúsculas
     normalized = schema.replace("-", "_").lower().strip()
     
-    # Si ya tiene el prefijo 'agencia_', validar y retornar
-    SCHEMA_PREFIX = "agencia_"
-    if normalized.startswith(SCHEMA_PREFIX):
-        candidate = normalized[len(SCHEMA_PREFIX):]
-        if candidate and _SCHEMA_RE.fullmatch(normalized):
-            return normalized
+    # Si el schema tiene el prefijo 'agencia_', eliminarlo (para compatibilidad con código antiguo)
+    if normalized.startswith("agencia_"):
+        normalized = normalized[len("agencia_"):]
     
-    # Si no tiene el prefijo, agregarlo y validar
-    if normalized:
-        schema_with_prefix = f"{SCHEMA_PREFIX}{normalized}"
-        if _SCHEMA_RE.fullmatch(schema_with_prefix):
-            return schema_with_prefix
+    # Validar que el schema sea válido
+    if normalized and _SCHEMA_RE.fullmatch(normalized):
+        return normalized
     
     # Fallback a public si no es válido
     return "public"
@@ -124,11 +119,7 @@ def get_connection(tenant_schema: Optional[str] = None):
     """
     if tenant_schema is None:
         tenant_schema = current_tenant.get()
-        print(f"🔍 [DEBUG] get_connection: tenant_schema obtenido de current_tenant: {tenant_schema}")
-    tenant_schema_original = tenant_schema
     tenant_schema = _sanitize_schema(tenant_schema)
-    if tenant_schema_original != tenant_schema:
-        print(f"🔍 [DEBUG] get_connection: schema sanitizado: '{tenant_schema_original}' -> '{tenant_schema}'")
 
     # Obtener conexión del pool
     conn = _tenant_pool.getconn()
@@ -138,10 +129,12 @@ def get_connection(tenant_schema: Optional[str] = None):
     conn.autocommit = False
 
     # Establecer search_path para la sesión/connection
+    # IMPORTANTE: Solo usar el schema del tenant, SIN public, para evitar leer datos de otros tenants
     with conn.cursor() as cur:
         # NOTA: usamos identificador seguro (no interpolamos sin validar)
         # como ya validamos tenant_schema con regex, esta interpolación es aceptable.
-        cur.execute(f"SET search_path TO {tenant_schema}, public;")
+        # NO incluir 'public' en el search_path para forzar que solo busque en el schema del tenant
+        cur.execute(f"SET search_path TO {tenant_schema};")
 
     return conn
 
