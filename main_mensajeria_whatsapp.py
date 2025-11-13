@@ -1641,15 +1641,6 @@ async def api_enviar_solicitar_informacion(data: dict):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
-
-@router.post("/respuesta")
-def guardar_respuesta_web(data: RespuestaInput):
-    try:
-        guardar_respuesta(data.numero, data.paso, data.respuesta)
-        return {"ok": True, "msg": "Respuesta guardada"}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
 @router.post("/consolidar")
 def consolidar_perfil_web(data: ConsolidarInput):
     try:
