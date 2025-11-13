@@ -45,32 +45,29 @@ load_dotenv()
 # ============================
 # CONFIGURACIÓN - URLs Frontend
 # ============================
-FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "https://talentum-manager.vercel.app")
-FRONTEND_DOMAIN_PATTERN = os.getenv("FRONTEND_DOMAIN_PATTERN", "{tenant}.talentum-manager.com")
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "https://talentum-manager.com")
 
 def construir_url_actualizar_perfil(numero: str, tenant_name: Optional[str] = None) -> str:
     """
-    Construye la URL para actualizar perfil.
-    
+    Construye la URL para actualizar perfil usando solo FRONTEND_BASE_URL.
+
     Args:
         numero: Número de teléfono del usuario
         tenant_name: Nombre del tenant (opcional)
-    
+
     Returns:
-        URL completa para actualizar perfil
+        URL completa para actualizar perfil, por ejemplo:
+        https://agencia.talentum-manager.com/actualizar-perfil?numero=573001112233
     """
+    # Remover https:// y www. si están presentes, para poder insertar el tenant
+    domain = FRONTEND_BASE_URL.replace("https://", "").replace("http://", "").replace("www.", "")
+    
     if tenant_name:
-        # Usar patrón con tenant: {tenant}.talentum-manager.com
-        base_url = FRONTEND_DOMAIN_PATTERN.format(tenant=tenant_name)
-        # Si el patrón no incluye https://, agregarlo
-        if not base_url.startswith("http"):
-            return f"https://{base_url}/actualizar-perfil?numero={numero}"
-        return f"{base_url}/actualizar-perfil?numero={numero}"
+        base_url = f"https://{tenant_name}.{domain}"
     else:
-        # Usar URL base (ya incluye https://)
-        if FRONTEND_BASE_URL.startswith("http"):
-            return f"{FRONTEND_BASE_URL}/actualizar-perfil?numero={numero}"
-        return f"https://{FRONTEND_BASE_URL}/actualizar-perfil?numero={numero}"
+        base_url = f"https://{domain}"
+    
+    return f"{base_url}/actualizar-perfil?numero={numero}"
 
 router = APIRouter()
 
@@ -84,44 +81,184 @@ usuarios_temp = {}
 # ============================
 
 def enviar_mensaje(numero: str, texto: str):
-    return enviar_mensaje_texto_simple(
-        token=current_token.get(),
-        numero_id=current_phone_id.get(),
-        telefono_destino=numero,
-        texto=texto
-    )
+    """
+    Envía un mensaje de texto simple a través de WhatsApp.
+    
+    Args:
+        numero: Número de teléfono del destinatario (formato internacional)
+        texto: Contenido del mensaje
+    
+    Returns:
+        Respuesta de la API de WhatsApp
+    
+    Raises:
+        LookupError: Si el contexto de tenant no está disponible
+        ValueError: Si el número o texto son inválidos
+        Exception: Si hay error al enviar el mensaje
+    """
+    try:
+        # Validar entrada
+        if not numero or not numero.strip():
+            raise ValueError("Número de teléfono no puede estar vacío")
+        if not texto or not texto.strip():
+            raise ValueError("Texto del mensaje no puede estar vacío")
+        
+        # Obtener contexto del tenant
+        try:
+            token = current_token.get()
+            phone_id = current_phone_id.get()
+        except LookupError as e:
+            print(f"❌ Contexto de tenant no disponible al enviar mensaje a {numero}: {e}")
+            raise LookupError(f"Contexto de tenant no disponible: {e}") from e
+        
+        return enviar_mensaje_texto_simple(
+            token=token,
+            numero_id=phone_id,
+            telefono_destino=numero.strip(),
+            texto=texto.strip()
+        )
+    except (LookupError, ValueError) as e:
+        # Re-raise errores de validación y contexto
+        raise
+    except Exception as e:
+        print(f"❌ Error enviando mensaje a {numero}: {e}")
+        traceback.print_exc()
+        raise
 
 def enviar_boton_iniciar(numero: str, texto: str):
-    return enviar_boton_iniciar_Completa(
-        token=current_token.get(),
-        numero_id=current_phone_id.get(),
-        telefono_destino=numero,
-        texto=texto
-    )
+    """
+    Envía un mensaje con botón de inicio a través de WhatsApp.
+    
+    Args:
+        numero: Número de teléfono del destinatario
+        texto: Contenido del mensaje
+    
+    Returns:
+        Respuesta de la API de WhatsApp
+    
+    Raises:
+        LookupError: Si el contexto de tenant no está disponible
+        ValueError: Si el número o texto son inválidos
+        Exception: Si hay error al enviar el mensaje
+    """
+    try:
+        if not numero or not numero.strip():
+            raise ValueError("Número de teléfono no puede estar vacío")
+        if not texto or not texto.strip():
+            raise ValueError("Texto del mensaje no puede estar vacío")
+        
+        try:
+            token = current_token.get()
+            phone_id = current_phone_id.get()
+        except LookupError as e:
+            print(f"❌ Contexto de tenant no disponible al enviar botón a {numero}: {e}")
+            raise LookupError(f"Contexto de tenant no disponible: {e}") from e
+        
+        return enviar_boton_iniciar_Completa(
+            token=token,
+            numero_id=phone_id,
+            telefono_destino=numero.strip(),
+            texto=texto.strip()
+        )
+    except (LookupError, ValueError) as e:
+        raise
+    except Exception as e:
+        print(f"❌ Error enviando botón a {numero}: {e}")
+        traceback.print_exc()
+        raise
 
 def enviar_botones(numero: str, texto: str, botones: list):
-    return enviar_botones_Completa(
-        token=current_token.get(),
-        numero_id=current_phone_id.get(),
-        telefono_destino=numero,
-        texto=texto,
-        botones=botones
-    )
+    """
+    Envía un mensaje con botones interactivos a través de WhatsApp.
+    
+    Args:
+        numero: Número de teléfono del destinatario
+        texto: Contenido del mensaje
+        botones: Lista de botones a mostrar
+    
+    Returns:
+        Respuesta de la API de WhatsApp
+    
+    Raises:
+        LookupError: Si el contexto de tenant no está disponible
+        ValueError: Si los parámetros son inválidos
+        Exception: Si hay error al enviar el mensaje
+    """
+    try:
+        if not numero or not numero.strip():
+            raise ValueError("Número de teléfono no puede estar vacío")
+        if not texto or not texto.strip():
+            raise ValueError("Texto del mensaje no puede estar vacío")
+        if not botones or not isinstance(botones, list):
+            raise ValueError("Botones debe ser una lista no vacía")
+        
+        try:
+            token = current_token.get()
+            phone_id = current_phone_id.get()
+        except LookupError as e:
+            print(f"❌ Contexto de tenant no disponible al enviar botones a {numero}: {e}")
+            raise LookupError(f"Contexto de tenant no disponible: {e}") from e
+        
+        return enviar_botones_Completa(
+            token=token,
+            numero_id=phone_id,
+            telefono_destino=numero.strip(),
+            texto=texto.strip(),
+            botones=botones
+        )
+    except (LookupError, ValueError) as e:
+        raise
+    except Exception as e:
+        print(f"❌ Error enviando botones a {numero}: {e}")
+        traceback.print_exc()
+        raise
 
 def enviar_inicio_encuesta_plantilla(numero: str):
-    nombre_agencia=current_business_name.get()
-    parametros = [
-        nombre_agencia,     # Llene {{1}} del body
-        numero              # Llene {{2}} del botón dinámico
-    ]
-    return enviar_plantilla_generica_parametros(
-        token=current_token.get(),
-        phone_number_id=current_phone_id.get(),
-        numero_destino=numero,
-        nombre_plantilla="inicio_encuesta",
-        codigo_idioma="es_CO",
-        parametros=parametros
-    )
+    """
+    Envía una plantilla de inicio de encuesta a través de WhatsApp.
+    
+    Args:
+        numero: Número de teléfono del destinatario
+    
+    Returns:
+        Respuesta de la API de WhatsApp
+    
+    Raises:
+        LookupError: Si el contexto de tenant no está disponible
+        ValueError: Si el número es inválido
+        Exception: Si hay error al enviar la plantilla
+    """
+    try:
+        if not numero or not numero.strip():
+            raise ValueError("Número de teléfono no puede estar vacío")
+        
+        try:
+            token = current_token.get()
+            phone_id = current_phone_id.get()
+            nombre_agencia = current_business_name.get()
+        except LookupError as e:
+            print(f"❌ Contexto de tenant no disponible al enviar plantilla a {numero}: {e}")
+            raise LookupError(f"Contexto de tenant no disponible: {e}") from e
+        
+        parametros = [
+            nombre_agencia,     # Llene {{1}} del body
+            numero              # Llene {{2}} del botón dinámico
+        ]
+        
+        return enviar_plantilla_generica_parametros(
+            token=token,
+            phone_number_id=phone_id,
+            numero_destino=numero.strip(),
+            nombre_plantilla="inicio_encuesta",
+            codigo_idioma="es_CO",
+            parametros=parametros
+        )
+    except (LookupError, ValueError) as e:
+        raise
+    except Exception as e:
+        print(f"❌ Error enviando plantilla de inicio de encuesta a {numero}: {e}")
+        traceback.print_exc()
+        raise
 
 # ============================
 # FIN ENVIAR MENSAJES
@@ -440,8 +577,16 @@ def guardar_respuesta(numero: str, paso: int, texto: str, tenant_schema: Optiona
         print(f"✅ Respuesta guardada: numero={numero} paso={paso}")
         return True
 
+    except psycopg2.OperationalError as e:
+        print(f"❌ Error de conexión a BD al guardar respuesta: numero={numero} paso={paso} error={e}")
+        traceback.print_exc()
+        return False
+    except psycopg2.IntegrityError as e:
+        print(f"❌ Error de integridad en BD al guardar respuesta: numero={numero} paso={paso} error={e}")
+        traceback.print_exc()
+        return False
     except Exception as e:
-        print(f"❌ Error guardando respuesta: numero={numero} paso={paso} error={e}")
+        print(f"❌ Error inesperado guardando respuesta: numero={numero} paso={paso} error={e}")
         traceback.print_exc()
         return False
 
@@ -460,8 +605,12 @@ def eliminar_flujo_temp(numero: str, tenant_schema: Optional[str] = None) -> boo
         print(f"🗑️ Datos temporales eliminados para {numero}")
         return True
 
+    except psycopg2.OperationalError as e:
+        print(f"❌ Error de conexión a BD al eliminar flujo temporal para {numero}: {e}")
+        traceback.print_exc()
+        return False
     except Exception as e:
-        print(f"❌ Error eliminando flujo temporal para {numero}: {e}")
+        print(f"❌ Error inesperado eliminando flujo temporal para {numero}: {e}")
         traceback.print_exc()
         return False
 
@@ -518,8 +667,24 @@ def enviar_diagnostico(numero: str) -> bool:
         print(f"✅ Diagnóstico enviado correctamente a {numero} ({nombre_real})")
         return True
 
+    except psycopg2.OperationalError as e:
+        print(f"❌ Error de conexión a BD al enviar diagnóstico a {numero}: {e}")
+        traceback.print_exc()
+        try:
+            enviar_mensaje(numero, "Ocurrió un error de conexión al generar tu diagnóstico. Intenta más tarde.")
+        except Exception:
+            pass  # Si falla el mensaje de error, no hacer nada más
+        return False
+    except LookupError as e:
+        print(f"❌ Error de contexto al enviar diagnóstico a {numero}: {e}")
+        traceback.print_exc()
+        try:
+            enviar_mensaje(numero, "Ocurrió un error de configuración. Intenta más tarde.")
+        except Exception:
+            pass
+        return False
     except Exception as e:
-        print(f"❌ Error al enviar diagnóstico a {numero}: {e}")
+        print(f"❌ Error inesperado al enviar diagnóstico a {numero}: {e}")
         traceback.print_exc()
         try:
             enviar_mensaje(numero, "Ocurrió un error al generar tu diagnóstico. Intenta más tarde.")
@@ -839,8 +1004,18 @@ def consolidar_perfil(telefono: str, respuestas_dict: dict | None = None, tenant
 
                 print(f"✅ Actualizado perfil_creador para creador_id={creador_id} ({telefono})")
 
+    except psycopg2.OperationalError as e:
+        print(f"❌ Error de conexión a BD al consolidar perfil para {telefono}: {e}")
+        traceback.print_exc()
+    except psycopg2.IntegrityError as e:
+        print(f"❌ Error de integridad en BD al consolidar perfil para {telefono}: {e}")
+        traceback.print_exc()
+    except KeyError as e:
+        print(f"❌ Error de clave faltante al consolidar perfil para {telefono}: {e}")
+        traceback.print_exc()
     except Exception as e:
-        print(f"❌ Error al procesar número {telefono}: {str(e)}")
+        print(f"❌ Error inesperado al procesar número {telefono}: {e}")
+        traceback.print_exc()
 
     return {"status": "ok"}
 
@@ -1580,8 +1755,14 @@ async def whatsapp_webhook(request: Request):
         for mensaje in mensajes:
             _process_single_message(mensaje, tenant_name)
 
+    except (IndexError, KeyError, TypeError) as e:
+        print(f"❌ Error de estructura en webhook (datos inválidos): {e}")
+        traceback.print_exc()
+    except LookupError as e:
+        print(f"❌ Error de contexto en webhook: {e}")
+        traceback.print_exc()
     except Exception as e:
-        print("❌ Error procesando webhook:", e)
+        print(f"❌ Error inesperado procesando webhook: {e}")
         traceback.print_exc()
 
     return {"status": "ok"}
@@ -1669,7 +1850,17 @@ async def api_enviar_solicitar_informacion(data: dict):
             "respuesta_api": respuesta_api
         }
 
+    except LookupError as e:
+        print(f"❌ Error de contexto al enviar solicitud de información: {e}")
+        traceback.print_exc()
+        return JSONResponse({"error": f"Error de configuración: {e}"}, status_code=500)
+    except KeyError as e:
+        print(f"❌ Error de clave faltante al enviar solicitud de información: {e}")
+        traceback.print_exc()
+        return JSONResponse({"error": f"Error de datos: {e}"}, status_code=500)
     except Exception as e:
+        print(f"❌ Error inesperado al enviar solicitud de información: {e}")
+        traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @router.post("/consolidar")
@@ -1723,7 +1914,8 @@ def consolidar_perfil_web(data: ConsolidarInput):
         try:
             usuario_bd = buscar_usuario_por_telefono(data.numero)
             nombre_usuario = usuario_bd.get("nombre") if usuario_bd else None
-        except:
+        except Exception as e:
+            print(f"⚠️ No se pudo obtener nombre del usuario {data.numero}: {e}")
             nombre_usuario = None
         
         mensaje_final = mensaje_encuesta_final(nombre=nombre_usuario)
@@ -1732,8 +1924,24 @@ def consolidar_perfil_web(data: ConsolidarInput):
 
         return {"ok": True, "msg": "Perfil consolidado correctamente"}
 
+    except LookupError as e:
+        print(f"❌ Error de contexto al consolidar perfil: {e}")
+        traceback.print_exc()
+        return {"ok": False, "error": f"Error de configuración: {e}"}
+    except KeyError as e:
+        print(f"❌ Error de clave faltante al consolidar perfil: {e}")
+        traceback.print_exc()
+        return {"ok": False, "error": f"Error de datos: {e}"}
+    except psycopg2.OperationalError as e:
+        print(f"❌ Error de conexión a BD al consolidar perfil: {e}")
+        traceback.print_exc()
+        return {"ok": False, "error": "Error de conexión a base de datos"}
+    except psycopg2.IntegrityError as e:
+        print(f"❌ Error de integridad en BD al consolidar perfil: {e}")
+        traceback.print_exc()
+        return {"ok": False, "error": "Error de integridad de datos"}
     except Exception as e:
-        print(f"❌ Error consolidando perfil: {e}")
+        print(f"❌ Error inesperado consolidando perfil: {e}")
         traceback.print_exc()
         return {"ok": False, "error": str(e)}
 
