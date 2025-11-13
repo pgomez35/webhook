@@ -407,11 +407,12 @@ def guardar_respuesta(numero: str, paso: int, texto: str, tenant_schema: Optiona
                     (numero, paso, texto),
                 )
 
-        logger.info("✅ Respuesta guardada: numero=%s paso=%s", numero, paso)
+        print(f"✅ Respuesta guardada: numero={numero} paso={paso}")
         return True
 
     except Exception as e:
-        logger.exception("❌ Error guardando respuesta: numero=%s paso=%s error=%s", numero, paso, e)
+        print(f"❌ Error guardando respuesta: numero={numero} paso={paso} error={e}")
+        traceback.print_exc()
         return False
 
 def eliminar_flujo_temp(numero: str, tenant_schema: Optional[str] = None) -> bool:
@@ -426,11 +427,12 @@ def eliminar_flujo_temp(numero: str, tenant_schema: Optional[str] = None) -> boo
                     (numero,),
                 )
 
-        logger.info("🗑️ Datos temporales eliminados para %s", numero)
+        print(f"🗑️ Datos temporales eliminados para {numero}")
         return True
 
     except Exception as e:
-        logger.exception("❌ Error eliminando flujo temporal para %s: %s", numero, e)
+        print(f"❌ Error eliminando flujo temporal para {numero}: {e}")
+        traceback.print_exc()
         return False
 
 
@@ -452,9 +454,8 @@ def enviar_diagnostico(numero: str) -> bool:
                 row = cur.fetchone()
 
                 if not row:
-                    logger.warning("No se encontró creador con whatsapp %s", numero)
-                    token, numero_id = obtener_tokens_por_tenant()
-                    enviar_mensaje(numero, "No encontramos tu perfil en el sistema. Verifica tu número.", token, numero_id)
+                    print(f"⚠️ No se encontró creador con whatsapp {numero}")
+                    enviar_mensaje(numero, "No encontramos tu perfil en el sistema. Verifica tu número.")
                     return False
 
                 creador_id, usuario, nombre_real = row
@@ -483,18 +484,18 @@ def enviar_diagnostico(numero: str) -> bool:
             diagnostico = f"🔎 Diagnóstico para {nombre_real}:\n\n{mejoras}"
 
         # 4️⃣ Enviar el diagnóstico
-        token, numero_id = obtener_tokens_por_tenant()
-        enviar_mensaje(numero, diagnostico, token, numero_id)
-        logger.info("Diagnóstico enviado correctamente a %s (%s)", numero, nombre_real)
+        enviar_mensaje(numero, diagnostico)
+        print(f"✅ Diagnóstico enviado correctamente a {numero} ({nombre_real})")
         return True
 
     except Exception as e:
-        logger.exception("Error al enviar diagnóstico a %s: %s", numero, e)
+        print(f"❌ Error al enviar diagnóstico a {numero}: {e}")
+        traceback.print_exc()
         try:
-            token, numero_id = obtener_tokens_por_tenant()
-            enviar_mensaje(numero, "Ocurrió un error al generar tu diagnóstico. Intenta más tarde.", token, numero_id)
-        except Exception:
-            logger.exception("Error adicional al intentar notificar al usuario %s", numero)
+            enviar_mensaje(numero, "Ocurrió un error al generar tu diagnóstico. Intenta más tarde.")
+        except Exception as e2:
+            print(f"❌ Error adicional al intentar notificar al usuario {numero}: {e2}")
+            traceback.print_exc()
         return False
 
 
