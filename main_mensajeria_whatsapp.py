@@ -42,6 +42,36 @@ from utils import *
 
 load_dotenv()
 
+# ============================
+# CONFIGURACIÓN - URLs Frontend
+# ============================
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "https://talentum-manager.vercel.app")
+FRONTEND_DOMAIN_PATTERN = os.getenv("FRONTEND_DOMAIN_PATTERN", "{tenant}.talentum-manager.com")
+
+def construir_url_actualizar_perfil(numero: str, tenant_name: Optional[str] = None) -> str:
+    """
+    Construye la URL para actualizar perfil.
+    
+    Args:
+        numero: Número de teléfono del usuario
+        tenant_name: Nombre del tenant (opcional)
+    
+    Returns:
+        URL completa para actualizar perfil
+    """
+    if tenant_name:
+        # Usar patrón con tenant: {tenant}.talentum-manager.com
+        base_url = FRONTEND_DOMAIN_PATTERN.format(tenant=tenant_name)
+        # Si el patrón no incluye https://, agregarlo
+        if not base_url.startswith("http"):
+            return f"https://{base_url}/actualizar-perfil?numero={numero}"
+        return f"{base_url}/actualizar-perfil?numero={numero}"
+    else:
+        # Usar URL base (ya incluye https://)
+        if FRONTEND_BASE_URL.startswith("http"):
+            return f"{FRONTEND_BASE_URL}/actualizar-perfil?numero={numero}"
+        return f"https://{FRONTEND_BASE_URL}/actualizar-perfil?numero={numero}"
+
 router = APIRouter()
 
 # Estado del flujo en memoria
@@ -1059,7 +1089,7 @@ def manejar_menu(numero, texto_normalizado, rol):
 
             # 2) PARA ACTUALIZAR INFO DESDE REACT DESMARCAR 2 Y MARCAR 1:
             # -------------------------------------------------
-            url_web = f"https://{tenant_name}.talentum-manager.com/actualizar-perfil?numero={numero}"
+            url_web = construir_url_actualizar_perfil(numero, tenant_name=tenant_name)
             enviar_mensaje(
                 numero,
                 f"✏️ Para actualizar tu información de perfil, haz clic en este enlace:\n{url_web}\n\nPuedes hacerlo desde tu celular o computadora."
@@ -1395,7 +1425,7 @@ def _process_new_user_onboarding(mensaje: dict, numero: str, texto: str, texto_l
                 except LookupError:
                     tenant_actual = "default"  # Fallback si no hay contexto
             
-            url_web = f"https://{tenant_name}.talentum-manager.com/actualizar-perfil?numero={numero}"
+            url_web = construir_url_actualizar_perfil(numero, tenant_name=tenant_actual)
             mensaje = (
                 f"💬 Haz clic en el enlace para comenzar la encuesta 📋\n\n"
                 f"{url_web}\n\n"
@@ -1428,7 +1458,7 @@ def _process_aspirante_message(mensaje: dict, numero: str, texto_lower: str, rol
             print(f"⚠️ tenant_name es None o vacío para {numero}, usando fallback")
             tenant_name = "default"  # Fallback solo si es necesario
         
-        url_web = f"https://{tenant_name}.talentum-manager.com/actualizar-perfil?numero={numero}"
+        url_web = construir_url_actualizar_perfil(numero, tenant_name=tenant_name)
         mensaje_texto = (
             f"💬 🚩 No has finalizado tu encuesta. Por favor haz clic en el enlace para completar la encuesta 📋\n\n"
             f"{url_web}\n\n"
@@ -1570,7 +1600,7 @@ def enviar_inicio_encuesta(numero: str):
     if not tenant_name:
         tenant_name = "default"  # Valor por defecto si no hay tenant activo
 
-    url_web = f"https://{tenant_name}.talentum-manager.com/actualizar-perfil?numero={numero}"
+    url_web = construir_url_actualizar_perfil(numero, tenant_name=tenant_name)
 
     mensaje = (
         f"{mensaje_inicio_encuesta()}\n\n"
