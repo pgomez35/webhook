@@ -4,29 +4,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-
-# Usa REDIS_URL si existe (ej. rediss://default:password@host:port)
 REDIS_URL = os.getenv("REDIS_URL")
 
 
 def create_redis_client():
     if REDIS_URL:
-        # Si la URL empieza por rediss:// asumimos conexión TLS
-        if REDIS_URL.startswith("rediss://"):
-            # Para Redis Cloud suele funcionar desactivar verificación de cert si no tienes los CA
-            return redis.from_url(
-                REDIS_URL,
-                decode_responses=True,
-                ssl_cert_reqs=None,  # 👈 evita problemas de certificados
-            )
-        else:
-            # redis:// sin TLS
-            return redis.from_url(
-                REDIS_URL,
-                decode_responses=True,
-            )
+        print("🔧 Usando REDIS_URL:", REDIS_URL)
+        # No TLS, según el ejemplo de Redis Cloud
+        return redis.from_url(
+            REDIS_URL,
+            decode_responses=True,
+        )
     else:
-        # Fallback local sin URL
+        # Fallback local
         REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
         REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
         REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
@@ -39,13 +29,13 @@ def create_redis_client():
             decode_responses=True,
         )
 
-# Cliente global
+
 r = create_redis_client()
 
 
 def get_redis():
-    """Devuelve la conexión activa de Redis"""
     return r
+
 
 # ============================
 # FUNCIONES PARA usuarios_temp
