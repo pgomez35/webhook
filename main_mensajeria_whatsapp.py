@@ -770,6 +770,18 @@ def consolidar_perfil(telefono: str, respuestas_dict: dict | None = None, tenant
 
                 creador_id = creador[0]
 
+                # Si no se pasaron respuestas, leerlas de la tabla perfil_creador_flujo_temp
+                if respuestas_dict is None:
+                    cur.execute("""
+                        SELECT paso, respuesta 
+                        FROM perfil_creador_flujo_temp 
+                        WHERE telefono=%s 
+                        ORDER BY paso ASC
+                    """, (telefono,))
+                    rows = cur.fetchall()
+                    respuestas_dict = {int(p): r for p, r in rows} if rows else {}
+                    print(f"📋 Respuestas leídas de la tabla: {respuestas_dict}")
+
                 # Procesar respuestas
                 datos_update = procesar_respuestas(respuestas_dict)
 
@@ -1569,13 +1581,18 @@ def enviar_inicio_encuesta(numero: str):
     print(f"🔗 Enviado mensaje de inicio de encuesta a {numero}: {url_web}")
 
 
-class RespuestaInput(BaseModel):
-    numero: str
-    paso: int
-    respuesta: str
+from pydantic import BaseModel
+
+# ⚠️ DEPRECADO: Ya no se usa. Las respuestas se envían todas juntas a /consolidar
+# class RespuestaInput(BaseModel):
+#     numero: str
+#     paso: int
+#     respuesta: str
 
 class ConsolidarInput(BaseModel):
     numero: str
+    respuestas: Optional[dict] = None  # Diccionario opcional: {1: "Ricardo", 2: "5", 3: "1", ...}
+                                      # Si es None, se leen de la tabla perfil_creador_flujo_temp
 
 
 @router.post("/enviar_solicitud_informacion")
@@ -1650,26 +1667,32 @@ def consolidar_perfil_web(data: ConsolidarInput):
         current_phone_id.set(phone_id_cliente)
         current_business_name.set(business_name)
 
-        # Procesar diccionario de respuestas directamente
-        # Formato: {1: "Ricardo", 2: "5", 3: "1", ...}
-        respuestas_dict = {}
-        for key, valor in data.respuestas.items():
-            # Convertir claves a int si vienen como string
-            key_int = int(key) if isinstance(key, str) and key.isdigit() else key
-            # Normalizar valores: convertir "no"/"si" a "0"/"1" para pregunta 8
-            if key_int == 8:
-                valor_str = str(valor).strip().lower()
-                if valor_str in {"no", "n", "0"}:
-                    respuestas_dict[key_int] = "0"
-                elif valor_str in {"si", "sí", "s", "yes", "y", "1"}:
-                    respuestas_dict[key_int] = "1"
+        # Procesar diccionario de respuestas si viene en el request
+        # Si no viene, consolidar_perfil leerá de la tabla perfil_creador_flujo_temp
+        respuestas_dict = None
+        if data.respuestas:
+            # Procesar diccionario de respuestas directamente
+            # Formato: {1: "Ricardo", 2: "5", 3: "1", ...}
+            respuestas_dict = {}
+            for key, valor in data.respuestas.items():
+                # Convertir claves a int si vienen como string
+                key_int = int(key) if isinstance(key, str) and key.isdigit() else key
+                # Normalizar valores: convertir "no"/"si" a "0"/"1" para pregunta 8
+                if key_int == 8:
+                    valor_str = str(valor).strip().lower()
+                    if valor_str in {"no", "n", "0"}:
+                        respuestas_dict[key_int] = "0"
+                    elif valor_str in {"si", "sí", "s", "yes", "y", "1"}:
+                        respuestas_dict[key_int] = "1"
+                    else:
+                        respuestas_dict[key_int] = str(valor)
                 else:
-                    respuestas_dict[key_int] = str(valor)
-            else:
-                respuestas_dict[key_int] = str(valor) if valor else ""
+                    respuestas_dict[key_int] = str(valor) if valor else ""
+            print(f"📋 Respuestas recibidas en request: {respuestas_dict}")
+        else:
+            print(f"📋 No se recibieron respuestas en request, se leerán de la tabla perfil_creador_flujo_temp")
 
         print(f"🔗 Iniciando consolidación de perfil en subdominio: {subdominio}")
-        print(f"📋 Respuestas recibidas: {respuestas_dict}")
         consolidar_perfil(data.numero, respuestas_dict=respuestas_dict, tenant_schema=subdominio)
         eliminar_flujo(data.numero, tenant_schema=subdominio)
         eliminar_flujo_temp(data.numero, tenant_schema=subdominio)
