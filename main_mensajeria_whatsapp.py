@@ -275,7 +275,7 @@ def asegurar_flujo(numero: str) -> dict:
         usuarios_flujo[numero] = {"timestamp": time.time()}
     return usuarios_flujo[numero]
 
-def eliminar_flujo(numero: str):
+def eliminar_flujo(numero: str, tenant_schema: Optional[str] = None):
     """Reinicia cualquier flujo o estado temporal del usuario."""
     usuarios_flujo.pop(numero, None)
     usuarios_temp.pop(numero, None)
@@ -1569,7 +1569,7 @@ def enviar_inicio_encuesta(numero: str):
     if not tenant_name:
         tenant_name = "default"  # Valor por defecto si no hay tenant activo
 
-    url_web = f"https://{tenant_name}.talentum-manager/actualizar-perfil?numero={numero}"
+    url_web = f"https://{tenant_name}.talentum-manager.com/actualizar-perfil?numero={numero}"
 
     mensaje = (
         f"{mensaje_inicio_encuesta()}\n\n"
