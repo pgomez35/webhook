@@ -38,6 +38,7 @@ from tenant import (
     current_token
 )
 from utils import *
+from redis_client import redis_set_temp, redis_get_temp, redis_delete_temp
 
 
 load_dotenv()
@@ -73,8 +74,8 @@ router = APIRouter()
 
 # Estado del flujo en memoria
 usuarios_flujo = {}    # { numero: paso_actual }
-respuestas = {}        # { numero: {campo: valor} }
-usuarios_temp = {}
+# ⚠️ respuestas = {} - ELIMINADO: No se usaba. Las respuestas se guardan en perfil_creador_flujo_temp
+usuarios_temp = {}  # ⚠️ Fallback a memoria si Redis falla (solo para datos temporales de onboarding)
 
 # ============================
 # ENVIAR MENSAJES INICIO
@@ -445,7 +446,12 @@ def asegurar_flujo(numero: str) -> dict:
 def eliminar_flujo(numero: str, tenant_schema: Optional[str] = None):
     """Reinicia cualquier flujo o estado temporal del usuario."""
     usuarios_flujo.pop(numero, None)
-    usuarios_temp.pop(numero, None)
+    # ✅ Limpiar también de Redis
+    try:
+        redis_delete_temp(numero)
+    except Exception as e:
+        print(f"⚠️ Error eliminando de Redis en eliminar_flujo para {numero}: {e}")
+    usuarios_temp.pop(numero, None)  # Limpiar también de memoria (fallback)
     print(f"🧹 Flujo reiniciado para {numero}")
 
 
@@ -559,61 +565,6 @@ def validar_aceptar_ciudad(usuario_ciudad, ciudades=CIUDADES_LATAM, score_minimo
         return {"ciudad": ciudad_oficial, "corregida": True}
     else:
         return {"ciudad": usuario_ciudad.strip(), "corregida": False}
-
-def guardar_respuesta(numero: str, paso: int, texto: str, tenant_schema: Optional[str] = None) -> bool:
-    try:
-        with get_connection_context(tenant_schema) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO perfil_creador_flujo_temp (telefono, paso, respuesta)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (telefono, paso)
-                        DO UPDATE SET respuesta = EXCLUDED.respuesta
-                    """,
-                    (numero, paso, texto),
-                )
-
-        print(f"✅ Respuesta guardada: numero={numero} paso={paso}")
-        return True
-
-    except psycopg2.OperationalError as e:
-        print(f"❌ Error de conexión a BD al guardar respuesta: numero={numero} paso={paso} error={e}")
-        traceback.print_exc()
-        return False
-    except psycopg2.IntegrityError as e:
-        print(f"❌ Error de integridad en BD al guardar respuesta: numero={numero} paso={paso} error={e}")
-        traceback.print_exc()
-        return False
-    except Exception as e:
-        print(f"❌ Error inesperado guardando respuesta: numero={numero} paso={paso} error={e}")
-        traceback.print_exc()
-        return False
-
-def eliminar_flujo_temp(numero: str, tenant_schema: Optional[str] = None) -> bool:
-    try:
-        with get_connection_context(tenant_schema) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    DELETE FROM perfil_creador_flujo_temp
-                    WHERE telefono = %s
-                    """,
-                    (numero,),
-                )
-
-        print(f"🗑️ Datos temporales eliminados para {numero}")
-        return True
-
-    except psycopg2.OperationalError as e:
-        print(f"❌ Error de conexión a BD al eliminar flujo temporal para {numero}: {e}")
-        traceback.print_exc()
-        return False
-    except Exception as e:
-        print(f"❌ Error inesperado eliminando flujo temporal para {numero}: {e}")
-        traceback.print_exc()
-        return False
-
 
 def enviar_diagnostico(numero: str) -> bool:
 
@@ -1253,7 +1204,6 @@ def manejar_menu(numero, texto_normalizado, rol):
     if rol == "aspirante":
         if texto_normalizado in {"1", "actualizar mi información", "perfil"}:
             marcar_encuesta_no_finalizada(numero)
-            eliminar_flujo_temp(numero)
             actualizar_flujo(numero, 1)
 
             # 1) PARA ACTUALIZAR INFO DESDE WHATSAPP DESMARCAR 1 Y MARCAR 2:
@@ -1569,7 +1519,12 @@ def _process_new_user_onboarding(mensaje: dict, numero: str, texto: str, texto_l
             nombre = aspirante.get("nickname") or aspirante.get("nombre_real") or "(sin nombre)"
             enviar_mensaje(numero, mensaje_confirmar_nombre(nombre))
             actualizar_flujo(numero, "confirmando_nombre")
-            usuarios_temp[numero] = aspirante
+            # ✅ Guardar en Redis (con fallback a memoria si falla)
+            try:
+                redis_set_temp(numero, aspirante, ttl=900)  # 15 minutos
+            except Exception as e:
+                print(f"⚠️ Redis falló, usando memoria como fallback para {numero}: {e}")
+                usuarios_temp[numero] = aspirante
         else:
             enviar_mensaje(numero, "❌ No encontramos ese usuario de TikTok. ¿Podrías verificarlo?")
         return {"status": "ok"}
@@ -1577,13 +1532,33 @@ def _process_new_user_onboarding(mensaje: dict, numero: str, texto: str, texto_l
     # Confirmar nickname y actualizar teléfono
     if paso == "confirmando_nombre":
         if texto_lower in ["si", "sí", "s"]:
-            aspirante = usuarios_temp.get(numero)
+            # ✅ Leer de Redis (con fallback a memoria si falla)
+            aspirante = redis_get_temp(numero)
+            if not aspirante:
+                # Fallback a memoria si Redis no tiene el dato
+                aspirante = usuarios_temp.get(numero)
+                if aspirante:
+                    print(f"⚠️ Datos encontrados en memoria (fallback) para {numero}")
+            
             if aspirante:
                 actualizar_telefono_aspirante(aspirante["id"], numero)
+                # ✅ Limpiar de Redis y memoria después de usar
+                try:
+                    redis_delete_temp(numero)
+                except Exception as e:
+                    print(f"⚠️ Error eliminando de Redis para {numero}: {e}")
+                usuarios_temp.pop(numero, None)  # Limpiar también de memoria
+            
             enviar_inicio_encuesta(numero)
             actualizar_flujo(numero, "esperando_inicio_encuesta")
         elif texto_lower in ["no", "n"]:
             enviar_mensaje(numero, "❌ Por favor verifica tu nombre o usuario de TikTok.")
+            # Limpiar datos temporales si el usuario rechaza
+            try:
+                redis_delete_temp(numero)
+            except Exception:
+                pass
+            usuarios_temp.pop(numero, None)
         else:
             enviar_mensaje(numero, "⚠️ Por favor responde solo *sí* o *no* para continuar.")
         return {"status": "ok"}
@@ -1908,7 +1883,6 @@ def consolidar_perfil_web(data: ConsolidarInput):
         print(f"🔗 Iniciando consolidación de perfil en subdominio: {subdominio}")
         consolidar_perfil(data.numero, respuestas_dict=respuestas_dict, tenant_schema=subdominio)
         eliminar_flujo(data.numero, tenant_schema=subdominio)
-        eliminar_flujo_temp(data.numero, tenant_schema=subdominio)
         
         # Obtener nombre del usuario si está disponible
         try:
