@@ -1,10 +1,9 @@
+import traceback
+
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
 from typing import Optional
-import traceback
-
-from fastapi import APIRouter, HTTPException, Depends, Body
-from typing import Optional, List, Dict
 
 from DataBase import get_connection_context
 
