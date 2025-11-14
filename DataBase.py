@@ -38,19 +38,36 @@ from tenant import current_tenant
 
 _SCHEMA_RE = re.compile(r"^[a-z0-9_]+$")  # validación para schema
 
+_SCHEMA_RE = re.compile(r"^[a-z0-9_]+$")
+
+
 class TenantSchemaError(Exception):
     pass
 
+
 def _sanitize_schema(schema: str) -> str:
+    """
+    Valida el nombre del schema del tenant.
+    Acepta nombres simples como 'test', 'public', 'agencia_xxx', etc.
+    """
     if not schema:
         raise TenantSchemaError("⚠️ current_tenant vacío o no configurado")
 
-    if schema.startswith("agencia_"):
-        candidate = schema.split("agencia_", 1)[1]
-        if _SCHEMA_RE.fullmatch(candidate):
-            return schema
+    # 1. Talentum Manager SIEMPRE va a public
+    if schema == "talentum-manager":
+        return "public"
 
+    # 2) Schemas especiales que sabemos que existen
+    if schema in ("public", "test"):
+        return schema
+
+    # 3) Cualquier nombre simple tipo mytenant_123
+    if _SCHEMA_RE.fullmatch(schema):
+        return schema
+
+    # 4) Si no cumple nada, error
     raise TenantSchemaError(f"⚠️ Schema de tenant inválido: {schema!r}")
+
 
 
 def get_connection():
