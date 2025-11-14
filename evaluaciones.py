@@ -1359,13 +1359,24 @@ def evaluar_potencial_creador(creador_id, score_cualitativa: float):
             return {"error": "No se encontraron métricas para el creador."}
 
         # 2. Calcular score estadístico
-        score_estadistica = evaluar_estadisticas(
+        score_estadistica_raw = evaluar_estadisticas(
             seguidores=data_dict.get("seguidores"),
             siguiendo=data_dict.get("siguiendo"),
             videos=data_dict.get("videos"),
             likes=data_dict.get("likes"),
             duracion=data_dict.get("duracion_emisiones")
         )
+
+        # Extraer puntaje si viene como dict
+        if isinstance(score_estadistica_raw, dict):
+            score_estadistica = score_estadistica_raw.get("puntaje_estadistica")
+        else:
+            score_estadistica = score_estadistica_raw
+
+        print("DEBUG score_estadistica:", score_estadistica)
+
+        if not isinstance(score_estadistica, (int, float)):
+            raise ValueError(f"Score estadístico inválido: {score_estadistica}")
 
         # 3. Calcular total ponderado y convertir a entero
         potencial_estimado = int(round(score_estadistica * 0.3 + score_cualitativa * 00.7))

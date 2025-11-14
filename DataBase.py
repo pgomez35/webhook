@@ -2715,3 +2715,56 @@ def obtener_cuenta_por_phone_number(phone_number: str) -> dict | None:
         print(f"❌ Error al obtener cuenta WhatsApp (phone_number={phone_number}): {e}")
         return None
 
+def obtener_cuenta_por_subdominio(subdominio: str) -> dict | None:
+    """Busca en la base de datos la cuenta de WhatsApp correspondiente al phone_number."""
+    if not subdominio:
+        return None
+
+    try:
+        # Usar context manager para asegurar que la conexión se devuelva al pool
+        with get_connection_public_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT 
+                        id,
+                        waba_id,
+                        access_token,
+                        phone_number,
+                        phone_number_id,
+                        business_name,
+                        subdominio,   -- ✅ ahora incluido
+                        status
+                    FROM whatsapp_business_accounts
+                    WHERE subdominio = %s
+                    LIMIT 1;
+                """, (subdominio,))
+
+                row = cur.fetchone()
+
+        if not row:
+            print(f"⚠️ No se encontró cuenta para subdominio={subdominio}")
+            return None
+
+        cuenta = {
+            "id": row[0],
+            "waba_id": row[1],
+            "access_token": row[2],
+            "phone_number": row[3],
+            "phone_number_id": row[4],
+            "business_name": row[5],
+            "subdominio": row[6],   # ✅ agregado
+            "status": row[7],
+        }
+
+        print(
+            f"✅ Cuenta WABA encontrada: {cuenta['business_name']} "
+            f"({cuenta['phone_number']}) - Tenant/Subdominio: {cuenta['subdominio']}"
+        )
+        return cuenta
+
+    except Exception as e:
+        print(f"❌ Error al obtener cuenta WhatsApp (phone_number={subdominio}): {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
