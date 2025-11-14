@@ -70,6 +70,9 @@ from main_mensajeria_whatsapp import router as perfil_creador_router
 from mainCargarAspirantes import router as aspirantes_router
 from middleware_tenant import TenantMiddleware   # 👈 importa tu middleware
 from middleware_rate_limit import RateLimitMiddleware  # 👈 Rate limiting por tenant
+from main_Agendamiento_Mobile import router as agendamiento_mobile_router
+
+
 
 # ⚙️ Inicializar FastAPI
 app = FastAPI()
@@ -94,6 +97,7 @@ app.add_middleware(
 # Incluir las rutas del módulo perfil_creador_whatsapp
 app.include_router(perfil_creador_router, tags=["Perfil Creador WhatsApp"])
 app.include_router(aspirantes_router, tags=["Cargar Aspirantes"])
+app.include_router(agendamiento_mobile_router,tags=["Agendamiento Mobile"])
 
 
 # ✅ Crear carpeta persistente de audios si no existe
