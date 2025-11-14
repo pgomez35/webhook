@@ -906,7 +906,7 @@ def consolidar_perfil(telefono: str, respuestas_dict: dict | None = None, tenant
         tenant_schema: Schema del tenant. Si es None, usa current_tenant.get()
     """
     try:
-        with get_connection_context(tenant_schema) as conn:
+        with get_connection_context() as conn:
             with conn.cursor() as cur:
                 # Buscar creador por número
                 cur.execute("SELECT id, usuario, nombre_real, whatsapp FROM creadores WHERE whatsapp=%s", (telefono,))

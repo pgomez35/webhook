@@ -84,7 +84,7 @@ def get_connection():
     return conn
 
 @contextmanager
-def get_connection_context():
+def get_connection_context(schema=None):
     """
     Context manager para obtener y cerrar conexiones automáticamente.
     
