@@ -70,8 +70,7 @@ from main_mensajeria_whatsapp import router as perfil_creador_router
 from mainCargarAspirantes import router as aspirantes_router
 from middleware_tenant import TenantMiddleware   # 👈 importa tu middleware
 from middleware_rate_limit import RateLimitMiddleware  # 👈 Rate limiting por tenant
-from main_Agendamiento import router as agendamiento_mobile_router
-
+from main_Agendamiento import router as agendamiento_router
 
 
 # ⚙️ Inicializar FastAPI
@@ -97,8 +96,7 @@ app.add_middleware(
 # Incluir las rutas del módulo perfil_creador_whatsapp
 app.include_router(perfil_creador_router, tags=["Perfil Creador WhatsApp"])
 app.include_router(aspirantes_router, tags=["Cargar Aspirantes"])
-app.include_router(agendamiento_mobile_router,tags=["Agendamiento Mobile"])
-
+app.include_router(agendamiento_router, tags=["Agendamiento"])
 
 # ✅ Crear carpeta persistente de audios si no existe
 AUDIO_DIR = "audios"
@@ -604,16 +602,16 @@ from googleapiclient.errors import HttpError
 #         logger.error(f"❌ Error al obtener eventos: {str(e)}")
 #         logger.error(traceback.format_exc())
 #         raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/sync")
-def sincronizar():
-    try:
-        sync_eventos()
-        return {"status": "ok", "mensaje": "Eventos sincronizados correctamente (logs disponibles)"}
-    except Exception as e:
-        logger.error(f"❌ Error al sincronizar eventos: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
+#
+# @app.post("/api/sync")
+# def sincronizar():
+#     try:
+#         sync_eventos()
+#         return {"status": "ok", "mensaje": "Eventos sincronizados correctamente (logs disponibles)"}
+#     except Exception as e:
+#         logger.error(f"❌ Error al sincronizar eventos: {str(e)}")
+#         logger.error(traceback.format_exc())
+#         raise HTTPException(status_code=500, detail=str(e))
 
 # @app.put("/api/eventos/{evento_id}", response_model=EventoOut)
 # def editar_evento(evento_id: str, evento: EventoIn):

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()   # ← ESTE ES EL ROUTER QUE VAS A IMPORTAR EN main.py
 
-router_agendamientos_aspirante = APIRouter()
+# router_agendamientos_aspirante = APIRouter()
 
 
 class AgendamientoAspiranteIn(BaseModel):
