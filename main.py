@@ -70,7 +70,7 @@ from main_mensajeria_whatsapp import router as perfil_creador_router
 from mainCargarAspirantes import router as aspirantes_router
 from middleware_tenant import TenantMiddleware   # 👈 importa tu middleware
 from middleware_rate_limit import RateLimitMiddleware  # 👈 Rate limiting por tenant
-from main_Agendamiento_Mobile import router as agendamiento_mobile_router
+from main_Agendamiento import router as agendamiento_mobile_router
 
 
 
@@ -266,7 +266,11 @@ from datetime import datetime, timedelta
 from typing import List, Dict
 from dateutil.parser import isoparse
 
-def obtener_eventos(time_min: datetime = None, time_max: datetime = None, max_results: int = 100) -> List[EventoOut]:
+
+
+
+
+def obtener_eventos_google_id(time_min: datetime = None, time_max: datetime = None, max_results: int = 100) -> List[EventoOut]:
     start_time = time.time()
     try:
         service = get_calendar_service()
@@ -492,118 +496,105 @@ def obtener_eventosV0() -> List[EventoOut]:
     return resultado
 
 
-def sync_eventos():
-    eventos = obtener_eventos()
-    logger.info(f"🔄 Se encontraron {len(eventos)} eventos en Google Calendar")
-    for evento in eventos:
-        logger.info(f"📅 Evento: {evento.titulo} | 🕐 Inicio: {evento.inicio} | 🕓 Fin: {evento.fin} | 📝 Descripción: {evento.descripcion}")
+# def sync_eventos():
+#     eventos = obtener_eventos()
+#     logger.info(f"🔄 Se encontraron {len(eventos)} eventos en Google Calendar")
+#     for evento in eventos:
+#         logger.info(f"📅 Evento: {evento.titulo} | 🕐 Inicio: {evento.inicio} | 🕓 Fin: {evento.fin} | 📝 Descripción: {evento.descripcion}")
 
 # ==================== RUTAS FASTAPI ==============================
 
+
+
+# @app.get("/api/eventos/{evento_id}", response_model=EventoOut)
+# def obtener_evento(evento_id: str):
+#     conn = get_connection()
+#     cur = conn.cursor()
+#     try:
+#         service = get_calendar_service()
+#
+#         try:
+#             google_event = service.events().get(calendarId=CALENDAR_ID, eventId=evento_id).execute()
+#         except HttpError as e:
+#             if e.resp.status == 404:
+#                 logger.warning(f"📭 Evento {evento_id} no encontrado en Google Calendar.")
+#                 raise HTTPException(status_code=404, detail=f"Evento {evento_id} no existe en Google Calendar.")
+#             else:
+#                 logger.error(f"❌ Error consultando evento {evento_id} en Google Calendar: {e}")
+#                 raise HTTPException(status_code=500, detail="Error consultando evento en Google Calendar.")
+#
+#         # 📅 Fechas
+#         fecha_inicio = isoparse(google_event["start"]["dateTime"])
+#         fecha_fin = isoparse(google_event["end"]["dateTime"])
+#         titulo = google_event.get("summary", "Sin título")
+#         descripcion = google_event.get("description", "")
+#
+#         # 📹 Link Meet
+#         meet_link = None
+#         if 'conferenceData' in google_event:
+#             for ep in google_event['conferenceData'].get('entryPoints', []):
+#                 if ep.get('entryPointType') == 'video':
+#                     meet_link = ep.get('uri')
+#                     break
+#
+#         # 🔍 Buscar en base de datos
+#         cur.execute("""SELECT id FROM agendamientos WHERE google_event_id = %s""", (evento_id,))
+#         agendamiento = cur.fetchone()
+#
+#         if agendamiento:
+#             agendamiento_id = agendamiento[0]
+#         else:
+#             cur.execute("""
+#                 INSERT INTO agendamientos (
+#                     titulo, descripcion, fecha_inicio, fecha_fin, google_event_id, link_meet, estado
+#                 ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+#                 RETURNING id
+#             """, (
+#                 titulo, descripcion, fecha_inicio, fecha_fin, evento_id, meet_link, 'programado'
+#             ))
+#             agendamiento_id = cur.fetchone()[0]
+#             conn.commit()
+#             logger.info(f"🆕 Evento {evento_id} insertado con ID {agendamiento_id}")
+#
+#         # 👥 Participantes
+#         cur.execute("""
+#             SELECT c.id, c.nombre_real AS nombre, c.nickname
+#             FROM agendamientos_participantes ap
+#             JOIN creadores c ON c.id = ap.creador_id
+#             WHERE ap.agendamiento_id = %s
+#         """, (agendamiento_id,))
+#         participantes = cur.fetchall()
+#
+#         participantes_ids = [p[0] for p in participantes]  # p[0] = id
+#         participantes_out = [
+#             {"id": p[0], "nombre": p[1], "nickname": p[2]}
+#             for p in participantes
+#         ]
+#
+#         return EventoOut(
+#             id=evento_id,
+#             titulo=titulo,
+#             descripcion=descripcion,
+#             inicio=fecha_inicio,
+#             fin=fecha_fin,
+#             participantes=participantes_out,
+#             participantes_ids=participantes_ids,
+#             link_meet=meet_link,
+#             origen="google_calendar"
+#         )
+#
+#     except HTTPException:
+#         raise  # Ya lo lanzamos arriba
+#     except Exception as e:
+#         logger.error(f"❌ Error al obtener evento {evento_id}: {e}")
+#         logger.error(traceback.format_exc())
+#         raise HTTPException(status_code=500, detail="Error interno al consultar el evento.")
+#     finally:
+#         cur.close()
+#         conn.close()
+
 from googleapiclient.errors import HttpError
 
-@app.get("/api/eventos/{evento_id}", response_model=EventoOut)
-def obtener_evento(evento_id: str):
-    conn = get_connection()
-    cur = conn.cursor()
-    try:
-        service = get_calendar_service()
-
-        try:
-            google_event = service.events().get(calendarId=CALENDAR_ID, eventId=evento_id).execute()
-        except HttpError as e:
-            if e.resp.status == 404:
-                logger.warning(f"📭 Evento {evento_id} no encontrado en Google Calendar.")
-                raise HTTPException(status_code=404, detail=f"Evento {evento_id} no existe en Google Calendar.")
-            else:
-                logger.error(f"❌ Error consultando evento {evento_id} en Google Calendar: {e}")
-                raise HTTPException(status_code=500, detail="Error consultando evento en Google Calendar.")
-
-        # 📅 Fechas
-        fecha_inicio = isoparse(google_event["start"]["dateTime"])
-        fecha_fin = isoparse(google_event["end"]["dateTime"])
-        titulo = google_event.get("summary", "Sin título")
-        descripcion = google_event.get("description", "")
-
-        # 📹 Link Meet
-        meet_link = None
-        if 'conferenceData' in google_event:
-            for ep in google_event['conferenceData'].get('entryPoints', []):
-                if ep.get('entryPointType') == 'video':
-                    meet_link = ep.get('uri')
-                    break
-
-        # 🔍 Buscar en base de datos
-        cur.execute("""SELECT id FROM agendamientos WHERE google_event_id = %s""", (evento_id,))
-        agendamiento = cur.fetchone()
-
-        if agendamiento:
-            agendamiento_id = agendamiento[0]
-        else:
-            cur.execute("""
-                INSERT INTO agendamientos (
-                    titulo, descripcion, fecha_inicio, fecha_fin, google_event_id, link_meet, estado
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-                RETURNING id
-            """, (
-                titulo, descripcion, fecha_inicio, fecha_fin, evento_id, meet_link, 'programado'
-            ))
-            agendamiento_id = cur.fetchone()[0]
-            conn.commit()
-            logger.info(f"🆕 Evento {evento_id} insertado con ID {agendamiento_id}")
-
-        # 👥 Participantes
-        cur.execute("""
-            SELECT c.id, c.nombre_real AS nombre, c.nickname
-            FROM agendamientos_participantes ap
-            JOIN creadores c ON c.id = ap.creador_id
-            WHERE ap.agendamiento_id = %s
-        """, (agendamiento_id,))
-        participantes = cur.fetchall()
-
-        participantes_ids = [p[0] for p in participantes]  # p[0] = id
-        participantes_out = [
-            {"id": p[0], "nombre": p[1], "nickname": p[2]}
-            for p in participantes
-        ]
-
-        return EventoOut(
-            id=evento_id,
-            titulo=titulo,
-            descripcion=descripcion,
-            inicio=fecha_inicio,
-            fin=fecha_fin,
-            participantes=participantes_out,
-            participantes_ids=participantes_ids,
-            link_meet=meet_link,
-            origen="google_calendar"
-        )
-
-    except HTTPException:
-        raise  # Ya lo lanzamos arriba
-    except Exception as e:
-        logger.error(f"❌ Error al obtener evento {evento_id}: {e}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail="Error interno al consultar el evento.")
-    finally:
-        cur.close()
-        conn.close()
-
-@app.get("/api/eventos", response_model=List[EventoOut])
-def listar_eventos(
-    time_min: Optional[datetime] = None,
-    time_max: Optional[datetime] = None,
-    max_results: Optional[int] = 100
-):
-    try:
-        return obtener_eventos(
-            time_min=time_min,
-            time_max=time_max,
-            max_results=max_results)
-    except Exception as e:
-        logger.error(f"❌ Error al obtener eventos: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
 
 # @app.get("/api/eventos", response_model=List[EventoOut])
 # def listar_eventos():
@@ -624,166 +615,166 @@ def sincronizar():
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.put("/api/eventos/{evento_id}", response_model=EventoOut)
-def editar_evento(evento_id: str, evento: EventoIn):
-    conn = get_connection()
-    cur = conn.cursor()
-    try:
-        if evento.fin <= evento.inicio:
-            raise HTTPException(status_code=400, detail="La fecha de fin debe ser posterior a la fecha de inicio.")
+# @app.put("/api/eventos/{evento_id}", response_model=EventoOut)
+# def editar_evento(evento_id: str, evento: EventoIn):
+#     conn = get_connection()
+#     cur = conn.cursor()
+#     try:
+#         if evento.fin <= evento.inicio:
+#             raise HTTPException(status_code=400, detail="La fecha de fin debe ser posterior a la fecha de inicio.")
+#
+#         # ✅ Obtener el servicio y el evento actual en Google Calendar
+#         service = get_calendar_service()
+#         google_event = service.events().get(calendarId=CALENDAR_ID, eventId=evento_id).execute()
+#
+#         # ✅ Actualizar campos sin borrar lo existente
+#         google_event["summary"] = evento.titulo
+#         google_event["description"] = evento.descripcion or ""
+#         google_event["start"] = {
+#             "dateTime": evento.inicio.isoformat(),
+#             "timeZone": "America/Bogota"
+#         }
+#         google_event["end"] = {
+#             "dateTime": evento.fin.isoformat(),
+#             "timeZone": "America/Bogota"
+#         }
+#
+#         # ⚠️ Solo regenerar Meet si es requerido explícitamente
+#         if getattr(evento, "regenerar_meet", False):
+#             google_event["conferenceData"] = {
+#                 "createRequest": {
+#                     "conferenceSolutionKey": {"type": "hangoutsMeet"},
+#                     "requestId": str(uuid4())
+#                 }
+#             }
+#
+#         try:
+#             updated = service.events().update(
+#                 calendarId=CALENDAR_ID,
+#                 eventId=evento_id,
+#                 body=google_event,
+#                 conferenceDataVersion=1 if "conferenceData" in google_event else 0
+#             ).execute()
+#         except HttpError as e:
+#             if e.resp.status == 400 and "Invalid conference type value" in str(e):
+#                 logger.warning(f"⚠️ Evento {evento_id} sin link de Meet válido, reintentando sin conferenceData...")
+#                 # Eliminar conferenceData y reintentar
+#                 google_event.pop("conferenceData", None)
+#                 updated = service.events().update(
+#                     calendarId=CALENDAR_ID,
+#                     eventId=evento_id,
+#                     body=google_event
+#                 ).execute()
+#             else:
+#                 raise
+#
+#         # ✅ Obtener link de Meet (si existe)
+#         meet_link = None
+#         if 'conferenceData' in updated:
+#             for ep in updated['conferenceData'].get('entryPoints', []):
+#                 if ep.get('entryPointType') == 'video':
+#                     meet_link = ep.get('uri')
+#                     break
+#
+#         # ✅ Guardar o actualizar en base de datos
+#         cur.execute("SELECT id FROM agendamientos WHERE google_event_id = %s", (evento_id,))
+#         agendamiento = cur.fetchone()
+#
+#         if agendamiento:
+#             agendamiento_id = agendamiento[0]
+#             cur.execute("""
+#                 UPDATE agendamientos
+#                 SET fecha_inicio = %s,
+#                     fecha_fin = %s,
+#                     titulo = %s,
+#                     descripcion = %s,
+#                     link_meet = %s,
+#                     actualizado_en = NOW()
+#                 WHERE id = %s
+#             """, (
+#                 evento.inicio,
+#                 evento.fin,
+#                 evento.titulo,
+#                 evento.descripcion,
+#                 meet_link,
+#                 agendamiento_id
+#             ))
+#         else:
+#             cur.execute("""
+#                 INSERT INTO agendamientos (
+#                     titulo, descripcion, fecha_inicio, fecha_fin,
+#                     google_event_id, link_meet, estado
+#                 ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+#                 RETURNING id
+#             """, (
+#                 evento.titulo,
+#                 evento.descripcion,
+#                 evento.inicio,
+#                 evento.fin,
+#                 evento_id,
+#                 meet_link,
+#                 'programado'
+#             ))
+#             agendamiento_id = cur.fetchone()[0]
+#             logger.info(f"🆕 Evento {evento_id} creado en agendamientos con ID {agendamiento_id}")
+#
+#         # ✅ Actualizar participantes
+#         cur.execute("DELETE FROM agendamientos_participantes WHERE agendamiento_id = %s", (agendamiento_id,))
+#         for participante_id in evento.participantes_ids:
+#             cur.execute("""
+#                 INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
+#                 VALUES (%s, %s)
+#             """, (agendamiento_id, participante_id))
+#
+#         conn.commit()
+#
+#         # ✅ Consultar datos de participantes
+#         participantes = []
+#         if evento.participantes_ids:
+#             cur.execute("""
+#                 SELECT id, nombre_real as nombre, nickname
+#                 FROM creadores
+#                 WHERE id = ANY(%s)
+#             """, (evento.participantes_ids,))
+#             participantes = [{"id": row[0], "nombre": row[1], "nickname": row[2]} for row in cur.fetchall()]
+#
+#         return EventoOut(
+#             id=updated['id'],
+#             titulo=updated['summary'],
+#             inicio=isoparse(updated['start']['dateTime']),
+#             fin=isoparse(updated['end']['dateTime']),
+#             descripcion=updated.get('description'),
+#             participantes_ids=evento.participantes_ids,
+#             participantes=participantes,
+#             link_meet=meet_link,
+#             origen="google_calendar"
+#         )
+#
+#     except Exception as e:
+#         logger.error(f"❌ Error al editar evento {evento_id}: {e}")
+#         logger.error(traceback.format_exc())
+#         raise HTTPException(status_code=500, detail=str(e))
+#     finally:
+#         cur.close()
+#         conn.close()
 
-        # ✅ Obtener el servicio y el evento actual en Google Calendar
-        service = get_calendar_service()
-        google_event = service.events().get(calendarId=CALENDAR_ID, eventId=evento_id).execute()
 
-        # ✅ Actualizar campos sin borrar lo existente
-        google_event["summary"] = evento.titulo
-        google_event["description"] = evento.descripcion or ""
-        google_event["start"] = {
-            "dateTime": evento.inicio.isoformat(),
-            "timeZone": "America/Bogota"
-        }
-        google_event["end"] = {
-            "dateTime": evento.fin.isoformat(),
-            "timeZone": "America/Bogota"
-        }
-
-        # ⚠️ Solo regenerar Meet si es requerido explícitamente
-        if getattr(evento, "regenerar_meet", False):
-            google_event["conferenceData"] = {
-                "createRequest": {
-                    "conferenceSolutionKey": {"type": "hangoutsMeet"},
-                    "requestId": str(uuid4())
-                }
-            }
-
-        try:
-            updated = service.events().update(
-                calendarId=CALENDAR_ID,
-                eventId=evento_id,
-                body=google_event,
-                conferenceDataVersion=1 if "conferenceData" in google_event else 0
-            ).execute()
-        except HttpError as e:
-            if e.resp.status == 400 and "Invalid conference type value" in str(e):
-                logger.warning(f"⚠️ Evento {evento_id} sin link de Meet válido, reintentando sin conferenceData...")
-                # Eliminar conferenceData y reintentar
-                google_event.pop("conferenceData", None)
-                updated = service.events().update(
-                    calendarId=CALENDAR_ID,
-                    eventId=evento_id,
-                    body=google_event
-                ).execute()
-            else:
-                raise
-
-        # ✅ Obtener link de Meet (si existe)
-        meet_link = None
-        if 'conferenceData' in updated:
-            for ep in updated['conferenceData'].get('entryPoints', []):
-                if ep.get('entryPointType') == 'video':
-                    meet_link = ep.get('uri')
-                    break
-
-        # ✅ Guardar o actualizar en base de datos
-        cur.execute("SELECT id FROM agendamientos WHERE google_event_id = %s", (evento_id,))
-        agendamiento = cur.fetchone()
-
-        if agendamiento:
-            agendamiento_id = agendamiento[0]
-            cur.execute("""
-                UPDATE agendamientos
-                SET fecha_inicio = %s,
-                    fecha_fin = %s,
-                    titulo = %s,
-                    descripcion = %s,
-                    link_meet = %s,
-                    actualizado_en = NOW()
-                WHERE id = %s
-            """, (
-                evento.inicio,
-                evento.fin,
-                evento.titulo,
-                evento.descripcion,
-                meet_link,
-                agendamiento_id
-            ))
-        else:
-            cur.execute("""
-                INSERT INTO agendamientos (
-                    titulo, descripcion, fecha_inicio, fecha_fin,
-                    google_event_id, link_meet, estado
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-                RETURNING id
-            """, (
-                evento.titulo,
-                evento.descripcion,
-                evento.inicio,
-                evento.fin,
-                evento_id,
-                meet_link,
-                'programado'
-            ))
-            agendamiento_id = cur.fetchone()[0]
-            logger.info(f"🆕 Evento {evento_id} creado en agendamientos con ID {agendamiento_id}")
-
-        # ✅ Actualizar participantes
-        cur.execute("DELETE FROM agendamientos_participantes WHERE agendamiento_id = %s", (agendamiento_id,))
-        for participante_id in evento.participantes_ids:
-            cur.execute("""
-                INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
-                VALUES (%s, %s)
-            """, (agendamiento_id, participante_id))
-
-        conn.commit()
-
-        # ✅ Consultar datos de participantes
-        participantes = []
-        if evento.participantes_ids:
-            cur.execute("""
-                SELECT id, nombre_real as nombre, nickname
-                FROM creadores
-                WHERE id = ANY(%s)
-            """, (evento.participantes_ids,))
-            participantes = [{"id": row[0], "nombre": row[1], "nickname": row[2]} for row in cur.fetchall()]
-
-        return EventoOut(
-            id=updated['id'],
-            titulo=updated['summary'],
-            inicio=isoparse(updated['start']['dateTime']),
-            fin=isoparse(updated['end']['dateTime']),
-            descripcion=updated.get('description'),
-            participantes_ids=evento.participantes_ids,
-            participantes=participantes,
-            link_meet=meet_link,
-            origen="google_calendar"
-        )
-
-    except Exception as e:
-        logger.error(f"❌ Error al editar evento {evento_id}: {e}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        cur.close()
-        conn.close()
-
-
-@app.delete("/api/eventos/{evento_id}")
-def eliminar_evento(evento_id: str):
-    try:
-        service = get_calendar_service()
-        service.events().delete(calendarId=CALENDAR_ID, eventId=evento_id).execute()
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("DELETE FROM agendamientos WHERE google_event_id = %s", (evento_id,))
-        conn.commit()
-        cur.close()
-        conn.close()
-
-        return {"ok": True, "mensaje": f"Evento {evento_id} eliminado"}
-    except Exception as e:
-        logger.error(f"❌ Error al eliminar evento {evento_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# @app.delete("/api/eventos/{evento_id}")
+# def eliminar_evento(evento_id: str):
+#     try:
+#         service = get_calendar_service()
+#         service.events().delete(calendarId=CALENDAR_ID, eventId=evento_id).execute()
+#         conn = get_connection()
+#         cur = conn.cursor()
+#         cur.execute("DELETE FROM agendamientos WHERE google_event_id = %s", (evento_id,))
+#         conn.commit()
+#         cur.close()
+#         conn.close()
+#
+#         return {"ok": True, "mensaje": f"Evento {evento_id} eliminado"}
+#     except Exception as e:
+#         logger.error(f"❌ Error al eliminar evento {evento_id}: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
 
 from fastapi import Depends,status
 from auth import *
@@ -795,7 +786,7 @@ from dateutil.parser import isoparse
 logger = logging.getLogger(__name__)
 
 @app.post("/api/eventos", response_model=EventoOut)
-def crear_evento(evento: EventoIn, usuario_actual: dict = Depends(obtener_usuario_actual)):
+def crear_eventoV0(evento: EventoIn, usuario_actual: dict = Depends(obtener_usuario_actual)):
     conn = get_connection()
     cur = conn.cursor()
     try:
@@ -1038,47 +1029,7 @@ def crear_evento_google_(resumen, descripcion, fecha_inicio, fecha_fin):
 
 from psycopg2.extras import RealDictCursor
 
-@app.get("/api/agendamientos")
-def listar_agendamientos():
-    try:
-        conn = get_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
 
-        # Obtener agendamientos con nombre del responsable
-        cur.execute("""
-            SELECT 
-                a.id, a.titulo, a.descripcion, a.fecha_inicio, a.fecha_fin,
-                a.estado, a.link_meet,
-                u.nombre_completo AS responsable
-            FROM agendamientos a
-            LEFT JOIN admin_usuario u ON u.id = a.responsable_id
-            ORDER BY a.fecha_inicio DESC;
-        """)
-        agendamientos = cur.fetchall()
-
-        # Para cada agendamiento, obtener los participantes (nombre, nickname)
-        for evento in agendamientos:
-            cur.execute("""
-                SELECT c.id, c.nombre_real as nombre, c.nickname
-                FROM agendamientos_participantes ap
-                JOIN creadores c ON c.id = ap.creador_id
-                WHERE ap.agendamiento_id = %s
-            """, (evento["id"],))
-            participantes = cur.fetchall()
-            evento["participantes"] = participantes
-
-            # Opcional: convertir fechas a string ISO si FastAPI no lo hace automáticamente
-            evento["fecha_inicio"] = evento["fecha_inicio"].isoformat() if isinstance(evento["fecha_inicio"], datetime) else evento["fecha_inicio"]
-            evento["fecha_fin"] = evento["fecha_fin"].isoformat() if isinstance(evento["fecha_fin"], datetime) else evento["fecha_fin"]
-
-        cur.close()
-        conn.close()
-        return agendamientos
-
-    except Exception as e:
-        logger.error(f"❌ Error consultando agendamientos: {e}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail="Error consultando agendamientos")
 
 
 @app.get("/debug/version")
