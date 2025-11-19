@@ -4803,3 +4803,55 @@ async def health_check():
         }
     
     return health_info
+
+
+@app.get("/api/perfil_creador/{creador_id}/pre_resumen",
+         tags=["Resumen Pre-Evaluación"],
+         response_model=ResumenEvaluacionOutput)
+def obtener_pre_resumen(creador_id: int, usuario_actual: dict = Depends(obtener_usuario_actual)):
+    perfil = obtener_puntajes_perfil_creador(creador_id)
+    if not perfil:
+        raise HTTPException(status_code=404, detail="Perfil no encontrado")
+
+    # PUNTAJES solo de pre-evaluación
+    estadistica = perfil.get("puntaje_estadistica", 0)
+    general = perfil.get("puntaje_general", 0)
+    habitos = perfil.get("puntaje_habitos", 0)
+
+    score = evaluacion_total_pre(
+        estadistica_score=estadistica,
+        general_score=general,
+        habitos_score=habitos
+    )
+
+    # Diagnóstico parcial
+    diagnostico = "-"
+    try:
+        diagnostico = diagnostico_perfil_creador_pre(creador_id)
+    except:
+        pass
+
+    texto = (
+        f"📊 Pre-Evaluación:\n"
+        f"Puntaje parcial: {score['puntaje_total']}\n"
+        f"Categoría: {score['puntaje_total_categoria']}\n\n"
+        f"🩺 Diagnóstico Preliminar:\n{diagnostico}\n"
+    )
+
+    return ResumenEvaluacionOutput(
+        status="ok",
+        mensaje="Resumen preliminar calculado",
+        puntaje_manual=None,  # NO aplica
+        puntaje_manual_categoria=None,
+        puntaje_estadistica=estadistica,
+        puntaje_estadistica_categoria=perfil.get("puntaje_estadistica_categoria"),
+        puntaje_general=general,
+        puntaje_general_categoria=perfil.get("puntaje_general_categoria"),
+        puntaje_habitos=habitos,
+        puntaje_habitos_categoria=perfil.get("puntaje_habitos_categoria"),
+        puntaje_total=score["puntaje_total"],
+        puntaje_total_categoria=score["puntaje_total_categoria"],
+        diagnostico=texto,
+        mejoras_sugeridas=None  # 👈 Quitado, no se calcula
+    )
+

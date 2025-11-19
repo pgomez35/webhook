@@ -1329,7 +1329,8 @@ def evaluacion_total(
         general_score * 0.15 +
         habitos_score * 0.10
     )
-    total_redondeado = round(total, 2)
+
+    total_redondeado = float(round(total, 2))  # 👈 asegura float limpio
 
     # Asigna la categoría basada en el puntaje total
     if total_redondeado < 1.5:
@@ -1601,3 +1602,156 @@ def mejoras_sugeridas_datos_generales_cortas(edad, genero, idiomas, estudios, pa
 
 
     return "\n".join(sugerencias)
+
+
+def evaluacion_total_pre(
+        estadistica_score=None,
+        general_score=None,
+        habitos_score=None
+):
+    """Combina puntajes parciales en un total (float) y asigna categoría."""
+
+    def to_num(val):
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return 0.0
+
+    # Normalizar a float
+    estadistica_score = to_num(estadistica_score)
+    general_score = to_num(general_score)
+    habitos_score = to_num(habitos_score)
+
+    # Calcular total como float y redondear
+    total = (
+            estadistica_score * 0.33 +
+            general_score * 0.33 +
+            habitos_score * 0.33
+    )
+
+    total = float(round(total, 2))  # 👈 asegura float limpio
+
+    if total < 1.5:
+        categoria = "Muy bajo"
+    elif total < 2.5:
+        categoria = "Bajo"
+    elif total < 3.5:
+        categoria = "Medio"
+    elif total < 4.5:
+        categoria = "Alto"
+    else:
+        categoria = "Excelente"
+
+    return {
+        "puntaje_total": total,  # 👈 float
+        "puntaje_total_categoria": categoria
+    }
+
+
+def diagnostico_perfil_creador_pre(
+    creador_id: int,
+    puntajes_calculados: dict = None
+) -> str:
+    """
+    Diagnóstico preliminar del perfil del creador para Pre-Evaluación.
+    No incluye evaluación cualitativa.
+    Solo usa: datos personales, estadísticas y hábitos.
+    """
+    datos = obtener_datos_mejoras_perfil_creador(creador_id)
+
+    puntajes = {
+        "Calificación parcial total": (
+            (puntajes_calculados or datos).get("puntaje_total"),
+            (puntajes_calculados or datos).get("puntaje_total_categoria"),
+        ),
+        "Calificación Estadísticas": (
+            (puntajes_calculados or datos).get("puntaje_estadistica"),
+            (puntajes_calculados or datos).get("puntaje_estadistica_categoria"),
+        ),
+        "Calificación Datos personales": (
+            (puntajes_calculados or datos).get("puntaje_general"),
+            (puntajes_calculados or datos).get("puntaje_general_categoria"),
+        ),
+        "Calificación Hábitos y preferencias": (
+            (puntajes_calculados or datos).get("puntaje_habitos"),
+            (puntajes_calculados or datos).get("puntaje_habitos_categoria"),
+        ),
+    }
+
+    diagnostico = {
+        "🧑‍🎓 Datos personales y generales": [],
+        "📊 Estadísticas": [],
+        "📅 Preferencias y hábitos": [],
+    }
+
+    # --- Datos personales ---
+
+    actividad = datos.get("actividad_actual", "No especificado")
+    edad = datos.get("edad", "")
+    genero = datos.get("genero", "No especificado")
+    pais = datos.get("pais", "No especificado")
+
+    diagnostico["🧑‍🎓 Datos personales y generales"].extend([
+        f"🎂 Edad: {edad if edad else 'No informado'}",
+        f"👤 Género: {genero}",
+        f"🌎 País: {pais}",
+        f"💼 Actividad actual: {actividad}",
+    ])
+
+    # --- Estadísticas ---
+    seguidores = datos.get("seguidores")
+    siguiendo = datos.get("siguiendo")
+    likes = datos.get("likes")
+    videos = datos.get("videos")
+    duracion = datos.get("duracion_emisiones")
+
+    diagnostico["📊 Estadísticas"].extend([
+        f"👥 Seguidores: {seguidores if seguidores is not None else 'No informado'}",
+        f"➡️ Siguiendo: {siguiendo if siguiendo is not None else 'No informado'}",
+        f"👍 Likes: {likes if likes is not None else 'No informado'}",
+        f"🎥 Videos: {videos if videos is not None else 'No informado'}",
+        f"⏳ Días activo: {duracion if duracion is not None else 'No informado'}",
+    ])
+
+    # --- Preferencias y hábitos ---
+    tiempo = datos.get("tiempo_disponible", "No definido")
+    frecuencia = datos.get("frecuencia_lives", "No definido")
+    experiencia = datos.get("experiencia_otras_plataformas") or {}
+    intencion = datos.get("intencion_trabajo", "No definido")
+
+    experiencia_fmt = [
+        f"{plataforma}: {valor} {'año' if valor == 1 else 'años'}"
+        for plataforma, valor in experiencia.items() if valor
+    ]
+    experiencia_str = ", ".join(experiencia_fmt) if experiencia_fmt else "Sin experiencia"
+
+    diagnostico["📅 Preferencias y hábitos"].extend([
+        f"⌛ Tiempo disponible: {tiempo}",
+        f"📡 Frecuencia de lives: {frecuencia}",
+        f"🌍 Experiencia en otras plataformas: {experiencia_str}",
+        f"💼 Intención de trabajo: {intencion}",
+    ])
+
+    # --- Armado final ---
+    mensaje = ["# 📋 DIAGNÓSTICO PRELIMINAR DEL PERFIL\n"]
+
+    mensaje.append("## 🧑‍🎓 Datos personales y generales")
+    for item in diagnostico["🧑‍🎓 Datos personales y generales"]:
+        mensaje.append(f"- {item}")
+    mensaje.append("")
+
+    mensaje.append("## 📊 Estadísticas del perfil")
+    for item in diagnostico["📊 Estadísticas"]:
+        mensaje.append(f"- {item}")
+    mensaje.append("")
+
+    mensaje.append("## 📅 Preferencias y hábitos")
+    for item in diagnostico["📅 Preferencias y hábitos"]:
+        mensaje.append(f"- {item}")
+    mensaje.append("")
+
+    mensaje.append("# 🏅 Puntajes Parciales del Perfil")
+    for nombre, (_, categoria) in puntajes.items():
+        mensaje.append(f"- {nombre}: {categoria if categoria else 'Sin categoría'}")
+
+    return "\n".join(mensaje)
