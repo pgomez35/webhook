@@ -584,7 +584,7 @@ class ResumenEvaluacionOutput(ResumenEvaluacionInput):
     puntaje_manual_categoria: Optional[str] = None
 
     puntaje_estadistica: Optional[float] = None
-    ppuntaje_estadistica_categoria: Optional[str] = None
+    puntaje_estadistica_categoria: Optional[str] = None
 
     puntaje_general: Optional[float] = None
     puntaje_general_categoria: Optional[str] = None
