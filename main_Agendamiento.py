@@ -3,6 +3,9 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 import pytz
+import secrets
+import string
+
 
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, EmailStr
@@ -13,6 +16,8 @@ from schemas import *
 from auth import obtener_usuario_actual
 
 # Configurar logger
+from tenant import current_tenant
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()   # ← ESTE ES EL ROUTER QUE VAS A IMPORTAR EN main.py
@@ -1054,6 +1059,12 @@ def obtener_info_token_agendamiento(token: str):
         nombre_mostrable=nombre_mostrable,
     )
 
+
+def generar_token_corto(longitud=10):
+    caracteres = string.ascii_letters + string.digits  # A-Z a-z 0-9
+    return ''.join(secrets.choice(caracteres) for _ in range(longitud))
+
+
 @router.post("/api/agendamientos/aspirante/link", response_model=LinkAgendamientoOut)
 def crear_link_agendamiento_aspirante(
     data: CrearLinkAgendamientoIn,
@@ -1065,7 +1076,7 @@ def crear_link_agendamiento_aspirante(
     """
     # (Opcional) aquí puedes validar permisos de usuario_actual.
 
-    token = secrets.token_urlsafe(32)
+    token = generar_token_corto(10)  # o 8 si prefieres
     expiracion = datetime.utcnow() + timedelta(minutes=data.minutos_validez)
 
     with get_connection_context() as conn:
@@ -1094,8 +1105,12 @@ def crear_link_agendamiento_aspirante(
             (token, data.creador_id, data.responsable_id, expiracion)
         )
 
+    subdomain = current_tenant.get() or "test"
+    if subdomain == "public":
+        subdomain = "test"
+
     # Construir URL del front
-    base_front = "https://test.talentum-manager.com/agendar"
+    base_front = f"https://{subdomain}.talentum-manager.com/agendar"
     url = f"{base_front}?token={token}"
 
     return LinkAgendamientoOut(
