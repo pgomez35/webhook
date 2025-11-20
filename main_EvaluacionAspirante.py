@@ -21,11 +21,10 @@ class ActualizarPreEvaluacionIn(BaseModel):
     observaciones_finales: Optional[str] = None
 
 
-ESTADO_MAP = {
-    "Evaluación": 3,
+ESTADO_MAP_PREEVAL = {
+    "No apto": 7,
     "Entrevista": 4,
-    "Invitación": 5,
-    "Rechazado": 7,
+    "Invitar a TikTok": 5,
 }
 ESTADO_DEFAULT = 99  # si no coincide
 
@@ -56,7 +55,7 @@ def actualizar_preevaluacion_perfil(creador_id: int, payload: dict):
 
 
 def actualizar_estado_creador_preevaluacion(creador_id: int, estado: str):
-    estado_id = ESTADO_MAP.get(estado, ESTADO_DEFAULT)
+    estado_id = ESTADO_MAP_PREEVAL.get(estado, ESTADO_DEFAULT)
 
     with get_connection_context() as conn:
         cur = conn.cursor()
@@ -68,35 +67,29 @@ def actualizar_estado_creador_preevaluacion(creador_id: int, estado: str):
         """, (estado_id, creador_id))
 
 
-
 @router.put("/api/perfil_creador/{creador_id}/preevaluacion")
 def actualizar_preevaluacion(
     creador_id: int,
     datos: ActualizarPreEvaluacionIn,
     usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
-    """
-    Actualiza únicamente los campos de PRE-EVALUACIÓN:
-    - estado_evaluacion (No apto / Entrevista / Invitar a TikTok)
-    - usuario_evalua
-    - observaciones_finales
-
-    SIN crear entrevistas ni invitaciones.
-    SIN generar eventos.
-    """
     try:
-        # 1) Actualizar perfil_creador
+        print("➡️ Payload recibido:", datos.dict())
+
         payload = {
             "estado_evaluacion": datos.estado_evaluacion,
             "usuario_evalua": datos.usuario_evalua,
             "observaciones_finales": datos.observaciones_finales,
         }
 
+        print("➡️ Actualizando perfil_creador con:", payload)
         actualizar_preevaluacion_perfil(creador_id, payload)
 
-        # 2) Actualizar creadores.estado_id (si viene estado)
         if datos.estado_evaluacion:
+            print("➡️ Actualizando tabla creadores.estado_id con:", datos.estado_evaluacion)
             actualizar_estado_creador_preevaluacion(creador_id, datos.estado_evaluacion)
+
+        print("✔️ Pre-evaluación actualizada correctamente")
 
         return {
             "status": "ok",
@@ -106,6 +99,7 @@ def actualizar_preevaluacion(
         }
 
     except Exception as e:
+        print("❌ ERROR en actualizar_preevaluacion:", str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -286,7 +280,8 @@ def enviar_mensaje_no_apto(
             numero_destino=telefono,
             nombre_plantilla="no_apto_proceso_v2",
             codigo_idioma="es_CO",
-            parametros=parametros
+            parametros=parametros,  # [nombre, business_name]
+            body_vars_count=2  # 👈 LOS 2 VAN AL BODY, SIN BOTÓN
         )
 
         return {
