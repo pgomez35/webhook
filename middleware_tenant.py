@@ -26,6 +26,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
     #
     #     response = await call_next(request)
     #     return response
+
     async def dispatch(self, request: Request, call_next):
         tenant_name = self._resolve_tenant_name(request)
         tenant_schema = self._build_schema_name(tenant_name)
@@ -41,14 +42,27 @@ class TenantMiddleware(BaseHTTPMiddleware):
             if cuenta:
                 current_token.set(cuenta["access_token"])
                 current_phone_id.set(cuenta["phone_number_id"])
+
+                # 👇 nuevo: nombre comercial de la cuenta WABA
+                business_name = (
+                        cuenta.get("business_name")
+                        or cuenta.get("nombre")
+                        or tenant_name
+                )
+                current_business_name.set(business_name)
+                request.state.business_name = business_name
             else:
                 print(f"⚠️ No hay credenciales WABA para tenant '{tenant_schema}'")
                 current_token.set(None)
                 current_phone_id.set(None)
+                current_business_name.set(None)
+                request.state.business_name = None
         except Exception as e:
             print(f"❌ Error obteniendo credenciales WABA para tenant '{tenant_schema}': {e}")
             current_token.set(None)
             current_phone_id.set(None)
+            current_business_name.set(None)
+            request.state.business_name = None
 
         # 3️⃣ Continuar request
         response = await call_next(request)

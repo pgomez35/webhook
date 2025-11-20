@@ -4,6 +4,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from auth import obtener_usuario_actual
+from enviar_msg_wp import enviar_plantilla_generica_parametros
 
 from main_mensajeria_whatsapp import  enviar_mensaje
 from tenant import current_tenant
@@ -11,7 +12,8 @@ from tenant import current_tenant
 router = APIRouter()   # ← ESTE ES EL ROUTER QUE VAS A IMPORTAR EN main.py
 
 
-from DataBase import get_connection_context
+from DataBase import get_connection_context, obtener_cuenta_por_subdominio
+
 
 class ActualizarPreEvaluacionIn(BaseModel):
     estado_evaluacion: Optional[str] = None  # "No apto" | "Entrevista" | "Invitar a TikTok"
@@ -218,20 +220,21 @@ def crear_y_enviar_link_agendamiento_aspirante(
 class EnviarNoAptoIn(BaseModel):
     creador_id: int
 
-
 @router.post("/api/aspirantes/no_apto/enviar")
 def enviar_mensaje_no_apto(
         data: EnviarNoAptoIn,
         usuario_actual: dict = Depends(obtener_usuario_actual)
 ):
     """
-    Envía un mensaje por WhatsApp indicando que el aspirante NO continúa en el proceso.
+    Envía mensaje de NO APTO.
+    1) Intenta mensaje simple.
+    2) Si falla por ventana 24h → envía plantilla no_apto_proceso_v2.
     """
 
     with get_connection_context() as conn:
         cur = conn.cursor()
 
-        # 1) Obtener datos del creador
+        # 1) Obtener datos del aspirante
         cur.execute("""
             SELECT id, nombre_real, telefono
             FROM creadores
@@ -247,34 +250,141 @@ def enviar_mensaje_no_apto(
         if not telefono:
             raise HTTPException(status_code=400, detail="El aspirante no tiene número registrado.")
 
-        # 2) Construir mensaje
+        # 2) Mensaje estándar (primer intento)
         mensaje = (
             f"Hola {nombre or ''} 👋\n\n"
             "Después de revisar tu información inicial, "
             "hemos determinado que por ahora *no cumples con los requisitos* "
             "para continuar en el proceso de selección de creadores de TikTok Live.\n\n"
-            "Esto *no refleja tu talento* ni tu potencial. Te invitamos a seguir creciendo "
-            "y a aplicar nuevamente más adelante si lo deseas.\n\n"
-            "Muchas gracias por tu tiempo y tu interés 🙌"
+            "Esto *no refleja tu talento* ni tu potencial. "
+            "Te invitamos a seguir creciendo y a aplicar nuevamente más adelante.\n\n"
+            "Gracias por tu tiempo 🙌"
         )
 
-        # 3) Enviar mensaje por WhatsApp
-        try:
-            enviar_mensaje(telefono, mensaje)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error enviando mensaje: {str(e)}")
+    # =============================
+    #   3) Intento 1: mensaje simple
+    # =============================
+    try:
+        resp = enviar_mensaje(telefono, mensaje)
+        return {
+            "status": "ok",
+            "tipo_envio": "mensaje_texto",
+            "mensaje": "Mensaje simple enviado correctamente",
+            "telefono": telefono
+        }
 
-        # # 4) (Opcional) Actualizar estado en BD
-        # cur.execute("""
-        #     UPDATE perfil_creador
-        #     SET estado_evaluacion = 'No apto'
-        #     WHERE creador_id = %s
-        # """, (creador_id,))
+    except Exception as e:
+        # Analizar error de ventana de 24h
+        err_str = str(e)
 
-    return {
-        "status": "ok",
-        "mensaje": "Mensaje de no apto enviado correctamente",
-        "telefono": telefono
-    }
+        if "131047" not in err_str and "24 hours" not in err_str:
+            # Error REAL → no continuar
+            raise HTTPException(status_code=500, detail=f"Error enviando mensaje: {err_str}")
+
+        print("⚠️ Mensaje simple bloqueado por ventana de 24h. Intentando plantilla...")
+
+    # ===================================================
+    # 4) Intento 2: plantilla fallback no_apto_proceso_v2
+    # ===================================================
+    try:
+        subdominio = current_tenant.get()
+        cuenta = obtener_cuenta_por_subdominio(subdominio)
+
+        token = cuenta["access_token"]
+        phone_id = cuenta["phone_number_id"]
+        business_name = (
+            cuenta.get("business_name")
+            or cuenta.get("nombre")
+            or "nuestra agencia"
+        )
+
+        # Parámetros plantilla: {{1}} = nombre, {{2}} = agency
+        parametros = [
+            nombre or "creador",
+            business_name
+        ]
+
+        codigo, respuesta_api = enviar_plantilla_generica_parametros(
+            token=token,
+            phone_number_id=phone_id,
+            numero_destino=telefono,
+            nombre_plantilla="no_apto_proceso_v2",
+            codigo_idioma="es_CO",
+            parametros=parametros
+        )
+
+        return {
+            "status": "ok",
+            "tipo_envio": "plantilla",
+            "codigo_meta": codigo,
+            "respuesta_api": respuesta_api,
+            "telefono": telefono
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudo enviar ni mensaje simple ni plantilla: {str(e)}"
+        )
+
+
+
+# @router.post("/api/aspirantes/no_apto/enviar")
+# def enviar_mensaje_no_apto(
+#         data: EnviarNoAptoIn,
+#         usuario_actual: dict = Depends(obtener_usuario_actual)
+# ):
+#     """
+#     Envía un mensaje por WhatsApp indicando que el aspirante NO continúa en el proceso.
+#     """
+#
+#     with get_connection_context() as conn:
+#         cur = conn.cursor()
+#
+#         # 1) Obtener datos del creador
+#         cur.execute("""
+#             SELECT id, nombre_real, telefono
+#             FROM creadores
+#             WHERE id = %s
+#         """, (data.creador_id,))
+#
+#         row = cur.fetchone()
+#         if not row:
+#             raise HTTPException(status_code=404, detail="Aspirante no encontrado.")
+#
+#         creador_id, nombre, telefono = row
+#
+#         if not telefono:
+#             raise HTTPException(status_code=400, detail="El aspirante no tiene número registrado.")
+#
+#         # 2) Construir mensaje
+#         mensaje = (
+#             f"Hola {nombre or ''} 👋\n\n"
+#             "Después de revisar tu información inicial, "
+#             "hemos determinado que por ahora *no cumples con los requisitos* "
+#             "para continuar en el proceso de selección de creadores de TikTok Live.\n\n"
+#             "Esto *no refleja tu talento* ni tu potencial. Te invitamos a seguir creciendo "
+#             "y a aplicar nuevamente más adelante si lo deseas.\n\n"
+#             "Muchas gracias por tu tiempo y tu interés 🙌"
+#         )
+#
+#         # 3) Enviar mensaje por WhatsApp
+#         try:
+#             enviar_mensaje(telefono, mensaje)
+#         except Exception as e:
+#             raise HTTPException(status_code=500, detail=f"Error enviando mensaje: {str(e)}")
+#
+#         # # 4) (Opcional) Actualizar estado en BD
+#         # cur.execute("""
+#         #     UPDATE perfil_creador
+#         #     SET estado_evaluacion = 'No apto'
+#         #     WHERE creador_id = %s
+#         # """, (creador_id,))
+#
+#     return {
+#         "status": "ok",
+#         "mensaje": "Mensaje de no apto enviado correctamente",
+#         "telefono": telefono
+#     }
 
 
