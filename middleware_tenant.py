@@ -4,7 +4,8 @@ from typing import Optional
 from fastapi import HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from tenant import current_tenant
+from tenant import *
+from DataBase import obtener_cuenta_por_subdominio
 
 TENANT_HEADER = "x-tenant-name"
 INVALID_TENANT_MESSAGE = (
@@ -14,15 +15,42 @@ BLACKLISTED_SUBDOMAINS = {"www", "api"}
 
 
 class TenantMiddleware(BaseHTTPMiddleware):
+    # async def dispatch(self, request: Request, call_next):
+    #     tenant_name = self._resolve_tenant_name(request)
+    #     # Normalizar tenant_name para usarlo como schema (sin prefijo 'agencia_')
+    #     tenant_schema = self._build_schema_name(tenant_name)
+    #
+    #     current_tenant.set(tenant_schema)
+    #     request.state.agencia = tenant_schema
+    #     request.state.tenant_name = tenant_name
+    #
+    #     response = await call_next(request)
+    #     return response
     async def dispatch(self, request: Request, call_next):
         tenant_name = self._resolve_tenant_name(request)
-        # Normalizar tenant_name para usarlo como schema (sin prefijo 'agencia_')
         tenant_schema = self._build_schema_name(tenant_name)
 
+        # 1️⃣ Setear tenant actual (schema BD)
         current_tenant.set(tenant_schema)
         request.state.agencia = tenant_schema
         request.state.tenant_name = tenant_name
 
+        # 2️⃣ Obtener credenciales por subdominio/tenant
+        try:
+            cuenta = obtener_cuenta_por_subdominio(tenant_schema)
+            if cuenta:
+                current_token.set(cuenta["access_token"])
+                current_phone_id.set(cuenta["phone_number_id"])
+            else:
+                print(f"⚠️ No hay credenciales WABA para tenant '{tenant_schema}'")
+                current_token.set(None)
+                current_phone_id.set(None)
+        except Exception as e:
+            print(f"❌ Error obteniendo credenciales WABA para tenant '{tenant_schema}': {e}")
+            current_token.set(None)
+            current_phone_id.set(None)
+
+        # 3️⃣ Continuar request
         response = await call_next(request)
         return response
 
