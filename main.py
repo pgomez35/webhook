@@ -3748,8 +3748,9 @@ def crear_agendamiento(
                 fin=fecha_fin,
                 participantes_ids=[creador_id],
             )
-            evento_creado = crear_evento(evento_payload, usuario_actual)
-            evento_id = getattr(evento_creado, "id", None)
+            # cambiado nov 19
+            # evento_creado = crear_evento(evento_payload, usuario_actual)
+            # evento_id = getattr(evento_creado, "id", None)
         except Exception as e:
             logger.warning(f"⚠️ Error al crear evento en calendario: {e}")
             evento_id = None
@@ -3816,14 +3817,14 @@ def eliminar_agendamiento(
         # 2. Eliminar el agendamiento
         cur.execute("DELETE FROM entrevista_agendamiento WHERE id = %s", (agendamiento_id,))
         conn.commit()
-
+        # revisar 19 nov
         # 3. Si tenía evento asociado, borrarlo de Google Calendar
-        if evento_id:
-            try:
-                eliminar_evento(evento_id)
-            except Exception as e:
-                # No hacemos rollback del DELETE si falla el Calendar
-                logger.warning(f"⚠️ No se pudo eliminar el evento {evento_id} en Calendar: {e}")
+        # if evento_id:
+        #     try:
+        #         eliminar_evento(evento_id)
+        #     except Exception as e:
+        #         # No hacemos rollback del DELETE si falla el Calendar
+        #         logger.warning(f"⚠️ No se pudo eliminar el evento {evento_id} en Calendar: {e}")
 
         return {
             "ok": True,
@@ -4809,49 +4810,33 @@ async def health_check():
          tags=["Resumen Pre-Evaluación"],
          response_model=ResumenEvaluacionOutput)
 def obtener_pre_resumen(creador_id: int, usuario_actual: dict = Depends(obtener_usuario_actual)):
-    perfil = obtener_puntajes_perfil_creador(creador_id)
-    if not perfil:
+
+    # Llamamos a la función maestra que ya calcula TODO
+    resultado = evaluar_perfil_pre(creador_id)
+
+    if resultado.get("status") != "ok":
         raise HTTPException(status_code=404, detail="Perfil no encontrado")
-
-    # PUNTAJES solo de pre-evaluación
-    estadistica = perfil.get("puntaje_estadistica", 0)
-    general = perfil.get("puntaje_general", 0)
-    habitos = perfil.get("puntaje_habitos", 0)
-
-    score = evaluacion_total_pre(
-        estadistica_score=estadistica,
-        general_score=general,
-        habitos_score=habitos
-    )
-
-    # Diagnóstico parcial
-    diagnostico = "-"
-    try:
-        diagnostico = diagnostico_perfil_creador_pre(creador_id)
-    except:
-        pass
-
-    texto = (
-        f"📊 Pre-Evaluación:\n"
-        f"Puntaje parcial: {score['puntaje_total']}\n"
-        f"Categoría: {score['puntaje_total_categoria']}\n\n"
-        f"🩺 Diagnóstico Preliminar:\n{diagnostico}\n"
-    )
 
     return ResumenEvaluacionOutput(
         status="ok",
         mensaje="Resumen preliminar calculado",
-        puntaje_manual=None,  # NO aplica
-        puntaje_manual_categoria=None,
-        puntaje_estadistica=estadistica,
-        puntaje_estadistica_categoria=perfil.get("puntaje_estadistica_categoria"),
-        puntaje_general=general,
-        puntaje_general_categoria=perfil.get("puntaje_general_categoria"),
-        puntaje_habitos=habitos,
-        puntaje_habitos_categoria=perfil.get("puntaje_habitos_categoria"),
-        puntaje_total=score["puntaje_total"],
-        puntaje_total_categoria=score["puntaje_total_categoria"],
-        diagnostico=texto,
-        mejoras_sugeridas=None  # 👈 Quitado, no se calcula
+
+        puntaje_estadistica=resultado.get("puntaje_estadistica"),
+        puntaje_estadistica_categoria=resultado.get("puntaje_estadistica_categoria"),
+
+        puntaje_general=resultado.get("puntaje_general"),
+        puntaje_general_categoria=resultado.get("puntaje_general_categoria"),
+
+        puntaje_habitos=resultado.get("puntaje_habitos"),
+        puntaje_habitos_categoria=resultado.get("puntaje_habitos_categoria"),
+
+        puntaje_manual=resultado.get("puntaje_manual"),  # siempre None
+        puntaje_manual_categoria=resultado.get("puntaje_manual_categoria"),  # siempre None
+
+        puntaje_total=resultado.get("puntaje_total"),
+        puntaje_total_categoria=resultado.get("puntaje_total_categoria"),
+
+        diagnostico=None,          # Pre-evaluación NO genera diagnóstico largo
+        mejoras_sugeridas=None     # Se mantiene vacío
     )
 
