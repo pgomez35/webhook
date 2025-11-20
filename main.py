@@ -4811,12 +4811,31 @@ async def health_check():
          response_model=ResumenEvaluacionOutput)
 def obtener_pre_resumen(creador_id: int, usuario_actual: dict = Depends(obtener_usuario_actual)):
 
-    # Llamamos a la función maestra que ya calcula TODO
+    # Llamamos a la función maestra (puntajes parciales)
     resultado = evaluar_perfil_pre(creador_id)
 
     if resultado.get("status") != "ok":
         raise HTTPException(status_code=404, detail="Perfil no encontrado")
 
+    # =======================================
+    # Obtener diagnóstico parcial
+    # =======================================
+    try:
+        diagnostico = diagnostico_perfil_creador_pre(creador_id)
+    except Exception:
+        diagnostico = "-"
+
+    # Texto final para mostrar en front
+    texto = (
+        f"📊 Pre-Evaluación:\n"
+        f"Puntaje parcial: {resultado.get('puntaje_total')}\n"
+        f"Categoría: {resultado.get('puntaje_total_categoria')}\n\n"
+        f"🩺 Diagnóstico Preliminar:\n{diagnostico}\n"
+    )
+
+    # =======================================
+    # Respuesta final en formato ResumenEvaluacionOutput
+    # =======================================
     return ResumenEvaluacionOutput(
         status="ok",
         mensaje="Resumen preliminar calculado",
@@ -4830,13 +4849,64 @@ def obtener_pre_resumen(creador_id: int, usuario_actual: dict = Depends(obtener_
         puntaje_habitos=resultado.get("puntaje_habitos"),
         puntaje_habitos_categoria=resultado.get("puntaje_habitos_categoria"),
 
-        puntaje_manual=resultado.get("puntaje_manual"),  # siempre None
-        puntaje_manual_categoria=resultado.get("puntaje_manual_categoria"),  # siempre None
+        puntaje_manual=None,
+        puntaje_manual_categoria=None,
 
         puntaje_total=resultado.get("puntaje_total"),
         puntaje_total_categoria=resultado.get("puntaje_total_categoria"),
 
-        diagnostico=None,          # Pre-evaluación NO genera diagnóstico largo
-        mejoras_sugeridas=None     # Se mantiene vacío
+        diagnostico=texto,
+        mejoras_sugeridas=None  # no aplica en pre-evaluación
     )
+
+
+# @app.get("/api/perfil_creador/{creador_id}/pre_resumen",
+#          tags=["Resumen Pre-Evaluación"],
+#          response_model=ResumenEvaluacionOutput)
+# def obtener_pre_resumen(creador_id: int, usuario_actual: dict = Depends(obtener_usuario_actual)):
+#     perfil = obtener_puntajes_perfil_creador(creador_id)
+#     if not perfil:
+#         raise HTTPException(status_code=404, detail="Perfil no encontrado")
+#
+#     # PUNTAJES solo de pre-evaluación
+#     estadistica = perfil.get("puntaje_estadistica", 0)
+#     general = perfil.get("puntaje_general", 0)
+#     habitos = perfil.get("puntaje_habitos", 0)
+#
+#     score = evaluacion_total_pre(
+#         estadistica_score=estadistica,
+#         general_score=general,
+#         habitos_score=habitos
+#     )
+#
+#     # Diagnóstico parcial
+#     diagnostico = "-"
+#     try:
+#         diagnostico = diagnostico_perfil_creador_pre(creador_id)
+#     except:
+#         pass
+#
+#     texto = (
+#         f"📊 Pre-Evaluación:\n"
+#         f"Puntaje parcial: {score['puntaje_total']}\n"
+#         f"Categoría: {score['puntaje_total_categoria']}\n\n"
+#         f"🩺 Diagnóstico Preliminar:\n{diagnostico}\n"
+#     )
+#
+#     return ResumenEvaluacionOutput(
+#         status="ok",
+#         mensaje="Resumen preliminar calculado",
+#         puntaje_manual=None,  # NO aplica
+#         puntaje_manual_categoria=None,
+#         puntaje_estadistica=estadistica,
+#         puntaje_estadistica_categoria=perfil.get("puntaje_estadistica_categoria"),
+#         puntaje_general=general,
+#         puntaje_general_categoria=perfil.get("puntaje_general_categoria"),
+#         puntaje_habitos=habitos,
+#         puntaje_habitos_categoria=perfil.get("puntaje_habitos_categoria"),
+#         puntaje_total=score["puntaje_total"],
+#         puntaje_total_categoria=score["puntaje_total_categoria"],
+#         diagnostico=texto,
+#         mejoras_sugeridas=None  # 👈 Quitado, no se calcula
+#     )
 
