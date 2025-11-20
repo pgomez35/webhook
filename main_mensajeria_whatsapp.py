@@ -108,6 +108,11 @@ def enviar_mensaje(numero: str, texto: str):
         try:
             token = current_token.get()
             phone_id = current_phone_id.get()
+
+            print("🔑 TOKEN ACTUAL:", token)
+            print("📱 PHONE_ID ACTUAL:", phone_id)
+
+
         except LookupError as e:
             print(f"❌ Contexto de tenant no disponible al enviar mensaje a {numero}: {e}")
             raise LookupError(f"Contexto de tenant no disponible: {e}") from e
