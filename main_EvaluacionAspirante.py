@@ -140,10 +140,10 @@ def crear_y_enviar_link_agendamiento_aspirante(
 ):
     """
     Genera un link de agendamiento y lo envía por WhatsApp al aspirante.
-    El número de teléfono se obtiene automáticamente desde `creadores`.
+    Se obtiene el access_token y phone_number_id desde la cuenta WABA del tenant.
     """
 
-    # 1) Token corto
+    # 1) Token corto y expiración
     token = generar_token_corto(10)
     expiracion = datetime.utcnow() + timedelta(minutes=data.minutos_validez)
 
@@ -153,7 +153,7 @@ def crear_y_enviar_link_agendamiento_aspirante(
         # 2) Obtener teléfono y nombre del aspirante
         cur.execute(
             """
-            SELECT nombre_real, telefono
+            SELECT COALESCE(nickname, nombre_real) AS nombre, telefono
             FROM creadores
             WHERE id = %s
             """,
@@ -169,7 +169,7 @@ def crear_y_enviar_link_agendamiento_aspirante(
         if not telefono:
             raise HTTPException(400, "El aspirante no tiene teléfono registrado.")
 
-        # 3) Guardar token
+        # 3) Guardar token en DB
         cur.execute(
             """
             INSERT INTO link_agendamiento_tokens (
@@ -181,28 +181,81 @@ def crear_y_enviar_link_agendamiento_aspirante(
         )
 
     # 4) Armar URL dinámica con tenant
-    subdomain = current_tenant.get() or "test"
-    if subdomain == "public":
-        subdomain = "test"
+    subdominio = current_tenant.get() or "test"
+    if subdominio == "public":
+        subdominio = "test"
 
-    base_front = f"https://{subdomain}.talentum-manager.com/agendar"
+    base_front = f"https://{subdominio}.talentum-manager.com/agendar"
     url = f"{base_front}?token={token}"
 
-    # 5) Armar mensaje
-    mensaje = (
-        f"Hola {nombre_creador} 👋\n\n"
-        "Queremos continuar tu proceso en la agencia.\n\n"
-        "📅 Agenda tu entrevista aquí:\n"
-        f"{url}\n\n"
-        "Selecciona el horario que prefieras.\n"
-        # "✨ Prestige Agency"
+    # =============================
+    # 5) Obtener credenciales WABA del tenant (access_token, phone_id, business_name)
+    # =============================
+    subdominio_cfg = current_tenant.get()
+    cuenta = obtener_cuenta_por_subdominio(subdominio_cfg)
+
+    if not cuenta:
+        raise HTTPException(
+            status_code=500,
+            detail=f"No hay credenciales WABA para el tenant '{subdominio_cfg}'."
+        )
+
+    access_token = cuenta.get("access_token")
+    phone_id = cuenta.get("phone_number_id")
+    business_name = (
+        cuenta.get("business_name")
+        or cuenta.get("nombre")
+        or "nuestra agencia"
     )
 
-    # 6) Enviar WhatsApp
+    if not access_token or not phone_id:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Credenciales WABA incompletas para el tenant '{subdominio_cfg}'."
+        )
+
+    # 6) Preparar parámetros para la plantilla "agenda_tu_entrevista"
+    #    Asumimos: plantilla tiene 1 placeholder en el body para el nombre
+    #    y un CTA URL configurado en la plantilla (por lo que el wrapper
+    #    recibirá las variables restantes para el CTA).
+    nombre_plantilla = "agenda_tu_entrevista"
+    codigo_idioma = "es_CO"
+    # orden: primero las variables del body, luego las variables del CTA (si aplica)
+    parametros = [nombre_creador, url, business_name]  # ajusta según tu plantilla
+
     try:
-        enviar_mensaje(telefono, mensaje)
+        # Llamamos al wrapper que envía la plantilla. Pasamos el access_token de la WABA.
+        # body_vars_count indica cuántos elementos de `parametros` pertenecen al body.
+        # En este ejemplo ponemos body_vars_count=1 (solo {0} en body).
+        codigo, respuesta_api = enviar_plantilla_generica_parametros(
+            access_token=access_token,
+            phone_number_id=phone_id,
+            numero_destino=telefono,
+            nombre_plantilla=nombre_plantilla,
+            codigo_idioma=codigo_idioma,
+            parametros=parametros,
+            body_vars_count=1
+        )
+
+        # Tu wrapper puede devolver (codigo, respuesta). Consideramos 200 como OK.
+        if codigo != 200:
+            # forza fallback al mensaje simple si no fue 200
+            raise Exception(f"Envio plantilla falló, codigo={codigo}, resp={respuesta_api}")
+
     except Exception as e:
-        raise HTTPException(500, f"Token generado, pero fallo al enviar WhatsApp: {e}")
+        # Fallback: enviar mensaje de texto simple con el enlace
+        try:
+            mensaje = (
+                f"Hola {nombre_creador} 👋\n\n"
+                "Queremos continuar tu proceso en la agencia.\n\n"
+                "📅 Agenda tu audición en TikTok LIVE aquí:\n"
+                f"{url}\n\n"
+                "Selecciona el horario que prefieras. Si necesitas cambiar la cita, contáctanos."
+            )
+            enviar_mensaje(telefono, mensaje)
+        except Exception as ex_send:
+            # Si falla todo, reportamos error para que el cliente lo vea
+            raise HTTPException(500, f"Token generado, fallo al enviar plantilla y fallback a texto: {e} / {ex_send}")
 
     # 7) Respuesta
     return LinkAgendamientoOut(
@@ -210,6 +263,87 @@ def crear_y_enviar_link_agendamiento_aspirante(
         url=url,
         expiracion=expiracion,
     )
+
+# @router.post("/api/agendamientos/aspirante/enviar", response_model=LinkAgendamientoOut)
+# def crear_y_enviar_link_agendamiento_aspirante(
+#     data: CrearLinkAgendamientoIn,
+#     usuario_actual: dict = Depends(obtener_usuario_actual),
+# ):
+#     """
+#     Genera un link de agendamiento y lo envía por WhatsApp al aspirante.
+#     El número de teléfono se obtiene automáticamente desde `creadores`.
+#     """
+#
+#     # 1) Token corto
+#     token = generar_token_corto(10)
+#     expiracion = datetime.utcnow() + timedelta(minutes=data.minutos_validez)
+#
+#     with get_connection_context() as conn:
+#         cur = conn.cursor()
+#
+#         # 2) Obtener teléfono y nombre del aspirante
+#         cur.execute(
+#             """
+#             SELECT COALESCE(nickname, nombre_real) AS nombre, telefono
+#             FROM creadores
+#             WHERE id = %s
+#             """,
+#             (data.creador_id,)
+#         )
+#         row = cur.fetchone()
+#
+#         if not row:
+#             raise HTTPException(404, "El aspirante no existe.")
+#
+#         nombre_creador, telefono = row
+#
+#         if not telefono:
+#             raise HTTPException(400, "El aspirante no tiene teléfono registrado.")
+#
+#         # 3) Guardar token
+#         cur.execute(
+#             """
+#             INSERT INTO link_agendamiento_tokens (
+#                 token, creador_id, responsable_id, expiracion, usado
+#             )
+#             VALUES (%s, %s, %s, %s, FALSE)
+#             """,
+#             (token, data.creador_id, data.responsable_id, expiracion)
+#         )
+#
+#     # 4) Armar URL dinámica con tenant
+#     subdomain = current_tenant.get() or "test"
+#     if subdomain == "public":
+#         subdomain = "test"
+#
+#     base_front = f"https://{subdomain}.talentum-manager.com/agendar"
+#     url = f"{base_front}?token={token}"
+#
+#     # 5) Armar mensaje
+#     mensaje = (
+#         f"Hola {nombre_creador} 👋\n\n"
+#         "Queremos continuar tu proceso en la agencia.\n\n"
+#         "📅 Agenda tu entrevista aquí:\n"
+#         f"{url}\n\n"
+#         "Selecciona el horario que prefieras.\n"
+#         # "✨ Prestige Agency"
+#     )
+#
+#     # 6) Enviar WhatsApp
+#     try:
+#         enviar_mensaje(telefono, mensaje)
+#     except Exception as e:
+#         raise HTTPException(500, f"Token generado, pero fallo al enviar WhatsApp: {e}")
+#
+#     # 7) Respuesta
+#     return LinkAgendamientoOut(
+#         token=token,
+#         url=url,
+#         expiracion=expiracion,
+#     )
+
+
+
 
 class EnviarNoAptoIn(BaseModel):
     creador_id: int
