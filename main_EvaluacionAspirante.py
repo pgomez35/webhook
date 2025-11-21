@@ -79,7 +79,7 @@ def actualizar_preevaluacion(
         payload = {
             "estado_evaluacion": datos.estado_evaluacion,
             "usuario_evalua": datos.usuario_evalua,
-            "observaciones_finales": datos.observaciones_finales,
+            # "observaciones_finales": datos.observaciones_finales,
         }
 
         print("➡️ Actualizando perfil_creador con:", payload)
@@ -230,9 +230,11 @@ def enviar_mensaje_no_apto(
 
         # 1) Obtener datos del aspirante
         cur.execute("""
-            SELECT id, nombre_real, telefono
-            FROM creadores
-            WHERE id = %s
+                    SELECT id,
+                           COALESCE(nickname, nombre_real) AS nombre,
+                           telefono
+                    FROM creadores
+                    WHERE id = %s;
         """, (data.creador_id,))
         row = cur.fetchone()
 

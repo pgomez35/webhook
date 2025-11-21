@@ -999,11 +999,74 @@ class TokenInfoOut(BaseModel):
     zona_horaria: Optional[str] = None
     nombre_mostrable: Optional[str] = None
 
+# @router.get("/api/agendamientos/aspirante/token-info", response_model=TokenInfoOut)
+# def obtener_info_token_agendamiento(token: str):
+#     """
+#     Devuelve info básica asociada al token: creador, responsable y zona horaria
+#     guardada en perfil_creador (si existe).
+#     """
+#     with get_connection_context() as conn:
+#         cur = conn.cursor()
+#
+#         # 1) Buscar token
+#         cur.execute(
+#             """
+#             SELECT token, creador_id, responsable_id, expiracion, usado
+#             FROM link_agendamiento_tokens
+#             WHERE token = %s
+#             """,
+#             (token,)
+#         )
+#         row = cur.fetchone()
+#         if not row:
+#             raise HTTPException(status_code=404, detail="Token no válido.")
+#
+#         _, creador_id, responsable_id, expiracion, usado = row
+#
+#         if usado:
+#             raise HTTPException(status_code=400, detail="Este enlace ya fue utilizado.")
+#         if expiracion < datetime.utcnow():
+#             raise HTTPException(status_code=400, detail="Este enlace ha expirado.")
+#
+#         # 2) Buscar zona horaria en perfil_creador
+#         cur.execute(
+#             """
+#             SELECT zona_horaria
+#             FROM perfil_creador
+#             WHERE creador_id = %s
+#             """,
+#             (creador_id,)
+#         )
+#         row_pc = cur.fetchone()
+#         zona_horaria = row_pc[0] if row_pc else None
+#
+#         # 3) Nombre mostrable (opcional)
+#         cur.execute(
+#             """
+#             SELECT COALESCE(NULLIF(nombre_real, ''), nickname)
+#             FROM creadores
+#             WHERE id = %s
+#             """,
+#             (creador_id,)
+#         )
+#         row_cr = cur.fetchone()
+#         nombre_mostrable = row_cr[0] if row_cr else None
+#
+#     return TokenInfoOut(
+#         creador_id=creador_id,
+#         responsable_id=responsable_id,
+#         zona_horaria=zona_horaria,
+#         nombre_mostrable=nombre_mostrable,
+#     )
+
 @router.get("/api/agendamientos/aspirante/token-info", response_model=TokenInfoOut)
 def obtener_info_token_agendamiento(token: str):
     """
-    Devuelve info básica asociada al token: creador, responsable y zona horaria
-    guardada en perfil_creador (si existe).
+    Devuelve info básica asociada al token.
+    Incluye mensajes claros para problemas comunes:
+    - Token inválido
+    - Token ya usado
+    - Token expirado
     """
     with get_connection_context() as conn:
         cur = conn.cursor()
@@ -1019,16 +1082,37 @@ def obtener_info_token_agendamiento(token: str):
         )
         row = cur.fetchone()
         if not row:
-            raise HTTPException(status_code=404, detail="Token no válido.")
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "🔗 El enlace no es válido.\n"
+                    "Por favor solicita un nuevo enlace de agendamiento."
+                )
+            )
 
         _, creador_id, responsable_id, expiracion, usado = row
 
+        # 2) Token usado
         if usado:
-            raise HTTPException(status_code=400, detail="Este enlace ya fue utilizado.")
-        if expiracion < datetime.utcnow():
-            raise HTTPException(status_code=400, detail="Este enlace ha expirado.")
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "⚠️ Este enlace ya fue utilizado.\n"
+                    "Si necesitas agendar otra cita, solicita un nuevo enlace."
+                )
+            )
 
-        # 2) Buscar zona horaria en perfil_creador
+        # 3) Token expirado
+        if expiracion < datetime.utcnow():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "⏰ Este enlace ha expirado.\n"
+                    "Solicita un nuevo enlace para continuar con tu agendamiento."
+                )
+            )
+
+        # 4) Zona horaria desde perfil_creador
         cur.execute(
             """
             SELECT zona_horaria
@@ -1040,7 +1124,7 @@ def obtener_info_token_agendamiento(token: str):
         row_pc = cur.fetchone()
         zona_horaria = row_pc[0] if row_pc else None
 
-        # 3) Nombre mostrable (opcional)
+        # 5) Nombre mostrable
         cur.execute(
             """
             SELECT COALESCE(NULLIF(nombre_real, ''), nickname)
@@ -1119,10 +1203,183 @@ def crear_link_agendamiento_aspirante(
         expiracion=expiracion,
     )
 
+# @router.post("/api/agendamientos/aspirante", response_model=EventoOut)
+# def crear_agendamiento_aspirante(
+#     data: AgendamientoAspiranteIn,
+# ):
+#     with get_connection_context() as conn:
+#         cur = conn.cursor()
+#
+#         try:
+#             # 1️⃣ Validar fechas
+#             if data.fin <= data.inicio:
+#                 raise HTTPException(
+#                     status_code=400,
+#                     detail="La fecha de fin debe ser posterior a la fecha de inicio."
+#                 )
+#
+#             # 2️⃣ Validar token
+#             cur.execute(
+#                 """
+#                 SELECT token, creador_id, responsable_id, expiracion, usado
+#                 FROM link_agendamiento_tokens
+#                 WHERE token = %s
+#                 """,
+#                 (data.token,)
+#             )
+#             row = cur.fetchone()
+#             if not row:
+#                 raise HTTPException(status_code=404, detail="Token no válido.")
+#
+#             token, creador_id, responsable_id, expiracion, usado = row
+#
+#             if usado:
+#                 raise HTTPException(status_code=400, detail="Este enlace ya fue utilizado.")
+#             if expiracion < datetime.utcnow():
+#                 raise HTTPException(status_code=400, detail="Este enlace ha expirado.")
+#
+#             # 3️⃣ Verificar que el aspirante existe
+#             cur.execute(
+#                 """
+#                 SELECT
+#                     id,
+#                     COALESCE(NULLIF(nombre_real, ''), nickname) AS nombre,
+#                     nickname
+#                 FROM creadores
+#                 WHERE id = %s
+#                 """,
+#                 (creador_id,)
+#             )
+#             row = cur.fetchone()
+#             if not row:
+#                 raise HTTPException(
+#                     status_code=404,
+#                     detail="El aspirante (creador_id) no existe en la tabla creadores."
+#                 )
+#
+#             aspirante_id = row[0]
+#             aspirante_nombre_db = row[1]
+#             aspirante_nickname = row[2]
+#
+#             # 4️⃣ Actualizar zona horaria en perfil_creador (si se envía)
+#             if data.timezone:
+#                 cur.execute(
+#                     """
+#                     UPDATE perfil_creador
+#                     SET zona_horaria = %s
+#                     WHERE creador_id = %s
+#                     """,
+#                     (data.timezone, aspirante_id)
+#                 )
+#
+#             # (Opcional) actualizar nombre/email si quieres
+#             # if data.aspirante_email or data.aspirante_nombre:
+#             #     cur.execute(
+#             #         """
+#             #         UPDATE creadores
+#             #         SET email = COALESCE(NULLIF(%s, ''), email),
+#             #             nombre_real = COALESCE(NULLIF(%s, ''), nombre_real)
+#             #         WHERE id = %s
+#             #         """,
+#             #         (data.aspirante_email, data.aspirante_nombre, aspirante_id)
+#             #     )
+#
+#             # 5️⃣ Guardar agendamiento
+#             # 👉 Guardamos las fechas tal cual llegan (hora local elegida por el aspirante)
+#             fecha_inicio = data.inicio
+#             fecha_fin = data.fin
+#
+#             cur.execute(
+#                 """
+#                 INSERT INTO agendamientos (
+#                     titulo,
+#                     descripcion,
+#                     fecha_inicio,
+#                     fecha_fin,
+#                     creador_id,
+#                     responsable_id,
+#                     estado,
+#                     link_meet,
+#                     google_event_id
+#                 )
+#                 VALUES (%s, %s, %s, %s, %s, %s, 'programado', NULL, NULL)
+#                 RETURNING id
+#                 """,
+#                 (
+#                     data.titulo,
+#                     data.descripcion,
+#                     fecha_inicio,
+#                     fecha_fin,
+#                     aspirante_id,
+#                     responsable_id,
+#                 )
+#             )
+#             agendamiento_id = cur.fetchone()[0]
+#
+#             # 6️⃣ Insertar participante (el propio aspirante)
+#             cur.execute(
+#                 """
+#                 INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
+#                 VALUES (%s, %s)
+#                 """,
+#                 (agendamiento_id, aspirante_id)
+#             )
+#
+#             # 7️⃣ Marcar token como usado
+#             cur.execute(
+#                 "UPDATE link_agendamiento_tokens SET usado = TRUE WHERE token = %s",
+#                 (token,)
+#             )
+#
+#             # 8️⃣ Construir respuesta
+#             participante = {
+#                 "id": aspirante_id,
+#                 "nombre": aspirante_nombre_db,
+#                 "nickname": aspirante_nickname,
+#             }
+#
+#             return EventoOut(
+#                 id=str(agendamiento_id),
+#                 titulo=data.titulo,
+#                 descripcion=data.descripcion,
+#                 inicio=fecha_inicio,
+#                 fin=fecha_fin,
+#                 creador_id=aspirante_id,
+#                 participantes_ids=[aspirante_id],
+#                 participantes=[participante],
+#                 responsable_id=responsable_id,
+#                 estado="programado",
+#                 link_meet=None,
+#                 origen="interno",
+#                 google_event_id=None,
+#             )
+#
+#         except HTTPException:
+#             raise
+#         except Exception as e:
+#             logger.error(f"❌ Error creando agendamiento de aspirante: {e}")
+#             logger.error(traceback.format_exc())
+#             raise HTTPException(
+#                 status_code=500,
+#                 detail="Error interno al crear agendamiento de aspirante."
+#             )
+#
+
+
+from datetime import datetime
+from fastapi import HTTPException
+from zoneinfo import ZoneInfo
+
 @router.post("/api/agendamientos/aspirante", response_model=EventoOut)
 def crear_agendamiento_aspirante(
     data: AgendamientoAspiranteIn,
 ):
+    """
+    Guarda una cita desde el link de agendamiento.
+    → Respeta exactamente el comportamiento original.
+    → Solo se agrega un bloque OPCIONAL para convertir a UTC.
+    """
+
     with get_connection_context() as conn:
         cur = conn.cursor()
 
@@ -1144,6 +1401,7 @@ def crear_agendamiento_aspirante(
                 (data.token,)
             )
             row = cur.fetchone()
+
             if not row:
                 raise HTTPException(status_code=404, detail="Token no válido.")
 
@@ -1151,6 +1409,7 @@ def crear_agendamiento_aspirante(
 
             if usado:
                 raise HTTPException(status_code=400, detail="Este enlace ya fue utilizado.")
+
             if expiracion < datetime.utcnow():
                 raise HTTPException(status_code=400, detail="Este enlace ha expirado.")
 
@@ -1167,17 +1426,18 @@ def crear_agendamiento_aspirante(
                 (creador_id,)
             )
             row = cur.fetchone()
+
             if not row:
                 raise HTTPException(
                     status_code=404,
-                    detail="El aspirante (creador_id) no existe en la tabla creadores."
+                    detail="El aspirante (creador_id) no existe."
                 )
 
             aspirante_id = row[0]
             aspirante_nombre_db = row[1]
             aspirante_nickname = row[2]
 
-            # 4️⃣ Actualizar zona horaria en perfil_creador (si se envía)
+            # 4️⃣ Guardar timezone si la envían
             if data.timezone:
                 cur.execute(
                     """
@@ -1188,23 +1448,28 @@ def crear_agendamiento_aspirante(
                     (data.timezone, aspirante_id)
                 )
 
-            # (Opcional) actualizar nombre/email si quieres
-            # if data.aspirante_email or data.aspirante_nombre:
-            #     cur.execute(
-            #         """
-            #         UPDATE creadores
-            #         SET email = COALESCE(NULLIF(%s, ''), email),
-            #             nombre_real = COALESCE(NULLIF(%s, ''), nombre_real)
-            #         WHERE id = %s
-            #         """,
-            #         (data.aspirante_email, data.aspirante_nombre, aspirante_id)
-            #     )
-
-            # 5️⃣ Guardar agendamiento
-            # 👉 Guardamos las fechas tal cual llegan (hora local elegida por el aspirante)
+            # ===========================================================
+            # 5️⃣ FECHAS: guardarlas tal cual (comportamiento ORIGINAL)
+            # ===========================================================
             fecha_inicio = data.inicio
             fecha_fin = data.fin
 
+            # ===========================================================
+            # ⭐ OPCIONAL: convertir a UTC antes de guardar ⭐
+            # (solo si quieres usar UTC más adelante)
+            #
+            if data.timezone:
+                tz = ZoneInfo(data.timezone)
+                if fecha_inicio.tzinfo is None:
+                    fecha_inicio = fecha_inicio.replace(tzinfo=tz)
+                if fecha_fin.tzinfo is None:
+                    fecha_fin = fecha_fin.replace(tzinfo=tz)
+                fecha_inicio = fecha_inicio.astimezone(ZoneInfo("UTC"))
+                fecha_fin = fecha_fin.astimezone(ZoneInfo("UTC"))
+            #
+            # ===========================================================
+
+            # 6️⃣ Insertar agendamiento
             cur.execute(
                 """
                 INSERT INTO agendamientos (
@@ -1230,9 +1495,10 @@ def crear_agendamiento_aspirante(
                     responsable_id,
                 )
             )
+
             agendamiento_id = cur.fetchone()[0]
 
-            # 6️⃣ Insertar participante (el propio aspirante)
+            # 7️⃣ Insertar participante
             cur.execute(
                 """
                 INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
@@ -1241,13 +1507,13 @@ def crear_agendamiento_aspirante(
                 (agendamiento_id, aspirante_id)
             )
 
-            # 7️⃣ Marcar token como usado
+            # 8️⃣ Marcar token como usado
             cur.execute(
                 "UPDATE link_agendamiento_tokens SET usado = TRUE WHERE token = %s",
                 (token,)
             )
 
-            # 8️⃣ Construir respuesta
+            # 9️⃣ Respuesta final
             participante = {
                 "id": aspirante_id,
                 "nombre": aspirante_nombre_db,
@@ -1279,4 +1545,3 @@ def crear_agendamiento_aspirante(
                 status_code=500,
                 detail="Error interno al crear agendamiento de aspirante."
             )
-
