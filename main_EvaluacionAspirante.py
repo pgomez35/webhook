@@ -218,7 +218,7 @@ def crear_y_enviar_link_agendamiento_aspirante(
     #    Asumimos: plantilla tiene 1 placeholder en el body para el nombre
     #    y un CTA URL configurado en la plantilla (por lo que el wrapper
     #    recibirá las variables restantes para el CTA).
-    nombre_plantilla = "agenda_tu_entrevista"
+    nombre_plantilla = "agenda_tu_entrevista "
     codigo_idioma = "es_CO"
     # orden: primero las variables del body, luego las variables del CTA (si aplica)
     parametros = [nombre_creador, url, business_name]  # ajusta según tu plantilla
@@ -233,7 +233,7 @@ def crear_y_enviar_link_agendamiento_aspirante(
             numero_destino=telefono,
             nombre_plantilla=nombre_plantilla,
             codigo_idioma=codigo_idioma,
-            parametros=parametros,
+            parametros=[url],  # <-- SOLO ESTO
             body_vars_count=1
         )
 
