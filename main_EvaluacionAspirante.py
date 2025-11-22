@@ -213,13 +213,14 @@ def crear_y_enviar_link_agendamiento_aspirante(
     # SOLO UN PARÁMETRO: la URL
     # ===========================
     try:
-        status_code, resp = enviar_plantilla_generica(
+        status_code, resp = enviar_plantilla_generica_parametros(
             token=access_token,
             phone_number_id=phone_id,
             numero_destino=telefono,
-            nombre_plantilla="agenda_tu_entrevista",
+            nombre_plantilla="agenda_tu_entrevista_v2",
             codigo_idioma="es_CO",
-            parametros=[url]  # <<< CORREGIDO
+            parametros=[nombre_creador, url],  # 2 parámetros: {{1}} y {{2}}
+            body_vars_count=2  # <<< IMPORTANTE: todo va al body
         )
 
         if status_code != 200:
