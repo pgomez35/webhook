@@ -914,7 +914,7 @@ def consolidar_perfil(telefono: str, respuestas_dict: dict | None = None, tenant
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 # Buscar creador por número
-                cur.execute("SELECT id, usuario, nombre_real, whatsapp FROM creadores WHERE whatsapp=%s", (telefono,))
+                cur.execute("SELECT id, usuario, nombre_real, whatsapp FROM creadores WHERE telefono=%s", (telefono,))
                 creador = cur.fetchone()
                 if not creador:
                     print(f"⚠️ No se encontró creador con whatsapp {telefono}")
