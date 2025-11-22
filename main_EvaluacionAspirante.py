@@ -197,6 +197,14 @@ def crear_y_enviar_link_agendamiento_aspirante(
     access_token = cuenta.get("access_token")
     phone_id = cuenta.get("phone_number_id")
 
+    # Mostrar solo los últimos 6 caracteres del token y phone_id
+    token_preview = access_token[:4] + "..." + access_token[-6:] if access_token else "None"
+    phone_preview = phone_id[:3] + "..." + phone_id[-3:] if phone_id else "None"
+
+    print(f"🔐 Token (preview): {token_preview}")
+    print(f"📱 Phone ID (preview): {phone_preview}")
+
+
     if not access_token or not phone_id:
         raise HTTPException(500, f"Credenciales WABA incompletas para '{subdominio_cfg}'.")
 
@@ -209,9 +217,9 @@ def crear_y_enviar_link_agendamiento_aspirante(
             token=access_token,
             phone_number_id=phone_id,
             numero_destino=telefono,
-            nombre_plantilla="agenda_tu_entrevista",  # <<< SIN ESPACIOS
+            nombre_plantilla="agenda_tu_entrevista",
             codigo_idioma="es_CO",
-            parametros_body=[url]   # <<< SOLO 1 variable
+            parametros=[url]  # <<< CORREGIDO
         )
 
         if status_code != 200:
