@@ -2231,7 +2231,7 @@ def buscar_usuario_por_telefono(numero: str):
             with conn.cursor() as cur:
                 # Buscar en creadores
                 cur.execute("""
-                    SELECT c.id, c.nickname, c.nombre_real AS nombre,
+                    SELECT c.id, c.nickname, COALESCE(NULLIF(TRIM(c.nickname), ''), c.nombre_real) AS nombre ,
                            COALESCE(r.nombre, 'aspirante') AS rol
                     FROM creadores c
                     LEFT JOIN roles r ON c.rol_id = r.id

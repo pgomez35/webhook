@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from auth import obtener_usuario_actual
 from enviar_msg_wp import enviar_plantilla_generica_parametros, enviar_plantilla_generica
 
-from main_mensajeria_whatsapp import  enviar_mensaje
+from main_webhook import  enviar_mensaje
 from tenant import current_tenant
 
 router = APIRouter()   # ← ESTE ES EL ROUTER QUE VAS A IMPORTAR EN main.py
