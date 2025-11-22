@@ -4,7 +4,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from auth import obtener_usuario_actual
-from enviar_msg_wp import enviar_plantilla_generica_parametros
+from enviar_msg_wp import enviar_plantilla_generica_parametros, enviar_plantilla_generica
 
 from main_mensajeria_whatsapp import  enviar_mensaje
 from tenant import current_tenant
@@ -133,6 +133,7 @@ def generar_token_corto(longitud=10):
     caracteres = string.ascii_letters + string.digits  # A-Z a-z 0-9
     return ''.join(secrets.choice(caracteres) for _ in range(longitud))
 
+
 @router.post("/api/agendamientos/aspirante/enviar", response_model=LinkAgendamientoOut)
 def crear_y_enviar_link_agendamiento_aspirante(
     data: CrearLinkAgendamientoIn,
@@ -140,10 +141,10 @@ def crear_y_enviar_link_agendamiento_aspirante(
 ):
     """
     Genera un link de agendamiento y lo envía por WhatsApp al aspirante.
-    Se obtiene el access_token y phone_number_id desde la cuenta WABA del tenant.
+    Usa la plantilla con 1 parámetro (URL) en el body.
     """
 
-    # 1) Token corto y expiración
+    # 1) Token
     token = generar_token_corto(10)
     expiracion = datetime.utcnow() + timedelta(minutes=data.minutos_validez)
 
@@ -169,81 +170,55 @@ def crear_y_enviar_link_agendamiento_aspirante(
         if not telefono:
             raise HTTPException(400, "El aspirante no tiene teléfono registrado.")
 
-        # 3) Guardar token en DB
+        # 3) Guardar token
         cur.execute(
             """
-            INSERT INTO link_agendamiento_tokens (
-                token, creador_id, responsable_id, expiracion, usado
-            )
+            INSERT INTO link_agendamiento_tokens
+            (token, creador_id, responsable_id, expiracion, usado)
             VALUES (%s, %s, %s, %s, FALSE)
             """,
             (token, data.creador_id, data.responsable_id, expiracion)
         )
 
-    # 4) Armar URL dinámica con tenant
+    # 4) Construir URL
     subdominio = current_tenant.get() or "test"
     if subdominio == "public":
         subdominio = "test"
 
-    base_front = f"https://{subdominio}.talentum-manager.com/agendar"
-    url = f"{base_front}?token={token}"
+    url = f"https://{subdominio}.talentum-manager.com/agendar?token={token}"
 
-    # =============================
-    # 5) Obtener credenciales WABA del tenant (access_token, phone_id, business_name)
-    # =============================
+    # 5) Credenciales WABA
     subdominio_cfg = current_tenant.get()
     cuenta = obtener_cuenta_por_subdominio(subdominio_cfg)
 
     if not cuenta:
-        raise HTTPException(
-            status_code=500,
-            detail=f"No hay credenciales WABA para el tenant '{subdominio_cfg}'."
-        )
+        raise HTTPException(500, f"No hay credenciales WABA para '{subdominio_cfg}'.")
 
     access_token = cuenta.get("access_token")
     phone_id = cuenta.get("phone_number_id")
-    business_name = (
-        cuenta.get("business_name")
-        or cuenta.get("nombre")
-        or "nuestra agencia"
-    )
 
     if not access_token or not phone_id:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Credenciales WABA incompletas para el tenant '{subdominio_cfg}'."
-        )
+        raise HTTPException(500, f"Credenciales WABA incompletas para '{subdominio_cfg}'.")
 
-    # 6) Preparar parámetros para la plantilla "agenda_tu_entrevista"
-    #    Asumimos: plantilla tiene 1 placeholder en el body para el nombre
-    #    y un CTA URL configurado en la plantilla (por lo que el wrapper
-    #    recibirá las variables restantes para el CTA).
-    nombre_plantilla = "agenda_tu_entrevista "
-    codigo_idioma = "es_CO"
-    # orden: primero las variables del body, luego las variables del CTA (si aplica)
-    parametros = [nombre_creador, url, business_name]  # ajusta según tu plantilla
-
+    # ===========================
+    # 6) Enviar plantilla
+    # SOLO UN PARÁMETRO: la URL
+    # ===========================
     try:
-        # Llamamos al wrapper que envía la plantilla. Pasamos el access_token de la WABA.
-        # body_vars_count indica cuántos elementos de `parametros` pertenecen al body.
-        # En este ejemplo ponemos body_vars_count=1 (solo {0} en body).
-        codigo, respuesta_api = enviar_plantilla_generica_parametros(
-            access_token=access_token,
+        status_code, resp = enviar_plantilla_generica(
+            token=access_token,
             phone_number_id=phone_id,
             numero_destino=telefono,
-            nombre_plantilla=nombre_plantilla,
-            codigo_idioma=codigo_idioma,
-            parametros=[url],  # <-- SOLO ESTO
-            body_vars_count=1
+            nombre_plantilla="agenda_tu_entrevista",  # <<< SIN ESPACIOS
+            codigo_idioma="es_CO",
+            parametros_body=[url]   # <<< SOLO 1 variable
         )
 
-        # Tu wrapper puede devolver (codigo, respuesta). Consideramos 200 como OK.
-        if codigo != 200:
-            # forza fallback al mensaje simple si no fue 200
-            raise Exception(f"Envio plantilla falló, codigo={codigo}, resp={respuesta_api}")
+        if status_code != 200:
+            raise Exception(f"Error {status_code}: {resp}")
 
     except Exception as e:
-        # Fallback: enviar mensaje de texto simple con el enlace
+        # Fallback obligatorios en caso de error Meta
         try:
             mensaje = (
                 f"Hola {nombre_creador} 👋\n\n"
@@ -252,10 +227,13 @@ def crear_y_enviar_link_agendamiento_aspirante(
                 f"{url}\n\n"
                 "Selecciona el horario que prefieras. Si necesitas cambiar la cita, contáctanos."
             )
-            enviar_mensaje(telefono, mensaje)
-        except Exception as ex_send:
-            # Si falla todo, reportamos error para que el cliente lo vea
-            raise HTTPException(500, f"Token generado, fallo al enviar plantilla y fallback a texto: {e} / {ex_send}")
+            # enviar_mensaje(telefono, mensaje)
+
+        except Exception as ex:
+            raise HTTPException(
+                500,
+                detail=f"Token creado, pero falló la plantilla y el fallback: {e} / {ex}"
+            )
 
     # 7) Respuesta
     return LinkAgendamientoOut(
@@ -263,6 +241,9 @@ def crear_y_enviar_link_agendamiento_aspirante(
         url=url,
         expiracion=expiracion,
     )
+
+
+
 
 # @router.post("/api/agendamientos/aspirante/enviar", response_model=LinkAgendamientoOut)
 # def crear_y_enviar_link_agendamiento_aspirante(
