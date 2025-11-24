@@ -220,38 +220,6 @@ def crear_agendamiento_aspirante(
         conn.close()
 
 
-
-
-def insertar_entrevista_minima(creador_id: int, usuario_evalua: int) -> Optional[dict]:
-    """
-    Inserta una entrevista mínima en la tabla entrevistas.
-    Devuelve: { id, creado_en }
-    """
-    conn = get_connection_context()
-    try:
-        with conn.cursor() as cur:
-            sql = """
-                INSERT INTO entrevistas (creador_id, usuario_evalua, creado_en)
-                VALUES (%s, %s, NOW() AT TIME ZONE 'UTC')
-                RETURNING id, creado_en
-            """
-            cur.execute(sql, (creador_id, usuario_evalua))
-            row = cur.fetchone()
-            conn.commit()
-
-            if not row:
-                return None
-
-            return {"id": row[0], "creado_en": row[1]}
-
-    except Exception as e:
-        print("❌ Error al insertar entrevista mínima:", e)
-        return None
-    finally:
-        conn.close()
-
-
-
 def actualizar_preevaluacion_perfil(creador_id: int, payload: dict):
     with get_connection_context() as conn:
         cur = conn.cursor()
@@ -374,28 +342,15 @@ def crear_y_enviar_link_agendamiento_aspirante(
             raise HTTPException(400, "El aspirante no tiene teléfono registrado.")
 
         # ---------------------------------------------------------
-        # 3️⃣ Crear ENTREVISTA mínima
-        # ---------------------------------------------------------
-        entrevista = insertar_entrevista_minima(
-            creador_id=data.creador_id,
-            usuario_evalua=usuario_actual["id"]
-        )
-
-        if not entrevista:
-            raise HTTPException(500, "No se pudo crear la entrevista mínima.")
-
-        entrevista_id = entrevista["id"]
-
-        # ---------------------------------------------------------
-        # 4️⃣ Guardar token + entrevista_id
+        # 3️⃣ Guardar token (YA NO se guarda entrevista_id)
         # ---------------------------------------------------------
         cur.execute(
             """
             INSERT INTO link_agendamiento_tokens
-            (token, creador_id, responsable_id, expiracion, usado, entrevista_id)
-            VALUES (%s, %s, %s, %s, FALSE, %s)
+            (token, creador_id, responsable_id, expiracion, usado)
+            VALUES (%s, %s, %s, %s, FALSE)
             """,
-            (token, data.creador_id, data.responsable_id, expiracion, entrevista_id)
+            (token, data.creador_id, data.responsable_id, expiracion)
         )
 
         conn.commit()
