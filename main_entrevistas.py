@@ -116,210 +116,127 @@ from zoneinfo import ZoneInfo
 from main_EvaluacionAspirante import obtener_entrevista_id
 
 
-def insertar_agendamiento(data: dict):
+
+from typing import Optional, Dict, Any
+from datetime import timedelta
+from zoneinfo import ZoneInfo
+
+from DataBase import get_connection_context
+from main_EvaluacionAspirante import obtener_entrevista_id  # ajusta el import según tu estructura
+
+def insertar_agendamiento(data: dict) -> Optional[Dict[str, Any]]:
     """
     Crea un agendamiento, obtiene/crea entrevista y guarda la relación
     en entrevista_agendamiento, igual que crear_agendamiento_aspirante,
     pero con los parámetros usados en este endpoint.
     """
     try:
-        conn = get_connection_context()
-        with conn.cursor() as cur:
+        # ✅ Usar SIEMPRE el context manager de conexión
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
 
-            creador_id = data["creador_id"]
-            fecha_inicio = data["fecha_programada"]
-            duracion_minutos = data["duracion_minutos"]
-            usuario_programa = data["usuario_programa"]
+                creador_id = data["creador_id"]
+                fecha_inicio = data["fecha_programada"]
+                duracion_minutos = data["duracion_minutos"]
+                usuario_programa = data["usuario_programa"]
 
-            # === Zona horaria ===
-            tz_local = ZoneInfo("America/Bogota")
+                # === Zona horaria ===
+                tz_local = ZoneInfo("America/Bogota")
 
-            if fecha_inicio.tzinfo is None:
-                fecha_inicio = fecha_inicio.replace(tzinfo=tz_local)
+                if fecha_inicio.tzinfo is None:
+                    fecha_inicio = fecha_inicio.replace(tzinfo=tz_local)
 
-            fecha_fin = fecha_inicio + timedelta(minutes=duracion_minutos)
+                fecha_fin = fecha_inicio + timedelta(minutes=duracion_minutos)
 
-            if fecha_fin.tzinfo is None:
-                fecha_fin = fecha_fin.replace(tzinfo=tz_local)
+                if fecha_fin.tzinfo is None:
+                    fecha_fin = fecha_fin.replace(tzinfo=tz_local)
 
-            # Convertir a UTC
-            fecha_inicio_utc = fecha_inicio.astimezone(ZoneInfo("UTC"))
-            fecha_fin_utc = fecha_fin.astimezone(ZoneInfo("UTC"))
+                # Convertir a UTC
+                fecha_inicio_utc = fecha_inicio.astimezone(ZoneInfo("UTC"))
+                fecha_fin_utc = fecha_fin.astimezone(ZoneInfo("UTC"))
 
-            # ==========================================
-            # 1️⃣ INSERTAR AGENDAMIENTO (sin entrevista_id)
-            # ==========================================
-            cur.execute(
-                """
-                INSERT INTO agendamientos (
-                    creador_id,
-                    fecha_inicio,
-                    fecha_fin,
-                    usuario_programa
+                # ==========================================
+                # 1️⃣ INSERTAR AGENDAMIENTO (sin entrevista_id)
+                # ==========================================
+                cur.execute(
+                    """
+                    INSERT INTO agendamientos (
+                        creador_id,
+                        fecha_inicio,
+                        fecha_fin,
+                        usuario_programa
+                    )
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING id, creado_en
+                    """,
+                    (
+                        creador_id,
+                        fecha_inicio_utc,
+                        fecha_fin_utc,
+                        usuario_programa
+                    )
                 )
-                VALUES (%s, %s, %s, %s)
-                RETURNING id, creado_en
-                """,
-                (
-                    creador_id,
-                    fecha_inicio_utc,
-                    fecha_fin_utc,
-                    usuario_programa
+
+                row = cur.fetchone()
+                agendamiento_id = row[0]
+                creado_en = row[1]
+
+                # ==========================================
+                # 2️⃣ OBTENER O CREAR ENTREVISTA
+                # ==========================================
+                entrevista = obtener_entrevista_id(creador_id, usuario_programa)
+                if not entrevista:
+                    raise Exception("No se pudo obtener o crear la entrevista.")
+
+                entrevista_id = entrevista["id"]
+
+                # ==========================================
+                # 3️⃣ INSERTAR RELACIÓN EN entrevista_agendamiento
+                # ==========================================
+                cur.execute(
+                    """
+                    INSERT INTO entrevista_agendamiento (
+                        agendamiento_id,
+                        entrevista_id,
+                        creado_en
+                    )
+                    VALUES (%s, %s, NOW() AT TIME ZONE 'UTC')
+                    """,
+                    (agendamiento_id, entrevista_id)
                 )
-            )
 
-            row = cur.fetchone()
-            agendamiento_id = row[0]
-            creado_en = row[1]
-
-            # ==========================================
-            # 2️⃣ OBTENER O CREAR ENTREVISTA
-            # ==========================================
-            entrevista = obtener_entrevista_id(creador_id, usuario_programa)
-            if not entrevista:
-                raise Exception("No se pudo obtener o crear la entrevista.")
-
-            entrevista_id = entrevista["id"]
-
-            # ==========================================
-            # 3️⃣ INSERTAR RELACIÓN EN entrevista_agendamiento
-            # ==========================================
-            cur.execute(
-                """
-                INSERT INTO entrevista_agendamiento (
-                    agendamiento_id,
-                    entrevista_id,
-                    creado_en
+                # ==========================================
+                # 4️⃣ INSERTAR PARTICIPANTE
+                # ==========================================
+                cur.execute(
+                    """
+                    INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
+                    VALUES (%s, %s)
+                    """,
+                    (agendamiento_id, creador_id)
                 )
-                VALUES (%s, %s, NOW() AT TIME ZONE 'UTC')
-                """,
-                (agendamiento_id, entrevista_id)
-            )
 
-            # ==========================================
-            # 4️⃣ INSERTAR PARTICIPANTE
-            # ==========================================
-            cur.execute(
-                """
-                INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
-                VALUES (%s, %s)
-                """,
-                (agendamiento_id, creador_id)
-            )
+                # ❌ Nada de conn.commit(): lo hace get_connection_context()
 
-            conn.commit()
-
-            # ==========================================
-            # 5️⃣ RETORNO
-            # ==========================================
-            return {
-                "id": agendamiento_id,
-                "entrevista_id": entrevista_id,
-                "creador_id": creador_id,
-                "fecha_programada": fecha_inicio_utc,
-                "fecha_fin": fecha_fin_utc,
-                "duracion_minutos": duracion_minutos,
-                "usuario_programa": usuario_programa,
-                "realizada": False,
-                "fecha_realizada": None,
-                "creado_en": creado_en,
-            }
+                # ==========================================
+                # 5️⃣ RETORNO
+                # ==========================================
+                return {
+                    "id": agendamiento_id,
+                    "entrevista_id": entrevista_id,
+                    "creador_id": creador_id,
+                    "fecha_programada": fecha_inicio_utc,
+                    "fecha_fin": fecha_fin_utc,
+                    "duracion_minutos": duracion_minutos,
+                    "usuario_programa": usuario_programa,
+                    "realizada": False,
+                    "fecha_realizada": None,
+                    "creado_en": creado_en,
+                }
 
     except Exception as e:
         print(f"❌ Error insertando agendamiento: {e}")
         return None
-
-def obtener_entrevista_con_agendamientos(creador_id: int):
-    conn = None
-    try:
-        conn = get_connection_context()
-        with conn.cursor() as cur:
-
-            # 1) Entrevista más reciente del creador
-            cur.execute("""
-                SELECT id, creador_id, usuario_evalua, resultado, observaciones,
-                       aspecto_tecnico, presencia_carisma, interaccion_audiencia,
-                       profesionalismo_normas, evaluacion_global, creado_en
-                FROM entrevistas
-                WHERE creador_id = %s
-                ORDER BY creado_en DESC
-                LIMIT 1
-            """, (creador_id,))
-            e = cur.fetchone()
-
-            if not e:
-                return None
-
-            entrevista_dict = {
-                "id": e[0],
-                "creador_id": e[1],
-                "usuario_evalua": e[2],
-                "resultado": e[3],
-                "observaciones": e[4],
-                "aspecto_tecnico": e[5],
-                "presencia_carisma": e[6],
-                "interaccion_audiencia": e[7],
-                "profesionalismo_normas": e[8],
-                "evaluacion_global": e[9],
-                "creado_en": e[10],
-                "agendamientos": []
-            }
-
-            entrevista_id = e[0]
-
-            # 2) Agendamientos asociados (JOIN correcto)
-            cur.execute("""
-                SELECT ea.id, 
-                       ea.agendamiento_id,
-                       ea.creado_en,
-
-                       a.titulo,
-                       a.descripcion,
-                       a.fecha_inicio,
-                       a.fecha_fin,
-                       a.creador_id,
-                       a.responsable_id,
-                       a.estado,
-                       a.link_meet,
-                       a.google_event_id,
-                       a.creado_en,
-                       a.actualizado_en
-
-                FROM entrevista_agendamiento ea
-                JOIN agendamientos a ON a.id = ea.agendamiento_id
-                WHERE ea.entrevista_id = %s
-                ORDER BY a.fecha_inicio ASC
-            """, (entrevista_id,))
-            rows = cur.fetchall()
-
-            for r in rows:
-                entrevista_dict["agendamientos"].append({
-                    "id": r[0],                     # id de entrevista_agendamiento
-                    "agendamiento_id": r[1],        # FK real
-                    "rel_creado_en": r[2],          # fecha de creación de la relación
-
-                    # Datos reales del agendamiento
-                    "titulo": r[3],
-                    "descripcion": r[4],
-                    "fecha_inicio": r[5],
-                    "fecha_fin": r[6],
-                    "creador_id": r[7],
-                    "responsable_id": r[8],
-                    "estado": r[9],
-                    "link_meet": r[10],
-                    "google_event_id": r[11],
-                    "ag_creado_en": r[12],
-                    "ag_actualizado_en": r[13],
-                })
-
-            return entrevista_dict
-
-    except Exception as e:
-        print(f"❌ Error al obtener entrevista con agendamientos: {e}")
-        return None
-    finally:
-        if conn:
-            conn.close()
 
 
 def actualizar_entrevista(entrevista_id: int, datos: dict):
@@ -357,9 +274,72 @@ def actualizar_entrevista(entrevista_id: int, datos: dict):
         print("❌ Error al actualizar entrevista:", e)
         return None
 
-# ================================
-# 📌 CREAR ENTREVISTA
-# ================================
+
+@router.delete("/api/entrevistas/agendamientos/{agendamiento_id}", response_model=dict)
+def eliminar_agendamiento(
+    agendamiento_id: int,
+    usuario_actual: dict = Depends(obtener_usuario_actual)
+) -> Dict:
+    if not usuario_actual:
+        raise HTTPException(status_code=401, detail="Usuario no autorizado")
+
+    try:
+        # ✅ Usar siempre el context manager de conexión
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+
+                # 1️⃣ Verificar que exista el agendamiento
+                cur.execute("""
+                    SELECT id
+                    FROM agendamientos
+                    WHERE id = %s
+                """, (agendamiento_id,))
+                row = cur.fetchone()
+
+                if not row:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Agendamiento {agendamiento_id} no encontrado"
+                    )
+
+                # 2️⃣ Eliminar registro en entrevista_agendamiento
+                cur.execute("""
+                    DELETE FROM entrevista_agendamiento
+                    WHERE agendamiento_id = %s
+                """, (agendamiento_id,))
+
+                # 3️⃣ Eliminar participantes del agendamiento
+                cur.execute("""
+                    DELETE FROM agendamientos_participantes
+                    WHERE agendamiento_id = %s
+                """, (agendamiento_id,))
+
+                # 4️⃣ Eliminar el agendamiento
+                cur.execute("""
+                    DELETE FROM agendamientos
+                    WHERE id = %s
+                """, (agendamiento_id,))
+
+                # ❌ Nada de conn.commit(): lo maneja get_connection_context()
+
+                return {
+                    "ok": True,
+                    "mensaje": f"Agendamiento {agendamiento_id} eliminado con éxito"
+                }
+
+    except HTTPException:
+        # Dejamos pasar los 401/404 tal cual
+        raise
+    except Exception as e:
+        # El rollback también lo maneja el context manager
+        logger.error(f"❌ Error al eliminar agendamiento {agendamiento_id}: {e}")
+        raise HTTPException(status_code=500, detail="Error interno al eliminar agendamiento")
+
+
+
+# ===================================================
+# 📌 CREAR AGENDAMIENTO ENTREVISTA EN FRONT END
+# ===================================================
 
 @router.post("/api/entrevistas/agendamientos", response_model=AgendamientoOut)
 def crear_agendamiento(
@@ -418,67 +398,6 @@ def crear_agendamiento(
         raise HTTPException(status_code=500, detail=f"Error al crear agendamiento: {e}")
 
 
-@router.delete("/api/entrevistas/agendamientos/{agendamiento_id}", response_model=dict)
-def eliminar_agendamiento(
-    agendamiento_id: int,
-    usuario_actual: dict = Depends(obtener_usuario_actual)
-):
-    if not usuario_actual:
-        raise HTTPException(status_code=401, detail="Usuario no autorizado")
-
-    conn = get_connection_context()
-    cur = conn.cursor()
-
-    try:
-        # 1. Verificar que exista el agendamiento
-        cur.execute("""
-            SELECT id
-            FROM agendamientos
-            WHERE id = %s
-        """, (agendamiento_id,))
-        row = cur.fetchone()
-
-        if not row:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Agendamiento {agendamiento_id} no encontrado"
-            )
-
-        # 2. Eliminar registro en entrevista_agendamiento
-        cur.execute("""
-            DELETE FROM entrevista_agendamiento
-            WHERE agendamiento_id = %s
-        """, (agendamiento_id,))
-
-        # 3. Eliminar participantes del agendamiento
-        cur.execute("""
-            DELETE FROM agendamientos_participantes
-            WHERE agendamiento_id = %s
-        """, (agendamiento_id,))
-
-        # 4. Eliminar el agendamiento
-        cur.execute("""
-            DELETE FROM agendamientos
-            WHERE id = %s
-        """, (agendamiento_id,))
-
-        conn.commit()
-
-        return {
-            "ok": True,
-            "mensaje": f"Agendamiento {agendamiento_id} eliminado con éxito"
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        conn.rollback()
-        logger.error(f"❌ Error al eliminar agendamiento {agendamiento_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-    finally:
-        cur.close()
-        conn.close()
 
 
 # ================================
@@ -586,6 +505,101 @@ def actualizar_entrevista(
         profesionalismo_normas=actualizado.get("profesionalismo_normas"),
         evaluacion_global=actualizado.get("evaluacion_global"),
     )
+
+
+def obtener_entrevista_con_agendamientos(creador_id: int) -> Optional[dict]:
+    """
+    Obtiene la entrevista más reciente del creador y sus agendamientos asociados.
+    Devuelve un diccionario con la entrevista y una lista de agendamientos.
+    """
+
+    try:
+        # ✅ Usar SIEMPRE el context manager
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+
+                # 1️⃣ Entrevista más reciente del creador
+                cur.execute("""
+                    SELECT id, creador_id, usuario_evalua, resultado, observaciones,
+                           aspecto_tecnico, presencia_carisma, interaccion_audiencia,
+                           profesionalismo_normas, evaluacion_global, creado_en
+                    FROM entrevistas
+                    WHERE creador_id = %s
+                    ORDER BY creado_en DESC
+                    LIMIT 1
+                """, (creador_id,))
+                e = cur.fetchone()
+
+                if not e:
+                    return None
+
+                entrevista_dict = {
+                    "id": e[0],
+                    "creador_id": e[1],
+                    "usuario_evalua": e[2],
+                    "resultado": e[3],
+                    "observaciones": e[4],
+                    "aspecto_tecnico": e[5],
+                    "presencia_carisma": e[6],
+                    "interaccion_audiencia": e[7],
+                    "profesionalismo_normas": e[8],
+                    "evaluacion_global": e[9],
+                    "creado_en": e[10],
+                    "agendamientos": []
+                }
+
+                entrevista_id = e[0]
+
+                # 2️⃣ Agendamientos asociados (JOIN correcto)
+                cur.execute("""
+                    SELECT ea.id, 
+                           ea.agendamiento_id,
+                           ea.creado_en,
+
+                           a.titulo,
+                           a.descripcion,
+                           a.fecha_inicio,
+                           a.fecha_fin,
+                           a.creador_id,
+                           a.responsable_id,
+                           a.estado,
+                           a.link_meet,
+                           a.google_event_id,
+                           a.creado_en,
+                           a.actualizado_en
+
+                    FROM entrevista_agendamiento ea
+                    JOIN agendamientos a ON a.id = ea.agendamiento_id
+                    WHERE ea.entrevista_id = %s
+                    ORDER BY a.fecha_inicio ASC
+                """, (entrevista_id,))
+                rows = cur.fetchall()
+
+                for r in rows:
+                    entrevista_dict["agendamientos"].append({
+                        "id": r[0],                     # id de entrevista_agendamiento
+                        "agendamiento_id": r[1],        # FK real
+                        "rel_creado_en": r[2],          # fecha de creación de la relación
+
+                        # Datos del agendamiento
+                        "titulo": r[3],
+                        "descripcion": r[4],
+                        "fecha_inicio": r[5],
+                        "fecha_fin": r[6],
+                        "creador_id": r[7],
+                        "responsable_id": r[8],
+                        "estado": r[9],
+                        "link_meet": r[10],
+                        "google_event_id": r[11],
+                        "ag_creado_en": r[12],
+                        "ag_actualizado_en": r[13],
+                    })
+
+                return entrevista_dict
+
+    except Exception as e:
+        print(f"❌ Error al obtener entrevista con agendamientos: {e}")
+        return None
 
 
 
@@ -787,6 +801,274 @@ def actualizar_entrevista(
 #         conn.rollback()
 #         logger.error(f"❌ Error al eliminar agendamiento {agendamiento_id}: {e}")
 #         raise HTTPException(status_code=500, detail=str(e))
+#     finally:
+#         cur.close()
+#         conn.close()
+
+
+# def obtener_entrevista_con_agendamientos(creador_id: int):
+#     conn = None
+#     try:
+#         conn = get_connection_context()
+#         with conn.cursor() as cur:
+#
+#             # 1) Entrevista más reciente del creador
+#             cur.execute("""
+#                 SELECT id, creador_id, usuario_evalua, resultado, observaciones,
+#                        aspecto_tecnico, presencia_carisma, interaccion_audiencia,
+#                        profesionalismo_normas, evaluacion_global, creado_en
+#                 FROM entrevistas
+#                 WHERE creador_id = %s
+#                 ORDER BY creado_en DESC
+#                 LIMIT 1
+#             """, (creador_id,))
+#             e = cur.fetchone()
+#
+#             if not e:
+#                 return None
+#
+#             entrevista_dict = {
+#                 "id": e[0],
+#                 "creador_id": e[1],
+#                 "usuario_evalua": e[2],
+#                 "resultado": e[3],
+#                 "observaciones": e[4],
+#                 "aspecto_tecnico": e[5],
+#                 "presencia_carisma": e[6],
+#                 "interaccion_audiencia": e[7],
+#                 "profesionalismo_normas": e[8],
+#                 "evaluacion_global": e[9],
+#                 "creado_en": e[10],
+#                 "agendamientos": []
+#             }
+#
+#             entrevista_id = e[0]
+#
+#             # 2) Agendamientos asociados (JOIN correcto)
+#             cur.execute("""
+#                 SELECT ea.id,
+#                        ea.agendamiento_id,
+#                        ea.creado_en,
+#
+#                        a.titulo,
+#                        a.descripcion,
+#                        a.fecha_inicio,
+#                        a.fecha_fin,
+#                        a.creador_id,
+#                        a.responsable_id,
+#                        a.estado,
+#                        a.link_meet,
+#                        a.google_event_id,
+#                        a.creado_en,
+#                        a.actualizado_en
+#
+#                 FROM entrevista_agendamiento ea
+#                 JOIN agendamientos a ON a.id = ea.agendamiento_id
+#                 WHERE ea.entrevista_id = %s
+#                 ORDER BY a.fecha_inicio ASC
+#             """, (entrevista_id,))
+#             rows = cur.fetchall()
+#
+#             for r in rows:
+#                 entrevista_dict["agendamientos"].append({
+#                     "id": r[0],                     # id de entrevista_agendamiento
+#                     "agendamiento_id": r[1],        # FK real
+#                     "rel_creado_en": r[2],          # fecha de creación de la relación
+#
+#                     # Datos reales del agendamiento
+#                     "titulo": r[3],
+#                     "descripcion": r[4],
+#                     "fecha_inicio": r[5],
+#                     "fecha_fin": r[6],
+#                     "creador_id": r[7],
+#                     "responsable_id": r[8],
+#                     "estado": r[9],
+#                     "link_meet": r[10],
+#                     "google_event_id": r[11],
+#                     "ag_creado_en": r[12],
+#                     "ag_actualizado_en": r[13],
+#                 })
+#
+#             return entrevista_dict
+#
+#     except Exception as e:
+#         print(f"❌ Error al obtener entrevista con agendamientos: {e}")
+#         return None
+#     finally:
+#         if conn:
+#             conn.close()
+
+# def insertar_agendamiento(data: dict):
+#     """
+#     Crea un agendamiento, obtiene/crea entrevista y guarda la relación
+#     en entrevista_agendamiento, igual que crear_agendamiento_aspirante,
+#     pero con los parámetros usados en este endpoint.
+#     """
+#     try:
+#         conn = get_connection_context()
+#         with conn.cursor() as cur:
+#
+#             creador_id = data["creador_id"]
+#             fecha_inicio = data["fecha_programada"]
+#             duracion_minutos = data["duracion_minutos"]
+#             usuario_programa = data["usuario_programa"]
+#
+#             # === Zona horaria ===
+#             tz_local = ZoneInfo("America/Bogota")
+#
+#             if fecha_inicio.tzinfo is None:
+#                 fecha_inicio = fecha_inicio.replace(tzinfo=tz_local)
+#
+#             fecha_fin = fecha_inicio + timedelta(minutes=duracion_minutos)
+#
+#             if fecha_fin.tzinfo is None:
+#                 fecha_fin = fecha_fin.replace(tzinfo=tz_local)
+#
+#             # Convertir a UTC
+#             fecha_inicio_utc = fecha_inicio.astimezone(ZoneInfo("UTC"))
+#             fecha_fin_utc = fecha_fin.astimezone(ZoneInfo("UTC"))
+#
+#             # ==========================================
+#             # 1️⃣ INSERTAR AGENDAMIENTO (sin entrevista_id)
+#             # ==========================================
+#             cur.execute(
+#                 """
+#                 INSERT INTO agendamientos (
+#                     creador_id,
+#                     fecha_inicio,
+#                     fecha_fin,
+#                     usuario_programa
+#                 )
+#                 VALUES (%s, %s, %s, %s)
+#                 RETURNING id, creado_en
+#                 """,
+#                 (
+#                     creador_id,
+#                     fecha_inicio_utc,
+#                     fecha_fin_utc,
+#                     usuario_programa
+#                 )
+#             )
+#
+#             row = cur.fetchone()
+#             agendamiento_id = row[0]
+#             creado_en = row[1]
+#
+#             # ==========================================
+#             # 2️⃣ OBTENER O CREAR ENTREVISTA
+#             # ==========================================
+#             entrevista = obtener_entrevista_id(creador_id, usuario_programa)
+#             if not entrevista:
+#                 raise Exception("No se pudo obtener o crear la entrevista.")
+#
+#             entrevista_id = entrevista["id"]
+#
+#             # ==========================================
+#             # 3️⃣ INSERTAR RELACIÓN EN entrevista_agendamiento
+#             # ==========================================
+#             cur.execute(
+#                 """
+#                 INSERT INTO entrevista_agendamiento (
+#                     agendamiento_id,
+#                     entrevista_id,
+#                     creado_en
+#                 )
+#                 VALUES (%s, %s, NOW() AT TIME ZONE 'UTC')
+#                 """,
+#                 (agendamiento_id, entrevista_id)
+#             )
+#
+#             # ==========================================
+#             # 4️⃣ INSERTAR PARTICIPANTE
+#             # ==========================================
+#             cur.execute(
+#                 """
+#                 INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
+#                 VALUES (%s, %s)
+#                 """,
+#                 (agendamiento_id, creador_id)
+#             )
+#
+#             conn.commit()
+#
+#             # ==========================================
+#             # 5️⃣ RETORNO
+#             # ==========================================
+#             return {
+#                 "id": agendamiento_id,
+#                 "entrevista_id": entrevista_id,
+#                 "creador_id": creador_id,
+#                 "fecha_programada": fecha_inicio_utc,
+#                 "fecha_fin": fecha_fin_utc,
+#                 "duracion_minutos": duracion_minutos,
+#                 "usuario_programa": usuario_programa,
+#                 "realizada": False,
+#                 "fecha_realizada": None,
+#                 "creado_en": creado_en,
+#             }
+#
+#     except Exception as e:
+#         print(f"❌ Error insertando agendamiento: {e}")
+#         return None
+
+# @router.delete("/api/entrevistas/agendamientos/{agendamiento_id}", response_model=dict)
+# def eliminar_agendamiento(
+#     agendamiento_id: int,
+#     usuario_actual: dict = Depends(obtener_usuario_actual)
+# ):
+#     if not usuario_actual:
+#         raise HTTPException(status_code=401, detail="Usuario no autorizado")
+#
+#     conn = get_connection_context()
+#     cur = conn.cursor()
+#
+#     try:
+#         # 1. Verificar que exista el agendamiento
+#         cur.execute("""
+#             SELECT id
+#             FROM agendamientos
+#             WHERE id = %s
+#         """, (agendamiento_id,))
+#         row = cur.fetchone()
+#
+#         if not row:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail=f"Agendamiento {agendamiento_id} no encontrado"
+#             )
+#
+#         # 2. Eliminar registro en entrevista_agendamiento
+#         cur.execute("""
+#             DELETE FROM entrevista_agendamiento
+#             WHERE agendamiento_id = %s
+#         """, (agendamiento_id,))
+#
+#         # 3. Eliminar participantes del agendamiento
+#         cur.execute("""
+#             DELETE FROM agendamientos_participantes
+#             WHERE agendamiento_id = %s
+#         """, (agendamiento_id,))
+#
+#         # 4. Eliminar el agendamiento
+#         cur.execute("""
+#             DELETE FROM agendamientos
+#             WHERE id = %s
+#         """, (agendamiento_id,))
+#
+#         conn.commit()
+#
+#         return {
+#             "ok": True,
+#             "mensaje": f"Agendamiento {agendamiento_id} eliminado con éxito"
+#         }
+#
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         conn.rollback()
+#         logger.error(f"❌ Error al eliminar agendamiento {agendamiento_id}: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
+#
 #     finally:
 #         cur.close()
 #         conn.close()

@@ -10,23 +10,18 @@ from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional, List
 from pydantic import BaseModel, AnyUrl
 from datetime import datetime, timedelta
+from typing import Optional
 
 from auth import obtener_usuario_actual
 from enviar_msg_wp import enviar_plantilla_generica_parametros, enviar_plantilla_generica
-
+from DataBase import get_connection_context, obtener_cuenta_por_subdominio
 from main_webhook import  enviar_mensaje
 from tenant import current_tenant
 
 
 logger = logging.getLogger(__name__)
 
-
 router = APIRouter()   # ← ESTE ES EL ROUTER QUE VAS A IMPORTAR EN main.py
-
-
-from DataBase import get_connection_context, obtener_cuenta_por_subdominio
-
-
 
 class CrearLinkAgendamientoIn(BaseModel):
     creador_id: int
@@ -86,8 +81,7 @@ ESTADO_MAP_PREEVAL = {
 }
 ESTADO_DEFAULT = 99  # si no coincide
 
-from typing import Optional
-from DataBase import get_connection_context
+
 
 def obtener_entrevista_id(creador_id: int, usuario_evalua: int) -> Optional[dict]:
     """
@@ -519,6 +513,11 @@ def enviar_mensaje_no_apto(
             detail=f"Error enviando plantilla: {str(e)}"
         )
 
+# ===================================================
+# 📌 CREAR AUTO AGENDAMIENTO ENTREVISTA EN LINK POR WHATSAPP
+# ===================================================
+
+
 @router.post("/api/agendamientos/aspirante", response_model=EventoOut)
 def crear_agendamiento_aspirante(
     data: AgendamientoAspiranteIn,
@@ -665,6 +664,175 @@ def crear_agendamiento_aspirante(
                 500,
                 "Error interno al crear agendamiento de aspirante."
             )
+
+@router.get("/api/agendamientos/aspirante/token-info", response_model=TokenInfoOut)
+def obtener_info_token_agendamiento(token: str):
+    """
+    Devuelve info básica asociada al token.
+    Incluye mensajes claros para problemas comunes:
+    - Token inválido
+    - Token ya usado
+    - Token expirado
+    """
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+
+        # 1) Buscar token
+        cur.execute(
+            """
+            SELECT token, creador_id, responsable_id, expiracion, usado
+            FROM link_agendamiento_tokens
+            WHERE token = %s
+            """,
+            (token,)
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "🔗 El enlace no es válido.\n"
+                    "Por favor solicita un nuevo enlace de agendamiento."
+                )
+            )
+
+        _, creador_id, responsable_id, expiracion, usado = row
+
+        # 2) Token usado
+        if usado:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "⚠️ Este enlace ya fue utilizado.\n"
+                    "Si necesitas agendar otra cita, solicita un nuevo enlace."
+                )
+            )
+
+        # 3) Token expirado
+        if expiracion < datetime.utcnow():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "⏰ Este enlace ha expirado.\n"
+                    "Solicita un nuevo enlace para continuar con tu agendamiento."
+                )
+            )
+
+        # 4) Zona horaria desde perfil_creador
+        cur.execute(
+            """
+            SELECT zona_horaria
+            FROM perfil_creador
+            WHERE creador_id = %s
+            """,
+            (creador_id,)
+        )
+        row_pc = cur.fetchone()
+        zona_horaria = row_pc[0] if row_pc else None
+
+        # 5) Nombre mostrable
+        cur.execute(
+            """
+            SELECT COALESCE(NULLIF(nombre_real, ''), nickname)
+            FROM creadores
+            WHERE id = %s
+            """,
+            (creador_id,)
+        )
+        row_cr = cur.fetchone()
+        nombre_mostrable = row_cr[0] if row_cr else None
+
+    return TokenInfoOut(
+        creador_id=creador_id,
+        responsable_id=responsable_id,
+        zona_horaria=zona_horaria,
+        nombre_mostrable=nombre_mostrable,
+    )
+
+@router.get("/api/agendamientos/aspirante/token-info", response_model=TokenInfoOut)
+def obtener_info_token_agendamiento(token: str):
+    """
+    Devuelve info básica asociada al token.
+    Incluye mensajes claros para problemas comunes:
+    - Token inválido
+    - Token ya usado
+    - Token expirado
+    """
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+
+        # 1) Buscar token
+        cur.execute(
+            """
+            SELECT token, creador_id, responsable_id, expiracion, usado
+            FROM link_agendamiento_tokens
+            WHERE token = %s
+            """,
+            (token,)
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "🔗 El enlace no es válido.\n"
+                    "Por favor solicita un nuevo enlace de agendamiento."
+                )
+            )
+
+        _, creador_id, responsable_id, expiracion, usado = row
+
+        # 2) Token usado
+        if usado:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "⚠️ Este enlace ya fue utilizado.\n"
+                    "Si necesitas agendar otra cita, solicita un nuevo enlace."
+                )
+            )
+
+        # 3) Token expirado
+        if expiracion < datetime.utcnow():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "⏰ Este enlace ha expirado.\n"
+                    "Solicita un nuevo enlace para continuar con tu agendamiento."
+                )
+            )
+
+        # 4) Zona horaria desde perfil_creador
+        cur.execute(
+            """
+            SELECT zona_horaria
+            FROM perfil_creador
+            WHERE creador_id = %s
+            """,
+            (creador_id,)
+        )
+        row_pc = cur.fetchone()
+        zona_horaria = row_pc[0] if row_pc else None
+
+        # 5) Nombre mostrable
+        cur.execute(
+            """
+            SELECT COALESCE(NULLIF(nombre_real, ''), nickname)
+            FROM creadores
+            WHERE id = %s
+            """,
+            (creador_id,)
+        )
+        row_cr = cur.fetchone()
+        nombre_mostrable = row_cr[0] if row_cr else None
+
+    return TokenInfoOut(
+        creador_id=creador_id,
+        responsable_id=responsable_id,
+        zona_horaria=zona_horaria,
+        nombre_mostrable=nombre_mostrable,
+    )
+
 
 
 # @router.post("/api/agendamientos/aspirante", response_model=EventoOut)

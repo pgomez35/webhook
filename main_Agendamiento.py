@@ -982,171 +982,7 @@ import secrets
 import pytz
 
 
-class CrearLinkAgendamientoIn(BaseModel):
-    creador_id: int
-    responsable_id: int
-    minutos_validez: int = 1440  # 24 horas por defecto
 
-class LinkAgendamientoOut(BaseModel):
-    token: str
-    url: AnyUrl
-    expiracion: datetime
-
-
-class TokenInfoOut(BaseModel):
-    creador_id: int
-    responsable_id: int
-    zona_horaria: Optional[str] = None
-    nombre_mostrable: Optional[str] = None
-
-# @router.get("/api/agendamientos/aspirante/token-info", response_model=TokenInfoOut)
-# def obtener_info_token_agendamiento(token: str):
-#     """
-#     Devuelve info básica asociada al token: creador, responsable y zona horaria
-#     guardada en perfil_creador (si existe).
-#     """
-#     with get_connection_context() as conn:
-#         cur = conn.cursor()
-#
-#         # 1) Buscar token
-#         cur.execute(
-#             """
-#             SELECT token, creador_id, responsable_id, expiracion, usado
-#             FROM link_agendamiento_tokens
-#             WHERE token = %s
-#             """,
-#             (token,)
-#         )
-#         row = cur.fetchone()
-#         if not row:
-#             raise HTTPException(status_code=404, detail="Token no válido.")
-#
-#         _, creador_id, responsable_id, expiracion, usado = row
-#
-#         if usado:
-#             raise HTTPException(status_code=400, detail="Este enlace ya fue utilizado.")
-#         if expiracion < datetime.utcnow():
-#             raise HTTPException(status_code=400, detail="Este enlace ha expirado.")
-#
-#         # 2) Buscar zona horaria en perfil_creador
-#         cur.execute(
-#             """
-#             SELECT zona_horaria
-#             FROM perfil_creador
-#             WHERE creador_id = %s
-#             """,
-#             (creador_id,)
-#         )
-#         row_pc = cur.fetchone()
-#         zona_horaria = row_pc[0] if row_pc else None
-#
-#         # 3) Nombre mostrable (opcional)
-#         cur.execute(
-#             """
-#             SELECT COALESCE(NULLIF(nombre_real, ''), nickname)
-#             FROM creadores
-#             WHERE id = %s
-#             """,
-#             (creador_id,)
-#         )
-#         row_cr = cur.fetchone()
-#         nombre_mostrable = row_cr[0] if row_cr else None
-#
-#     return TokenInfoOut(
-#         creador_id=creador_id,
-#         responsable_id=responsable_id,
-#         zona_horaria=zona_horaria,
-#         nombre_mostrable=nombre_mostrable,
-#     )
-
-@router.get("/api/agendamientos/aspirante/token-info", response_model=TokenInfoOut)
-def obtener_info_token_agendamiento(token: str):
-    """
-    Devuelve info básica asociada al token.
-    Incluye mensajes claros para problemas comunes:
-    - Token inválido
-    - Token ya usado
-    - Token expirado
-    """
-    with get_connection_context() as conn:
-        cur = conn.cursor()
-
-        # 1) Buscar token
-        cur.execute(
-            """
-            SELECT token, creador_id, responsable_id, expiracion, usado
-            FROM link_agendamiento_tokens
-            WHERE token = %s
-            """,
-            (token,)
-        )
-        row = cur.fetchone()
-        if not row:
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    "🔗 El enlace no es válido.\n"
-                    "Por favor solicita un nuevo enlace de agendamiento."
-                )
-            )
-
-        _, creador_id, responsable_id, expiracion, usado = row
-
-        # 2) Token usado
-        if usado:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "⚠️ Este enlace ya fue utilizado.\n"
-                    "Si necesitas agendar otra cita, solicita un nuevo enlace."
-                )
-            )
-
-        # 3) Token expirado
-        if expiracion < datetime.utcnow():
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "⏰ Este enlace ha expirado.\n"
-                    "Solicita un nuevo enlace para continuar con tu agendamiento."
-                )
-            )
-
-        # 4) Zona horaria desde perfil_creador
-        cur.execute(
-            """
-            SELECT zona_horaria
-            FROM perfil_creador
-            WHERE creador_id = %s
-            """,
-            (creador_id,)
-        )
-        row_pc = cur.fetchone()
-        zona_horaria = row_pc[0] if row_pc else None
-
-        # 5) Nombre mostrable
-        cur.execute(
-            """
-            SELECT COALESCE(NULLIF(nombre_real, ''), nickname)
-            FROM creadores
-            WHERE id = %s
-            """,
-            (creador_id,)
-        )
-        row_cr = cur.fetchone()
-        nombre_mostrable = row_cr[0] if row_cr else None
-
-    return TokenInfoOut(
-        creador_id=creador_id,
-        responsable_id=responsable_id,
-        zona_horaria=zona_horaria,
-        nombre_mostrable=nombre_mostrable,
-    )
-
-
-def generar_token_corto(longitud=10):
-    caracteres = string.ascii_letters + string.digits  # A-Z a-z 0-9
-    return ''.join(secrets.choice(caracteres) for _ in range(longitud))
 
 
 
@@ -1685,3 +1521,63 @@ from zoneinfo import ZoneInfo
 #                 status_code=500,
 #                 detail="Error interno al crear agendamiento de aspirante."
 #             )
+
+# @router.get("/api/agendamientos/aspirante/token-info", response_model=TokenInfoOut)
+# def obtener_info_token_agendamiento(token: str):
+#     """
+#     Devuelve info básica asociada al token: creador, responsable y zona horaria
+#     guardada en perfil_creador (si existe).
+#     """
+#     with get_connection_context() as conn:
+#         cur = conn.cursor()
+#
+#         # 1) Buscar token
+#         cur.execute(
+#             """
+#             SELECT token, creador_id, responsable_id, expiracion, usado
+#             FROM link_agendamiento_tokens
+#             WHERE token = %s
+#             """,
+#             (token,)
+#         )
+#         row = cur.fetchone()
+#         if not row:
+#             raise HTTPException(status_code=404, detail="Token no válido.")
+#
+#         _, creador_id, responsable_id, expiracion, usado = row
+#
+#         if usado:
+#             raise HTTPException(status_code=400, detail="Este enlace ya fue utilizado.")
+#         if expiracion < datetime.utcnow():
+#             raise HTTPException(status_code=400, detail="Este enlace ha expirado.")
+#
+#         # 2) Buscar zona horaria en perfil_creador
+#         cur.execute(
+#             """
+#             SELECT zona_horaria
+#             FROM perfil_creador
+#             WHERE creador_id = %s
+#             """,
+#             (creador_id,)
+#         )
+#         row_pc = cur.fetchone()
+#         zona_horaria = row_pc[0] if row_pc else None
+#
+#         # 3) Nombre mostrable (opcional)
+#         cur.execute(
+#             """
+#             SELECT COALESCE(NULLIF(nombre_real, ''), nickname)
+#             FROM creadores
+#             WHERE id = %s
+#             """,
+#             (creador_id,)
+#         )
+#         row_cr = cur.fetchone()
+#         nombre_mostrable = row_cr[0] if row_cr else None
+#
+#     return TokenInfoOut(
+#         creador_id=creador_id,
+#         responsable_id=responsable_id,
+#         zona_horaria=zona_horaria,
+#         nombre_mostrable=nombre_mostrable,
+#     )
