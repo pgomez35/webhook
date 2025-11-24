@@ -137,7 +137,7 @@ def obtener_entrevista_id(creador_id: int, usuario_evalua: int) -> Optional[dict
         conn.close()
 
 
-def crear_agendamiento_aspirante(
+def crear_agendamiento_aspirante_DB(
     data,
     aspirante_id: int,
     responsable_id: int
@@ -613,7 +613,7 @@ def crear_agendamiento_aspirante(
                 fecha_fin = fecha_fin.astimezone(ZoneInfo("UTC"))
 
             # 6️⃣ Crear agendamiento + relación entrevista en UNA sola función
-            agendamiento_id = crear_agendamiento_aspirante(
+            agendamiento_id = crear_agendamiento_aspirante_DB(
                 data=SimpleNamespace(
                     titulo=data.titulo,
                     descripcion=data.descripcion,

@@ -13,6 +13,11 @@ INVALID_TENANT_MESSAGE = (
 )
 BLACKLISTED_SUBDOMAINS = {"www", "api"}
 
+ROOT_DOMAIN_TENANTS = {
+    "talentum-manager.com": "public",
+    "www.talentum-manager.com": "public",
+}
+
 
 class TenantMiddleware(BaseHTTPMiddleware):
     # async def dispatch(self, request: Request, call_next):
@@ -68,16 +73,38 @@ class TenantMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         return response
 
+
+
     def _resolve_tenant_name(self, request: Request) -> str:
+        # 1️⃣ Intentar header X-Tenant-Name
         header_value = self._extract_header_tenant(request)
         if header_value:
             return header_value
 
+        # 2️⃣ Resolver host completo
+        host = (request.headers.get("host") or "").strip().lower()
+        hostname = host.split(":")[0]
+
+        # 2.1 Host mapeado explícitamente a un tenant
+        from typing import Dict
+        ROOT_DOMAIN_TENANTS: Dict[str, str] = {
+            "talentum-manager.com": "public",
+            "www.talentum-manager.com": "public",
+        }
+
+        if hostname in ROOT_DOMAIN_TENANTS:
+            tenant = ROOT_DOMAIN_TENANTS[hostname]
+            TenantMiddleware._validate_tenant_value(tenant)
+            return tenant
+
+        # 3️⃣ Intentar subdominio normal
         subdomain_value = self._extract_subdomain_tenant(request)
         if subdomain_value:
             return subdomain_value
 
+        # 4️⃣ Si nada funcionó
         raise HTTPException(status_code=400, detail=INVALID_TENANT_MESSAGE)
+
 
     @staticmethod
     def _extract_header_tenant(request: Request) -> Optional[str]:
@@ -151,3 +178,15 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 status_code=400,
                 detail="Valor de X-Tenant-Name inválido. Usa solo letras, números, '-' o '_'.",
             )
+
+
+    # def _resolve_tenant_name(self, request: Request) -> str:
+    #     header_value = self._extract_header_tenant(request)
+    #     if header_value:
+    #         return header_value
+    #
+    #     subdomain_value = self._extract_subdomain_tenant(request)
+    #     if subdomain_value:
+    #         return subdomain_value
+    #
+    #     raise HTTPException(status_code=400, detail=INVALID_TENANT_MESSAGE)
