@@ -1,7 +1,15 @@
+import secrets
+import string
+import pytz
+import logging
+import traceback
 
+from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 from fastapi import APIRouter, HTTPException, Depends
-from typing import Optional
-from pydantic import BaseModel
+from typing import Optional, List
+from pydantic import BaseModel, AnyUrl
+from datetime import datetime, timedelta
 
 from auth import obtener_usuario_actual
 from enviar_msg_wp import enviar_plantilla_generica_parametros, enviar_plantilla_generica
@@ -9,10 +17,33 @@ from enviar_msg_wp import enviar_plantilla_generica_parametros, enviar_plantilla
 from main_webhook import  enviar_mensaje
 from tenant import current_tenant
 
+
+logger = logging.getLogger(__name__)
+
+
 router = APIRouter()   # ← ESTE ES EL ROUTER QUE VAS A IMPORTAR EN main.py
 
 
 from DataBase import get_connection_context, obtener_cuenta_por_subdominio
+
+
+
+class CrearLinkAgendamientoIn(BaseModel):
+    creador_id: int
+    responsable_id: int
+    minutos_validez: int = 1440  # 24 horas por defecto
+
+class LinkAgendamientoOut(BaseModel):
+    token: str
+    url: AnyUrl
+    expiracion: datetime
+
+
+class TokenInfoOut(BaseModel):
+    creador_id: int
+    responsable_id: int
+    zona_horaria: Optional[str] = None
+    nombre_mostrable: Optional[str] = None
 
 
 class ActualizarPreEvaluacionIn(BaseModel):
@@ -21,12 +52,205 @@ class ActualizarPreEvaluacionIn(BaseModel):
     observaciones_finales: Optional[str] = None
 
 
+class EventoIn(BaseModel):
+    titulo: str
+    descripcion: Optional[str] = None
+    inicio: datetime
+    fin: datetime
+    participantes_ids: List[int] = []  # << agregar esta línea
+    link_meet: Optional[str] = None  # ← agregar esto si quieres permitir edición manual
+    requiere_meet: Optional[bool] = True  # ✅ nuevo flag
+
+
+class EventoOut(EventoIn):
+    id: str
+    link_meet: Optional[str] = None
+    origen: Optional[str] = "google_calendar"  # Para distinguir fuentes
+    responsable_id: Optional[int] = None
+    participantes: Optional[List[dict]] = None  # ← para devolver nombres, roles, etc
+
+class AgendamientoAspiranteIn(BaseModel):
+    titulo: str
+    descripcion: Optional[str] = None
+    inicio: datetime            # "2025-11-30T09:30:00" (hora local del aspirante)
+    fin: datetime               # "2025-11-30T10:40:00"
+    timezone: Optional[str] = None  # "America/Santiago", etc.
+    aspirante_nombre: Optional[str] = None
+    aspirante_email: Optional[str] = None
+    token: str
+
 ESTADO_MAP_PREEVAL = {
     "No apto": 7,
     "Entrevista": 4,
     "Invitar a TikTok": 5,
 }
 ESTADO_DEFAULT = 99  # si no coincide
+
+
+
+
+def obtener_entrevista_id(creador_id: int, usuario_evalua: int) -> Optional[dict]:
+    """
+    Obtiene una entrevista existente por creador_id.
+    Si no existe, crea una entrevista mínima.
+    Devuelve: { id, creado_en }
+    """
+    conn = get_connection_context()
+    try:
+        with conn.cursor() as cur:
+
+            # 1️⃣ Buscar entrevista existente
+            cur.execute("""
+                SELECT id, creado_en
+                FROM entrevistas
+                WHERE creador_id = %s
+                ORDER BY creado_en ASC
+                LIMIT 1
+            """, (creador_id,))
+
+            row = cur.fetchone()
+
+            # Si existe → retornarla
+            if row:
+                return {"id": row[0], "creado_en": row[1]}
+
+            # 2️⃣ Si no existe → crear entrevista mínima
+            cur.execute("""
+                INSERT INTO entrevistas (creador_id, usuario_evalua, creado_en)
+                VALUES (%s, %s, NOW() AT TIME ZONE 'UTC')
+                RETURNING id, creado_en
+            """, (creador_id, usuario_evalua))
+
+            new_row = cur.fetchone()
+            conn.commit()
+
+            if not new_row:
+                return None
+
+            return {"id": new_row[0], "creado_en": new_row[1]}
+
+    except Exception as e:
+        print("❌ Error en obtener_o_crear_entrevista:", e)
+        return None
+
+    finally:
+        conn.close()
+
+
+def crear_agendamiento_aspirante(
+    data,
+    aspirante_id: int,
+    responsable_id: int
+) -> Optional[int]:
+    """
+    Crea un agendamiento, obtiene/crea la entrevista y registra la relación
+    en entrevista_agendamiento. Devuelve agendamiento_id.
+    """
+    conn = get_connection_context()
+    try:
+        with conn.cursor() as cur:
+
+            # 1️⃣ INSERTAR AGENDAMIENTO
+            cur.execute(
+                """
+                INSERT INTO agendamientos (
+                    titulo,
+                    descripcion,
+                    fecha_inicio,
+                    fecha_fin,
+                    creador_id,
+                    responsable_id,
+                    estado,
+                    link_meet,
+                    google_event_id
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, 'programado', NULL, NULL)
+                RETURNING id
+                """,
+                (
+                    data.titulo,
+                    data.descripcion,
+                    data.fecha_inicio,
+                    data.fecha_fin,
+                    aspirante_id,
+                    responsable_id,
+                )
+            )
+
+            agendamiento_id = cur.fetchone()[0]
+
+            # 2️⃣ OBTENER O CREAR ENTREVISTA
+            entrevista = obtener_entrevista_id(aspirante_id, responsable_id)
+            if not entrevista:
+                raise Exception("No se pudo obtener o crear la entrevista.")
+
+            entrevista_id = entrevista["id"]
+
+            # 3️⃣ INSERTAR EN TABLA entrevista_agendamiento
+            cur.execute(
+                """
+                INSERT INTO entrevista_agendamiento (
+                    agendamiento_id,
+                    entrevista_id,
+                    creado_en
+                )
+                VALUES (%s, %s, NOW() AT TIME ZONE 'UTC')
+                """,
+                (agendamiento_id, entrevista_id)
+            )
+
+            # 4️⃣ INSERTAR PARTICIPANTE
+            cur.execute(
+                """
+                INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
+                VALUES (%s, %s)
+                """,
+                (agendamiento_id, aspirante_id)
+            )
+
+            conn.commit()
+            return agendamiento_id
+
+    except Exception as e:
+        print("❌ Error al crear agendamiento y relacionar entrevista:", e)
+        conn.rollback()
+        return None
+
+    finally:
+        conn.close()
+
+
+
+
+def insertar_entrevista_minima(creador_id: int, usuario_evalua: int) -> Optional[dict]:
+    """
+    Inserta una entrevista mínima en la tabla entrevistas.
+    Devuelve: { id, creado_en }
+    """
+    conn = get_connection_context()
+    try:
+        with conn.cursor() as cur:
+            sql = """
+                INSERT INTO entrevistas (creador_id, usuario_evalua, creado_en)
+                VALUES (%s, %s, NOW() AT TIME ZONE 'UTC')
+                RETURNING id, creado_en
+            """
+            cur.execute(sql, (creador_id, usuario_evalua))
+            row = cur.fetchone()
+            conn.commit()
+
+            if not row:
+                return None
+
+            return {"id": row[0], "creado_en": row[1]}
+
+    except Exception as e:
+        print("❌ Error al insertar entrevista mínima:", e)
+        return None
+    finally:
+        conn.close()
+
+
 
 def actualizar_preevaluacion_perfil(creador_id: int, payload: dict):
     with get_connection_context() as conn:
@@ -104,30 +328,6 @@ def actualizar_preevaluacion(
 
 
 
-from pydantic import BaseModel, AnyUrl
-from typing import Optional, List
-from datetime import datetime, timedelta
-import secrets
-import string
-import pytz
-
-
-class CrearLinkAgendamientoIn(BaseModel):
-    creador_id: int
-    responsable_id: int
-    minutos_validez: int = 1440  # 24 horas por defecto
-
-class LinkAgendamientoOut(BaseModel):
-    token: str
-    url: AnyUrl
-    expiracion: datetime
-
-
-class TokenInfoOut(BaseModel):
-    creador_id: int
-    responsable_id: int
-    zona_horaria: Optional[str] = None
-    nombre_mostrable: Optional[str] = None
 
 def generar_token_corto(longitud=10):
     caracteres = string.ascii_letters + string.digits  # A-Z a-z 0-9
@@ -140,18 +340,21 @@ def crear_y_enviar_link_agendamiento_aspirante(
     usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     """
-    Genera un link de agendamiento y lo envía por WhatsApp al aspirante.
-    Usa la plantilla con 1 parámetro (URL) en el body.
+    Genera un link de agendamiento, crea una entrevista mínima,
+    guarda el entrevista_id dentro de link_agendamiento_tokens
+    y envía la plantilla por WhatsApp.
     """
 
-    # 1) Token
+    # 1️⃣ Token
     token = generar_token_corto(10)
     expiracion = datetime.utcnow() + timedelta(minutes=data.minutos_validez)
 
     with get_connection_context() as conn:
         cur = conn.cursor()
 
-        # 2) Obtener teléfono y nombre del aspirante
+        # ---------------------------------------------------------
+        # 2️⃣ Obtener datos del aspirante
+        # ---------------------------------------------------------
         cur.execute(
             """
             SELECT COALESCE(nickname, nombre_real) AS nombre, telefono
@@ -170,24 +373,45 @@ def crear_y_enviar_link_agendamiento_aspirante(
         if not telefono:
             raise HTTPException(400, "El aspirante no tiene teléfono registrado.")
 
-        # 3) Guardar token
+        # ---------------------------------------------------------
+        # 3️⃣ Crear ENTREVISTA mínima
+        # ---------------------------------------------------------
+        entrevista = insertar_entrevista_minima(
+            creador_id=data.creador_id,
+            usuario_evalua=usuario_actual["id"]
+        )
+
+        if not entrevista:
+            raise HTTPException(500, "No se pudo crear la entrevista mínima.")
+
+        entrevista_id = entrevista["id"]
+
+        # ---------------------------------------------------------
+        # 4️⃣ Guardar token + entrevista_id
+        # ---------------------------------------------------------
         cur.execute(
             """
             INSERT INTO link_agendamiento_tokens
-            (token, creador_id, responsable_id, expiracion, usado)
-            VALUES (%s, %s, %s, %s, FALSE)
+            (token, creador_id, responsable_id, expiracion, usado, entrevista_id)
+            VALUES (%s, %s, %s, %s, FALSE, %s)
             """,
-            (token, data.creador_id, data.responsable_id, expiracion)
+            (token, data.creador_id, data.responsable_id, expiracion, entrevista_id)
         )
 
-    # 4) Construir URL
+        conn.commit()
+
+    # ---------------------------------------------------------
+    # 5️⃣ Construir URL de agendamiento
+    # ---------------------------------------------------------
     subdominio = current_tenant.get() or "test"
     if subdominio == "public":
         subdominio = "test"
 
     url = f"https://{subdominio}.talentum-manager.com/agendar?token={token}"
 
-    # 5) Credenciales WABA
+    # ---------------------------------------------------------
+    # 6️⃣ Obtener credenciales WABA
+    # ---------------------------------------------------------
     subdominio_cfg = current_tenant.get()
     cuenta = obtener_cuenta_por_subdominio(subdominio_cfg)
 
@@ -197,21 +421,18 @@ def crear_y_enviar_link_agendamiento_aspirante(
     access_token = cuenta.get("access_token")
     phone_id = cuenta.get("phone_number_id")
 
-    # Mostrar solo los últimos 6 caracteres del token y phone_id
+    # Debug seguro
     token_preview = access_token[:4] + "..." + access_token[-6:] if access_token else "None"
     phone_preview = phone_id[:3] + "..." + phone_id[-3:] if phone_id else "None"
-
     print(f"🔐 Token (preview): {token_preview}")
     print(f"📱 Phone ID (preview): {phone_preview}")
-
 
     if not access_token or not phone_id:
         raise HTTPException(500, f"Credenciales WABA incompletas para '{subdominio_cfg}'.")
 
-    # ===========================
-    # 6) Enviar plantilla
-    # SOLO UN PARÁMETRO: la URL
-    # ===========================
+    # ---------------------------------------------------------
+    # 7️⃣ Enviar plantilla WhatsApp
+    # ---------------------------------------------------------
     try:
         status_code, resp = enviar_plantilla_generica_parametros(
             token=access_token,
@@ -219,15 +440,15 @@ def crear_y_enviar_link_agendamiento_aspirante(
             numero_destino=telefono,
             nombre_plantilla="agenda_tu_entrevista_v2",
             codigo_idioma="es_CO",
-            parametros=[nombre_creador, url],  # 2 parámetros: {{1}} y {{2}}
-            body_vars_count=2  # <<< IMPORTANTE: todo va al body
+            parametros=[nombre_creador, url],  # 2 parámetros
+            body_vars_count=2
         )
 
         if status_code != 200:
             raise Exception(f"Error {status_code}: {resp}")
 
     except Exception as e:
-        # Fallback obligatorios en caso de error Meta
+        # Fallback texto normal
         try:
             mensaje = (
                 f"Hola {nombre_creador} 👋\n\n"
@@ -241,97 +462,18 @@ def crear_y_enviar_link_agendamiento_aspirante(
         except Exception as ex:
             raise HTTPException(
                 500,
-                detail=f"Token creado, pero falló la plantilla y el fallback: {e} / {ex}"
+                detail=f"Token creado y entrevista registrada, "
+                       f"pero falló la plantilla y el fallback: {e} / {ex}"
             )
 
-    # 7) Respuesta
+    # ---------------------------------------------------------
+    # 8️⃣ Respuesta final
+    # ---------------------------------------------------------
     return LinkAgendamientoOut(
         token=token,
         url=url,
         expiracion=expiracion,
     )
-
-
-
-
-# @router.post("/api/agendamientos/aspirante/enviar", response_model=LinkAgendamientoOut)
-# def crear_y_enviar_link_agendamiento_aspirante(
-#     data: CrearLinkAgendamientoIn,
-#     usuario_actual: dict = Depends(obtener_usuario_actual),
-# ):
-#     """
-#     Genera un link de agendamiento y lo envía por WhatsApp al aspirante.
-#     El número de teléfono se obtiene automáticamente desde `creadores`.
-#     """
-#
-#     # 1) Token corto
-#     token = generar_token_corto(10)
-#     expiracion = datetime.utcnow() + timedelta(minutes=data.minutos_validez)
-#
-#     with get_connection_context() as conn:
-#         cur = conn.cursor()
-#
-#         # 2) Obtener teléfono y nombre del aspirante
-#         cur.execute(
-#             """
-#             SELECT COALESCE(nickname, nombre_real) AS nombre, telefono
-#             FROM creadores
-#             WHERE id = %s
-#             """,
-#             (data.creador_id,)
-#         )
-#         row = cur.fetchone()
-#
-#         if not row:
-#             raise HTTPException(404, "El aspirante no existe.")
-#
-#         nombre_creador, telefono = row
-#
-#         if not telefono:
-#             raise HTTPException(400, "El aspirante no tiene teléfono registrado.")
-#
-#         # 3) Guardar token
-#         cur.execute(
-#             """
-#             INSERT INTO link_agendamiento_tokens (
-#                 token, creador_id, responsable_id, expiracion, usado
-#             )
-#             VALUES (%s, %s, %s, %s, FALSE)
-#             """,
-#             (token, data.creador_id, data.responsable_id, expiracion)
-#         )
-#
-#     # 4) Armar URL dinámica con tenant
-#     subdomain = current_tenant.get() or "test"
-#     if subdomain == "public":
-#         subdomain = "test"
-#
-#     base_front = f"https://{subdomain}.talentum-manager.com/agendar"
-#     url = f"{base_front}?token={token}"
-#
-#     # 5) Armar mensaje
-#     mensaje = (
-#         f"Hola {nombre_creador} 👋\n\n"
-#         "Queremos continuar tu proceso en la agencia.\n\n"
-#         "📅 Agenda tu entrevista aquí:\n"
-#         f"{url}\n\n"
-#         "Selecciona el horario que prefieras.\n"
-#         # "✨ Prestige Agency"
-#     )
-#
-#     # 6) Enviar WhatsApp
-#     try:
-#         enviar_mensaje(telefono, mensaje)
-#     except Exception as e:
-#         raise HTTPException(500, f"Token generado, pero fallo al enviar WhatsApp: {e}")
-#
-#     # 7) Respuesta
-#     return LinkAgendamientoOut(
-#         token=token,
-#         url=url,
-#         expiracion=expiracion,
-#     )
-
 
 
 
@@ -423,6 +565,333 @@ def enviar_mensaje_no_apto(
             status_code=500,
             detail=f"Error enviando plantilla: {str(e)}"
         )
+
+@router.post("/api/agendamientos/aspirante", response_model=EventoOut)
+def crear_agendamiento_aspirante(
+    data: AgendamientoAspiranteIn,
+):
+    """
+    Guarda una cita desde el link de agendamiento y:
+    → Valida token
+    → Crea agendamiento
+    → Obtiene o crea entrevista
+    → Inserta en entrevista_agendamiento
+    """
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+
+        try:
+            # 1️⃣ Validar fechas
+            if data.fin <= data.inicio:
+                raise HTTPException(
+                    status_code=400,
+                    detail="La fecha de fin debe ser posterior a la fecha de inicio."
+                )
+
+            # 2️⃣ Validar token
+            cur.execute(
+                """
+                SELECT token, creador_id, responsable_id, expiracion, usado
+                FROM link_agendamiento_tokens
+                WHERE token = %s
+                """,
+                (data.token,)
+            )
+            row = cur.fetchone()
+
+            if not row:
+                raise HTTPException(404, "Token no válido.")
+
+            token, creador_id, responsable_id, expiracion, usado = row
+
+            if usado:
+                raise HTTPException(400, "Este enlace ya fue utilizado.")
+
+            if expiracion < datetime.utcnow():
+                raise HTTPException(400, "Este enlace ha expirado.")
+
+            # 3️⃣ Verificar aspirante
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    COALESCE(NULLIF(nombre_real, ''), nickname) AS nombre,
+                    nickname
+                FROM creadores
+                WHERE id = %s
+                """,
+                (creador_id,)
+            )
+            row = cur.fetchone()
+
+            if not row:
+                raise HTTPException(404, "El aspirante no existe.")
+
+            aspirante_id = row[0]
+            aspirante_nombre_db = row[1]
+            aspirante_nickname = row[2]
+
+            # 4️⃣ Guardar timezone opcional
+            if data.timezone:
+                cur.execute(
+                    """
+                    UPDATE perfil_creador
+                    SET zona_horaria = %s
+                    WHERE creador_id = %s
+                    """,
+                    (data.timezone, aspirante_id)
+                )
+
+            # 5️⃣ Fechas UTC
+            fecha_inicio = data.inicio
+            fecha_fin = data.fin
+
+            if data.timezone:
+                tz = ZoneInfo(data.timezone)
+
+                if fecha_inicio.tzinfo is None:
+                    fecha_inicio = fecha_inicio.replace(tzinfo=tz)
+                if fecha_fin.tzinfo is None:
+                    fecha_fin = fecha_fin.replace(tzinfo=tz)
+
+                fecha_inicio = fecha_inicio.astimezone(ZoneInfo("UTC"))
+                fecha_fin = fecha_fin.astimezone(ZoneInfo("UTC"))
+
+            # 6️⃣ Crear agendamiento + relación entrevista en UNA sola función
+            agendamiento_id = crear_agendamiento_aspirante(
+                data=SimpleNamespace(
+                    titulo=data.titulo,
+                    descripcion=data.descripcion,
+                    fecha_inicio=fecha_inicio,
+                    fecha_fin=fecha_fin
+                ),
+                aspirante_id=aspirante_id,
+                responsable_id=responsable_id
+            )
+
+            if not agendamiento_id:
+                raise HTTPException(500, "No se pudo crear el agendamiento.")
+
+            # 7️⃣ Marcar token como usado
+            cur.execute(
+                "UPDATE link_agendamiento_tokens SET usado = TRUE WHERE token = %s",
+                (token,)
+            )
+
+            conn.commit()
+
+            # 8️⃣ Respuesta final
+            participante = {
+                "id": aspirante_id,
+                "nombre": aspirante_nombre_db,
+                "nickname": aspirante_nickname,
+            }
+
+            return EventoOut(
+                id=str(agendamiento_id),
+                titulo=data.titulo,
+                descripcion=data.descripcion,
+                inicio=fecha_inicio,
+                fin=fecha_fin,
+                creador_id=aspirante_id,
+                participantes_ids=[aspirante_id],
+                participantes=[participante],
+                responsable_id=responsable_id,
+                estado="programado",
+                link_meet=None,
+                origen="interno",
+                google_event_id=None,
+            )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"❌ Error creando agendamiento de aspirante: {e}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(
+                500,
+                "Error interno al crear agendamiento de aspirante."
+            )
+
+
+# @router.post("/api/agendamientos/aspirante", response_model=EventoOut)
+# def crear_agendamiento_aspirante(
+#     data: AgendamientoAspiranteIn,
+# ):
+#     """
+#     Guarda una cita desde el link de agendamiento y además:
+#     → Obtiene entrevista_id desde link_agendamiento_tokens
+#     → Inserta entrevista_id en la tabla agendamientos
+#     """
+#
+#     with get_connection_context() as conn:
+#         cur = conn.cursor()
+#
+#         try:
+#             # 1️⃣ Validar fechas
+#             if data.fin <= data.inicio:
+#                 raise HTTPException(
+#                     status_code=400,
+#                     detail="La fecha de fin debe ser posterior a la fecha de inicio."
+#                 )
+#
+#             # 2️⃣ Validar token + obtener entrevista_id
+#             cur.execute(
+#                 """
+#                 SELECT token, creador_id, responsable_id, expiracion, usado, entrevista_id
+#                 FROM link_agendamiento_tokens
+#                 WHERE token = %s
+#                 """,
+#                 (data.token,)
+#             )
+#             row = cur.fetchone()
+#
+#             if not row:
+#                 raise HTTPException(404, "Token no válido.")
+#
+#             token, creador_id, responsable_id, expiracion, usado, entrevista_id = row
+#
+#             if usado:
+#                 raise HTTPException(400, "Este enlace ya fue utilizado.")
+#
+#             if expiracion < datetime.utcnow():
+#                 raise HTTPException(400, "Este enlace ha expirado.")
+#
+#             if entrevista_id is None:
+#                 raise HTTPException(500, "El token no tiene entrevista_id asociado.")
+#
+#             # 3️⃣ Verificar aspirante
+#             cur.execute(
+#                 """
+#                 SELECT
+#                     id,
+#                     COALESCE(NULLIF(nombre_real, ''), nickname) AS nombre,
+#                     nickname
+#                 FROM creadores
+#                 WHERE id = %s
+#                 """,
+#                 (creador_id,)
+#             )
+#             row = cur.fetchone()
+#
+#             if not row:
+#                 raise HTTPException(404, "El aspirante no existe.")
+#
+#             aspirante_id = row[0]
+#             aspirante_nombre_db = row[1]
+#             aspirante_nickname = row[2]
+#
+#             # 4️⃣ Guardar timezone opcional
+#             if data.timezone:
+#                 cur.execute(
+#                     """
+#                     UPDATE perfil_creador
+#                     SET zona_horaria = %s
+#                     WHERE creador_id = %s
+#                     """,
+#                     (data.timezone, aspirante_id)
+#                 )
+#
+#             # 5️⃣ Fechas
+#             fecha_inicio = data.inicio
+#             fecha_fin = data.fin
+#
+#             # 6️⃣ Convertir a UTC si aplica
+#             if data.timezone:
+#                 tz = ZoneInfo(data.timezone)
+#
+#                 if fecha_inicio.tzinfo is None:
+#                     fecha_inicio = fecha_inicio.replace(tzinfo=tz)
+#                 if fecha_fin.tzinfo is None:
+#                     fecha_fin = fecha_fin.replace(tzinfo=tz)
+#
+#                 fecha_inicio = fecha_inicio.astimezone(ZoneInfo("UTC"))
+#                 fecha_fin = fecha_fin.astimezone(ZoneInfo("UTC"))
+#
+#             # 7️⃣ Insertar agendamiento (AQUÍ SE AGREGA entrevista_id)
+#             cur.execute(
+#                 """
+#                 INSERT INTO agendamientos (
+#                     titulo,
+#                     descripcion,
+#                     fecha_inicio,
+#                     fecha_fin,
+#                     creador_id,
+#                     responsable_id,
+#                     estado,
+#                     link_meet,
+#                     google_event_id,
+#                     entrevista_id   -- 👈 NUEVO CAMPO
+#                 )
+#                 VALUES (%s, %s, %s, %s, %s, %s, 'programado', NULL, NULL, %s)
+#                 RETURNING id
+#                 """,
+#                 (
+#                     data.titulo,
+#                     data.descripcion,
+#                     fecha_inicio,
+#                     fecha_fin,
+#                     aspirante_id,
+#                     responsable_id,
+#                     entrevista_id,   # 👈 INSERTAR AQUÍ
+#                 )
+#             )
+#
+#             agendamiento_id = cur.fetchone()[0]
+#
+#             # 8️⃣ Insertar participante
+#             cur.execute(
+#                 """
+#                 INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
+#                 VALUES (%s, %s)
+#                 """,
+#                 (agendamiento_id, aspirante_id)
+#             )
+#
+#             # ⭐ YA NO SE ACTUALIZA ENTREVISTAS ⭐
+#             # (se elimina por completo el bloque UPDATE entrevistas)
+#
+#             # 9️⃣ Marcar token como usado
+#             cur.execute(
+#                 "UPDATE link_agendamiento_tokens SET usado = TRUE WHERE token = %s",
+#                 (token,)
+#             )
+#
+#             conn.commit()
+#
+#             # 🔟 Respuesta final
+#             participante = {
+#                 "id": aspirante_id,
+#                 "nombre": aspirante_nombre_db,
+#                 "nickname": aspirante_nickname,
+#             }
+#
+#             return EventoOut(
+#                 id=str(agendamiento_id),
+#                 titulo=data.titulo,
+#                 descripcion=data.descripcion,
+#                 inicio=fecha_inicio,
+#                 fin=fecha_fin,
+#                 creador_id=aspirante_id,
+#                 participantes_ids=[aspirante_id],
+#                 participantes=[participante],
+#                 responsable_id=responsable_id,
+#                 estado="programado",
+#                 link_meet=None,
+#                 origen="interno",
+#                 google_event_id=None,
+#             )
+#
+#         except HTTPException:
+#             raise
+#         except Exception as e:
+#             logger.error(f"❌ Error creando agendamiento de aspirante: {e}")
+#             logger.error(traceback.format_exc())
+#             raise HTTPException(
+#                 500,
+#                 "Error interno al crear agendamiento de aspirante."
+#             )
+
 
 
 # @router.post("/api/aspirantes/no_apto/enviar")
@@ -533,3 +1002,86 @@ def enviar_mensaje_no_apto(
 #         )
 #
 #
+
+
+
+
+# @router.post("/api/agendamientos/aspirante/enviar", response_model=LinkAgendamientoOut)
+# def crear_y_enviar_link_agendamiento_aspirante(
+#     data: CrearLinkAgendamientoIn,
+#     usuario_actual: dict = Depends(obtener_usuario_actual),
+# ):
+#     """
+#     Genera un link de agendamiento y lo envía por WhatsApp al aspirante.
+#     El número de teléfono se obtiene automáticamente desde `creadores`.
+#     """
+#
+#     # 1) Token corto
+#     token = generar_token_corto(10)
+#     expiracion = datetime.utcnow() + timedelta(minutes=data.minutos_validez)
+#
+#     with get_connection_context() as conn:
+#         cur = conn.cursor()
+#
+#         # 2) Obtener teléfono y nombre del aspirante
+#         cur.execute(
+#             """
+#             SELECT COALESCE(nickname, nombre_real) AS nombre, telefono
+#             FROM creadores
+#             WHERE id = %s
+#             """,
+#             (data.creador_id,)
+#         )
+#         row = cur.fetchone()
+#
+#         if not row:
+#             raise HTTPException(404, "El aspirante no existe.")
+#
+#         nombre_creador, telefono = row
+#
+#         if not telefono:
+#             raise HTTPException(400, "El aspirante no tiene teléfono registrado.")
+#
+#         # 3) Guardar token
+#         cur.execute(
+#             """
+#             INSERT INTO link_agendamiento_tokens (
+#                 token, creador_id, responsable_id, expiracion, usado
+#             )
+#             VALUES (%s, %s, %s, %s, FALSE)
+#             """,
+#             (token, data.creador_id, data.responsable_id, expiracion)
+#         )
+#
+#     # 4) Armar URL dinámica con tenant
+#     subdomain = current_tenant.get() or "test"
+#     if subdomain == "public":
+#         subdomain = "test"
+#
+#     base_front = f"https://{subdomain}.talentum-manager.com/agendar"
+#     url = f"{base_front}?token={token}"
+#
+#     # 5) Armar mensaje
+#     mensaje = (
+#         f"Hola {nombre_creador} 👋\n\n"
+#         "Queremos continuar tu proceso en la agencia.\n\n"
+#         "📅 Agenda tu entrevista aquí:\n"
+#         f"{url}\n\n"
+#         "Selecciona el horario que prefieras.\n"
+#         # "✨ Prestige Agency"
+#     )
+#
+#     # 6) Enviar WhatsApp
+#     try:
+#         enviar_mensaje(telefono, mensaje)
+#     except Exception as e:
+#         raise HTTPException(500, f"Token generado, pero fallo al enviar WhatsApp: {e}")
+#
+#     # 7) Respuesta
+#     return LinkAgendamientoOut(
+#         token=token,
+#         url=url,
+#         expiracion=expiracion,
+#     )
+
+
