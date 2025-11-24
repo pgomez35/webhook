@@ -506,13 +506,12 @@ def actualizar_entrevista(
         evaluacion_global=actualizado.get("evaluacion_global"),
     )
 
-
 def obtener_entrevista_con_agendamientos(creador_id: int) -> Optional[dict]:
     """
     Obtiene la entrevista más reciente del creador y sus agendamientos asociados.
-    Devuelve un diccionario con la entrevista y una lista de agendamientos.
+    Devuelve un diccionario compatible con EntrevistaDetalleOut
+    (incluye lista de AgendamientoOut).
     """
-
     try:
         # ✅ Usar SIEMPRE el context manager
         with get_connection_context() as conn:
@@ -576,23 +575,46 @@ def obtener_entrevista_con_agendamientos(creador_id: int) -> Optional[dict]:
                 rows = cur.fetchall()
 
                 for r in rows:
-                    entrevista_dict["agendamientos"].append({
-                        "id": r[0],                     # id de entrevista_agendamiento
-                        "agendamiento_id": r[1],        # FK real
-                        "rel_creado_en": r[2],          # fecha de creación de la relación
+                    (
+                        rel_id,            # ea.id (no lo usamos en el modelo)
+                        agendamiento_id,   # a.id
+                        rel_creado_en,     # ea.creado_en (no lo usamos)
 
-                        # Datos del agendamiento
-                        "titulo": r[3],
-                        "descripcion": r[4],
-                        "fecha_inicio": r[5],
-                        "fecha_fin": r[6],
-                        "creador_id": r[7],
-                        "responsable_id": r[8],
-                        "estado": r[9],
-                        "link_meet": r[10],
-                        "google_event_id": r[11],
-                        "ag_creado_en": r[12],
-                        "ag_actualizado_en": r[13],
+                        titulo,
+                        descripcion,
+                        fecha_inicio,
+                        fecha_fin,
+                        creador_id_ag,
+                        responsable_id,
+                        estado,
+                        link_meet,
+                        google_event_id,
+                        ag_creado_en,      # a.creado_en
+                        ag_actualizado_en  # a.actualizado_en (no lo usamos)
+                    ) = r
+
+                    # ⏱️ Duración en minutos
+                    duracion_minutos: Optional[int] = None
+                    if fecha_inicio and fecha_fin:
+                        duracion_minutos = int(
+                            (fecha_fin - fecha_inicio).total_seconds() // 60
+                        )
+
+                    # 🔁 Lógica simple para 'realizada'
+                    realizada = (estado == "realizado")
+
+                    # ✅ Construir EXACTAMENTE AgendamientoOut
+                    entrevista_dict["agendamientos"].append({
+                        "id": agendamiento_id,          # id del agendamiento
+                        "entrevista_id": entrevista_id,
+                        "creador_id": creador_id_ag,
+                        "fecha_programada": fecha_inicio,
+                        "duracion_minutos": duracion_minutos,
+                        "realizada": realizada,
+                        "fecha_realizada": None,        # si luego lo manejas en DB, aquí lo lees
+                        "usuario_programa": None,       # no tenemos la columna en este SELECT
+                        "evento_id": google_event_id,
+                        "creado_en": ag_creado_en,
                     })
 
                 return entrevista_dict
@@ -600,6 +622,100 @@ def obtener_entrevista_con_agendamientos(creador_id: int) -> Optional[dict]:
     except Exception as e:
         print(f"❌ Error al obtener entrevista con agendamientos: {e}")
         return None
+
+# def obtener_entrevista_con_agendamientos(creador_id: int) -> Optional[dict]:
+#     """
+#     Obtiene la entrevista más reciente del creador y sus agendamientos asociados.
+#     Devuelve un diccionario con la entrevista y una lista de agendamientos.
+#     """
+#
+#     try:
+#         # ✅ Usar SIEMPRE el context manager
+#         with get_connection_context() as conn:
+#             with conn.cursor() as cur:
+#
+#                 # 1️⃣ Entrevista más reciente del creador
+#                 cur.execute("""
+#                     SELECT id, creador_id, usuario_evalua, resultado, observaciones,
+#                            aspecto_tecnico, presencia_carisma, interaccion_audiencia,
+#                            profesionalismo_normas, evaluacion_global, creado_en
+#                     FROM entrevistas
+#                     WHERE creador_id = %s
+#                     ORDER BY creado_en DESC
+#                     LIMIT 1
+#                 """, (creador_id,))
+#                 e = cur.fetchone()
+#
+#                 if not e:
+#                     return None
+#
+#                 entrevista_dict = {
+#                     "id": e[0],
+#                     "creador_id": e[1],
+#                     "usuario_evalua": e[2],
+#                     "resultado": e[3],
+#                     "observaciones": e[4],
+#                     "aspecto_tecnico": e[5],
+#                     "presencia_carisma": e[6],
+#                     "interaccion_audiencia": e[7],
+#                     "profesionalismo_normas": e[8],
+#                     "evaluacion_global": e[9],
+#                     "creado_en": e[10],
+#                     "agendamientos": []
+#                 }
+#
+#                 entrevista_id = e[0]
+#
+#                 # 2️⃣ Agendamientos asociados (JOIN correcto)
+#                 cur.execute("""
+#                     SELECT ea.id,
+#                            ea.agendamiento_id,
+#                            ea.creado_en,
+#
+#                            a.titulo,
+#                            a.descripcion,
+#                            a.fecha_inicio,
+#                            a.fecha_fin,
+#                            a.creador_id,
+#                            a.responsable_id,
+#                            a.estado,
+#                            a.link_meet,
+#                            a.google_event_id,
+#                            a.creado_en,
+#                            a.actualizado_en
+#
+#                     FROM entrevista_agendamiento ea
+#                     JOIN agendamientos a ON a.id = ea.agendamiento_id
+#                     WHERE ea.entrevista_id = %s
+#                     ORDER BY a.fecha_inicio ASC
+#                 """, (entrevista_id,))
+#                 rows = cur.fetchall()
+#
+#                 for r in rows:
+#                     entrevista_dict["agendamientos"].append({
+#                         "id": r[0],                     # id de entrevista_agendamiento
+#                         "agendamiento_id": r[1],        # FK real
+#                         "rel_creado_en": r[2],          # fecha de creación de la relación
+#
+#                         # Datos del agendamiento
+#                         "titulo": r[3],
+#                         "descripcion": r[4],
+#                         "fecha_inicio": r[5],
+#                         "fecha_fin": r[6],
+#                         "creador_id": r[7],
+#                         "responsable_id": r[8],
+#                         "estado": r[9],
+#                         "link_meet": r[10],
+#                         "google_event_id": r[11],
+#                         "ag_creado_en": r[12],
+#                         "ag_actualizado_en": r[13],
+#                     })
+#
+#                 return entrevista_dict
+#
+#     except Exception as e:
+#         print(f"❌ Error al obtener entrevista con agendamientos: {e}")
+#         return None
 
 
 
