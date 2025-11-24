@@ -86,8 +86,8 @@ ESTADO_MAP_PREEVAL = {
 }
 ESTADO_DEFAULT = 99  # si no coincide
 
-
-
+from typing import Optional
+from DataBase import get_connection_context
 
 def obtener_entrevista_id(creador_id: int, usuario_evalua: int) -> Optional[dict]:
     """
@@ -95,46 +95,45 @@ def obtener_entrevista_id(creador_id: int, usuario_evalua: int) -> Optional[dict
     Si no existe, crea una entrevista mínima.
     Devuelve: { id, creado_en }
     """
-    conn = get_connection_context()
+
     try:
-        with conn.cursor() as cur:
+        # ✅ usar siempre el context manager
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
 
-            # 1️⃣ Buscar entrevista existente
-            cur.execute("""
-                SELECT id, creado_en
-                FROM entrevistas
-                WHERE creador_id = %s
-                ORDER BY creado_en ASC
-                LIMIT 1
-            """, (creador_id,))
+                # 1️⃣ Buscar entrevista existente
+                cur.execute("""
+                    SELECT id, creado_en
+                    FROM entrevistas
+                    WHERE creador_id = %s
+                    ORDER BY creado_en ASC
+                    LIMIT 1
+                """, (creador_id,))
 
-            row = cur.fetchone()
+                row = cur.fetchone()
 
-            # Si existe → retornarla
-            if row:
-                return {"id": row[0], "creado_en": row[1]}
+                if row:
+                    return {"id": row[0], "creado_en": row[1]}
 
-            # 2️⃣ Si no existe → crear entrevista mínima
-            cur.execute("""
-                INSERT INTO entrevistas (creador_id, usuario_evalua, creado_en)
-                VALUES (%s, %s, NOW() AT TIME ZONE 'UTC')
-                RETURNING id, creado_en
-            """, (creador_id, usuario_evalua))
+                # 2️⃣ Crear entrevista mínima
+                cur.execute("""
+                    INSERT INTO entrevistas (creador_id, usuario_evalua, creado_en)
+                    VALUES (%s, %s, NOW() AT TIME ZONE 'UTC')
+                    RETURNING id, creado_en
+                """, (creador_id, usuario_evalua))
 
-            new_row = cur.fetchone()
-            conn.commit()
+                new_row = cur.fetchone()
 
-            if not new_row:
-                return None
+                if not new_row:
+                    return None
 
-            return {"id": new_row[0], "creado_en": new_row[1]}
+                # El commit lo hace get_connection_context()
+                return {"id": new_row[0], "creado_en": new_row[1]}
 
     except Exception as e:
-        print("❌ Error en obtener_o_crear_entrevista:", e)
+        print("❌ Error en obtener_entrevista_id:", e)
         return None
 
-    finally:
-        conn.close()
 
 
 def crear_agendamiento_aspirante_DB(
@@ -144,80 +143,79 @@ def crear_agendamiento_aspirante_DB(
 ) -> Optional[int]:
     """
     Crea un agendamiento, obtiene/crea la entrevista y registra la relación
-    en entrevista_agendamiento. Devuelve agendamiento_id.
+    en entrevista_agendamiento. Devuelve agendamiento_id o None si falla.
     """
-    conn = get_connection_context()
+
     try:
-        with conn.cursor() as cur:
+        # ✅ usar SIEMPRE el context manager
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
 
-            # 1️⃣ INSERTAR AGENDAMIENTO
-            cur.execute(
-                """
-                INSERT INTO agendamientos (
-                    titulo,
-                    descripcion,
-                    fecha_inicio,
-                    fecha_fin,
-                    creador_id,
-                    responsable_id,
-                    estado,
-                    link_meet,
-                    google_event_id
+                # 1️⃣ INSERTAR AGENDAMIENTO
+                cur.execute(
+                    """
+                    INSERT INTO agendamientos (
+                        titulo,
+                        descripcion,
+                        fecha_inicio,
+                        fecha_fin,
+                        creador_id,
+                        responsable_id,
+                        estado,
+                        link_meet,
+                        google_event_id
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, 'programado', NULL, NULL)
+                    RETURNING id
+                    """,
+                    (
+                        data.titulo,
+                        data.descripcion,
+                        data.fecha_inicio,
+                        data.fecha_fin,
+                        aspirante_id,
+                        responsable_id,
+                    )
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, 'programado', NULL, NULL)
-                RETURNING id
-                """,
-                (
-                    data.titulo,
-                    data.descripcion,
-                    data.fecha_inicio,
-                    data.fecha_fin,
-                    aspirante_id,
-                    responsable_id,
+
+                agendamiento_id = cur.fetchone()[0]
+
+                # 2️⃣ OBTENER O CREAR ENTREVISTA
+                entrevista = obtener_entrevista_id(aspirante_id, responsable_id)
+                if not entrevista:
+                    raise Exception("No se pudo obtener o crear la entrevista.")
+
+                entrevista_id = entrevista["id"]
+
+                # 3️⃣ INSERTAR EN TABLA entrevista_agendamiento
+                cur.execute(
+                    """
+                    INSERT INTO entrevista_agendamiento (
+                        agendamiento_id,
+                        entrevista_id,
+                        creado_en
+                    )
+                    VALUES (%s, %s, NOW() AT TIME ZONE 'UTC')
+                    """,
+                    (agendamiento_id, entrevista_id)
                 )
-            )
 
-            agendamiento_id = cur.fetchone()[0]
-
-            # 2️⃣ OBTENER O CREAR ENTREVISTA
-            entrevista = obtener_entrevista_id(aspirante_id, responsable_id)
-            if not entrevista:
-                raise Exception("No se pudo obtener o crear la entrevista.")
-
-            entrevista_id = entrevista["id"]
-
-            # 3️⃣ INSERTAR EN TABLA entrevista_agendamiento
-            cur.execute(
-                """
-                INSERT INTO entrevista_agendamiento (
-                    agendamiento_id,
-                    entrevista_id,
-                    creado_en
+                # 4️⃣ INSERTAR PARTICIPANTE
+                cur.execute(
+                    """
+                    INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
+                    VALUES (%s, %s)
+                    """,
+                    (agendamiento_id, aspirante_id)
                 )
-                VALUES (%s, %s, NOW() AT TIME ZONE 'UTC')
-                """,
-                (agendamiento_id, entrevista_id)
-            )
 
-            # 4️⃣ INSERTAR PARTICIPANTE
-            cur.execute(
-                """
-                INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
-                VALUES (%s, %s)
-                """,
-                (agendamiento_id, aspirante_id)
-            )
-
-            conn.commit()
-            return agendamiento_id
+                # ❌ Nada de conn.commit() aquí: lo hace get_connection_context()
+                return agendamiento_id
 
     except Exception as e:
+        # Aquí solo logueamos; rollback y close los maneja el context manager
         print("❌ Error al crear agendamiento y relacionar entrevista:", e)
-        conn.rollback()
         return None
-
-    finally:
-        conn.close()
 
 
 def actualizar_preevaluacion_perfil(creador_id: int, payload: dict):
@@ -1038,5 +1036,138 @@ def crear_agendamiento_aspirante(
 #         url=url,
 #         expiracion=expiracion,
 #     )
+
+
+# def crear_agendamiento_aspirante_DB(
+#     data,
+#     aspirante_id: int,
+#     responsable_id: int
+# ) -> Optional[int]:
+#     """
+#     Crea un agendamiento, obtiene/crea la entrevista y registra la relación
+#     en entrevista_agendamiento. Devuelve agendamiento_id.
+#     """
+#     conn = get_connection_context()
+#     try:
+#         with conn.cursor() as cur:
+#
+#             # 1️⃣ INSERTAR AGENDAMIENTO
+#             cur.execute(
+#                 """
+#                 INSERT INTO agendamientos (
+#                     titulo,
+#                     descripcion,
+#                     fecha_inicio,
+#                     fecha_fin,
+#                     creador_id,
+#                     responsable_id,
+#                     estado,
+#                     link_meet,
+#                     google_event_id
+#                 )
+#                 VALUES (%s, %s, %s, %s, %s, %s, 'programado', NULL, NULL)
+#                 RETURNING id
+#                 """,
+#                 (
+#                     data.titulo,
+#                     data.descripcion,
+#                     data.fecha_inicio,
+#                     data.fecha_fin,
+#                     aspirante_id,
+#                     responsable_id,
+#                 )
+#             )
+#
+#             agendamiento_id = cur.fetchone()[0]
+#
+#             # 2️⃣ OBTENER O CREAR ENTREVISTA
+#             entrevista = obtener_entrevista_id(aspirante_id, responsable_id)
+#             if not entrevista:
+#                 raise Exception("No se pudo obtener o crear la entrevista.")
+#
+#             entrevista_id = entrevista["id"]
+#
+#             # 3️⃣ INSERTAR EN TABLA entrevista_agendamiento
+#             cur.execute(
+#                 """
+#                 INSERT INTO entrevista_agendamiento (
+#                     agendamiento_id,
+#                     entrevista_id,
+#                     creado_en
+#                 )
+#                 VALUES (%s, %s, NOW() AT TIME ZONE 'UTC')
+#                 """,
+#                 (agendamiento_id, entrevista_id)
+#             )
+#
+#             # 4️⃣ INSERTAR PARTICIPANTE
+#             cur.execute(
+#                 """
+#                 INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
+#                 VALUES (%s, %s)
+#                 """,
+#                 (agendamiento_id, aspirante_id)
+#             )
+#
+#             conn.commit()
+#             return agendamiento_id
+#
+#     except Exception as e:
+#         print("❌ Error al crear agendamiento y relacionar entrevista:", e)
+#         conn.rollback()
+#         return None
+#
+#     finally:
+#         conn.close()
+
+
+
+# def obtener_entrevista_id(creador_id: int, usuario_evalua: int) -> Optional[dict]:
+#     """
+#     Obtiene una entrevista existente por creador_id.
+#     Si no existe, crea una entrevista mínima.
+#     Devuelve: { id, creado_en }
+#     """
+#     conn = get_connection_context()
+#     try:
+#         with conn.cursor() as cur:
+#
+#             # 1️⃣ Buscar entrevista existente
+#             cur.execute("""
+#                 SELECT id, creado_en
+#                 FROM entrevistas
+#                 WHERE creador_id = %s
+#                 ORDER BY creado_en ASC
+#                 LIMIT 1
+#             """, (creador_id,))
+#
+#             row = cur.fetchone()
+#
+#             # Si existe → retornarla
+#             if row:
+#                 return {"id": row[0], "creado_en": row[1]}
+#
+#             # 2️⃣ Si no existe → crear entrevista mínima
+#             cur.execute("""
+#                 INSERT INTO entrevistas (creador_id, usuario_evalua, creado_en)
+#                 VALUES (%s, %s, NOW() AT TIME ZONE 'UTC')
+#                 RETURNING id, creado_en
+#             """, (creador_id, usuario_evalua))
+#
+#             new_row = cur.fetchone()
+#             conn.commit()
+#
+#             if not new_row:
+#                 return None
+#
+#             return {"id": new_row[0], "creado_en": new_row[1]}
+#
+#     except Exception as e:
+#         print("❌ Error en obtener_o_crear_entrevista:", e)
+#         return None
+#
+#     finally:
+#         conn.close()
+
 
 
