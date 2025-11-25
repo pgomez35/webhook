@@ -215,7 +215,10 @@ def diagnostico_perfil_creador(
 def evaluar_estadisticas(seguidores, siguiendo, videos, likes, duracion):
     # Corte duro: si tiene muy pocos seguidores, no cuenta
     if seguidores is None or seguidores < 50:
-        return 0.0
+        return {
+            "puntaje_estadistica": 0.0,
+            "puntaje_estadistica_categoria": "No aplicable"
+        }
 
     # Evitar división por cero
     if seguidores > 0 and videos and videos > 0:
@@ -1620,7 +1623,7 @@ def evaluar_estadisticas_pre(seguidores, siguiendo, videos, likes, duracion):
     if seguidores is None or seguidores < 50:
         return {
             "puntaje_estadistica": 0.0,
-            "puntaje_estadistica_categoria": "Muy bajo"
+            "puntaje_estadistica_categoria": "No aplicable"
         }
 
     # Evitar división por cero
@@ -1683,14 +1686,16 @@ def evaluar_estadisticas_pre(seguidores, siguiendo, videos, likes, duracion):
     score = seg * 0.35 + vid * 0.25 + lik * 0.25 + dur * 0.15
     score = round(score * (5 / 4), 2)
 
-    # Categoría
+    # Categoría proporcional
     if score == 0:
-        categoria = "Muy bajo"
+        categoria = "No aplicable"
     elif score < 1.5:
-        categoria = "Bajo"
+        categoria = "Muy bajo"
     elif score < 2.5:
-        categoria = "Medio"
+        categoria = "Bajo"
     elif score < 3.5:
+        categoria = "Aceptable"
+    elif score < 4.5:
         categoria = "Bueno"
     else:
         categoria = "Excelente"
