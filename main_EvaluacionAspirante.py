@@ -835,15 +835,12 @@ def obtener_info_token_agendamiento(token: str):
         nombre_mostrable=nombre_mostrable,
     )
 
-class calcularPreResumenIn(BaseModel):
-    potencial_estimado: int
-
 @router.post("/api/perfil_creador/{creador_id}/pre_resumen/calcular",
     tags=["Resumen Pre-Evaluación"]
 )
 def calcular_y_guardar_pre_resumen(
     creador_id: int,
-    data: calcularPreResumenIn,   # 👈 Recibe potencial_estimado aquí
+    potencial_estimado: int,   # 👈 Recibe potencial_estimado aquí
     usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     """
@@ -861,17 +858,17 @@ def calcular_y_guardar_pre_resumen(
                     UPDATE perfil_creador
                     SET potencial_estimado = %s
                     WHERE creador_id = %s
-                """, (data.potencial_estimado, creador_id))
+                """, (potencial_estimado, creador_id))
                 conn.commit()
 
         print(f"✅ Pre-evaluación calculada y GUARDADA para creador_id={creador_id}")
-        print(f"🔧 potencial_estimado actualizado a {data.potencial_estimado}")
+        print(f"🔧 potencial_estimado actualizado a {potencial_estimado}")
 
         return {
             "status": "ok",
             "mensaje": "Pre-evaluación recalculada y potencial_estimado actualizado",
             "creador_id": creador_id,
-            "potencial_estimado": data.potencial_estimado
+            "potencial_estimado": potencial_estimado
         }
 
     except HTTPException:
