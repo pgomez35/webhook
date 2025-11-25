@@ -1615,9 +1615,13 @@ def mejoras_sugeridas_datos_generales_cortas(edad, genero, idiomas, estudios, pa
 
 
 def evaluar_estadisticas_pre(seguidores, siguiendo, videos, likes, duracion):
-    # Corte duro: si tiene muy pocos seguidores, no cuenta
+
+    # Corte duro → debe devolver diccionario SIEMPRE
     if seguidores is None or seguidores < 50:
-        return 0.0
+        return {
+            "puntaje_estadistica": 0.0,
+            "puntaje_estadistica_categoria": "Muy bajo"
+        }
 
     # Evitar división por cero
     if seguidores > 0 and videos and videos > 0:
@@ -1628,19 +1632,15 @@ def evaluar_estadisticas_pre(seguidores, siguiendo, videos, likes, duracion):
         likesNormalizado = 0
 
     # Seguidores
-    if seguidores is None or seguidores <= 0:
+    if seguidores <= 0:
         seg = 0
     elif seguidores < 50:
-        # Menos de 50 → mala calificación
         seg = 1
     elif seguidores <= 500:
-        # 50 a 500 → regular
         seg = 2
     elif seguidores <= 1000:
-        # 501 a 1000 → aceptable / medio
         seg = 3
     else:
-        # Más de 1000 → bueno/alto
         seg = 4
 
     # Videos
@@ -1655,16 +1655,16 @@ def evaluar_estadisticas_pre(seguidores, siguiendo, videos, likes, duracion):
     else:
         vid = 4
 
-    # Likes normalizados (engagement relativo)
+    # Likes normalizados
     if likesNormalizado == 0:
         lik = 0
-    elif likesNormalizado < 0.02:   # <2%
+    elif likesNormalizado < 0.02:
         lik = 1
-    elif likesNormalizado <= 0.05:  # 2% - 5%
+    elif likesNormalizado <= 0.05:
         lik = 2
-    elif likesNormalizado <= 0.10:  # 5% - 10%
+    elif likesNormalizado <= 0.10:
         lik = 3
-    else:                           # >10%
+    else:
         lik = 4
 
     # Duración emisiones
@@ -1679,20 +1679,18 @@ def evaluar_estadisticas_pre(seguidores, siguiendo, videos, likes, duracion):
     else:
         dur = 4
 
-    # Score ponderado
+    # Score
     score = seg * 0.35 + vid * 0.25 + lik * 0.25 + dur * 0.15
-    score = round(score * (5 / 4), 2)  # Normalización a escala 0–5
+    score = round(score * (5 / 4), 2)
 
-    # Categoría proporcional
+    # Categoría
     if score == 0:
-        categoria = "No aplicable"
-    elif score < 1.5:
         categoria = "Muy bajo"
-    elif score < 2.5:
+    elif score < 1.5:
         categoria = "Bajo"
+    elif score < 2.5:
+        categoria = "Medio"
     elif score < 3.5:
-        categoria = "Aceptable"
-    elif score < 4.5:
         categoria = "Bueno"
     else:
         categoria = "Excelente"
@@ -1701,6 +1699,7 @@ def evaluar_estadisticas_pre(seguidores, siguiendo, videos, likes, duracion):
         "puntaje_estadistica": score,
         "puntaje_estadistica_categoria": categoria
     }
+
 
 
 def evaluar_datos_generales_pre(edad, genero, pais=None, actividad_actual=None):
@@ -2032,22 +2031,31 @@ def evaluar_perfil_pre(creador_id: int):
     else:
         cat_total = "Alto"
 
-    # ======================
-    # 7. Respuesta final
-    # ======================
-    return {
-        "status": "ok",
-        "creador_id": creador_id,
+        # ======================
+        # 7. RESPUESTA FINAL COMPATIBLE
+        # ======================
+        return {
+            "status": "ok",
+            "creador_id": creador_id,
 
-        # Puntajes individuales
-        "estadisticas": est,
-        "datos_generales": gen,
-        "habitos": hab,
+            # Compatibles con la BD
+            "puntaje_estadistica": est.get("puntaje_estadistica"),
+            "puntaje_estadistica_categoria": est.get("categoria"),
 
-        # Puntaje total pre-evaluación
-        "puntaje_total_pre": puntaje_total_pre,
-        "puntaje_total_categoria_pre": cat_total,
-    }
+            "puntaje_general": gen.get("puntaje_general"),
+            "puntaje_general_categoria": gen.get("categoria"),
+
+            "puntaje_habitos": hab.get("puntaje_habitos"),
+            "puntaje_habitos_categoria": hab.get("categoria"),
+
+            "puntaje_total": puntaje_total_pre,
+            "puntaje_total_categoria": cat_total,
+
+            # Para otras interfaces
+            "estadisticas": est,
+            "datos_generales": gen,
+            "habitos": hab,
+        }
 
 
 
