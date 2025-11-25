@@ -30,6 +30,7 @@ from enviar_msg_wp import (
     enviar_plantilla_generica,
     enviar_plantilla_generica_parametros
 )
+
 from main import guardar_mensaje
 from tenant import (
     current_business_name,
@@ -1900,7 +1901,7 @@ def consolidar_perfil_web(data: ConsolidarInput):
         except Exception as e:
             print(f"⚠️ No se pudo obtener nombre del usuario {data.numero}: {e}")
             nombre_usuario = None
-        
+
         mensaje_final = mensaje_encuesta_final(nombre=nombre_usuario)
         enviar_mensaje(data.numero, mensaje_final)
         print(f"✅ Perfil consolidado y mensaje final enviado a {data.numero}")

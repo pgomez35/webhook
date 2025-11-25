@@ -12,6 +12,7 @@ from google.oauth2.service_account import Credentials
 from gspread.worksheet import JSONResponse as GSpreadJSONResponse
 from fastapi.responses import JSONResponse
 
+from evaluaciones import evaluar_perfil_pre, diagnostico_perfil_creador_pre
 from schemas import ActualizacionContactoInfo
 from psycopg2.extras import RealDictCursor
 
@@ -2767,7 +2768,6 @@ def obtener_cuenta_por_subdominio(subdominio: str) -> dict | None:
         import traceback
         traceback.print_exc()
         return None
-
 
 
 

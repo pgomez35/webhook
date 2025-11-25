@@ -15,7 +15,9 @@ from typing import Optional
 from auth import obtener_usuario_actual
 from enviar_msg_wp import enviar_plantilla_generica_parametros, enviar_plantilla_generica
 from DataBase import get_connection_context, obtener_cuenta_por_subdominio
+from evaluaciones import evaluar_perfil_pre, diagnostico_perfil_creador_pre, obtener_guardar_pre_resumen
 from main_webhook import  enviar_mensaje
+from schemas import ResumenEvaluacionOutput
 from tenant import current_tenant
 
 
@@ -833,7 +835,107 @@ def obtener_info_token_agendamiento(token: str):
         nombre_mostrable=nombre_mostrable,
     )
 
+class calcularPreResumenIn(BaseModel):
+    potencial_estimado: int
 
+@router.post("/api/perfil_creador/{creador_id}/pre_resumen/calcular",
+    tags=["Resumen Pre-Evaluación"]
+)
+def calcular_y_guardar_pre_resumen(
+    creador_id: int,
+    data: calcularPreResumenIn,   # 👈 Recibe potencial_estimado aquí
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
+    """
+    Recalcula la pre-evaluación y actualiza el potencial_estimado manual.
+    """
+
+    try:
+        # 1️⃣ Ejecuta la función completa que calcula y guarda
+        obtener_guardar_pre_resumen(creador_id)
+
+        # 2️⃣ Actualizar manualmente el campo potencial_estimado en perfil_creador
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE perfil_creador
+                    SET potencial_estimado = %s
+                    WHERE creador_id = %s
+                """, (data.potencial_estimado, creador_id))
+                conn.commit()
+
+        print(f"✅ Pre-evaluación calculada y GUARDADA para creador_id={creador_id}")
+        print(f"🔧 potencial_estimado actualizado a {data.potencial_estimado}")
+
+        return {
+            "status": "ok",
+            "mensaje": "Pre-evaluación recalculada y potencial_estimado actualizado",
+            "creador_id": creador_id,
+            "potencial_estimado": data.potencial_estimado
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al recalcular/guardar pre-evaluación: {str(e)}"
+        )
+
+@router.get("/api/perfil_creador/{creador_id}/pre_resumen",
+         tags=["Resumen Pre-Evaluación"],
+         response_model=ResumenEvaluacionOutput)
+def obtener_pre_resumen(creador_id: int, usuario_actual: dict = Depends(obtener_usuario_actual)):
+
+    # Llamamos a la función maestra (puntajes parciales)
+    resultado = evaluar_perfil_pre(creador_id)
+
+    if resultado.get("status") != "ok":
+        raise HTTPException(status_code=404, detail="Perfil no encontrado")
+
+    # =======================================
+    # Obtener diagnóstico parcial
+    # =======================================
+    try:
+        diagnostico = diagnostico_perfil_creador_pre(creador_id)
+    except Exception:
+        diagnostico = "-"
+
+    # Texto final para mostrar en front
+    texto = (
+        f"📊 Pre-Evaluación:\n"
+        f"Puntaje parcial: {resultado.get('puntaje_total')}\n"
+        f"Categoría: {resultado.get('puntaje_total_categoria')}\n\n"
+        f"🩺 Diagnóstico Preliminar:\n{diagnostico}\n"
+    )
+
+    # =======================================
+    # Respuesta final en formato ResumenEvaluacionOutput
+    # =======================================
+    return ResumenEvaluacionOutput(
+        status="ok",
+        mensaje="Resumen preliminar calculado",
+
+        puntaje_estadistica=resultado.get("puntaje_estadistica"),
+        puntaje_estadistica_categoria=resultado.get("puntaje_estadistica_categoria"),
+
+        puntaje_general=resultado.get("puntaje_general"),
+        puntaje_general_categoria=resultado.get("puntaje_general_categoria"),
+
+        puntaje_habitos=resultado.get("puntaje_habitos"),
+        puntaje_habitos_categoria=resultado.get("puntaje_habitos_categoria"),
+
+        puntaje_manual=None,
+        puntaje_manual_categoria=None,
+
+        puntaje_total=resultado.get("puntaje_total"),
+        puntaje_total_categoria=resultado.get("puntaje_total_categoria"),
+
+        diagnostico=texto,
+        mejoras_sugeridas=None  # no aplica en pre-evaluación
+    )
 
 # @router.post("/api/agendamientos/aspirante", response_model=EventoOut)
 # def crear_agendamiento_aspirante(

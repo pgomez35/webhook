@@ -4243,59 +4243,6 @@ async def health_check():
     return health_info
 
 
-@app.get("/api/perfil_creador/{creador_id}/pre_resumen",
-         tags=["Resumen Pre-Evaluación"],
-         response_model=ResumenEvaluacionOutput)
-def obtener_pre_resumen(creador_id: int, usuario_actual: dict = Depends(obtener_usuario_actual)):
-
-    # Llamamos a la función maestra (puntajes parciales)
-    resultado = evaluar_perfil_pre(creador_id)
-
-    if resultado.get("status") != "ok":
-        raise HTTPException(status_code=404, detail="Perfil no encontrado")
-
-    # =======================================
-    # Obtener diagnóstico parcial
-    # =======================================
-    try:
-        diagnostico = diagnostico_perfil_creador_pre(creador_id)
-    except Exception:
-        diagnostico = "-"
-
-    # Texto final para mostrar en front
-    texto = (
-        f"📊 Pre-Evaluación:\n"
-        f"Puntaje parcial: {resultado.get('puntaje_total')}\n"
-        f"Categoría: {resultado.get('puntaje_total_categoria')}\n\n"
-        f"🩺 Diagnóstico Preliminar:\n{diagnostico}\n"
-    )
-
-    # =======================================
-    # Respuesta final en formato ResumenEvaluacionOutput
-    # =======================================
-    return ResumenEvaluacionOutput(
-        status="ok",
-        mensaje="Resumen preliminar calculado",
-
-        puntaje_estadistica=resultado.get("puntaje_estadistica"),
-        puntaje_estadistica_categoria=resultado.get("puntaje_estadistica_categoria"),
-
-        puntaje_general=resultado.get("puntaje_general"),
-        puntaje_general_categoria=resultado.get("puntaje_general_categoria"),
-
-        puntaje_habitos=resultado.get("puntaje_habitos"),
-        puntaje_habitos_categoria=resultado.get("puntaje_habitos_categoria"),
-
-        puntaje_manual=None,
-        puntaje_manual_categoria=None,
-
-        puntaje_total=resultado.get("puntaje_total"),
-        puntaje_total_categoria=resultado.get("puntaje_total_categoria"),
-
-        diagnostico=texto,
-        mejoras_sugeridas=None  # no aplica en pre-evaluación
-    )
-
 
 # @app.get("/api/perfil_creador/{creador_id}/pre_resumen",
 #          tags=["Resumen Pre-Evaluación"],

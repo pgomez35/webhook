@@ -1930,13 +1930,15 @@ def evaluacion_total_pre(
         "puntaje_total_categoria": categoria
     }
 
+
 def evaluar_perfil_pre(creador_id: int):
     """
     Obtiene datos de perfil_creador y calcula:
     - puntaje_estadisticas_pre
     - puntaje_datos_generales_pre
     - puntaje_preferencias_habitos_pre
-    - puntaje_total_pre (promedio parcial)
+    - puntaje_total_pre (promedio parcial, redondeo a 0.5)
+    - categoría total (Bajo, Medio, Alto)
     """
 
     # ======================
@@ -2007,6 +2009,7 @@ def evaluar_perfil_pre(creador_id: int):
     # ======================
     # 5. Calcular puntaje total PRE-EVALUACIÓN
     # (promedio simple de los tres parciales)
+    # Con redondeo a pasos de 0.5
     # ======================
     puntajes = [
         est.get("puntaje_estadistica", 0),
@@ -2014,22 +2017,21 @@ def evaluar_perfil_pre(creador_id: int):
         hab.get("puntaje_habitos", 0)
     ]
 
-    puntaje_total_pre = round(sum(puntajes) / 3, 2)
-
-    # Categoría total
-    if puntaje_total_pre < 1.5:
-        cat_total = "Muy bajo"
-    elif puntaje_total_pre < 2.5:
-        cat_total = "Bajo"
-    elif puntaje_total_pre < 3.5:
-        cat_total = "Aceptable"
-    elif puntaje_total_pre < 4.5:
-        cat_total = "Bueno"
-    else:
-        cat_total = "Excelente"
+    promedio = sum(puntajes) / 3
+    puntaje_total_pre = round(promedio * 2) / 2   # 🔥 redondeo a 0.5
 
     # ======================
-    # 6. Respuesta final
+    # 6. Categoría total (3 niveles)
+    # ======================
+    if puntaje_total_pre < 1.5:
+        cat_total = "Bajo"
+    elif puntaje_total_pre < 3:
+        cat_total = "Medio"
+    else:
+        cat_total = "Alto"
+
+    # ======================
+    # 7. Respuesta final
     # ======================
     return {
         "status": "ok",
@@ -2044,6 +2046,123 @@ def evaluar_perfil_pre(creador_id: int):
         "puntaje_total_pre": puntaje_total_pre,
         "puntaje_total_categoria_pre": cat_total,
     }
+
+
+
+# def evaluar_perfil_pre(creador_id: int):
+#     """
+#     Obtiene datos de perfil_creador y calcula:
+#     - puntaje_estadisticas_pre
+#     - puntaje_datos_generales_pre
+#     - puntaje_preferencias_habitos_pre
+#     - puntaje_total_pre (promedio parcial)
+#     """
+#
+#     # ======================
+#     # 1. Obtener datos desde BD
+#     # ======================
+#     try:
+#         with get_connection_context() as conn:
+#             with conn.cursor() as cur:
+#                 cur.execute("""
+#                     SELECT
+#                         edad, genero, pais, actividad_actual,
+#                         seguidores, siguiendo, videos, likes, duracion_emisiones,
+#                         tiempo_disponible, frecuencia_lives, intencion_trabajo,
+#                         experiencia_otras_plataformas
+#                     FROM perfil_creador
+#                     WHERE creador_id = %s
+#                     LIMIT 1
+#                 """, (creador_id,))
+#
+#                 row = cur.fetchone()
+#                 if not row:
+#                     return {"error": "Perfil no encontrado"}
+#
+#                 (
+#                     edad, genero, pais, actividad_actual,
+#                     seguidores, siguiendo, videos, likes, duracion,
+#                     tiempo_disponible, frecuencia_lives, intencion_trabajo,
+#                     experiencia_otras_plataformas
+#                 ) = row
+#
+#                 if experiencia_otras_plataformas is None:
+#                     experiencia_otras_plataformas = {}
+#     except Exception as e:
+#         print("❌ Error obteniendo perfil:", e)
+#         return {"error": "Error al consultar BD"}
+#
+#     # ======================
+#     # 2. Evaluar estadísticas parciales
+#     # ======================
+#     est = evaluar_estadisticas_pre(
+#         seguidores=seguidores,
+#         siguiendo=siguiendo,
+#         videos=videos,
+#         likes=likes,
+#         duracion=duracion
+#     )
+#
+#     # ======================
+#     # 3. Evaluar datos generales parciales
+#     # ======================
+#     gen = evaluar_datos_generales_pre(
+#         edad=edad,
+#         genero=genero,
+#         pais=pais,
+#         actividad_actual=actividad_actual
+#     )
+#
+#     # ======================
+#     # 4. Evaluar hábitos y preferencias parciales
+#     # ======================
+#     hab = evaluar_preferencias_habitos_pre(
+#         exp_otras=experiencia_otras_plataformas,
+#         tiempo=tiempo_disponible,
+#         freq_lives=frecuencia_lives,
+#         intencion=intencion_trabajo
+#     )
+#
+#     # ======================
+#     # 5. Calcular puntaje total PRE-EVALUACIÓN
+#     # (promedio simple de los tres parciales)
+#     # ======================
+#     puntajes = [
+#         est.get("puntaje_estadistica", 0),
+#         gen.get("puntaje_general", 0),
+#         hab.get("puntaje_habitos", 0)
+#     ]
+#
+#     puntaje_total_pre = round(sum(puntajes) / 3, 2)
+#
+#     # Categoría total
+#     if puntaje_total_pre < 1.5:
+#         cat_total = "Muy bajo"
+#     elif puntaje_total_pre < 2.5:
+#         cat_total = "Bajo"
+#     elif puntaje_total_pre < 3.5:
+#         cat_total = "Aceptable"
+#     elif puntaje_total_pre < 4.5:
+#         cat_total = "Bueno"
+#     else:
+#         cat_total = "Excelente"
+#
+#     # ======================
+#     # 6. Respuesta final
+#     # ======================
+#     return {
+#         "status": "ok",
+#         "creador_id": creador_id,
+#
+#         # Puntajes individuales
+#         "estadisticas": est,
+#         "datos_generales": gen,
+#         "habitos": hab,
+#
+#         # Puntaje total pre-evaluación
+#         "puntaje_total_pre": puntaje_total_pre,
+#         "puntaje_total_categoria_pre": cat_total,
+#     }
 
 def evaluar_perfil_pre(creador_id: int):
 
@@ -2200,9 +2319,49 @@ def diagnostico_perfil_creador_pre(
 ) -> str:
     """
     Diagnóstico preliminar del perfil del creador para Pre-Evaluación.
-    No incluye evaluación cualitativa.
-    Solo usa: datos personales, estadísticas y hábitos.
+    Usa datos personales, estadísticas y hábitos (SIN cualitativo).
     """
+
+    # =========================
+    #  MAPEOS DEL FRONTEND
+    # =========================
+
+    MAP_EDAD = {
+        1: "Menos de 18 años",
+        2: "18 - 24 años",
+        3: "25 - 34 años",
+        4: "35 - 45 años",
+        5: "Más de 45 años",
+    }
+
+    MAP_ACTIVIDAD = {
+        "estudiante_tiempo_completo": "Estudia tiempo completo",
+        "estudiante_tiempo_parcial": "Estudia medio tiempo",
+        "trabajo_tiempo_completo": "Trabaja tiempo completo",
+        "trabajo_medio_tiempo": "Trabaja medio tiempo",
+        "buscando_empleo": "Buscando empleo",
+        "emprendiendo": "Emprendiendo",
+        "disponible_total": "Disponible tiempo completo",
+        "otro": "Otro",
+    }
+
+    MAP_TIEMPO = {
+        1: "0–1 hrs",
+        2: "1–3 hrs",
+        3: "Más de 3 hrs",
+    }
+
+    MAP_FRECUENCIA = {
+        1: "1–2 días",
+        2: "3–5 días",
+        3: "Todos los días",
+        4: "Ninguno",
+    }
+
+    # =========================
+    #  OBTENER DATOS
+    # =========================
+
     datos = obtener_datos_mejoras_perfil_creador(creador_id)
 
     puntajes = {
@@ -2230,75 +2389,152 @@ def diagnostico_perfil_creador_pre(
         "📅 Preferencias y hábitos": [],
     }
 
-    # --- Datos personales ---
+    # =========================
+    # DATOS PERSONALES
+    # =========================
 
-    actividad = datos.get("actividad_actual", "No especificado")
-    edad = datos.get("edad", "")
-    genero = datos.get("genero", "No especificado")
-    pais = datos.get("pais", "No especificado")
+    edad = datos.get("edad")
+    genero = datos.get("genero", "No informado")
+    pais = datos.get("pais", "No informado")
+    actividad_raw = datos.get("actividad_actual")
 
     diagnostico["🧑‍🎓 Datos personales y generales"].extend([
-        f"🎂 Edad: {edad if edad else 'No informado'}",
-        f"👤 Género: {genero}",
-        f"🌎 País: {pais}",
-        f"💼 Actividad actual: {actividad}",
+        f"🎂 Edad: {MAP_EDAD.get(edad, 'No informado')}",
+        f"👤 Género: {genero or 'No informado'}",
+        f"🌎 País: {pais or 'No informado'}",
+        f"💼 Actividad actual: {MAP_ACTIVIDAD.get(actividad_raw, 'No informado')}",
     ])
 
-    # --- Estadísticas ---
+    # =========================
+    # ESTADÍSTICAS
+    # =========================
+
     seguidores = datos.get("seguidores")
     siguiendo = datos.get("siguiendo")
     likes = datos.get("likes")
     videos = datos.get("videos")
-    duracion = datos.get("duracion_emisiones")
+    dias_activo = datos.get("duracion_emisiones")
 
     diagnostico["📊 Estadísticas"].extend([
         f"👥 Seguidores: {seguidores if seguidores is not None else 'No informado'}",
         f"➡️ Siguiendo: {siguiendo if siguiendo is not None else 'No informado'}",
         f"👍 Likes: {likes if likes is not None else 'No informado'}",
-        f"🎥 Videos: {videos if videos is not None else 'No informado'}",
-        f"⏳ Días activo: {duracion if duracion is not None else 'No informado'}",
+        f"🎥 Videos publicados: {videos if videos is not None else 'No informado'}",
+        f"⏳ Días activo TikTok LIVE: {dias_activo if dias_activo is not None else 'No informado'}",
     ])
 
-    # --- Preferencias y hábitos ---
-    tiempo = datos.get("tiempo_disponible", "No definido")
-    frecuencia = datos.get("frecuencia_lives", "No definido")
+    # =========================
+    # PREFERENCIAS Y HÁBITOS
+    # =========================
+
+    tiempo = datos.get("tiempo_disponible")
+    frecuencia = datos.get("frecuencia_lives")
     experiencia = datos.get("experiencia_otras_plataformas") or {}
-    intencion = datos.get("intencion_trabajo", "No definido")
+    intencion = datos.get("intencion_trabajo", "No informado")
 
     experiencia_fmt = [
         f"{plataforma}: {valor} {'año' if valor == 1 else 'años'}"
-        for plataforma, valor in experiencia.items() if valor
+        for plataforma, valor in experiencia.items()
+        if valor
     ]
     experiencia_str = ", ".join(experiencia_fmt) if experiencia_fmt else "Sin experiencia"
 
     diagnostico["📅 Preferencias y hábitos"].extend([
-        f"⌛ Tiempo disponible: {tiempo}",
-        f"📡 Frecuencia de lives: {frecuencia}",
+        f"⌛ Tiempo disponible: {MAP_TIEMPO.get(tiempo, 'No definido')}",
+        f"📡 Frecuencia de lives: {MAP_FRECUENCIA.get(frecuencia, 'No definido')}",
         f"🌍 Experiencia en plataformas: {experiencia_str}",
         f"💼 Intención de trabajo: {intencion}",
     ])
 
-    # --- Armado final ---
+    # =========================
+    # ARMADO DEL MENSAJE
+    # =========================
+
     mensaje = ["# 📋 DIAGNÓSTICO PRELIMINAR DEL PERFIL\n"]
 
     mensaje.append("## 🧑‍🎓 Datos personales y generales")
-    for item in diagnostico["🧑‍🎓 Datos personales y generales"]:
-        mensaje.append(f"- {item}")
+    mensaje.extend([f"- {item}" for item in diagnostico["🧑‍🎓 Datos personales y generales"]])
     mensaje.append("")
 
     mensaje.append("## 📊 Estadísticas del perfil")
-    for item in diagnostico["📊 Estadísticas"]:
-        mensaje.append(f"- {item}")
+    mensaje.extend([f"- {item}" for item in diagnostico["📊 Estadísticas"]])
     mensaje.append("")
 
     mensaje.append("## 📅 Preferencias y hábitos")
-    for item in diagnostico["📅 Preferencias y hábitos"]:
-        mensaje.append(f"- {item}")
+    mensaje.extend([f"- {item}" for item in diagnostico["📅 Preferencias y hábitos"]])
     mensaje.append("")
 
     mensaje.append("# 🏅 Puntajes Parciales del Perfil")
     for nombre, (_, categoria) in puntajes.items():
-        mensaje.append(f"- {nombre}: {categoria if categoria else 'Sin categoría'}")
+        mensaje.append(f"- {nombre}: {categoria or 'Sin categoría'}")
 
     return "\n".join(mensaje)
+
+def obtener_guardar_pre_resumen(creador_id: int):
+    """
+    Calcula la pre-evaluación del creador, genera el diagnóstico preliminar
+    y actualiza la tabla perfil_creador con los resultados.
+    Retorna un diccionario con toda la información.
+    """
+
+    # 1️⃣ Calcular puntajes parciales de pre-evaluación
+    resultado = evaluar_perfil_pre(creador_id)
+
+    if resultado.get("status") != "ok":
+        raise Exception("Perfil no encontrado")
+
+    # 2️⃣ Obtener diagnóstico preliminar
+    try:
+        diagnostico = diagnostico_perfil_creador_pre(creador_id)
+    except Exception:
+        diagnostico = "-"
+
+    # 3️⃣ Texto para mostrar en interfaz
+    texto = (
+        f"📊 Pre-Evaluación:\n"
+        f"Puntaje parcial: {resultado.get('puntaje_total')}\n"
+        f"Categoría: {resultado.get('puntaje_total_categoria')}\n\n"
+        f"🩺 Diagnóstico Preliminar:\n{diagnostico}\n"
+    )
+
+    # 4️⃣ Guardar resultados en tabla perfil_creador
+    try:
+        with get_connection_context() as conn:
+            cur = conn.cursor()
+
+            cur.execute(
+                """
+                UPDATE perfil_creador
+                SET
+                    puntaje_estadistica = %s,
+                    puntaje_estadistica_categoria = %s,
+                    puntaje_general = %s,
+                    puntaje_general_categoria = %s,
+                    puntaje_habitos = %s,
+                    puntaje_habitos_categoria = %s,
+                    puntaje_total = %s,
+                    puntaje_total_categoria = %s,
+                    diagnostico = %s,
+                    actualizado_en = NOW()
+                WHERE creador_id = %s
+                """,
+                (
+                    resultado.get("puntaje_estadistica"),
+                    resultado.get("puntaje_estadistica_categoria"),
+                    resultado.get("puntaje_general"),
+                    resultado.get("puntaje_general_categoria"),
+                    resultado.get("puntaje_habitos"),
+                    resultado.get("puntaje_habitos_categoria"),
+                    resultado.get("puntaje_total"),
+                    resultado.get("puntaje_total_categoria"),
+                    texto,
+                    creador_id,
+                )
+            )
+
+            if cur.rowcount == 0:
+                raise Exception("No existe perfil_creador para este creador_id")
+
+    except Exception as e:
+        raise Exception(f"Error al guardar la pre-evaluación en perfil_creador: {str(e)}")
 
