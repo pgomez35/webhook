@@ -1,10 +1,12 @@
-from DataBase import *
+# from DataBase import *
 from openai import OpenAI
 from dotenv import load_dotenv
-from utils import *
 import os
 
 # Cargar variables de entorno
+from DataBase import obtener_datos_mejoras_perfil_creador, obtener_datos_estadisticas_perfil_creador, \
+    get_connection_context
+
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=api_key)

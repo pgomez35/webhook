@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from starlette.staticfiles import StaticFiles
 from enviar_msg_wp import enviar_plantilla_generica, enviar_mensaje_texto_simple
 
-from waba_DB import guardar_o_actualizar_waba_db,actualizar_phone_info_db
+from DataBase import guardar_o_actualizar_waba_db,actualizar_phone_info_db
 
 # Cargar variables de entorno (incluye DATABASE_URL)
 load_dotenv()
