@@ -600,6 +600,13 @@ class ResumenEvaluacionOutput(ResumenEvaluacionInput):
     fecha_entrevista: Optional[datetime] = None
     entrevista: Optional[bool] = False  # 👈 agregado aquí
 
+# 🆕 NUEVOS CAMPOS PARA DECISIÓN FINAL
+    decision_icono: Optional[str] = None    # "❌", "🟡", "⭐", etc.
+    decision: Optional[str] = None          # "No apto", "Prueba", "Apto"
+    recomendacion: Optional[str] = None     # Texto largo de recomendación
+    potencial_estimado: Optional[int] = None              # valor numérico 1–3
+    potencial_estimado_texto: Optional[str] = None        # bajo / medio / alto
+
 
 class ResumenEvaluacionSchema(ResumenEvaluacionOutput):
     pass

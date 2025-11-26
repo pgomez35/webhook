@@ -2478,6 +2478,46 @@ def obtener_invitacion_por_creador(creador_id: int):
         return None
 
 
+def obtener_potencial_estimado(creador_id: int):
+    try:
+        # Validación defensiva
+        if not isinstance(creador_id, int):
+            print("❌ Error: creador_id inválido (debe ser int).")
+            return 2  # Valor por defecto
+
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT potencial_estimado
+                    FROM perfil_creador
+                    WHERE creador_id = %s;
+                """, (creador_id,))
+
+                row = cur.fetchone()
+
+        # Si no hay fila → usar 2
+        if row is None:
+            print(f"⚠️ No existe registro de potencial_estimado para creador_id={creador_id}. Usando valor=2 (default)")
+            return 2
+
+        valor = row[0]
+
+        # Si hay fila pero valor es NULL → usar 2
+        if valor is None:
+            print(f"⚠️ potencial_estimado es NULL para creador_id={creador_id}. Usando valor=2 (default)")
+            return 2
+
+        # Valor válido
+        print(f"✅ potencial_estimado obtenido para creador_id={creador_id}: {valor}")
+        return valor
+
+    except Exception as e:
+        print(f"❌ Error al obtener potencial_estimado (creador_id={creador_id}): {e}")
+        return 2  # fallback seguro
+
+
+
+
 def guardar_o_actualizar_token_db(session_id: str, token: str):
     try:
         with get_connection_public_context() as conn:
