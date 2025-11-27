@@ -915,6 +915,7 @@ def obtener_pre_resumen(creador_id: int, usuario_actual: dict = Depends(obtener_
         calidad_visual_cualitativo=calidad_visual_val
     )
 
+
     # =======================================
     # Respuesta final en formato ResumenEvaluacionOutput
     # =======================================
@@ -936,6 +937,7 @@ def obtener_pre_resumen(creador_id: int, usuario_actual: dict = Depends(obtener_
 
         puntaje_total=resultado.get("puntaje_total"),
         puntaje_total_categoria=resultado.get("puntaje_total_categoria"),
+        puntaje_total_categoria_Ajustado=convertir_1a5_a_1a3(resultado.get("puntaje_total")),
 
         diagnostico=texto,
         mejoras_sugeridas=None,  # no aplica en pre-evaluación
@@ -948,20 +950,37 @@ def obtener_pre_resumen(creador_id: int, usuario_actual: dict = Depends(obtener_
 
     )
 
+
+def convertir_1a5_a_1a3(puntaje):
+    if puntaje is None:
+        return None
+
+    # Redondear al múltiplo de 0.5 más cercano
+    puntaje_redondeado = round(puntaje * 2) / 2
+
+    # Convertir a categoría 1–3
+    if puntaje_redondeado <= 2:
+        return "Bajo"
+    elif puntaje_redondeado == 3:
+        return "Medio"
+    else:
+        return "Alto"
+
+
 def mapear_potencial_categoria(valor: int | None) -> str:
     if valor == 1:
-        return "bajo"
+        return "Potencial Bajo"
     if valor == 2:
-        return "medio"
+        return "En Desarrollo"
     if valor == 3:
-        return "alto"
-    return "medio"  # por defecto
-
+        return "Potencial Alto"
+    return ""  # por defecto
 
 def sugerencia_decision_final(puntaje_total: int, calidad_visual_cualitativo: int):
     """
     puntaje_total: 1-5  -> bajo, medio, alto
-    calidad_visual_cualitativo: 1-3
+    calidad_visual_cualitativo:
+        0 = no evaluado (IGNORAR, usar solo puntaje_total)
         1 = no tiene potencial
         2 = potencial en desarrollo
         3 = alto potencial
@@ -975,7 +994,47 @@ def sugerencia_decision_final(puntaje_total: int, calidad_visual_cualitativo: in
     else:  # 4 o 5
         cat_total = "alto"
 
-    # --- Normalizar cualitativo ---
+    # ----------------------------------------------------------------------
+    #  CASO ESPECIAL: calidad_visual_cualitativo = 0 → evaluar SOLO por puntaje_total
+    # ----------------------------------------------------------------------
+    if calidad_visual_cualitativo == 0:
+        if cat_total == "bajo":
+            icono = "❌"
+            decision = "No apto"
+        elif cat_total == "medio":
+            icono = "🟡"
+            decision = "Prueba"
+        else:  # alto
+            icono = "⭐"
+            decision = "Apto"
+
+        recomendaciones_simple = {
+            "No apto": (
+                "El creador no muestra suficiente potencial según el desempeño numérico."
+            ),
+            "Prueba": (
+                "El puntaje es aceptable, pero falta evaluación visual. "
+                "Recomendar una prueba para confirmar."
+            ),
+            "Apto": (
+                "Buen desempeño numérico. Aunque no hay evaluación visual, "
+                "el perfil parece suficientemente sólido."
+            ),
+        }
+
+        return {
+            "puntaje_total_categoria": cat_total,
+            "calidad_visual_categoria": None,
+            "decision_icono": icono,
+            "decision": decision,
+            "recomendacion": recomendaciones_simple.get(decision),
+        }
+
+    # ----------------------------------------------------------------------
+    #  CASO NORMAL (sí existe evaluación visual)
+    # ----------------------------------------------------------------------
+
+    # Normalizar cualitativo
     cualitativo_map = {
         1: "no_potencial",
         2: "desarrollo",
@@ -984,29 +1043,24 @@ def sugerencia_decision_final(puntaje_total: int, calidad_visual_cualitativo: in
 
     cat_visual = cualitativo_map.get(calidad_visual_cualitativo, None)
     if cat_visual is None:
-        raise ValueError("El valor de calidad_visual_cualitativo debe ser 1, 2 o 3.")
+        raise ValueError("El valor de calidad_visual_cualitativo debe ser 0, 1, 2 o 3.")
 
-    # --- Matriz de decisión ---
-    # Devuelve: icono, decisión
+    # Matriz
     matriz = {
-        # no tiene potencial
         ("bajo", "no_potencial"):    ("❌", "No apto"),
         ("medio", "no_potencial"):   ("❌", "No apto"),
         ("alto", "no_potencial"):    ("🟡", "Requiere prueba"),
 
-        # en desarrollo
         ("bajo", "desarrollo"):      ("🟡", "Prueba"),
         ("medio", "desarrollo"):     ("🟡", "Prueba"),
         ("alto", "desarrollo"):      ("⭐", "Apto / prueba"),
 
-        # alto potencial
         ("medio", "alto_potencial"): ("⭐", "Apto"),
         ("alto", "alto_potencial"):  ("⭐", "Apto"),
     }
 
     icono, decision = matriz.get((cat_total, cat_visual), ("❓", "Indeterminado"))
 
-    # --- Recomendación en texto ---
     recomendaciones = {
         "No apto": (
             "El creador no cumple con los criterios visuales o de desempeño necesarios. "
@@ -1038,6 +1092,89 @@ def sugerencia_decision_final(puntaje_total: int, calidad_visual_cualitativo: in
         "decision": decision,
         "recomendacion": recomendacion,
     }
+
+
+
+# def sugerencia_decision_final(puntaje_total: int, calidad_visual_cualitativo: int):
+#     """
+#     puntaje_total: 1-5  -> bajo, medio, alto
+#     calidad_visual_cualitativo: 1-3
+#         1 = no tiene potencial
+#         2 = potencial en desarrollo
+#         3 = alto potencial
+#     """
+#
+#     # --- Normalizar puntaje total ---
+#     if puntaje_total <= 2:
+#         cat_total = "bajo"
+#     elif puntaje_total == 3:
+#         cat_total = "medio"
+#     else:  # 4 o 5
+#         cat_total = "alto"
+#
+#     # --- Normalizar cualitativo ---
+#     cualitativo_map = {
+#         1: "no_potencial",
+#         2: "desarrollo",
+#         3: "alto_potencial"
+#     }
+#
+#     cat_visual = cualitativo_map.get(calidad_visual_cualitativo, None)
+#     if cat_visual is None:
+#         raise ValueError("El valor de calidad_visual_cualitativo debe ser 1, 2 o 3.")
+#
+#     # --- Matriz de decisión ---
+#     # Devuelve: icono, decisión
+#     matriz = {
+#         # no tiene potencial
+#         ("bajo", "no_potencial"):    ("❌", "No apto"),
+#         ("medio", "no_potencial"):   ("❌", "No apto"),
+#         ("alto", "no_potencial"):    ("🟡", "Requiere prueba"),
+#
+#         # en desarrollo
+#         ("bajo", "desarrollo"):      ("🟡", "Prueba"),
+#         ("medio", "desarrollo"):     ("🟡", "Prueba"),
+#         ("alto", "desarrollo"):      ("⭐", "Apto / prueba"),
+#
+#         # alto potencial
+#         ("medio", "alto_potencial"): ("⭐", "Apto"),
+#         ("alto", "alto_potencial"):  ("⭐", "Apto"),
+#     }
+#
+#     icono, decision = matriz.get((cat_total, cat_visual), ("❓", "Indeterminado"))
+#
+#     # --- Recomendación en texto ---
+#     recomendaciones = {
+#         "No apto": (
+#             "El creador no cumple con los criterios visuales o de desempeño necesarios. "
+#             "Se recomienda descartar o reevaluar más adelante."
+#         ),
+#         "Requiere prueba": (
+#             "El puntaje es bueno, pero visualmente no muestra suficiente potencial. "
+#             "Recomienda una prueba corta para confirmar."
+#         ),
+#         "Prueba": (
+#             "Tiene señales positivas pero aún no es consistente. "
+#             "Realizar una prueba para validar desempeño en vivo."
+#         ),
+#         "Apto / prueba": (
+#             "El desempeño es alto y muestra buen potencial, pero aún requiere una validación rápida."
+#         ),
+#         "Apto": (
+#             "Muy buen perfil, buena energía y potencial claro. "
+#             "Apto para continuar con el proceso."
+#         ),
+#     }
+#
+#     recomendacion = recomendaciones.get(decision, "Sin recomendación definida.")
+#
+#     return {
+#         "puntaje_total_categoria": cat_total,
+#         "calidad_visual_categoria": cat_visual,
+#         "decision_icono": icono,
+#         "decision": decision,
+#         "recomendacion": recomendacion,
+#     }
 
 
 # @router.post("/api/agendamientos/aspirante", response_model=EventoOut)

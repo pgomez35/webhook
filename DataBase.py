@@ -1395,65 +1395,69 @@ def obtener_perfil_creador(creador_id):
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT
-                        id,
-                        creador_id,
-                        edad,
-                        seguidores,
-                        siguiendo,
-                        videos,
-                        likes,
-                        duracion_emisiones,
-                        dias_emisiones,
-                        apariencia,
-                        engagement,
-                        calidad_contenido,
-                        frecuencia_lives,
-                        creado_en,
-                        actualizado_en,
-                        puntaje_total,
-                        tiempo_disponible,
-                        experiencia_otras_plataformas,
-                        intereses,
-                        tipo_contenido,
-                        puntaje_estadistica,
-                        puntaje_manual,
-                        puntaje_general,
-                        puntaje_habitos,
-                        puntaje_total_categoria,
-                        campo_estudios,
-                        estudios,
-                        horario_preferido,
-                        intencion_trabajo,
-                        puntaje_estadistica_categoria,
-                        usuario,
-                        biografia_sugerida,
-                        puntaje_manual_categoria,
-                        genero,
-                        telefono,
-                        pais,
-                        ciudad,
-                        zona_horaria,
-                        puntaje_habitos_categoria,
-                        nombre,
-                        usuario_evalua,
-                        potencial_estimado,
-                        experiencia_otras_plataformas_otro_nombre,
-                        eval_foto,
-                        eval_biografia,
-                        biografia,
-                        estado,
-                        metadata_videos,
-                        actividad_actual,
-                        puntaje_general_categoria,
-                        idioma,
-                        diagnostico,
-                        mejoras_sugeridas,
-                        fecha_entrevista,
-                        entrevista,
-                        estado_evaluacion
-                    FROM perfil_creador
-                    WHERE creador_id = %s;
+                        SELECT
+                            pc.id,
+                            pc.creador_id,
+                            pc.edad,
+                            pc.seguidores,
+                            pc.siguiendo,
+                            pc.videos,
+                            pc.likes,
+                            pc.duracion_emisiones,
+                            pc.dias_emisiones,
+                            pc.apariencia,
+                            pc.engagement,
+                            pc.calidad_contenido,
+                            pc.frecuencia_lives,
+                            pc.creado_en,
+                            pc.actualizado_en,
+                            pc.tiempo_disponible,
+                            pc.experiencia_otras_plataformas,
+                            pc.intereses,
+                            pc.tipo_contenido,
+                            pc.puntaje_estadistica,
+                            pc.puntaje_estadistica_categoria,
+                            pc.puntaje_manual,
+                            pc.puntaje_manual_categoria,
+                            pc.puntaje_general,
+                            pc.puntaje_general_categoria,
+                            pc.puntaje_habitos,
+                            pc.puntaje_habitos_categoria,
+                            pc.puntaje_total,
+                            pc.puntaje_total_categoria,
+                            pc.potencial_estimado,
+                            pc.campo_estudios,
+                            pc.estudios,
+                            pc.horario_preferido,
+                            pc.intencion_trabajo,
+                            pc.usuario,
+                            pc.biografia_sugerida,
+                            pc.genero,
+                            pc.telefono,
+                            pc.pais,
+                            pc.ciudad,
+                            pc.zona_horaria,
+                            pc.nombre,
+                            pc.usuario_evalua,
+                            pc.experiencia_otras_plataformas_otro_nombre,
+                            pc.eval_foto,
+                            pc.eval_biografia,
+                            pc.biografia,
+                            pc.estado,
+                            pc.metadata_videos,
+                            pc.actividad_actual,
+                            pc.idioma,
+                            pc.diagnostico,
+                            pc.mejoras_sugeridas,
+                            pc.fecha_entrevista,
+                            pc.entrevista,
+                            pc.estado_evaluacion,
+                            -- Campo traído desde la tabla creadores
+                            c.encuesta_terminada
+                        FROM perfil_creador pc
+                        INNER JOIN creadores c
+                            ON pc.creador_id = c.id
+                        WHERE pc.creador_id = %s;
                 """, (creador_id,))
                 fila = cur.fetchone()
                 columnas = [desc[0] for desc in cur.description]
@@ -2498,14 +2502,14 @@ def obtener_potencial_estimado(creador_id: int):
         # Si no hay fila → usar 2
         if row is None:
             print(f"⚠️ No existe registro de potencial_estimado para creador_id={creador_id}. Usando valor=2 (default)")
-            return 2
+            return 0
 
         valor = row[0]
 
         # Si hay fila pero valor es NULL → usar 2
         if valor is None:
             print(f"⚠️ potencial_estimado es NULL para creador_id={creador_id}. Usando valor=2 (default)")
-            return 2
+            return 0
 
         # Valor válido
         print(f"✅ potencial_estimado obtenido para creador_id={creador_id}: {valor}")

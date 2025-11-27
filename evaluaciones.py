@@ -2315,15 +2315,15 @@ def evaluar_perfil_pre(creador_id: int):
 
     return {
         "status": "ok",
-        "puntaje_estadistica": puntaje_estadistica,
+        "puntaje_estadistica": round(puntaje_estadistica),
         "puntaje_estadistica_categoria": puntaje_estadistica_categoria,
-        "puntaje_general": puntaje_general,
+        "puntaje_general": round(puntaje_general),
         "puntaje_general_categoria": puntaje_general_categoria,
-        "puntaje_habitos": puntaje_habitos,
+        "puntaje_habitos": round(puntaje_habitos),
         "puntaje_habitos_categoria": puntaje_habitos_categoria,
         "puntaje_manual": None,
         "puntaje_manual_categoria": None,
-        "puntaje_total": puntaje_total,
+        "puntaje_total": round(puntaje_total),
         "puntaje_total_categoria": puntaje_total_categoria,
     }
 
