@@ -2299,33 +2299,34 @@ def evaluar_perfil_pre(creador_id: int):
     else:
         puntaje_total = None
 
-    # Categoría total
-    if puntaje_total is None:
-        puntaje_total_categoria = None
-    elif puntaje_total < 1.5:
-        puntaje_total_categoria = "Muy bajo"
-    elif puntaje_total < 2.5:
-        puntaje_total_categoria = "Bajo"
-    elif puntaje_total < 3.5:
-        puntaje_total_categoria = "Aceptable"
-    elif puntaje_total < 4.5:
-        puntaje_total_categoria = "Bueno"
-    else:
-        puntaje_total_categoria = "Excelente"
-
     return {
         "status": "ok",
         "puntaje_estadistica": round(puntaje_estadistica),
-        "puntaje_estadistica_categoria": puntaje_estadistica_categoria,
+        "puntaje_estadistica_categoria": convertir_1a5_a_1a3(puntaje_estadistica),
         "puntaje_general": round(puntaje_general),
-        "puntaje_general_categoria": puntaje_general_categoria,
+        "puntaje_general_categoria": convertir_1a5_a_1a3(puntaje_general),
         "puntaje_habitos": round(puntaje_habitos),
-        "puntaje_habitos_categoria": puntaje_habitos_categoria,
+        "puntaje_habitos_categoria": convertir_1a5_a_1a3(puntaje_habitos),
         "puntaje_manual": None,
         "puntaje_manual_categoria": None,
         "puntaje_total": round(puntaje_total),
-        "puntaje_total_categoria": puntaje_total_categoria,
+        "puntaje_total_categoria": convertir_1a5_a_1a3(puntaje_total),
     }
+
+def convertir_1a5_a_1a3(puntaje):
+    if puntaje is None:
+        return None
+
+    # Redondear al múltiplo de 0.5 más cercano
+    puntaje_redondeado = round(puntaje)
+
+    # Convertir a categoría 1–3
+    if puntaje_redondeado <= 2:
+        return "Bajo"
+    elif puntaje_redondeado == 3:
+        return "Medio"
+    else:
+        return "Alto"
 
 
 def diagnostico_perfil_creador_pre(
