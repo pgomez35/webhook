@@ -861,13 +861,12 @@ def calcular_y_guardar_pre_resumen(
 
         # 2️⃣ Ejecuta la función completa que calcula y guarda
         obtener_guardar_pre_resumen(creador_id)
-
         print(f"✅ Pre-evaluación calculada y GUARDADA para creador_id={creador_id}")
 
 
         return {
             "status": "ok",
-            "mensaje": "Pre-evaluación recalculada y potencial_estimado actualizado",
+            "mensaje": "potencial_estimado actualizado",
             "creador_id": creador_id,
             "potencial_estimado": potencial_estimado
         }

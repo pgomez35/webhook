@@ -1937,120 +1937,6 @@ def evaluacion_total_pre(
     }
 
 
-# def evaluar_perfil_pre(creador_id: int):
-#     """
-#     Obtiene datos de perfil_creador y calcula:
-#     - puntaje_estadisticas_pre
-#     - puntaje_datos_generales_pre
-#     - puntaje_preferencias_habitos_pre
-#     - puntaje_total_pre (promedio parcial)
-#     """
-#
-#     # ======================
-#     # 1. Obtener datos desde BD
-#     # ======================
-#     try:
-#         with get_connection_context() as conn:
-#             with conn.cursor() as cur:
-#                 cur.execute("""
-#                     SELECT
-#                         edad, genero, pais, actividad_actual,
-#                         seguidores, siguiendo, videos, likes, duracion_emisiones,
-#                         tiempo_disponible, frecuencia_lives, intencion_trabajo,
-#                         experiencia_otras_plataformas
-#                     FROM perfil_creador
-#                     WHERE creador_id = %s
-#                     LIMIT 1
-#                 """, (creador_id,))
-#
-#                 row = cur.fetchone()
-#                 if not row:
-#                     return {"error": "Perfil no encontrado"}
-#
-#                 (
-#                     edad, genero, pais, actividad_actual,
-#                     seguidores, siguiendo, videos, likes, duracion,
-#                     tiempo_disponible, frecuencia_lives, intencion_trabajo,
-#                     experiencia_otras_plataformas
-#                 ) = row
-#
-#                 if experiencia_otras_plataformas is None:
-#                     experiencia_otras_plataformas = {}
-#     except Exception as e:
-#         print("❌ Error obteniendo perfil:", e)
-#         return {"error": "Error al consultar BD"}
-#
-#     # ======================
-#     # 2. Evaluar estadísticas parciales
-#     # ======================
-#     est = evaluar_estadisticas_pre(
-#         seguidores=seguidores,
-#         siguiendo=siguiendo,
-#         videos=videos,
-#         likes=likes,
-#         duracion=duracion
-#     )
-#
-#     # ======================
-#     # 3. Evaluar datos generales parciales
-#     # ======================
-#     gen = evaluar_datos_generales_pre(
-#         edad=edad,
-#         genero=genero,
-#         pais=pais,
-#         actividad_actual=actividad_actual
-#     )
-#
-#     # ======================
-#     # 4. Evaluar hábitos y preferencias parciales
-#     # ======================
-#     hab = evaluar_preferencias_habitos_pre(
-#         exp_otras=experiencia_otras_plataformas,
-#         tiempo=tiempo_disponible,
-#         freq_lives=frecuencia_lives,
-#         intencion=intencion_trabajo
-#     )
-#
-#     # ======================
-#     # 5. Calcular puntaje total PRE-EVALUACIÓN
-#     # (promedio simple de los tres parciales)
-#     # ======================
-#     puntajes = [
-#         est.get("puntaje_estadistica", 0),
-#         gen.get("puntaje_general", 0),
-#         hab.get("puntaje_habitos", 0)
-#     ]
-#
-#     puntaje_total_pre = round(sum(puntajes) / 3, 2)
-#
-#     # Categoría total
-#     if puntaje_total_pre < 1.5:
-#         cat_total = "Muy bajo"
-#     elif puntaje_total_pre < 2.5:
-#         cat_total = "Bajo"
-#     elif puntaje_total_pre < 3.5:
-#         cat_total = "Aceptable"
-#     elif puntaje_total_pre < 4.5:
-#         cat_total = "Bueno"
-#     else:
-#         cat_total = "Excelente"
-#
-#     # ======================
-#     # 6. Respuesta final
-#     # ======================
-#     return {
-#         "status": "ok",
-#         "creador_id": creador_id,
-#
-#         # Puntajes individuales
-#         "estadisticas": est,
-#         "datos_generales": gen,
-#         "habitos": hab,
-#
-#         # Puntaje total pre-evaluación
-#         "puntaje_total_pre": puntaje_total_pre,
-#         "puntaje_total_categoria_pre": cat_total,
-#     }
 
 def evaluar_perfil_pre(creador_id: int):
 
@@ -2527,3 +2413,118 @@ def obtener_guardar_pre_resumen(creador_id: int):
     except Exception as e:
         raise Exception(f"Error al guardar la pre-evaluación en perfil_creador: {str(e)}")
 
+
+# def evaluar_perfil_pre(creador_id: int):
+#     """
+#     Obtiene datos de perfil_creador y calcula:
+#     - puntaje_estadisticas_pre
+#     - puntaje_datos_generales_pre
+#     - puntaje_preferencias_habitos_pre
+#     - puntaje_total_pre (promedio parcial)
+#     """
+#
+#     # ======================
+#     # 1. Obtener datos desde BD
+#     # ======================
+#     try:
+#         with get_connection_context() as conn:
+#             with conn.cursor() as cur:
+#                 cur.execute("""
+#                     SELECT
+#                         edad, genero, pais, actividad_actual,
+#                         seguidores, siguiendo, videos, likes, duracion_emisiones,
+#                         tiempo_disponible, frecuencia_lives, intencion_trabajo,
+#                         experiencia_otras_plataformas
+#                     FROM perfil_creador
+#                     WHERE creador_id = %s
+#                     LIMIT 1
+#                 """, (creador_id,))
+#
+#                 row = cur.fetchone()
+#                 if not row:
+#                     return {"error": "Perfil no encontrado"}
+#
+#                 (
+#                     edad, genero, pais, actividad_actual,
+#                     seguidores, siguiendo, videos, likes, duracion,
+#                     tiempo_disponible, frecuencia_lives, intencion_trabajo,
+#                     experiencia_otras_plataformas
+#                 ) = row
+#
+#                 if experiencia_otras_plataformas is None:
+#                     experiencia_otras_plataformas = {}
+#     except Exception as e:
+#         print("❌ Error obteniendo perfil:", e)
+#         return {"error": "Error al consultar BD"}
+#
+#     # ======================
+#     # 2. Evaluar estadísticas parciales
+#     # ======================
+#     est = evaluar_estadisticas_pre(
+#         seguidores=seguidores,
+#         siguiendo=siguiendo,
+#         videos=videos,
+#         likes=likes,
+#         duracion=duracion
+#     )
+#
+#     # ======================
+#     # 3. Evaluar datos generales parciales
+#     # ======================
+#     gen = evaluar_datos_generales_pre(
+#         edad=edad,
+#         genero=genero,
+#         pais=pais,
+#         actividad_actual=actividad_actual
+#     )
+#
+#     # ======================
+#     # 4. Evaluar hábitos y preferencias parciales
+#     # ======================
+#     hab = evaluar_preferencias_habitos_pre(
+#         exp_otras=experiencia_otras_plataformas,
+#         tiempo=tiempo_disponible,
+#         freq_lives=frecuencia_lives,
+#         intencion=intencion_trabajo
+#     )
+#
+#     # ======================
+#     # 5. Calcular puntaje total PRE-EVALUACIÓN
+#     # (promedio simple de los tres parciales)
+#     # ======================
+#     puntajes = [
+#         est.get("puntaje_estadistica", 0),
+#         gen.get("puntaje_general", 0),
+#         hab.get("puntaje_habitos", 0)
+#     ]
+#
+#     puntaje_total_pre = round(sum(puntajes) / 3, 2)
+#
+#     # Categoría total
+#     if puntaje_total_pre < 1.5:
+#         cat_total = "Muy bajo"
+#     elif puntaje_total_pre < 2.5:
+#         cat_total = "Bajo"
+#     elif puntaje_total_pre < 3.5:
+#         cat_total = "Aceptable"
+#     elif puntaje_total_pre < 4.5:
+#         cat_total = "Bueno"
+#     else:
+#         cat_total = "Excelente"
+#
+#     # ======================
+#     # 6. Respuesta final
+#     # ======================
+#     return {
+#         "status": "ok",
+#         "creador_id": creador_id,
+#
+#         # Puntajes individuales
+#         "estadisticas": est,
+#         "datos_generales": gen,
+#         "habitos": hab,
+#
+#         # Puntaje total pre-evaluación
+#         "puntaje_total_pre": puntaje_total_pre,
+#         "puntaje_total_categoria_pre": cat_total,
+#     }
