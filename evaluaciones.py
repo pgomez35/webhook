@@ -2187,10 +2187,10 @@ def evaluar_perfil_pre(creador_id: int):
     elif seguidores < 50: # seguidores menores a 50
         alerta = 2
 
-    visual = potencial_estimado if potencial_estimado in (1, 2, 3) else None
+    visual = potencial_estimado if potencial_estimado in (1, 3, 5) else None
 
     resultado = puntaje_ponderado_completo(
-        round(puntaje_total) if puntaje_total is not None else None,
+        puntaje_total,  # ya es float promedio
         visual
     )
 
@@ -2216,57 +2216,55 @@ def evaluar_perfil_pre(creador_id: int):
         "alerta": alerta,
     }
 
-
 def puntaje_ponderado_completo(
-    puntaje_total: int | None = None,
-    calificacion_visual: int | None = None
-) -> int:
-    # Conversión del puntaje_total (1-5) a escala 1-3
+    puntaje_total: float | int | None = None,
+    calificacion_visual: int | None = None,
+):
 
-    if puntaje_total is None:
-        puntaje_convertido = None
+    # --- Normalizar puntaje_total (1–5 → 0–1) ---
+    if puntaje_total is None or puntaje_total < 1:
+        puntaje_norm = None
     else:
-        if puntaje_total <= 2:
-            puntaje_convertido = 1
-        elif puntaje_total == 3:
-            puntaje_convertido = 2
-        else:  # 4 o 5
-            puntaje_convertido = 3
+        pt = max(1, min(5, float(puntaje_total)))
+        puntaje_norm = (pt - 1) / 4.0  # 0–1
 
-    # La calificación visual ya está en escala 1-3
-    visual_convertida = calificacion_visual if calificacion_visual else None
+    # --- Normalizar calificacion_visual (1–5 → 0–1) ---
+    if calificacion_visual is None or calificacion_visual < 1:
+        visual_norm = None
+    else:
+        cv = max(1, min(5, int(calificacion_visual)))
+        visual_norm = (cv - 1) / 4.0  # 0–1 (ajustado)
 
-    # Si solo hay puntaje_total
-    if puntaje_convertido and not visual_convertida:
-        return puntaje_convertido
+    # --- Sin datos ---
+    if puntaje_norm is None and visual_norm is None:
+        puntuacion = 1
+    else:
+        # Si solo uno existe, usar ese
+        if puntaje_norm is None:
+            ponderado = visual_norm
+        elif visual_norm is None:
+            ponderado = puntaje_norm
+        else:
+            # 60% peso numérico + 40% peso visual
+            ponderado = (puntaje_norm * 0.60) + (visual_norm * 0.40)
 
-    # Si solo hay calificación visual
-    if visual_convertida and not puntaje_convertido:
-        return visual_convertida
+        # Convertir 0–1 → 1–5
+        puntuacion = round(ponderado * 4 + 1)
+        puntuacion = max(1, min(5, puntuacion))
 
-    # Si no hay ninguna
-    if puntaje_convertido is None and visual_convertida is None:
-        return 1   # salida por defecto: nivel más bajo
-
-    # Ponderación 60% puntaje numérico, 40% visual
-    ponderado = (puntaje_convertido * 0.6) + (visual_convertida * 0.4)
-
-    # Redondear a 1-3
-    resultado_redondeado = round(ponderado)
-
-    resultado = max(1, min(3, resultado_redondeado))
-
-    # --- Convertir a texto ---
-    categorias_texto = {
-        1: "Bajo",
-        2: "Medio",
-        3: "Alto"
-    }
+    # --- Clasificación texto ---
+    if puntuacion <= 2:
+        categoria_texto = "bajo"
+    elif puntuacion == 3:
+        categoria_texto = "medio"
+    else:
+        categoria_texto = "alto"
 
     return {
-        "puntuacion": resultado,  # 1, 2 o 3
-        "categoria_texto": categorias_texto[resultado]  # bajo/medio/alto
+        "puntuacion": puntuacion,
+        "categoria_texto": categoria_texto
     }
+
 
 
 def convertir_1a5_a_1a3(puntaje):
@@ -2278,11 +2276,11 @@ def convertir_1a5_a_1a3(puntaje):
 
     # Convertir a categoría 1–3
     if puntaje_redondeado <= 2:
-        return "Bajo"
+        return "bajo"
     elif puntaje_redondeado == 3:
-        return "Medio"
+        return "medio"
     else:
-        return "Alto"
+        return "alto"
 
 
 def diagnostico_perfil_creador_pre(

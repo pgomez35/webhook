@@ -846,12 +846,8 @@ def calcular_y_guardar_pre_resumen(
     """
     Recalcula la pre-evaluación y actualiza el potencial_estimado manual.
     """
-
     try:
-        # 1️⃣ Ejecuta la función completa que calcula y guarda
-        obtener_guardar_pre_resumen(creador_id)
-
-        # 2️⃣ Actualizar manualmente el campo potencial_estimado en perfil_creador
+        # 1️⃣ Actualizar manualmente el campo potencial_estimado en perfil_creador
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
@@ -861,8 +857,13 @@ def calcular_y_guardar_pre_resumen(
                 """, (potencial_estimado, creador_id))
                 conn.commit()
 
-        print(f"✅ Pre-evaluación calculada y GUARDADA para creador_id={creador_id}")
         print(f"🔧 potencial_estimado actualizado a {potencial_estimado}")
+
+        # 2️⃣ Ejecuta la función completa que calcula y guarda
+        obtener_guardar_pre_resumen(creador_id)
+
+        print(f"✅ Pre-evaluación calculada y GUARDADA para creador_id={creador_id}")
+
 
         return {
             "status": "ok",
