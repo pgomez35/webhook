@@ -14,7 +14,7 @@ from typing import Optional
 
 from auth import obtener_usuario_actual
 from enviar_msg_wp import enviar_plantilla_generica_parametros, enviar_plantilla_generica
-from DataBase import get_connection_context, obtener_cuenta_por_subdominio, obtener_potencial_estimado
+from DataBase import get_connection_context, obtener_cuenta_por_subdominio
 from evaluaciones import evaluar_perfil_pre, diagnostico_perfil_creador_pre, obtener_guardar_pre_resumen
 from main_webhook import  enviar_mensaje
 from schemas import ResumenEvaluacionOutput
@@ -945,21 +945,13 @@ def obtener_pre_resumen(creador_id: int, usuario_actual: dict = Depends(obtener_
         diagnostico=texto,
         mejoras_sugeridas=None,  # no aplica en pre-evaluación
 
-        potencial_estimado=convertir_1a3_a_1a5(calidad_visual_val),
+        potencial_estimado=calidad_visual_val,
         potencial_estimado_texto=mapear_potencial_categoria(calidad_visual_val),
         decision_icono = decision["decision_icono"],
         decision = decision["decision"],
         recomendacion = decision["recomendacion"]
 
     )
-
-def convertir_1a3_a_1a5(valor: int | None) -> int | None:
-
-    if valor not in (1, 2, 3):
-        return None
-
-    # Conversión proporcional
-    return ((valor - 1) * 2) + 1
 
 
 def convertir_1a5_a_1a3(puntaje):
@@ -981,9 +973,9 @@ def convertir_1a5_a_1a3(puntaje):
 def mapear_potencial_categoria(valor: int | None) -> str:
     if valor == 1:
         return "bajo"
-    if valor == 2:
-        return "medio"
     if valor == 3:
+        return "medio"
+    if valor == 5:
         return "alto"
     return ""  # por defecto
 
@@ -1018,8 +1010,8 @@ def sugerencia_decision_final(
     # ==========================================
     visual_map = {
         1: "bajo",
-        2: "medio",
-        3: "alto",
+        3: "medio",
+        5: "alto",
     }
     cat_visual = visual_map.get(calidad_visual_cualitativo, None)
 
@@ -1073,6 +1065,7 @@ def sugerencia_decision_final(
         else:
             icono, decision = "⭐", "Apto"
 
+        # Puedes dejar este texto simple o cambiarlo luego si quieres
         return {
             "puntaje_total_categoria": cat_total,
             "calidad_visual_categoria": None,
@@ -1104,27 +1097,195 @@ def sugerencia_decision_final(
     # MATRIZ FINAL COMBINADA (bajo/medio/alto)
     # ==========================================
     matriz = {
-        ("bajo", "bajo"): ("❌", "No apto"),
+        ("bajo", "bajo"):  ("❌", "No apto"),
         ("medio", "bajo"): ("❌", "No apto"),
-        ("alto", "bajo"): ("🟡", "Prueba"),
+        ("alto", "bajo"):  ("🟡", "Prueba"),
 
-        ("bajo", "medio"): ("🟡", "Prueba"),
+        ("bajo", "medio"):  ("🟡", "Prueba"),
         ("medio", "medio"): ("🟡", "Prueba"),
-        ("alto", "medio"): ("⭐", "Apto / prueba"),
+        ("alto", "medio"):  ("⭐", "Apto / prueba"),
 
         ("medio", "alto"): ("⭐", "Apto"),
-        ("alto", "alto"): ("⭐", "Apto"),
+        ("alto", "alto"):  ("⭐", "Apto"),
     }
 
     icono, decision = matriz.get((cat_total, cat_visual), ("❓", "Indeterminado"))
+
+    # ===== NUEVO: recomendaciones detalladas según la decisión =====
+    recomendaciones = {
+        "No apto": (
+            "El creador no cumple con los criterios visuales o de desempeño necesarios. "
+            "Se recomienda descartar por ahora o reevaluar más adelante si mejora su perfil."
+        ),
+        "Requiere prueba": (
+            "El puntaje es bueno, pero visualmente no muestra suficiente potencial. "
+            "Se recomienda una prueba corta o entrevista para confirmar."
+        ),
+        "Prueba": (
+            "El perfil muestra señales positivas, pero aún no es consistente. "
+            "Realizar una prueba o entrevista para validar el desempeño en vivo."
+        ),
+        "Apto / prueba": (
+            "El desempeño general es alto y muestra buen potencial. "
+            "Se recomienda una prueba rápida para confirmar antes de la invitación definitiva."
+        ),
+        "Apto": (
+            "Muy buen perfil, con buena energía y potencial claro. "
+            "Recomendado para continuar el proceso o enviar a TikTok."
+        ),
+        "Indeterminado": (
+            "La combinación de puntajes no permite una conclusión clara. "
+            "Revise manualmente el perfil o complemente la evaluación."
+        ),
+    }
 
     return {
         "puntaje_total_categoria": cat_total,
         "calidad_visual_categoria": cat_visual,
         "decision_icono": icono,
         "decision": decision,
-        "recomendacion": "Evaluación completa realizada.",
+        "recomendacion": recomendaciones.get(decision, "Sin recomendación definida."),
     }
+
+
+
+# def sugerencia_decision_final(
+#     alerta: int = 0,
+#     puntaje_total: float | None = None,
+#     calidad_visual_cualitativo: int | None = None
+# ):
+#     """
+#     ALERTAS:
+#         0 = sin alerta
+#         1 = menor de edad → No apto automático
+#         2 = seguidores < 50 → No apto automático
+#     """
+#
+#     # ==========================================
+#     # NORMALIZAR puntaje_total
+#     # ==========================================
+#     if puntaje_total is None or puntaje_total == 0:
+#         cat_total = None
+#     else:
+#         if puntaje_total <= 2:
+#             cat_total = "bajo"
+#         elif puntaje_total == 3:
+#             cat_total = "medio"
+#         else:
+#             cat_total = "alto"
+#
+#     # ==========================================
+#     # NORMALIZAR calidad_visual → (bajo/medio/alto)
+#     # ==========================================
+#     visual_map = {
+#         1: "bajo",
+#         2: "medio",
+#         3: "alto",
+#     }
+#     cat_visual = visual_map.get(calidad_visual_cualitativo, None)
+#
+#     # ==========================================
+#     # ALERTAS AUTOMÁTICAS
+#     # ==========================================
+#     if alerta == 1:
+#         return {
+#             "puntaje_total_categoria": cat_total,
+#             "calidad_visual_categoria": cat_visual,
+#             "decision_icono": "❌",
+#             "decision": "No apto",
+#             "recomendacion": (
+#                 "El aspirante es menor de edad. No puede ser ingresado a la agencia."
+#             ),
+#             "motivo_alerta": "menor_edad"
+#         }
+#
+#     if alerta == 2:
+#         return {
+#             "puntaje_total_categoria": cat_total,
+#             "calidad_visual_categoria": cat_visual,
+#             "decision_icono": "❌",
+#             "decision": "No apto",
+#             "recomendacion": (
+#                 "El aspirante tiene menos de 50 seguidores. No cumple el requisito mínimo."
+#             ),
+#             "motivo_alerta": "seguidores_insuficientes"
+#         }
+#
+#     # ==========================================
+#     # CASO SIN DATOS
+#     # ==========================================
+#     if cat_total is None and cat_visual is None:
+#         return {
+#             "puntaje_total_categoria": None,
+#             "calidad_visual_categoria": None,
+#             "decision_icono": "❓",
+#             "decision": "Indeterminado",
+#             "recomendacion": "Faltan datos para la evaluación.",
+#         }
+#
+#     # ==========================================
+#     # SOLO PUNTAJE TOTAL
+#     # ==========================================
+#     if cat_visual is None:
+#         if cat_total == "bajo":
+#             icono, decision = "❌", "No apto"
+#         elif cat_total == "medio":
+#             icono, decision = "🟡", "Prueba"
+#         else:
+#             icono, decision = "⭐", "Apto"
+#
+#         return {
+#             "puntaje_total_categoria": cat_total,
+#             "calidad_visual_categoria": None,
+#             "decision_icono": icono,
+#             "decision": decision,
+#             "recomendacion": "Evaluación basada únicamente en el puntaje total.",
+#         }
+#
+#     # ==========================================
+#     # SOLO VISUAL
+#     # ==========================================
+#     if cat_total is None and cat_visual:
+#         if cat_visual == "bajo":
+#             icono, decision = "❌", "No apto"
+#         elif cat_visual == "medio":
+#             icono, decision = "🟡", "Prueba"
+#         else:
+#             icono, decision = "⭐", "Apto"
+#
+#         return {
+#             "puntaje_total_categoria": None,
+#             "calidad_visual_categoria": cat_visual,
+#             "decision_icono": icono,
+#             "decision": decision,
+#             "recomendacion": "Evaluación basada solo en análisis visual.",
+#         }
+#
+#     # ==========================================
+#     # MATRIZ FINAL COMBINADA (bajo/medio/alto)
+#     # ==========================================
+#     matriz = {
+#         ("bajo", "bajo"): ("❌", "No apto"),
+#         ("medio", "bajo"): ("❌", "No apto"),
+#         ("alto", "bajo"): ("🟡", "Prueba"),
+#
+#         ("bajo", "medio"): ("🟡", "Prueba"),
+#         ("medio", "medio"): ("🟡", "Prueba"),
+#         ("alto", "medio"): ("⭐", "Apto / prueba"),
+#
+#         ("medio", "alto"): ("⭐", "Apto"),
+#         ("alto", "alto"): ("⭐", "Apto"),
+#     }
+#
+#     icono, decision = matriz.get((cat_total, cat_visual), ("❓", "Indeterminado"))
+#
+#     return {
+#         "puntaje_total_categoria": cat_total,
+#         "calidad_visual_categoria": cat_visual,
+#         "decision_icono": icono,
+#         "decision": decision,
+#         "recomendacion": "Evaluación completa realizada.",
+#     }
 
 
 # def sugerencia_decision_final(alerta: int = 0,
