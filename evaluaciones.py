@@ -1937,133 +1937,6 @@ def evaluacion_total_pre(
     }
 
 
-def evaluar_perfil_pre(creador_id: int):
-    """
-    Obtiene datos de perfil_creador y calcula:
-    - puntaje_estadisticas_pre
-    - puntaje_datos_generales_pre
-    - puntaje_preferencias_habitos_pre
-    - puntaje_total_pre (promedio parcial, redondeo a 0.5)
-    - categoría total (Bajo, Medio, Alto)
-    """
-
-    # ======================
-    # 1. Obtener datos desde BD
-    # ======================
-    try:
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT 
-                        edad, genero, pais, actividad_actual,
-                        seguidores, siguiendo, videos, likes, duracion_emisiones,
-                        tiempo_disponible, frecuencia_lives, intencion_trabajo,
-                        experiencia_otras_plataformas
-                    FROM perfil_creador
-                    WHERE creador_id = %s
-                    LIMIT 1
-                """, (creador_id,))
-
-                row = cur.fetchone()
-                if not row:
-                    return {"error": "Perfil no encontrado"}
-
-                (
-                    edad, genero, pais, actividad_actual,
-                    seguidores, siguiendo, videos, likes, duracion,
-                    tiempo_disponible, frecuencia_lives, intencion_trabajo,
-                    experiencia_otras_plataformas
-                ) = row
-
-                if experiencia_otras_plataformas is None:
-                    experiencia_otras_plataformas = {}
-    except Exception as e:
-        print("❌ Error obteniendo perfil:", e)
-        return {"error": "Error al consultar BD"}
-
-    # ======================
-    # 2. Evaluar estadísticas parciales
-    # ======================
-    est = evaluar_estadisticas_pre(
-        seguidores=seguidores,
-        siguiendo=siguiendo,
-        videos=videos,
-        likes=likes,
-        duracion=duracion
-    )
-
-    # ======================
-    # 3. Evaluar datos generales parciales
-    # ======================
-    gen = evaluar_datos_generales_pre(
-        edad=edad,
-        genero=genero,
-        pais=pais,
-        actividad_actual=actividad_actual
-    )
-
-    # ======================
-    # 4. Evaluar hábitos y preferencias parciales
-    # ======================
-    hab = evaluar_preferencias_habitos_pre(
-        exp_otras=experiencia_otras_plataformas,
-        tiempo=tiempo_disponible,
-        freq_lives=frecuencia_lives,
-        intencion=intencion_trabajo
-    )
-
-    # ======================
-    # 5. Calcular puntaje total PRE-EVALUACIÓN
-    # (promedio simple de los tres parciales)
-    # Con redondeo a pasos de 0.5
-    # ======================
-    puntajes = [
-        est.get("puntaje_estadistica", 0),
-        gen.get("puntaje_general", 0),
-        hab.get("puntaje_habitos", 0)
-    ]
-
-    promedio = sum(puntajes) / 3
-    puntaje_total_pre = round(promedio * 2) / 2   # 🔥 redondeo a 0.5
-
-    # ======================
-    # 6. Categoría total (3 niveles)
-    # ======================
-    if puntaje_total_pre < 1.5:
-        cat_total = "Bajo"
-    elif puntaje_total_pre < 3:
-        cat_total = "Medio"
-    else:
-        cat_total = "Alto"
-
-        # ======================
-        # 7. RESPUESTA FINAL COMPATIBLE
-        # ======================
-        return {
-            "status": "ok",
-            "creador_id": creador_id,
-
-            # Compatibles con la BD
-            "puntaje_estadistica": est.get("puntaje_estadistica"),
-            "puntaje_estadistica_categoria": est.get("categoria"),
-
-            "puntaje_general": gen.get("puntaje_general"),
-            "puntaje_general_categoria": gen.get("categoria"),
-
-            "puntaje_habitos": hab.get("puntaje_habitos"),
-            "puntaje_habitos_categoria": hab.get("categoria"),
-
-            "puntaje_total": puntaje_total_pre,
-            "puntaje_total_categoria": cat_total,
-
-            # Para otras interfaces
-            "estadisticas": est,
-            "datos_generales": gen,
-            "habitos": hab,
-        }
-
-
-
 # def evaluar_perfil_pre(creador_id: int):
 #     """
 #     Obtiene datos de perfil_creador y calcula:
@@ -2198,7 +2071,8 @@ def evaluar_perfil_pre(creador_id: int):
                         tiempo_disponible,
                         frecuencia_lives,
                         intencion_trabajo,
-                        experiencia_otras_plataformas
+                        experiencia_otras_plataformas,
+                        potencial_estimado
                     FROM perfil_creador
                     WHERE creador_id = %s
                     LIMIT 1
@@ -2218,6 +2092,9 @@ def evaluar_perfil_pre(creador_id: int):
                         "puntaje_manual_categoria": None,
                         "puntaje_total": None,
                         "puntaje_total_categoria": None,
+                        "puntaje_total_ponderado": None,
+                        "puntaje_total_ponderado_cat": None,
+                        "alerta": None,
                     }
 
                 (
@@ -2233,7 +2110,8 @@ def evaluar_perfil_pre(creador_id: int):
                     tiempo_disponible,
                     frecuencia_lives,
                     intencion_trabajo,
-                    experiencia_otras_plataformas
+                    experiencia_otras_plataformas,
+                    potencial_estimado
                 ) = row
 
                 if experiencia_otras_plataformas is None:
@@ -2252,6 +2130,9 @@ def evaluar_perfil_pre(creador_id: int):
             "puntaje_manual_categoria": None,
             "puntaje_total": None,
             "puntaje_total_categoria": None,
+            "puntaje_total_ponderado": None,
+            "puntaje_total_ponderado_cat": None,
+            "alerta": None,
         }
 
     # 1) Estadísticas
@@ -2299,6 +2180,24 @@ def evaluar_perfil_pre(creador_id: int):
     else:
         puntaje_total = None
 
+    alerta = 0
+
+    if edad == 1: # Menores 18 años
+        alerta = 1
+    elif seguidores < 50: # seguidores menores a 50
+        alerta = 2
+
+    visual = potencial_estimado if potencial_estimado in (1, 2, 3) else None
+
+    resultado = puntaje_ponderado_completo(
+        round(puntaje_total) if puntaje_total is not None else None,
+        visual
+    )
+
+    puntaje_total_ponderado=resultado.get("puntuacion")
+    puntaje_total_ponderado_cat=resultado.get("categoria_texto")
+
+
     return {
         "status": "ok",
         "puntaje_estadistica": round(puntaje_estadistica),
@@ -2311,7 +2210,64 @@ def evaluar_perfil_pre(creador_id: int):
         "puntaje_manual_categoria": None,
         "puntaje_total": round(puntaje_total),
         "puntaje_total_categoria": convertir_1a5_a_1a3(puntaje_total),
+        "puntaje_total_ponderado": puntaje_total_ponderado,
+        "puntaje_total_ponderado_cat": puntaje_total_ponderado_cat,
+        "potencial_estimado":potencial_estimado,
+        "alerta": alerta,
     }
+
+
+def puntaje_ponderado_completo(
+    puntaje_total: int | None = None,
+    calificacion_visual: int | None = None
+) -> int:
+    # Conversión del puntaje_total (1-5) a escala 1-3
+
+    if puntaje_total is None:
+        puntaje_convertido = None
+    else:
+        if puntaje_total <= 2:
+            puntaje_convertido = 1
+        elif puntaje_total == 3:
+            puntaje_convertido = 2
+        else:  # 4 o 5
+            puntaje_convertido = 3
+
+    # La calificación visual ya está en escala 1-3
+    visual_convertida = calificacion_visual if calificacion_visual else None
+
+    # Si solo hay puntaje_total
+    if puntaje_convertido and not visual_convertida:
+        return puntaje_convertido
+
+    # Si solo hay calificación visual
+    if visual_convertida and not puntaje_convertido:
+        return visual_convertida
+
+    # Si no hay ninguna
+    if puntaje_convertido is None and visual_convertida is None:
+        return 1   # salida por defecto: nivel más bajo
+
+    # Ponderación 60% puntaje numérico, 40% visual
+    ponderado = (puntaje_convertido * 0.6) + (visual_convertida * 0.4)
+
+    # Redondear a 1-3
+    resultado_redondeado = round(ponderado)
+
+    resultado = max(1, min(3, resultado_redondeado))
+
+    # --- Convertir a texto ---
+    categorias_texto = {
+        1: "Bajo",
+        2: "Medio",
+        3: "Alto"
+    }
+
+    return {
+        "puntuacion": resultado,  # 1, 2 o 3
+        "categoria_texto": categorias_texto[resultado]  # bajo/medio/alto
+    }
+
 
 def convertir_1a5_a_1a3(puntaje):
     if puntaje is None:

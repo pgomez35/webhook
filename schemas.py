@@ -596,6 +596,9 @@ class ResumenEvaluacionOutput(ResumenEvaluacionInput):
     puntaje_total_categoria: Optional[str] = None
     puntaje_total_categoria_Ajustado: Optional[str] = None
 
+    puntaje_total_ponderado: Optional[float] = None
+    puntaje_total_ponderado_cat: Optional[str] = None
+
     diagnostico: Optional[str] = None
     mejoras_sugeridas: Optional[str] = None
     fecha_entrevista: Optional[datetime] = None
