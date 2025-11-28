@@ -2431,7 +2431,7 @@ def diagnostico_perfil_creador_pre(
     if potencial_val in (1, 3, 5):
         potencial_txt = MAP_POTENCIAL_TIKTOK[potencial_val]
         diagnostico["📊 Estadísticas"].append(
-            f"📈 Potencial Perfil TikTok(Contenido y presentación): {potencial_txt}"
+            f"📈 Potencial Perfil Público TikTok(Contenido y presentación): {potencial_txt}"
         )
 
 
@@ -2481,6 +2481,7 @@ def obtener_guardar_pre_resumen(creador_id: int):
     # 3️⃣ Texto para mostrar en interfaz
     texto = (
         f"📊 Pre-Evaluación:\n"
+        f"Puntaje Parcial: {resultado.get('puntaje_total_ponderado')}\n"
         f"Categoría: {resultado.get('puntaje_total_ponderado_cat')}\n\n"
         f"🩺 Diagnóstico Preliminar:\n{diagnostico}\n"
     )
