@@ -2417,6 +2417,25 @@ def diagnostico_perfil_creador_pre(
     ])
 
     # =========================
+    # NUEVO: POTENCIAL PERFIL TIKTOK
+    # =========================
+
+    MAP_POTENCIAL_TIKTOK = {
+        1: "Bajo",
+        3: "En desarrollo",
+        5: "Alto",
+    }
+    potencial_val = datos.get("potencial_estimado")
+
+    # Solo mostrar si es un valor válido
+    if potencial_val in (1, 3, 5):
+        potencial_txt = MAP_POTENCIAL_TIKTOK[potencial_val]
+        diagnostico["📊 Estadísticas"].append(
+            f"📈 Potencial Perfil TikTok(Contenido y presentación): {potencial_txt}"
+        )
+
+
+    # =========================
     # ARMADO DEL MENSAJE
     # =========================
 
@@ -2462,8 +2481,7 @@ def obtener_guardar_pre_resumen(creador_id: int):
     # 3️⃣ Texto para mostrar en interfaz
     texto = (
         f"📊 Pre-Evaluación:\n"
-        f"Puntaje parcial: {resultado.get('puntaje_total')}\n"
-        f"Categoría: {resultado.get('puntaje_total_categoria')}\n\n"
+        f"Categoría: {resultado.get('puntaje_total_ponderado_cat')}\n\n"
         f"🩺 Diagnóstico Preliminar:\n{diagnostico}\n"
     )
 
@@ -2495,8 +2513,8 @@ def obtener_guardar_pre_resumen(creador_id: int):
                     resultado.get("puntaje_general_categoria"),
                     resultado.get("puntaje_habitos"),
                     resultado.get("puntaje_habitos_categoria"),
-                    resultado.get("puntaje_total"),
-                    resultado.get("puntaje_total_categoria"),
+                    resultado.get("puntaje_total_ponderado"),
+                    resultado.get("puntaje_total_ponderado_cat"),
                     texto,
                     creador_id,
                 )
