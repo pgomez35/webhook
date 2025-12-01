@@ -275,6 +275,8 @@ def enviar_inicio_encuesta_plantilla(numero: str):
 # FIN ENVIAR MENSAJES
 # ============================
 
+
+
 # ============================
 # OPCIONES
 # ============================
@@ -1730,6 +1732,23 @@ async def whatsapp_webhook(request: Request):
             return {"status": "ignored"}
 
         tenant_name = cuenta_info["tenant_name"]
+        display_phone_number = metadata.get("display_phone_number", "")
+
+        # CASO 3: PROCESAR STATUSES (actualizaciones de estado de mensajes)
+        statuses = value.get("statuses", [])
+        if statuses:
+            try:
+                for st in statuses:
+                    actualizar_mensaje_desde_status(
+                        tenant=tenant_name,
+                        phone_number_id=phone_number_id,
+                        display_phone_number=display_phone_number,
+                        status_obj=st,
+                        raw_payload=value
+                    )
+            except Exception as e:
+                print(f"⚠️ Error al procesar statuses (continuando procesamiento): {e}")
+                traceback.print_exc()
 
         # Obtener mensajes
         mensajes = value.get("messages", [])
@@ -1738,6 +1757,44 @@ async def whatsapp_webhook(request: Request):
 
         # Procesar cada mensaje
         for mensaje in mensajes:
+            # Registrar mensaje entrante en BD
+            try:
+                wa_id = mensaje.get("from")
+                message_id = mensaje.get("id")
+                tipo = mensaje.get("type")
+                
+                # Extraer contenido según el tipo de mensaje
+                content = None
+                if tipo == "text":
+                    content = mensaje.get("text", {}).get("body", "")
+                elif tipo == "audio":
+                    content = f"[Audio: {mensaje.get('audio', {}).get('id', 'unknown')}]"
+                elif tipo == "image":
+                    content = f"[Image: {mensaje.get('image', {}).get('id', 'unknown')}]"
+                elif tipo == "video":
+                    content = f"[Video: {mensaje.get('video', {}).get('id', 'unknown')}]"
+                elif tipo == "document":
+                    content = f"[Document: {mensaje.get('document', {}).get('filename', 'unknown')}]"
+                elif tipo == "interactive":
+                    content = f"[Interactive: {mensaje.get('interactive', {}).get('type', 'unknown')}]"
+                else:
+                    content = f"[{tipo}]"
+                
+                # Registrar el mensaje
+                registrar_mensaje_recibido(
+                    tenant=tenant_name,
+                    phone_number_id=phone_number_id,
+                    display_phone_number=display_phone_number,
+                    wa_id=wa_id,
+                    message_id=message_id,
+                    content=content,
+                    raw_payload=mensaje
+                )
+            except Exception as e:
+                print(f"⚠️ Error al registrar mensaje en BD (continuando procesamiento): {e}")
+                traceback.print_exc()
+            
+            # Procesar el mensaje normalmente
             _process_single_message(mensaje, tenant_name)
 
     except (IndexError, KeyError, TypeError) as e:
@@ -1932,3 +1989,130 @@ def consolidar_perfil_web(data: ConsolidarInput):
         traceback.print_exc()
         return {"ok": False, "error": str(e)}
 
+
+# ============================
+# REGISTRO DE MENSAJES DE STATUS
+# ============================
+
+def actualizar_mensaje_desde_status(
+    tenant: str,
+    phone_number_id: str,
+    display_phone_number: str,
+    status_obj: dict,
+    raw_payload: dict,
+) -> None:
+    """
+    Actualiza el estado de un mensaje en la BD basado en el webhook de status.
+
+    - tenant: tenant/subdominio (ej: 'pruebas', 'prestige')
+    - phone_number_id: phone_number_id WABA
+    - display_phone_number: número de negocio
+    - status_obj: dict del status individual (de value["statuses"][i])
+    - raw_payload: el bloque "value" completo o el status_obj
+    """
+    try:
+        message_id = status_obj.get("id")
+        status = status_obj.get("status")
+        recipient_id = status_obj.get("recipient_id")
+        timestamp = status_obj.get("timestamp")
+
+        error = (status_obj.get("errors") or [None])[0]  # primer error o None
+
+        error_code = error.get("code") if error else None
+        error_title = error.get("title") if error else None
+        error_message = error.get("message") if error else None
+        error_details = (error.get("error_data") or {}).get("details") if error else None
+
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE whatsapp_messages
+                    SET
+                        status = %s,
+                        error_code = %s,
+                        error_title = %s,
+                        error_message = %s,
+                        error_details = %s,
+                        raw_payload = %s,
+                        updated_at = NOW(),
+                        last_status_at = TO_TIMESTAMP(%s)
+                    WHERE message_id = %s
+                      AND tenant = %s;
+                    """,
+                    (
+                        status,
+                        error_code,
+                        error_title,
+                        error_message,
+                        error_details,
+                        json.dumps(raw_payload),
+                        int(timestamp) if timestamp else None,
+                        message_id,
+                        tenant,
+                    ),
+                )
+        print(f"📊 Status actualizado para mensaje {message_id}: {status}")
+    except Exception as e:
+        print(f"❌ Error al actualizar status del mensaje {status_obj.get('id', 'unknown')}: {e}")
+        traceback.print_exc()
+
+
+# ============================
+# REGISTRO DE MENSAJES ENTRANTES
+# ============================
+
+def registrar_mensaje_recibido(
+    tenant: str,
+    phone_number_id: str,
+    display_phone_number: str,
+    wa_id: str,
+    message_id: str,
+    content: Optional[str] = None,
+    raw_payload: Optional[dict] = None,
+) -> None:
+    """
+    Registra en la BD un mensaje ENTRANTE (inbound) de WhatsApp.
+
+    - tenant: tenant/subdominio (ej: 'pruebas', 'prestige')
+    - phone_number_id: phone_number_id WABA que recibió el mensaje
+    - display_phone_number: número de negocio (ej: '573144667587')
+    - wa_id: número de WhatsApp del usuario (ej: '573153638069')
+    - message_id: id del mensaje (wamid....)
+    - content: texto recibido (si aplica; para tipos no-text puedes dejar None)
+    - raw_payload: JSON completo del evento (value o message específico)
+    """
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO whatsapp_messages (
+                        tenant,
+                        phone_number_id,
+                        display_phone_number,
+                        recipient,
+                        message_id,
+                        direction,
+                        content,
+                        status,
+                        raw_payload,
+                        last_status_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, 'inbound', %s, 'received', %s, NOW())
+                    ON CONFLICT (message_id) DO NOTHING;
+                    """,
+                    (
+                        tenant,
+                        phone_number_id,
+                        display_phone_number,
+                        wa_id,                          # aquí guardamos el número del usuario
+                        message_id,
+                        content,
+                        json.dumps(raw_payload) if raw_payload else None,
+                    ),
+                )
+        print(f"📥 Mensaje inbound registrado en DB: {message_id}")
+    except Exception as e:
+        print(f"❌ Error al registrar mensaje inbound {message_id}: {e}")
+        traceback.print_exc()

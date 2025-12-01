@@ -2814,3 +2814,108 @@ def actualizar_phone_info_db(
         return False
 
 
+
+def registrar_envio_mensaje(
+    tenant: str,
+    phone_number_id: str,
+    display_phone_number: str,
+    recipient: str,
+    message_id: str,
+    content: str | None = None,
+):
+    """
+    Registra en la BD un mensaje enviado via WhatsApp Cloud API.
+    Compatible con multi-tenant usando get_connection_context().
+    """
+    try:
+        # Crea conexión y cursor como en tus otros módulos
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    """
+                    INSERT INTO whatsapp_messages (
+                        tenant,
+                        phone_number_id,
+                        display_phone_number,
+                        recipient,
+                        message_id,
+                        direction,
+                        content,
+                        status,
+                        last_status_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, 'outbound', %s, 'sent', NOW())
+                    ON CONFLICT (message_id) DO NOTHING;
+                    """,
+                    (
+                        tenant,
+                        phone_number_id,
+                        display_phone_number,
+                        recipient,
+                        message_id,
+                        content,
+                    ),
+                )
+
+            conn.commit()
+
+        print(f"📩 Mensaje registrado en DB: {message_id}")
+
+    except Exception as e:
+        print(f"❌ Error al guardar mensaje {message_id}: {e}")
+
+
+
+def actualizar_mensaje_desde_status(conn, tenant: str, value: dict):
+    """
+    value = value["changes"][0]["value"]
+    """
+    metadata = value.get("metadata", {})
+    phone_number_id = metadata.get("phone_number_id")
+    display_phone_number = metadata.get("display_phone_number")
+
+    statuses = value.get("statuses", [])
+
+    for st in statuses:
+        message_id = st.get("id")
+        status = st.get("status")
+        recipient_id = st.get("recipient_id")
+        timestamp = st.get("timestamp")
+
+        error = (st.get("errors") or [None])[0]  # primer error o None
+
+        error_code = error.get("code") if error else None
+        error_title = error.get("title") if error else None
+        error_message = error.get("message") if error else None
+        error_details = (error.get("error_data") or {}).get("details") if error else None
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE whatsapp_messages
+                SET
+                    status = %s,
+                    error_code = %s,
+                    error_title = %s,
+                    error_message = %s,
+                    error_details = %s,
+                    raw_payload = %s,
+                    updated_at = NOW(),
+                    last_status_at = TO_TIMESTAMP(%s)
+                WHERE message_id = %s
+                  AND tenant = %s;
+                """,
+                (
+                    status,
+                    error_code,
+                    error_title,
+                    error_message,
+                    error_details,
+                    json.dumps(value),
+                    int(timestamp),
+                    message_id,
+                    tenant,
+                ),
+            )
+        conn.commit()
