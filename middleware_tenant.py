@@ -35,6 +35,10 @@ class TenantMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         tenant_name = self._resolve_tenant_name(request)
         tenant_schema = self._build_schema_name(tenant_name)
+        
+        print(f"🔍 [MIDDLEWARE] Resolviendo tenant - tenant_name: {tenant_name}, tenant_schema: {tenant_schema}")
+        print(f"🔍 [MIDDLEWARE] Host: {request.headers.get('host', 'N/A')}")
+        print(f"🔍 [MIDDLEWARE] X-Tenant-Name header: {request.headers.get('x-tenant-name', 'N/A')}")
 
         # 1️⃣ Setear tenant actual (schema BD)
         current_tenant.set(tenant_schema)

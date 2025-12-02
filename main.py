@@ -1233,7 +1233,15 @@ def actualizar_contacto_info(telefono: str = Path(...), datos: ActualizacionCont
     return actualizar_contacto_info_db(telefono, datos)
 
 @app.get("/contactos")
-def listar_contactos(estado: Optional[str] = None):
+def listar_contactos(estado: Optional[str] = None, request: Request = None):
+    from tenant import current_tenant
+    tenant_actual = current_tenant.get()
+    print(f"🔍 [DEBUG /contactos] Tenant actual: {tenant_actual}")
+    if request:
+        print(f"🔍 [DEBUG /contactos] Request state tenant_name: {getattr(request.state, 'tenant_name', 'N/A')}")
+        print(f"🔍 [DEBUG /contactos] Request state agencia: {getattr(request.state, 'agencia', 'N/A')}")
+        print(f"🔍 [DEBUG /contactos] Request host: {request.headers.get('host', 'N/A')}")
+        print(f"🔍 [DEBUG /contactos] Request X-Tenant-Name: {request.headers.get('x-tenant-name', 'N/A')}")
     return obtener_contactos_db(estado)
 
 # ✅ VERIFICACIÓN DEL WEBHOOK (Facebook Developers)
