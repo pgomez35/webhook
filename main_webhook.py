@@ -483,7 +483,7 @@ def consultar_rol_bd(numero):
     return "aspirante"
 
 def enviar_menu_principal(numero, rol=None, nombre=None):
-    rol = "aspirante_entrevista"
+    rol = "aspirante_entrevista" #-- quitar luego
 
     # Obtener el rol del usuario si no se pasa explícitamente
     if rol is None:
@@ -1272,6 +1272,7 @@ def manejar_menu(numero, texto_normalizado, rol):
     # ------------------------------------------------------------------
     # 🟠 NUEVO MENÚ PARA ROL ASPIRANTE_EN ENTREVISTA / PRUEBA LIVE
     # ------------------------------------------------------------------
+    rol = "aspirante_entrevista" #-- quitar luego
     if rol == "aspirante_entrevista":
         # 1) Adjuntar link TikTok LIVE
         if texto_normalizado in {"1", "link tiktok live", "live tiktok", "enviar link live"}:
