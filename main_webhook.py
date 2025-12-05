@@ -1291,6 +1291,7 @@ def manejar_menu(numero, texto_normalizado, rol):
                 numero,
                 "📅 Estas son tus citas agendadas. (Próximamente mostraremos el detalle desde sistema 😉)"
             )
+            enviar_citas_agendadas(numero)
             usuarios_flujo.pop(numero, None)
             return
 
@@ -2590,3 +2591,363 @@ def obtener_entrevista_id(creador_id: int, usuario_evalua: int) -> Optional[dict
     except Exception as e:
         print(f"❌ Error en obtener_entrevista_id para creador_id={creador_id}, usuario_evalua={usuario_evalua}: {e}")
         return None
+
+
+
+
+# --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+#------CREAR LINK PARA ABRIR PORTAL CITAS ASPIRANTES
+# --------------------------------------------------------------------------
+
+from typing import Optional
+
+def enviar_citas_agendadas(numero: str) -> None:
+    """
+    Envía al aspirante, por WhatsApp, el listado de sus citas agendadas
+    y un enlace al portal de citas con token de acceso.
+
+    Usa:
+      - buscar_usuario_por_telefono(numero)
+      - get_connection_context()
+      - agendamientos, agendamientos_participantes
+      - crear_token_portal_citas(creador_id, responsable_id?, minutos_validez?)
+      - construir_url_portal_citas(token, tenant_name)
+      - current_tenant.get()
+      - enviar_mensaje(numero, texto)
+    """
+
+    # 1️⃣ Verificar aspirante
+    aspirante = buscar_usuario_por_telefono(numero)
+    if not aspirante:
+        enviar_mensaje(
+            numero,
+            "⚠️ No encontramos tu información como aspirante. Por favor intenta más tarde."
+        )
+        return
+
+    creador_id = aspirante.get("id")
+    if not creador_id:
+        enviar_mensaje(
+            numero,
+            "⚠️ No encontramos tu perfil completo. Por favor intenta más tarde."
+        )
+        return
+
+    # 2️⃣ Consultar citas agendadas del aspirante
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT 
+                        a.id,
+                        a.titulo,
+                        a.descripcion,
+                        a.fecha_inicio,
+                        a.fecha_fin,
+                        a.estado,
+                        COALESCE(a.tipo_prueba, 'ENTREVISTA') AS tipo_prueba,
+                        a.link_meet
+                    FROM agendamientos a
+                    JOIN agendamientos_participantes ap
+                      ON ap.agendamiento_id = a.id
+                    WHERE ap.creador_id = %s
+                    ORDER BY a.fecha_inicio ASC
+                    """,
+                    (creador_id,)
+                )
+                rows = cur.fetchall()
+    except Exception as e:
+        print("❌ Error cargando citas desde DB en enviar_citas_agendadas:", e)
+        enviar_mensaje(
+            numero,
+            "⚠️ Ocurrió un error consultando tus citas. Intenta de nuevo más tarde."
+        )
+        return
+
+    # 3️⃣ Si no hay citas
+    if not rows:
+        enviar_mensaje(
+            numero,
+            "📅 Por ahora no tienes citas agendadas."
+        )
+    else:
+        # 4️⃣ Formatear y enviar detalle de citas
+        mensajes: list[str] = ["📅 *Tus citas agendadas:*"]
+
+        for r in rows:
+            (
+                ag_id,
+                titulo,
+                descripcion,
+                fecha_inicio,
+                fecha_fin,
+                estado,
+                tipo_prueba,
+                link_meet,
+            ) = r
+
+            # Duración en minutos
+            try:
+                duracion_min = int((fecha_fin - fecha_inicio).total_seconds() // 60)
+            except Exception:
+                duracion_min = 60
+
+            # Fecha formateada (puedes ajustar formato si quieres)
+            fecha_str = fecha_inicio.strftime("%d/%m/%Y %I:%M %p")
+
+            # Realizada o no
+            realizada = "Sí" if estado == "realizada" else "No"
+
+            mensajes.append(
+                (
+                    f"\n🗂️ *Cita #{ag_id}*\n"
+                    f"• Fecha: {fecha_str}\n"
+                    f"• Duración: {duracion_min} min\n"
+                    f"• Tipo de prueba: *{tipo_prueba.upper()}*\n"
+                    f"• Realizada: {realizada}\n"
+                    f"• Enlace asignado: {link_meet or 'N/A'}"
+                )
+            )
+
+        # Enviar bloques para evitar límites de tamaño en WhatsApp
+        for bloque in mensajes:
+            enviar_mensaje(numero, bloque)
+
+    # 5️⃣ Generar token para portal de citas
+    try:
+        token = crear_token_portal_citas(creador_id=creador_id)
+    except Exception as e:
+        print(f"❌ Error creando token de portal de citas para creador_id={creador_id}: {e}")
+        token = None
+
+    if not token:
+        enviar_mensaje(
+            numero,
+            "⚠️ Hubo un problema generando el acceso a tu portal de citas. "
+            "Puedes volver a intentar más tarde."
+        )
+        return
+
+    # 6️⃣ Obtener tenant actual (si existe)
+    try:
+        tenant_name: Optional[str] = current_tenant.get()
+    except LookupError:
+        tenant_name = None
+
+    # 7️⃣ Construir URL del portal usando la misma lógica multitenant del frontend
+    url_portal = construir_url_portal_citas(token, tenant_name=tenant_name)
+
+    # 8️⃣ Enviar enlace del portal al aspirante
+    enviar_mensaje(
+        numero,
+        (
+            "🌐 También puedes ver y gestionar tus citas desde tu portal:\n"
+            f"{url_portal}\n\n"
+            "Ábrelo desde tu celular o computador para revisar tus citas, unirte a evaluaciones "
+            "y enviar tu TikTok LIVE."
+        )
+    )
+
+
+
+def buscar_usuario_por_telefono(numero: str):
+    try:
+        numero = normalizar_numero(numero)
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                # Buscar en creadores
+                cur.execute("""
+                    SELECT c.id, c.nickname, COALESCE(NULLIF(TRIM(c.nickname), ''), c.nombre_real) AS nombre ,
+                           COALESCE(r.nombre, 'aspirante') AS rol
+                    FROM creadores c
+                    LEFT JOIN roles r ON c.rol_id = r.id
+                    WHERE c.telefono = %s OR c.whatsapp = %s
+                    LIMIT 1;
+                """, (numero, numero))
+                row = cur.fetchone()
+                if row:
+                    return dict(zip([desc[0] for desc in cur.description], row))
+
+                # Buscar en admin_usuario
+                cur.execute("""
+                    SELECT id, username AS nickname,
+                           nombre_completo AS nombre,
+                           'admin' AS rol
+                    FROM admin_usuario
+                    WHERE telefono = %s
+                    LIMIT 1;
+                """, (numero,))
+                row = cur.fetchone()
+                if row:
+                    return dict(zip([desc[0] for desc in cur.description], row))
+                return None
+
+    except Exception as e:
+        import traceback
+        print("❌ Error al buscar usuario por teléfono:", e)
+        traceback.print_exc()
+        return None
+
+
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "https://talentum-manager.com")
+
+def construir_url_portal_citas(token: str, tenant_name: Optional[str] = None) -> str:
+    """
+    Construye la URL pública del portal de citas para aspirantes.
+    Ejemplo:
+        https://agencia.talentum-manager.com/portal-citas?token=ABC123
+
+    Args:
+        token: token generado para el acceso del aspirante.
+        tenant_name: nombre del tenant actual para construir subdominio.
+
+    Returns:
+        URL completa al portal de citas.
+    """
+    # Limpiar dominio base (igual que en tu función original)
+    domain = (
+        FRONTEND_BASE_URL
+        .replace("https://", "")
+        .replace("http://", "")
+        .replace("www.", "")
+    )
+
+    # Construir base URL según tenant
+    if tenant_name:
+        base_url = f"https://{tenant_name}.{domain}"
+    else:
+        base_url = f"https://{domain}"
+
+    return f"{base_url}/portal-citas?token={token}"
+
+
+
+import secrets
+from datetime import datetime, timezone, timedelta
+from typing import Optional
+
+def crear_token_portal_citas(
+    creador_id: int,
+    responsable_id: Optional[int] = None,
+    minutos_validez: int = 24 * 60  # por defecto, 24 horas
+) -> Optional[str]:
+    """
+    Crea un token para que el aspirante pueda acceder al portal de citas.
+    Registra el token en la tabla link_agendamiento_tokens.
+
+    - Si responsable_id no se pasa, intenta obtenerlo de la última entrevista del creador.
+    - expiracion = ahora + minutos_validez (en UTC).
+    """
+
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                # 1️⃣ Resolver responsable_id si no viene
+                if responsable_id is None:
+                    cur.execute(
+                        """
+                        SELECT usuario_evalua
+                        FROM entrevistas
+                        WHERE creador_id = %s
+                        ORDER BY id DESC
+                        LIMIT 1
+                        """,
+                        (creador_id,)
+                    )
+                    row = cur.fetchone()
+                    if row and row[0] is not None:
+                        responsable_id = row[0]
+
+                # Fallback mínimo si sigue siendo None
+                if responsable_id is None:
+                    print(
+                        f"⚠️ crear_token_portal_citas: sin responsable para creador_id={creador_id}. "
+                        f"Usando responsable_id=1 por defecto."
+                    )
+                    responsable_id = 1
+
+                # 2️⃣ Generar token seguro
+                token = secrets.token_urlsafe(16)
+
+                # 3️⃣ Calcular expiración (UTC)
+                now_utc = datetime.now(timezone.utc)
+                expiracion = now_utc + timedelta(minutes=minutos_validez)
+
+                # 4️⃣ Insertar en link_agendamiento_tokens
+                cur.execute(
+                    """
+                    INSERT INTO link_agendamiento_tokens (
+                        token,
+                        creador_id,
+                        responsable_id,
+                        expiracion,
+                        usado,
+                        creado_en
+                    )
+                    VALUES (%s, %s, %s, %s, false, NOW() AT TIME ZONE 'UTC')
+                    """,
+                    (token, creador_id, responsable_id, expiracion.replace(tzinfo=None))
+                )
+
+                print(
+                    f"✅ Token portal citas creado para creador_id={creador_id}, "
+                    f"responsable_id={responsable_id}, token={token}"
+                )
+                return token
+
+    except Exception as e:
+        print(f"❌ Error en crear_token_portal_citas para creador_id={creador_id}: {e}")
+        return None
+
+
+import re
+
+def normalizar_numero(numero: str) -> str:
+    """
+    Normaliza un número de WhatsApp a formato estándar (E.164-like).
+    Funciona para Colombia y entradas comunes de usuarios.
+
+    Reglas:
+    - Quita espacios, guiones, paréntesis.
+    - Quita prefijo "+" si existe.
+    - Si empieza con "57" y tiene 12 dígitos -> lo deja así.
+    - Si empieza con "3" y tiene 10 dígitos -> lo convierte a "57" + número.
+    - Si empieza con "0" y luego "3" (ej: 03...) -> quita el 0.
+    - Si tiene 10 dígitos y empieza por 3 -> es celular CO, añade 57.
+    """
+
+    if not numero:
+        return ""
+
+    # Quitar caracteres no numéricos
+    numero = re.sub(r"[^\d+]", "", numero).strip()
+
+    # Quitar "+" si existe
+    if numero.startswith("+"):
+        numero = numero[1:]
+
+    # Caso: número ya completo "57xxxxxxxxxx"
+    if numero.startswith("57") and len(numero) == 12:
+        return numero
+
+    # Si empieza con 03..., quitar el cero
+    if numero.startswith("03") and len(numero) == 11:
+        numero = numero[1:]  # queda 3xxxxxxxxx
+
+    # Si tiene 10 dígitos y empieza por 3 ⇒ celular colombiano
+    if len(numero) == 10 and numero.startswith("3"):
+        return "57" + numero
+
+    # Si ya empieza por 57 pero la longitud no es de 12, tratamos de corregir
+    if numero.startswith("57") and len(numero) > 12:
+        # eliminar exceso de dígitos accidentales
+        return numero[:12]
+
+    # Si envían un número sin indicativo (ej: 3012345678)
+    if len(numero) == 10:
+        return "57" + numero
+
+    # Último fallback: devolver tal cual
+    return numero

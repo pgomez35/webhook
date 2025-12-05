@@ -1,3 +1,4 @@
+import os
 from datetime import datetime,date,timedelta
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional,List
@@ -1200,7 +1201,7 @@ class CitaAspiranteOut(BaseModel):
     fecha_inicio: str
     fecha_fin: str
     duracion_minutos: int
-    tipo_prueba: str
+    tipo_agendamiento: str
     realizada: bool
     link_meet: Optional[str] = None
     url_reagendar: Optional[str] = None
@@ -1223,7 +1224,7 @@ def listar_citas_aspirante(token: str = Query(...)):
                     a.fecha_inicio,
                     a.fecha_fin,
                     a.estado,
-                    COALESCE(a.tipo_prueba, 'ENTREVISTA') AS tipo_prueba,
+                    COALESCE(a.tipo_agendamiento, 'ENTREVISTA') AS tipo_agendamiento,
                     a.link_meet
                 FROM agendamientos a
                 JOIN agendamientos_participantes ap
@@ -1236,7 +1237,7 @@ def listar_citas_aspirante(token: str = Query(...)):
             rows = cur.fetchall()
 
     for r in rows:
-        a_id, f_ini, f_fin, estado, tipo_prueba, link_meet = r
+        a_id, f_ini, f_fin, estado, tipo_agendamiento, link_meet = r
         duracion_min = int((f_fin - f_ini).total_seconds() // 60)
         realizada = (estado == "realizada")
 
@@ -1246,7 +1247,7 @@ def listar_citas_aspirante(token: str = Query(...)):
                 fecha_inicio=f_ini.isoformat(),
                 fecha_fin=f_fin.isoformat(),
                 duracion_minutos=duracion_min,
-                tipo_prueba=tipo_prueba.upper(),
+                tipo_agendamiento=tipo_agendamiento.upper(),
                 realizada=realizada,
                 link_meet=link_meet,
                 url_reagendar=None,  # aquí podrías construir una URL pública si quieres
@@ -1400,3 +1401,5 @@ def resolver_creador_por_token(token: str) -> Optional[Dict]:
     except Exception as e:
         print(f"❌ Error en resolver_creador_por_token: {e}")
         return None
+
+
