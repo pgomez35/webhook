@@ -35,7 +35,6 @@ def enviar_mensaje_texto_simple(token: str, numero_id: str, telefono_destino: st
 
     return response.status_code, respuesta_json
 
-
 import requests
 import base64
 import mimetypes
@@ -397,3 +396,214 @@ def enviar_boton_iniciar_Completa(token: str, numero_id: str, telefono_destino: 
 
     print("📡 Respuesta de la API:", respuesta_json)
     return response.status_code, respuesta_json
+
+
+import json
+import logging
+import requests
+from typing import List, Dict
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
+MAX_BUTTON_TITLE = 20
+MAX_BUTTONS = 3
+
+def _sanitize_title(title: str) -> str:
+    if title is None:
+        return ""
+    t = " ".join(str(title).split())
+    if len(t) > MAX_BUTTON_TITLE:
+        logger.warning("Título de botón demasiado largo (%d). Se truncará a %d: %s", len(t), MAX_BUTTON_TITLE, t)
+        t = t[:MAX_BUTTON_TITLE]
+    return t
+
+def enviar_botones_con_iconos_minimal(
+    token: str,
+    phone_number_id: str,
+    telefono_destino: str,
+    opciones: List[Dict],  # cada opción: {"id": "opt_1", "emoji": "1️⃣", "label": "Actualizar perfil"}
+):
+    """
+    Envía un mensaje interactivo (reply buttons) con emoji/icono + texto en el título.
+    El cuerpo del mensaje será mínimo: "Pulsa una opción." (no menú adicional).
+    - opciones: lista de dicts con keys 'id'(str), 'emoji'(str opcional), 'label'(str)
+    - usa hasta 3 botones (limitación de la API)
+    Retorna (status_code, response_json).
+    """
+    if not isinstance(opciones, list) or len(opciones) == 0:
+        raise ValueError("opciones debe ser una lista no vacía")
+    if len(opciones) > MAX_BUTTONS:
+        opciones = opciones[:MAX_BUTTONS]
+
+    url = f"https://graph.facebook.com/v19.0/{phone_number_id}/messages"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    action_buttons = []
+    for idx, opt in enumerate(opciones, start=1):
+        btn_id = str(opt.get("id") or f"opt_{idx}").strip()
+        emoji = str(opt.get("emoji") or "").strip()
+        label = str(opt.get("label") or "").strip()
+        title_raw = f"{emoji} {label}".strip() if emoji else label
+        title = _sanitize_title(title_raw)
+        if not btn_id or not title:
+            raise ValueError("Cada opción necesita 'id' y 'label' válidos")
+        action_buttons.append({"type": "reply", "reply": {"id": btn_id, "title": title}})
+
+    # Cuerpo mínimo tal como pediste
+    cuerpo = "Pulsa una opción."
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": telefono_destino,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": cuerpo},
+            "action": {"buttons": action_buttons}
+        }
+    }
+
+    logger.info("Enviando interactivo (minimal) a %s con botones: %s", telefono_destino, [b["reply"]["title"] for b in action_buttons])
+    resp = requests.post(url, headers=headers, json=payload)
+    try:
+        resp_json = resp.json()
+    except Exception:
+        resp_json = {"error": "no json", "text": resp.text}
+    logger.info("Código: %s, respuesta: %s", resp.status_code, resp_json)
+    return resp.status_code, resp_json
+
+
+def enviar_mensaje_animacion_simple(
+    token: str,
+    numero_id: str,
+    telefono_destino: str,
+    animation_url: str = None,
+    media_id: str = None,
+    caption: str = None,
+):
+    """
+    Envía una animación (GIF/MP4) por WhatsApp Cloud API.
+    - Proporciona animation_url (link público) *o* media_id (media previamente subido).
+    - caption es opcional (texto que acompaña la animación).
+    Retorna (status_code, respuesta_json).
+    """
+    if not (animation_url or media_id):
+        raise ValueError("Se requiere animation_url o media_id")
+
+    url = f"https://graph.facebook.com/v19.0/{numero_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    animation_field = {}
+    if media_id:
+        animation_field["id"] = media_id
+    else:
+        animation_field["link"] = animation_url
+
+    if caption:
+        animation_field["caption"] = caption
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": telefono_destino,
+        "type": "animation",
+        "animation": animation_field
+    }
+
+    print("📤 Enviando animación a:", telefono_destino)
+    if animation_url:
+        print("🔗 Link:", animation_url)
+    if media_id:
+        print("🆔 Media ID:", media_id)
+    if caption:
+        print("📝 Caption:", caption)
+
+    response = requests.post(url, headers=headers, json=payload)
+    print("✅ Código de estado:", response.status_code)
+
+    try:
+        respuesta_json = response.json()
+    except json.JSONDecodeError:
+        respuesta_json = {"error": "Respuesta no válida en formato JSON", "contenido": response.text}
+
+    print("📡 Respuesta de la API:", respuesta_json)
+    return response.status_code, respuesta_json
+
+
+import json
+import mimetypes
+import os
+import requests
+
+GRAPH_API_VERSION = "v19.0"
+
+
+def upload_media(token: str, phone_number_id: str, file_path: str):
+    """
+    Sube un fichero (GIF/MP4) local al endpoint /<PHONE_NUMBER_ID>/media de WhatsApp Cloud API.
+    Retorna media_id (str) si todo OK.
+    """
+    if not os.path.isfile(file_path):
+        raise FileNotFoundError(f"Fichero no encontrado: {file_path}")
+
+    mime_type, _ = mimetypes.guess_type(file_path)
+    if not mime_type:
+        raise ValueError("No se pudo detectar el mime type; especifica una extensión válida (.mp4, .gif)")
+
+    url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{phone_number_id}/media"
+    headers = {"Authorization": f"Bearer {token}"}
+
+    with open(file_path, "rb") as fh:
+        files = {
+            "file": (os.path.basename(file_path), fh, mime_type),
+        }
+        data = {"messaging_product": "whatsapp"}
+        resp = requests.post(url, headers=headers, data=data, files=files)
+
+    try:
+        resp_json = resp.json()
+    except Exception:
+        raise RuntimeError(f"Respuesta no JSON al subir media: {resp.status_code} {resp.text}")
+
+    if resp.status_code != 200:
+        raise RuntimeError(f"Error subiendo media: {resp.status_code} {resp_json}")
+
+    # resp_json ejemplo: {"id":"<MEDIA_ID>","mime_type":"video/mp4","sha256":"...", ...}
+    media_id = resp_json.get("id")
+    if not media_id:
+        raise RuntimeError(f"No se devolvió media_id: {resp_json}")
+
+    return media_id
+
+
+def enviar_mensaje_animacion_con_media_id(token: str, phone_number_id: str, telefono_destino: str, media_id: str, caption: str = None):
+    """
+    Envía un mensaje tipo 'animation' usando un media_id previamente subido.
+    """
+    url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{phone_number_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    animation = {"id": media_id}
+    if caption:
+        animation["caption"] = caption
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": telefono_destino,
+        "type": "animation",
+        "animation": animation
+    }
+
+    resp = requests.post(url, headers=headers, json=payload)
+    try:
+        resp_json = resp.json()
+    except Exception:
+        resp_json = {"error": "no json", "text": resp.text}
+
+    return resp.status_code, resp_json

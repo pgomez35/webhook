@@ -9,7 +9,7 @@ from auth import obtener_usuario_actual
 from enviar_msg_wp import enviar_plantilla_generica_parametros, enviar_plantilla_generica
 from main_Agendamiento import crear_evento
 
-from main_webhook import  enviar_mensaje
+from main_webhook import enviar_mensaje, actualizar_link_prueba_live, validar_link_tiktok
 from tenant import current_tenant
 
 
@@ -1188,3 +1188,137 @@ def obtener_entrevista_con_agendamientos(creador_id: int) -> Optional[dict]:
 #     finally:
 #         cur.close()
 #         conn.close()
+
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
+from typing import List, Optional
+
+router = APIRouter()
+
+class CitaAspiranteOut(BaseModel):
+    id: int
+    fecha_inicio: str
+    fecha_fin: str
+    duracion_minutos: int
+    tipo_prueba: str
+    realizada: bool
+    link_meet: Optional[str] = None
+    url_reagendar: Optional[str] = None
+
+def resolver_creador_por_token(token: str) -> int:
+    # TODO: aquí miras en tu tabla de tokens / creadores
+    ...
+
+@router.get("/api/aspirantes/citas", response_model=List[CitaAspiranteOut])
+def listar_citas_aspirante(token: str = Query(...)):
+    creador_id = resolver_creador_por_token(token)
+    if not creador_id:
+        raise HTTPException(status_code=404, detail="Aspirante no encontrado")
+
+    citas: list[CitaAspiranteOut] = []
+
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    a.id,
+                    a.fecha_inicio,
+                    a.fecha_fin,
+                    a.estado,
+                    COALESCE(a.tipo_prueba, 'ENTREVISTA') AS tipo_prueba,
+                    a.link_meet
+                FROM agendamientos a
+                JOIN agendamientos_participantes ap
+                  ON ap.agendamiento_id = a.id
+                WHERE ap.creador_id = %s
+                ORDER BY a.fecha_inicio ASC
+                """,
+                (creador_id,)
+            )
+            rows = cur.fetchall()
+
+    for r in rows:
+        a_id, f_ini, f_fin, estado, tipo_prueba, link_meet = r
+        duracion_min = int((f_fin - f_ini).total_seconds() // 60)
+        realizada = (estado == "realizada")
+
+        citas.append(
+            CitaAspiranteOut(
+                id=a_id,
+                fecha_inicio=f_ini.isoformat(),
+                fecha_fin=f_fin.isoformat(),
+                duracion_minutos=duracion_min,
+                tipo_prueba=tipo_prueba.upper(),
+                realizada=realizada,
+                link_meet=link_meet,
+                url_reagendar=None,  # aquí podrías construir una URL pública si quieres
+            )
+        )
+
+    return citas
+
+
+class TikTokLiveLinkIn(BaseModel):
+    token: str
+    link_tiktok: str
+    agendamiento_id: Optional[int] = None
+
+class TikTokLiveLinkOut(BaseModel):
+    agendamiento_id: int
+    message: str
+
+@router.post("/api/aspirantes/tiktok-live-link", response_model=TikTokLiveLinkOut)
+def guardar_tiktok_live_link(payload: TikTokLiveLinkIn):
+    creador_id = resolver_creador_por_token(payload.token)
+    if not creador_id:
+        raise HTTPException(status_code=404, detail="Aspirante no encontrado")
+
+    link = payload.link_tiktok.strip()
+    if not validar_link_tiktok(link):
+        raise HTTPException(status_code=400, detail="El formato del enlace de TikTok no es válido.")
+
+    # Caso 1: se especifica un agendamiento concreto
+    if payload.agendamiento_id:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                # Verificar que la cita pertenece al creador
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM agendamientos a
+                    JOIN agendamientos_participantes ap
+                      ON ap.agendamiento_id = a.id
+                    WHERE a.id = %s
+                      AND ap.creador_id = %s
+                    """,
+                    (payload.agendamiento_id, creador_id)
+                )
+                if not cur.fetchone():
+                    raise HTTPException(status_code=403, detail="No tienes permiso sobre esta cita.")
+
+                # Actualizar link_meet con el link de TikTok
+                cur.execute(
+                    """
+                    UPDATE agendamientos
+                    SET link_meet = %s
+                    WHERE id = %s
+                    """,
+                    (link, payload.agendamiento_id)
+                )
+
+        return TikTokLiveLinkOut(
+            agendamiento_id=payload.agendamiento_id,
+            message="Enlace de TikTok LIVE actualizado para tu cita."
+        )
+
+    # Caso 2: sin agendamiento → usamos actualizar_link_prueba_live
+    ag_id = actualizar_link_prueba_live(creador_id=creador_id, link_tiktok=link)
+    if not ag_id:
+        raise HTTPException(status_code=500, detail="No se pudo registrar el enlace de TikTok LIVE.")
+
+    return TikTokLiveLinkOut(
+        agendamiento_id=ag_id,
+        message="Enlace de TikTok LIVE registrado correctamente."
+    )
+
