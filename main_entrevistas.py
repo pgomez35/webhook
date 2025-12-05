@@ -1205,9 +1205,6 @@ class CitaAspiranteOut(BaseModel):
     link_meet: Optional[str] = None
     url_reagendar: Optional[str] = None
 
-def resolver_creador_por_token(token: str) -> int:
-    # TODO: aquí miras en tu tabla de tokens / creadores
-    ...
 
 @router.get("/api/aspirantes/citas", response_model=List[CitaAspiranteOut])
 def listar_citas_aspirante(token: str = Query(...)):
@@ -1322,3 +1319,84 @@ def guardar_tiktok_live_link(payload: TikTokLiveLinkIn):
         message="Enlace de TikTok LIVE registrado correctamente."
     )
 
+
+from typing import Optional, Dict
+from datetime import datetime, timezone
+
+
+def resolver_creador_por_token(token: str) -> Optional[Dict]:
+    """
+    Resuelve un token público de acceso para aspirantes.
+
+    Tabla usada: link_agendamiento_tokens
+    Campos:
+      - token: str
+      - creador_id: int
+      - responsable_id: int (opcional)
+      - expiracion: timestamp
+      - usado: bool
+
+    Devuelve:
+        {
+            "creador_id": int,
+            "responsable_id": Optional[int]
+        }
+    O None si:
+        - no existe
+        - expiró
+        - fue marcado como usado (opcional)
+    """
+
+    if not token:
+        return None
+
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT token, creador_id, responsable_id, expiracion, usado
+                    FROM link_agendamiento_tokens
+                    WHERE token = %s
+                    """,
+                    (token,)
+                )
+                row = cur.fetchone()
+
+        if not row:
+            print(f"⚠️ Token inválido o no encontrado: {token}")
+            return None
+
+        (
+            token_db,
+            creador_id,
+            responsable_id,
+            expiracion,
+            usado,
+        ) = row
+
+        # 1) Verificar expiración
+        if expiracion:
+            now_utc = datetime.now(timezone.utc)
+            # Convertir expiración a timezone-aware si es naive
+            if expiracion.tzinfo is None:
+                expiracion = expiracion.replace(tzinfo=timezone.utc)
+
+            if now_utc > expiracion:
+                print(f"⚠️ Token expirado: {token}")
+                return None
+
+        # 2) Verificar si ya fue usado (si quieres bloquearlo)
+        if usado:
+            print(f"⚠️ Token ya usado: {token}")
+            return None
+
+        # 3) Devuelve creador y responsable asociado
+        return {
+            "creador_id": creador_id,
+            "responsable_id": responsable_id
+        }
+
+    except Exception as e:
+        print(f"❌ Error en resolver_creador_por_token: {e}")
+        return None
