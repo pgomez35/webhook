@@ -1247,7 +1247,13 @@ def manejar_menu(numero, texto_normalizado, rol):
             return
         if texto_normalizado in {"2", "análisis", "diagnóstico", "diagnostico"}:
             actualizar_flujo(numero, "diagnostico")
-            enviar_diagnostico(numero)
+
+            # marcar y desmarcar despues
+            # ----------------------------
+            enviar_citas_agendadas(numero)
+            # enviar_diagnostico(numero)
+            # ----------------------------
+
             usuarios_flujo.pop(numero, None)
             return
         if texto_normalizado in {"3", "requisitos"}:
