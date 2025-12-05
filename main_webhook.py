@@ -2655,7 +2655,7 @@ def enviar_citas_agendadas(numero: str) -> None:
                         a.fecha_inicio,
                         a.fecha_fin,
                         a.estado,
-                        COALESCE(a.tipo_prueba, 'ENTREVISTA') AS tipo_prueba,
+                        COALESCE(a.tipo_agendamiento, 'ENTREVISTA') AS tipo_agendamiento,
                         a.link_meet
                     FROM agendamientos a
                     JOIN agendamientos_participantes ap
@@ -2692,7 +2692,7 @@ def enviar_citas_agendadas(numero: str) -> None:
                 fecha_inicio,
                 fecha_fin,
                 estado,
-                tipo_prueba,
+                tipo_agendamiento,
                 link_meet,
             ) = r
 
@@ -2713,7 +2713,7 @@ def enviar_citas_agendadas(numero: str) -> None:
                     f"\n🗂️ *Cita #{ag_id}*\n"
                     f"• Fecha: {fecha_str}\n"
                     f"• Duración: {duracion_min} min\n"
-                    f"• Tipo de prueba: *{tipo_prueba.upper()}*\n"
+                    f"• Tipo de prueba: *{tipo_agendamiento.upper()}*\n"
                     f"• Realizada: {realizada}\n"
                     f"• Enlace asignado: {link_meet or 'N/A'}"
                 )
