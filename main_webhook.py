@@ -483,10 +483,11 @@ def consultar_rol_bd(numero):
     return "aspirante"
 
 def enviar_menu_principal(numero, rol=None, nombre=None):
+    rol = "aspirante_entrevista"
+
     # Obtener el rol del usuario si no se pasa explícitamente
     if rol is None:
         rol = obtener_rol_usuario(numero)
-    rol == "aspirante_entrevista"
 
     # Obtener el nombre desde la base de datos si no se pasa explícitamente
     if nombre is None:
