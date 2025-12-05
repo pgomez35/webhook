@@ -1209,12 +1209,17 @@ class CitaAspiranteOut(BaseModel):
 
 @router.get("/api/aspirantes/citas", response_model=List[CitaAspiranteOut])
 def listar_citas_aspirante(token: str = Query(...)):
-    creador_id = resolver_creador_por_token(token)
-    if not creador_id:
+    # 1️⃣ Resolver token correctamente
+    info_token = resolver_creador_por_token(token)
+    if not info_token:
         raise HTTPException(status_code=404, detail="Aspirante no encontrado")
+
+    creador_id = info_token["creador_id"]  # 👈 ESTE es el INT que necesita SQL
+    responsable_id = info_token.get("responsable_id")
 
     citas: list[CitaAspiranteOut] = []
 
+    # 2️⃣ Consulta SQL usando el ID correcto
     with get_connection_context() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -1232,10 +1237,11 @@ def listar_citas_aspirante(token: str = Query(...)):
                 WHERE ap.creador_id = %s
                 ORDER BY a.fecha_inicio ASC
                 """,
-                (creador_id,)
+                (creador_id,)  # 👈 ahora sí funciona
             )
             rows = cur.fetchall()
 
+    # 3️⃣ Construcción del response
     for r in rows:
         a_id, f_ini, f_fin, estado, tipo_agendamiento, link_meet = r
         duracion_min = int((f_fin - f_ini).total_seconds() // 60)
@@ -1250,7 +1256,7 @@ def listar_citas_aspirante(token: str = Query(...)):
                 tipo_agendamiento=tipo_agendamiento.upper(),
                 realizada=realizada,
                 link_meet=link_meet,
-                url_reagendar=None,  # aquí podrías construir una URL pública si quieres
+                url_reagendar=None,
             )
         )
 
