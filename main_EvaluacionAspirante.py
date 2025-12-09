@@ -16,6 +16,7 @@ from auth import obtener_usuario_actual
 from enviar_msg_wp import enviar_plantilla_generica_parametros, enviar_plantilla_generica
 from DataBase import get_connection_context, obtener_cuenta_por_subdominio
 from evaluaciones import evaluar_perfil_pre, diagnostico_perfil_creador_pre, obtener_guardar_pre_resumen
+from main import crear_evento_google
 from main_webhook import  enviar_mensaje
 from schemas import ResumenEvaluacionOutput
 from tenant import current_tenant
