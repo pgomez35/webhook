@@ -2210,36 +2210,36 @@ def registrar_mensaje_recibido(
 
 
 
-def _process_tiktok_live_link(numero: str, texto: str, tenant_name: str) -> dict:
-    """
-    Maneja el caso donde el aspirante debe enviar el link del LIVE de TikTok.
-    """
-    # 1. Validar el link
-    if not validar_link_tiktok(texto):
-        enviar_mensaje(
-            numero,
-            "❌ El formato del link no es válido.\n\n"
-            "Por favor pega el enlace completo del LIVE de TikTok, por ejemplo:\n"
-            "https://www.tiktok.com/@usuario/live"
-        )
-        # No cambiamos el paso: sigue en 'esperando_link_tiktok_live'
-        return {"status": "ok"}
-
-    # 2. Guardar/el link
-    grabar_link_tiktok(numero, texto, tenant_name)
-
-    # 3. Actualizar el flujo: ya no estamos esperando el link
-    # Puedes dejar None, o pasar a algo como 'esperando_evaluacion_live'
-    actualizar_flujo(numero, None)
-
-    # 4. Confirmar al aspirante
-    enviar_mensaje(
-        numero,
-        "✅ ¡Perfecto! Hemos recibido el link de tu LIVE de TikTok.\n"
-        "Nuestro equipo lo revisará y te compartiremos la retroalimentación pronto. 💫"
-    )
-
-    return {"status": "ok"}
+# def _process_tiktok_live_link(numero: str, texto: str, tenant_name: str) -> dict:
+#     """
+#     Maneja el caso donde el aspirante debe enviar el link del LIVE de TikTok.
+#     """
+#     # 1. Validar el link
+#     if not validar_link_tiktok(texto):
+#         enviar_mensaje(
+#             numero,
+#             "❌ El formato del link no es válido.\n\n"
+#             "Por favor pega el enlace completo del LIVE de TikTok, por ejemplo:\n"
+#             "https://www.tiktok.com/@usuario/live"
+#         )
+#         # No cambiamos el paso: sigue en 'esperando_link_tiktok_live'
+#         return {"status": "ok"}
+#
+#     # 2. Guardar/el link
+#     grabar_link_tiktok(numero, texto, tenant_name)
+#
+#     # 3. Actualizar el flujo: ya no estamos esperando el link
+#     # Puedes dejar None, o pasar a algo como 'esperando_evaluacion_live'
+#     actualizar_flujo(numero, None)
+#
+#     # 4. Confirmar al aspirante
+#     enviar_mensaje(
+#         numero,
+#         "✅ ¡Perfecto! Hemos recibido el link de tu LIVE de TikTok.\n"
+#         "Nuestro equipo lo revisará y te compartiremos la retroalimentación pronto. 💫"
+#     )
+#
+#     return {"status": "ok"}
 
 
 
@@ -2292,205 +2292,205 @@ def validar_link_tiktok(texto: str) -> bool:
     return True
 
 
-def grabar_link_tiktok(numero: str, link: str, tenant_name: str) -> None:
-    """
-    Guarda el link del LIVE de TikTok asociado al aspirante.
-    Ajusta según tu modelo y tus funciones de acceso a datos.
-    """
-    # 1. Buscar aspirante por teléfono
-    aspirante = buscar_usuario_por_telefono(numero)
-    if not aspirante:
-        print(f"⚠️ No se encontró aspirante con número {numero} en tenant {tenant_name}")
-        return
-
-    aspirante_id = aspirante.get("id")  # o como lo tengas
-
-    # 2. Guardar en la tabla correspondiente
-    # Ejemplos posibles (ajusta):
-    # - actualizar_link_prueba_live(aspirante_id, link)
-    # - crear_registro_prueba_live(aspirante_id, link, tenant_name)
-
-    actualizar_link_prueba_live(aspirante_id, link)
+# def grabar_link_tiktok(numero: str, link: str, tenant_name: str) -> None:
+#     """
+#     Guarda el link del LIVE de TikTok asociado al aspirante.
+#     Ajusta según tu modelo y tus funciones de acceso a datos.
+#     """
+#     # 1. Buscar aspirante por teléfono
+#     aspirante = buscar_usuario_por_telefono(numero)
+#     if not aspirante:
+#         print(f"⚠️ No se encontró aspirante con número {numero} en tenant {tenant_name}")
+#         return
+#
+#     aspirante_id = aspirante.get("id")  # o como lo tengas
+#
+#     # 2. Guardar en la tabla correspondiente
+#     # Ejemplos posibles (ajusta):
+#     # - actualizar_link_prueba_live(aspirante_id, link)
+#     # - crear_registro_prueba_live(aspirante_id, link, tenant_name)
+#
+#     actualizar_link_prueba_live(aspirante_id, link)
 
     from typing import Optional
 
 
-def actualizar_link_prueba_live(
-        creador_id: int,
-        link_tiktok: str,
-        responsable_id: Optional[int] = None
-) -> Optional[int]:
-    """
-    Actualiza o crea un agendamiento para una prueba TikTok LIVE.
-
-    Lógica:
-    1️⃣ Busca un agendamiento relacionado con una ENTREVISTA del creador (aspirante),
-       cuya fecha_inicio esté a menos de 60 minutos de diferencia de la hora actual.
-       - Relaciones:
-         entrevistas -> entrevista_agendamiento -> agendamientos
-       - Filtro:
-         ABS(fecha_inicio - NOW_UTC) <= 60 minutos
-
-    2️⃣ Si existe:
-        - Actualiza el campo link_meet de ese agendamiento con el link de TikTok.
-        - Devuelve el id del agendamiento.
-
-    3️⃣ Si NO existe:
-        - Obtiene (o infiere) un responsable_id.
-        - Crea un nuevo agendamiento de 60 minutos a partir de ahora,
-          con el link de TikTok en link_meet.
-        - Crea/obtiene la entrevista y registra en entrevista_agendamiento.
-        - Registra al creador como participante en agendamientos_participantes.
-        - Devuelve el id del nuevo agendamiento.
-
-    Devuelve:
-        agendamiento_id (int) o None si algo falla.
-    """
-
-    try:
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-                # 1️⃣ Buscar agendamiento cercano (±60 minutos) vinculado a entrevista de este creador
-                cur.execute(
-                    """
-                    SELECT a.id
-                    FROM entrevistas e
-                    JOIN entrevista_agendamiento ea ON ea.entrevista_id = e.id
-                    JOIN agendamientos a ON a.id = ea.agendamiento_id
-                    WHERE e.creador_id = %s
-                      AND ABS(
-                            EXTRACT(
-                                EPOCH FROM (
-                                    a.fecha_inicio - (NOW() AT TIME ZONE 'UTC')
-                                )
-                            )
-                      ) <= 60 * 60
-                    ORDER BY ABS(
-                        EXTRACT(
-                            EPOCH FROM (
-                                a.fecha_inicio - (NOW() AT TIME ZONE 'UTC')
-                            )
-                        )
-                    )
-                    LIMIT 1
-                    """,
-                    (creador_id,)
-                )
-                row = cur.fetchone()
-
-                if row:
-                    # ✅ Caso 1: ya hay una cita cercana → actualizar link_meet
-                    agendamiento_id = row[0]
-                    cur.execute(
-                        """
-                        UPDATE agendamientos
-                        SET link_meet = %s
-                        WHERE id = %s
-                        """,
-                        (link_tiktok, agendamiento_id)
-                    )
-                    print(
-                        f"✅ link_meet actualizado en agendamiento_id={agendamiento_id} para creador_id={creador_id}")
-                    return agendamiento_id
-
-                # 2️⃣ No hay cita cercana → crear una nueva
-
-                # 2.1 Obtener responsable_id si no viene por parámetro
-                if responsable_id is None:
-                    cur.execute(
-                        """
-                        SELECT responsable_id
-                        FROM entrevistas
-                        WHERE creador_id = %s
-                        ORDER BY id DESC
-                        LIMIT 1
-                        """,
-                        (creador_id,)
-                    )
-                    row_resp = cur.fetchone()
-                    if row_resp:
-                        responsable_id = row_resp[0]
-
-                if responsable_id is None:
-                    # ⚠️ Fallback de seguridad: evita reventar si no hay responsable configurado
-                    print(
-                        f"⚠️ No se encontró responsable para creador_id={creador_id}. Usando responsable_id=1 por defecto.")
-                    responsable_id = 1
-
-                # 2.2 Crear nuevo agendamiento (60 min a partir de ahora) con el link de TikTok
-                cur.execute(
-                    """
-                    INSERT INTO agendamientos (
-                        titulo,
-                        descripcion,
-                        fecha_inicio,
-                        fecha_fin,
-                        creador_id,
-                        responsable_id,
-                        estado,
-                        link_meet,
-                        google_event_id
-                    )
-                    VALUES (
-                        %s,
-                        %s,
-                        NOW() AT TIME ZONE 'UTC',
-                        (NOW() AT TIME ZONE 'UTC') + INTERVAL '60 minutes',
-                        %s,
-                        %s,
-                        'programado',
-                        %s,
-                        NULL
-                    )
-                    RETURNING id
-                    """,
-                    (
-                        "Prueba TikTok LIVE",
-                        "Sesión de evaluación TikTok LIVE (registrada desde WhatsApp bot).",
-                        creador_id,
-                        responsable_id,
-                        link_tiktok,
-                    )
-                )
-
-                agendamiento_id = cur.fetchone()[0]
-
-                # 2.3 Obtener o crear la entrevista asociada
-                entrevista = obtener_entrevista_id(creador_id, responsable_id)
-                if not entrevista:
-                    raise Exception("No se pudo obtener o crear la entrevista asociada a la prueba TikTok LIVE.")
-
-                entrevista_id = entrevista["id"]
-
-                # 2.4 Registrar relación en entrevista_agendamiento
-                cur.execute(
-                    """
-                    INSERT INTO entrevista_agendamiento (
-                        agendamiento_id,
-                        entrevista_id,
-                        creado_en
-                    )
-                    VALUES (%s, %s, NOW() AT TIME ZONE 'UTC')
-                    """,
-                    (agendamiento_id, entrevista_id)
-                )
-
-                # 2.5 Registrar participante en agendamientos_participantes
-                cur.execute(
-                    """
-                    INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
-                    VALUES (%s, %s)
-                    """,
-                    (agendamiento_id, creador_id)
-                )
-
-                print(
-                    f"✅ Agendamiento de prueba TikTok LIVE creado con id={agendamiento_id} para creador_id={creador_id}")
-                return agendamiento_id
-
-    except Exception as e:
-        print(f"❌ Error en actualizar_link_prueba_live para creador_id={creador_id}: {e}")
-        return None
+# def actualizar_link_prueba_live(
+#         creador_id: int,
+#         link_tiktok: str,
+#         responsable_id: Optional[int] = None
+# ) -> Optional[int]:
+#     """
+#     Actualiza o crea un agendamiento para una prueba TikTok LIVE.
+#
+#     Lógica:
+#     1️⃣ Busca un agendamiento relacionado con una ENTREVISTA del creador (aspirante),
+#        cuya fecha_inicio esté a menos de 60 minutos de diferencia de la hora actual.
+#        - Relaciones:
+#          entrevistas -> entrevista_agendamiento -> agendamientos
+#        - Filtro:
+#          ABS(fecha_inicio - NOW_UTC) <= 60 minutos
+#
+#     2️⃣ Si existe:
+#         - Actualiza el campo link_meet de ese agendamiento con el link de TikTok.
+#         - Devuelve el id del agendamiento.
+#
+#     3️⃣ Si NO existe:
+#         - Obtiene (o infiere) un responsable_id.
+#         - Crea un nuevo agendamiento de 60 minutos a partir de ahora,
+#           con el link de TikTok en link_meet.
+#         - Crea/obtiene la entrevista y registra en entrevista_agendamiento.
+#         - Registra al creador como participante en agendamientos_participantes.
+#         - Devuelve el id del nuevo agendamiento.
+#
+#     Devuelve:
+#         agendamiento_id (int) o None si algo falla.
+#     """
+#
+#     try:
+#         with get_connection_context() as conn:
+#             with conn.cursor() as cur:
+#                 # 1️⃣ Buscar agendamiento cercano (±60 minutos) vinculado a entrevista de este creador
+#                 cur.execute(
+#                     """
+#                     SELECT a.id
+#                     FROM entrevistas e
+#                     JOIN entrevista_agendamiento ea ON ea.entrevista_id = e.id
+#                     JOIN agendamientos a ON a.id = ea.agendamiento_id
+#                     WHERE e.creador_id = %s
+#                       AND ABS(
+#                             EXTRACT(
+#                                 EPOCH FROM (
+#                                     a.fecha_inicio - (NOW() AT TIME ZONE 'UTC')
+#                                 )
+#                             )
+#                       ) <= 60 * 60
+#                     ORDER BY ABS(
+#                         EXTRACT(
+#                             EPOCH FROM (
+#                                 a.fecha_inicio - (NOW() AT TIME ZONE 'UTC')
+#                             )
+#                         )
+#                     )
+#                     LIMIT 1
+#                     """,
+#                     (creador_id,)
+#                 )
+#                 row = cur.fetchone()
+#
+#                 if row:
+#                     # ✅ Caso 1: ya hay una cita cercana → actualizar link_meet
+#                     agendamiento_id = row[0]
+#                     cur.execute(
+#                         """
+#                         UPDATE agendamientos
+#                         SET link_meet = %s
+#                         WHERE id = %s
+#                         """,
+#                         (link_tiktok, agendamiento_id)
+#                     )
+#                     print(
+#                         f"✅ link_meet actualizado en agendamiento_id={agendamiento_id} para creador_id={creador_id}")
+#                     return agendamiento_id
+#
+#                 # 2️⃣ No hay cita cercana → crear una nueva
+#
+#                 # 2.1 Obtener responsable_id si no viene por parámetro
+#                 if responsable_id is None:
+#                     cur.execute(
+#                         """
+#                         SELECT responsable_id
+#                         FROM entrevistas
+#                         WHERE creador_id = %s
+#                         ORDER BY id DESC
+#                         LIMIT 1
+#                         """,
+#                         (creador_id,)
+#                     )
+#                     row_resp = cur.fetchone()
+#                     if row_resp:
+#                         responsable_id = row_resp[0]
+#
+#                 if responsable_id is None:
+#                     # ⚠️ Fallback de seguridad: evita reventar si no hay responsable configurado
+#                     print(
+#                         f"⚠️ No se encontró responsable para creador_id={creador_id}. Usando responsable_id=1 por defecto.")
+#                     responsable_id = 1
+#
+#                 # 2.2 Crear nuevo agendamiento (60 min a partir de ahora) con el link de TikTok
+#                 cur.execute(
+#                     """
+#                     INSERT INTO agendamientos (
+#                         titulo,
+#                         descripcion,
+#                         fecha_inicio,
+#                         fecha_fin,
+#                         creador_id,
+#                         responsable_id,
+#                         estado,
+#                         link_meet,
+#                         google_event_id
+#                     )
+#                     VALUES (
+#                         %s,
+#                         %s,
+#                         NOW() AT TIME ZONE 'UTC',
+#                         (NOW() AT TIME ZONE 'UTC') + INTERVAL '60 minutes',
+#                         %s,
+#                         %s,
+#                         'programado',
+#                         %s,
+#                         NULL
+#                     )
+#                     RETURNING id
+#                     """,
+#                     (
+#                         "Prueba TikTok LIVE",
+#                         "Sesión de evaluación TikTok LIVE (registrada desde WhatsApp bot).",
+#                         creador_id,
+#                         responsable_id,
+#                         link_tiktok,
+#                     )
+#                 )
+#
+#                 agendamiento_id = cur.fetchone()[0]
+#
+#                 # 2.3 Obtener o crear la entrevista asociada
+#                 entrevista = obtener_entrevista_id(creador_id, responsable_id)
+#                 if not entrevista:
+#                     raise Exception("No se pudo obtener o crear la entrevista asociada a la prueba TikTok LIVE.")
+#
+#                 entrevista_id = entrevista["id"]
+#
+#                 # 2.4 Registrar relación en entrevista_agendamiento
+#                 cur.execute(
+#                     """
+#                     INSERT INTO entrevista_agendamiento (
+#                         agendamiento_id,
+#                         entrevista_id,
+#                         creado_en
+#                     )
+#                     VALUES (%s, %s, NOW() AT TIME ZONE 'UTC')
+#                     """,
+#                     (agendamiento_id, entrevista_id)
+#                 )
+#
+#                 # 2.5 Registrar participante en agendamientos_participantes
+#                 cur.execute(
+#                     """
+#                     INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
+#                     VALUES (%s, %s)
+#                     """,
+#                     (agendamiento_id, creador_id)
+#                 )
+#
+#                 print(
+#                     f"✅ Agendamiento de prueba TikTok LIVE creado con id={agendamiento_id} para creador_id={creador_id}")
+#                 return agendamiento_id
+#
+#     except Exception as e:
+#         print(f"❌ Error en actualizar_link_prueba_live para creador_id={creador_id}: {e}")
+#         return None
 
 
 from typing import Optional
