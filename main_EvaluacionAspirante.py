@@ -2651,10 +2651,10 @@ def get_calendar_service():
         logger.error(traceback.format_exc())
         raise
 
-
-def crear_evento_google_(resumen, descripcion, fecha_inicio, fecha_fin):
+def crear_evento_google(resumen, descripcion, fecha_inicio, fecha_fin, requiere_meet=False):
     service = get_calendar_service()
 
+    # 🧱 Estructura base del evento
     evento = {
         'summary': resumen,
         'description': descripcion,
@@ -2666,18 +2666,56 @@ def crear_evento_google_(resumen, descripcion, fecha_inicio, fecha_fin):
             'dateTime': fecha_fin.isoformat(),
             'timeZone': 'America/Bogota',
         },
-        'conferenceData': {
+    }
+
+    # ✅ Si requiere Meet, agregamos conferenceData
+    if requiere_meet:
+        evento['conferenceData'] = {
             'createRequest': {
                 'requestId': str(uuid4()),
                 'conferenceSolutionKey': {'type': 'hangoutsMeet'},
-            },
-        },
-    }
+            }
+        }
 
+    # ⚙️ Insertar evento en Google Calendar
     evento_creado = service.events().insert(
         calendarId=CALENDAR_ID,
         body=evento,
-        conferenceDataVersion=1
+        conferenceDataVersion=1 if requiere_meet else 0  # Solo activa el modo Meet si se requiere
     ).execute()
 
+    logger.info(f"✅ Evento creado: {evento_creado.get('htmlLink')}")
+    if requiere_meet:
+        logger.info(f"🔗 Meet: {evento_creado.get('hangoutLink')}")
+
     return evento_creado
+
+# def crear_evento_google_(resumen, descripcion, fecha_inicio, fecha_fin):
+#     service = get_calendar_service()
+#
+#     evento = {
+#         'summary': resumen,
+#         'description': descripcion,
+#         'start': {
+#             'dateTime': fecha_inicio.isoformat(),
+#             'timeZone': 'America/Bogota',
+#         },
+#         'end': {
+#             'dateTime': fecha_fin.isoformat(),
+#             'timeZone': 'America/Bogota',
+#         },
+#         'conferenceData': {
+#             'createRequest': {
+#                 'requestId': str(uuid4()),
+#                 'conferenceSolutionKey': {'type': 'hangoutsMeet'},
+#             },
+#         },
+#     }
+#
+#     evento_creado = service.events().insert(
+#         calendarId=CALENDAR_ID,
+#         body=evento,
+#         conferenceDataVersion=1
+#     ).execute()
+#
+#     return evento_creado
