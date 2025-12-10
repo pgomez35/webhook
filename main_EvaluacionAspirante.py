@@ -55,6 +55,7 @@ class TokenInfoOut(BaseModel):
     responsable_id: int
     zona_horaria: Optional[str] = None
     nombre_mostrable: Optional[str] = None
+    duracion_minutos: Optional[int] = None
 
 
 class ActualizarPreEvaluacionIn(BaseModel):
@@ -715,28 +716,36 @@ def crear_agendamiento_aspirante(
                 "Error interno al crear agendamiento de aspirante."
             )
 
-
 @router.get("/api/agendamientos/aspirante/token-info", response_model=TokenInfoOut)
 def obtener_info_token_agendamiento(token: str):
     """
-    Devuelve info básica asociada al token.
-    Incluye mensajes claros para problemas comunes:
+    Devuelve info básica asociada al token:
     - Token inválido
     - Token ya usado
     - Token expirado
+    - Datos básicos del aspirante
+    - Zona horaria si existe
+    - Duración de la cita
     """
     with get_connection_context() as conn:
         cur = conn.cursor()
 
-        # 1) Buscar token
+        # 1️⃣ Buscar token
         cur.execute(
             """
-            SELECT token, creador_id, responsable_id, expiracion, usado
+            SELECT 
+                token, 
+                creador_id, 
+                responsable_id, 
+                expiracion, 
+                usado,
+                duracion_minutos
             FROM link_agendamiento_tokens
             WHERE token = %s
             """,
             (token,)
         )
+
         row = cur.fetchone()
         if not row:
             raise HTTPException(
@@ -747,9 +756,16 @@ def obtener_info_token_agendamiento(token: str):
                 )
             )
 
-        _, creador_id, responsable_id, expiracion, usado = row
+        (
+            _,
+            creador_id,
+            responsable_id,
+            expiracion,
+            usado,
+            duracion_minutos,
+        ) = row
 
-        # 2) Token usado
+        # 2️⃣ Token usado
         if usado:
             raise HTTPException(
                 status_code=400,
@@ -759,7 +775,7 @@ def obtener_info_token_agendamiento(token: str):
                 )
             )
 
-        # 3) Token expirado
+        # 3️⃣ Token expirado
         if expiracion < datetime.utcnow():
             raise HTTPException(
                 status_code=400,
@@ -769,7 +785,7 @@ def obtener_info_token_agendamiento(token: str):
                 )
             )
 
-        # 4) Zona horaria desde perfil_creador
+        # 4️⃣ Zona horaria desde perfil_creador
         cur.execute(
             """
             SELECT zona_horaria
@@ -781,7 +797,7 @@ def obtener_info_token_agendamiento(token: str):
         row_pc = cur.fetchone()
         zona_horaria = row_pc[0] if row_pc else None
 
-        # 5) Nombre mostrable
+        # 5️⃣ Nombre mostrable del creador
         cur.execute(
             """
             SELECT COALESCE(NULLIF(nombre_real, ''), nickname)
@@ -793,12 +809,16 @@ def obtener_info_token_agendamiento(token: str):
         row_cr = cur.fetchone()
         nombre_mostrable = row_cr[0] if row_cr else None
 
+    # 6️⃣ Respuesta final
     return TokenInfoOut(
         creador_id=creador_id,
         responsable_id=responsable_id,
         zona_horaria=zona_horaria,
         nombre_mostrable=nombre_mostrable,
+        duracion_minutos=duracion_minutos,
     )
+
+
 
 
 @router.post("/api/perfil_creador/{creador_id}/pre_resumen/calcular",
@@ -2719,3 +2739,90 @@ def crear_evento_google(resumen, descripcion, fecha_inicio, fecha_fin, requiere_
 #     ).execute()
 #
 #     return evento_creado
+
+
+
+# @router.get("/api/agendamientos/aspirante/token-info", response_model=TokenInfoOut)
+# def obtener_info_token_agendamiento(token: str):
+#     """
+#     Devuelve info básica asociada al token.
+#     Incluye mensajes claros para problemas comunes:
+#     - Token inválido
+#     - Token ya usado
+#     - Token expirado
+#     """
+#     with get_connection_context() as conn:
+#         cur = conn.cursor()
+#
+#         # 1) Buscar token
+#         cur.execute(
+#             """
+#             SELECT token, creador_id, responsable_id, expiracion, usado, duracion_minutos
+#             FROM link_agendamiento_tokens
+#             WHERE token = %s
+#             """,
+#             (token,)
+#         )
+#         row = cur.fetchone()
+#         if not row:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail=(
+#                     "🔗 El enlace no es válido.\n"
+#                     "Por favor solicita un nuevo enlace de agendamiento."
+#                 )
+#             )
+#
+#         _, creador_id, responsable_id, expiracion, usado = row
+#
+#         # 2) Token usado
+#         if usado:
+#             raise HTTPException(
+#                 status_code=400,
+#                 detail=(
+#                     "⚠️ Este enlace ya fue utilizado.\n"
+#                     "Si necesitas agendar otra cita, solicita un nuevo enlace."
+#                 )
+#             )
+#
+#         # 3) Token expirado
+#         if expiracion < datetime.utcnow():
+#             raise HTTPException(
+#                 status_code=400,
+#                 detail=(
+#                     "⏰ Este enlace ha expirado.\n"
+#                     "Solicita un nuevo enlace para continuar con tu agendamiento."
+#                 )
+#             )
+#
+#         # 4) Zona horaria desde perfil_creador
+#         cur.execute(
+#             """
+#             SELECT zona_horaria
+#             FROM perfil_creador
+#             WHERE creador_id = %s
+#             """,
+#             (creador_id,)
+#         )
+#         row_pc = cur.fetchone()
+#         zona_horaria = row_pc[0] if row_pc else None
+#
+#         # 5) Nombre mostrable
+#         cur.execute(
+#             """
+#             SELECT COALESCE(NULLIF(nombre_real, ''), nickname)
+#             FROM creadores
+#             WHERE id = %s
+#             """,
+#             (creador_id,)
+#         )
+#         row_cr = cur.fetchone()
+#         nombre_mostrable = row_cr[0] if row_cr else None
+#
+#     return TokenInfoOut(
+#         creador_id=creador_id,
+#         responsable_id=responsable_id,
+#         zona_horaria=zona_horaria,
+#         nombre_mostrable=nombre_mostrable,
+#         duracion_minutos=duracion_minutos,
+#     )
