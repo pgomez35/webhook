@@ -1,11 +1,15 @@
 import secrets
 import string
+from uuid import uuid4
+
 import pytz
 import logging
 import traceback
 
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
+
+from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional, List
 from pydantic import BaseModel, AnyUrl
@@ -16,7 +20,7 @@ from auth import obtener_usuario_actual
 from enviar_msg_wp import enviar_plantilla_generica_parametros, enviar_plantilla_generica
 from DataBase import get_connection_context, obtener_cuenta_por_subdominio
 from evaluaciones import evaluar_perfil_pre, diagnostico_perfil_creador_pre, obtener_guardar_pre_resumen
-from main import crear_evento_google
+# from main import crear_evento_google
 from main_webhook import  enviar_mensaje
 from schemas import ResumenEvaluacionOutput
 from tenant import current_tenant
@@ -2619,3 +2623,61 @@ def sugerencia_decision_final(
 #     except Exception as e:
 #         print("❌ Error al crear agendamiento y relacionar entrevista:", e)
 #         return None
+import os
+import json
+from googleapiclient.discovery import build
+load_dotenv()
+SERVICE_ACCOUNT_INFO = os.getenv("GOOGLE_CREDENTIALS_JSON")
+CALENDAR_ID = os.getenv("CALENDAR_ID")
+
+from google.oauth2 import service_account
+def get_calendar_service():
+    try:
+        SCOPES = ["https://www.googleapis.com/auth/calendar"]
+        creds_dict = json.loads(SERVICE_ACCOUNT_INFO)  # string JSON desde env
+        creds = service_account.Credentials.from_service_account_info(
+            creds_dict, scopes=SCOPES
+        )
+
+        # 👉 Impersonar al usuario de Workspace
+        delegated_creds = creds.with_subject(os.getenv("CALENDAR_ID"))
+
+        service = build("calendar", "v3", credentials=delegated_creds)
+        logger.info(f"✅ Servicio de Google Calendar inicializado con impersonación como {os.getenv('CALENDAR_ID')}")
+        return service
+
+    except Exception as e:
+        logger.error("❌ Error al inicializar el servicio de Google Calendar:")
+        logger.error(traceback.format_exc())
+        raise
+
+
+def crear_evento_google_(resumen, descripcion, fecha_inicio, fecha_fin):
+    service = get_calendar_service()
+
+    evento = {
+        'summary': resumen,
+        'description': descripcion,
+        'start': {
+            'dateTime': fecha_inicio.isoformat(),
+            'timeZone': 'America/Bogota',
+        },
+        'end': {
+            'dateTime': fecha_fin.isoformat(),
+            'timeZone': 'America/Bogota',
+        },
+        'conferenceData': {
+            'createRequest': {
+                'requestId': str(uuid4()),
+                'conferenceSolutionKey': {'type': 'hangoutsMeet'},
+            },
+        },
+    }
+
+    evento_creado = service.events().insert(
+        calendarId=CALENDAR_ID,
+        body=evento,
+        conferenceDataVersion=1
+    ).execute()
+
+    return evento_creado

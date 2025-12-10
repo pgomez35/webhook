@@ -29,8 +29,6 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 import psycopg2
 from schemas import *
-
-from googleapiclient.discovery import build
 from uuid import uuid4
 
 # Tu propio código/librerías
