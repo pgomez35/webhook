@@ -1518,10 +1518,10 @@ def _setup_tenant_context(phone_number_id: str) -> Optional[dict]:
     print(f"🔑 Token actual: {current_token.get()}")
     print(f"📞 phone_id actual: {current_phone_id.get()}")
     print(f"📞 business_name: {current_business_name.get()}")
-    
+
     return {
-        "token": token_cliente,
-        "phone_id": phone_id_cliente,
+        "access_token": token_cliente,
+        "phone_number_id": phone_id_cliente,
         "tenant_name": tenant_name,
         "business_name": business_name
     }
