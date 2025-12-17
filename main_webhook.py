@@ -40,7 +40,10 @@ from tenant import (
 )
 from utils import *
 from redis_client import redis_set_temp, redis_get_temp, redis_delete_temp
-
+from utils_aspirantes import guardar_estado_eval, obtener_status_24hrs, Enviar_msg_estado, \
+    enviar_plantilla_estado_evaluacion, obtener_creador_id_por_telefono, buscar_estado_creador, Enviar_menu_quickreply, \
+    accion_menu_estado_evaluacion, validar_url_link_tiktok_live, guardar_link_tiktok_live, \
+    actualizar_mensaje_desde_status, _handle_statuses, enviar_confirmacion_interactiva
 
 load_dotenv()
 
@@ -1572,94 +1575,146 @@ def _process_interactive_message(mensaje: dict, numero: str, paso: Optional[str 
     return {"status": "ok"}
 
 
-def _process_new_user_onboarding(mensaje: dict, numero: str, texto: str, texto_lower: str, paso: Optional[str | int], tenant_name: str) -> Optional[dict]:
+def _process_new_user_onboarding(
+        mensaje: dict,
+        numero: str,
+        texto: str,
+        texto_lower: str,
+        paso: Optional[str | int],
+        tenant_name: str,
+        payload: str = None,  # <--- Nuevo argumento (o extráelo dentro)
+        phone_id: str = None,  # <--- Necesarios para enviar botones
+        token: str = None  # <--- Necesarios para enviar botones
+) -> Optional[dict]:
     """
-    Procesa el flujo de onboarding para nuevos usuarios.
-    
-    Returns:
-        Dict con status si se procesó, None si no aplica
+    Procesa el flujo de onboarding para nuevos usuarios con botones interactivos.
     """
     tipo = mensaje.get("type")
-    if tipo != "text":
+
+    # 1. VALIDACIÓN DE TIPO (Ahora permitimos texto E interactive)
+    if tipo not in ["text", "interactive"]:
         return None
-    
-    # Si el paso guardado no tiene sentido, reiniciamos el flujo
+
+    # Si el payload no vino como argumento, intentamos extraerlo aquí
+    if not payload and tipo == "interactive":
+        try:
+            payload = mensaje.get("interactive", {}).get("button_reply", {}).get("id")
+        except:
+            pass
+
+    # Reinicio de flujo si el estado es inválido
     if paso not in [None, "esperando_usuario_tiktok", "confirmando_nombre", "esperando_inicio_encuesta"]:
         print(f"⚠️ Reiniciando flujo para {numero}, paso anterior: {paso}")
         eliminar_flujo(numero)
         paso = None
-    
-    # Inicio del flujo
+
+    # -----------------------------------------------------
+    # PASO 0: INICIO
+    # -----------------------------------------------------
     if paso is None:
-        enviar_mensaje(numero, Mensaje_bienvenida)
+        enviar_mensaje(numero, "¡Hola! 👋 Bienvenido.\nPara comenzar, por favor escribe tu *usuario de TikTok* (sin @).")
         actualizar_flujo(numero, "esperando_usuario_tiktok")
         return {"status": "ok"}
-    
-    # Se espera usuario de TikTok
+
+    # -----------------------------------------------------
+    # PASO 1: ESPERANDO USUARIO TIKTOK
+    # -----------------------------------------------------
     if paso == "esperando_usuario_tiktok":
+        # Aquí esperamos texto, no botones
+        if tipo != "text":
+            enviar_mensaje(numero, "Por favor escribe tu usuario de TikTok.")
+            return {"status": "ok"}
+
         usuario_tiktok = texto.strip()
         aspirante = buscar_aspirante_por_usuario_tiktok(usuario_tiktok)
+
         if aspirante:
             nombre = aspirante.get("nickname") or aspirante.get("nombre_real") or "(sin nombre)"
-            enviar_mensaje(numero, mensaje_confirmar_nombre(nombre))
+
+            # --- CAMBIO CLAVE: Usamos botones en vez de texto plano ---
+            # Si tenemos credenciales enviamos botones, si no, texto plano (fallback)
+            if phone_id and token:
+                enviar_confirmacion_interactiva(numero, nombre, phone_id, token)
+            else:
+                enviar_mensaje(numero, f"Encontramos el usuario: *{nombre}*. ¿Eres tú? (Responde SÍ o NO)")
+
             actualizar_flujo(numero, "confirmando_nombre")
-            # ✅ Guardar en Redis (con fallback a memoria si falla)
+
+            # Guardar en Redis/Memoria
             try:
-                redis_set_temp(numero, aspirante, ttl=900)  # 15 minutos
+                redis_set_temp(numero, aspirante, ttl=900)
             except Exception as e:
-                print(f"⚠️ Redis falló, usando memoria como fallback para {numero}: {e}")
+                print(f"⚠️ Redis falló, usando memoria: {e}")
                 usuarios_temp[numero] = aspirante
         else:
-            enviar_mensaje(numero, "❌ No encontramos ese usuario de TikTok. ¿Podrías verificarlo?")
+            enviar_mensaje(numero,
+                           "❌ No encontramos ese usuario en nuestra base de datos. Verifica y escríbelo nuevamente.")
+
         return {"status": "ok"}
-    
-    # Confirmar nickname y actualizar teléfono
+
+    # -----------------------------------------------------
+    # PASO 2: CONFIRMANDO NOMBRE (Botones o Texto)
+    # -----------------------------------------------------
     if paso == "confirmando_nombre":
-        if texto_lower in ["si", "sí", "s"]:
-            # ✅ Leer de Redis (con fallback a memoria si falla)
+
+        # A. EL USUARIO DIJO QUE SÍ (Botón o Texto)
+        es_si_boton = (payload == "BTN_CONFIRM_YES")
+        es_si_texto = (tipo == "text" and texto_lower in ["si", "sí", "s", "y", "yes"])
+
+        if es_si_boton or es_si_texto:
+            # Recuperar datos
             aspirante = redis_get_temp(numero)
             if not aspirante:
-                # Fallback a memoria si Redis no tiene el dato
-                aspirante = usuarios_temp.get(numero)
-                if aspirante:
-                    print(f"⚠️ Datos encontrados en memoria (fallback) para {numero}")
-            
+                aspirante = usuarios_temp.get(numero)  # Fallback memoria
+
             if aspirante:
                 actualizar_telefono_aspirante(aspirante["id"], numero)
-                # ✅ Limpiar de Redis y memoria después de usar
+
+                # Limpiar temporales
                 try:
                     redis_delete_temp(numero)
-                except Exception as e:
-                    print(f"⚠️ Error eliminando de Redis para {numero}: {e}")
-                usuarios_temp.pop(numero, None)  # Limpiar también de memoria
-            
-            enviar_inicio_encuesta(numero)
-            actualizar_flujo(numero, "esperando_inicio_encuesta")
-        elif texto_lower in ["no", "n"]:
-            enviar_mensaje(numero, "❌ Por favor verifica tu nombre o usuario de TikTok.")
-            # Limpiar datos temporales si el usuario rechaza
+                except:
+                    pass
+                usuarios_temp.pop(numero, None)
+
+                # Avanzar a encuesta
+                enviar_inicio_encuesta(numero)  # Asumo que esta función envía el texto de bienvenida a la encuesta
+                actualizar_flujo(numero, "esperando_inicio_encuesta")
+            else:
+                # Caso borde: Se expiró el caché
+                enviar_mensaje(numero, "⏳ La sesión expiró. Por favor escribe tu usuario de TikTok nuevamente.")
+                actualizar_flujo(numero, "esperando_usuario_tiktok")
+
+        # B. EL USUARIO DIJO QUE NO (Botón o Texto)
+        elif payload == "BTN_CONFIRM_NO" or (tipo == "text" and texto_lower in ["no", "n"]):
+            enviar_mensaje(numero, "Entendido. Por favor escribe nuevamente tu usuario de TikTok correcto:")
+
+            # Limpiar datos erróneos
             try:
                 redis_delete_temp(numero)
-            except Exception:
+            except:
                 pass
             usuarios_temp.pop(numero, None)
+
+            # 🔄 REGRESAR AL PASO ANTERIOR
+            actualizar_flujo(numero, "esperando_usuario_tiktok")
+
+        # C. ESCRIBIÓ OTRA COSA
         else:
-            enviar_mensaje(numero, "⚠️ Por favor responde solo *sí* o *no* para continuar.")
+            enviar_mensaje(numero, "⚠️ No te entendí. Por favor selecciona una de las opciones.")
+            # Opcional: Reenviar los botones aquí si quieres ser insistente
+
         return {"status": "ok"}
-    
-    # Si el usuario está esperando iniciar la encuesta pero escribe texto
+
+    # -----------------------------------------------------
+    # PASO 3: ESPERANDO LINK (Encuesta)
+    # -----------------------------------------------------
     if paso == "esperando_inicio_encuesta":
         if texto_lower.strip() != "":
-            # ✅ Usar el parámetro tenant_name (ya disponible desde _process_single_message)
-            # Fallback al contexto si el parámetro no está disponible por alguna razón
-            tenant_actual = tenant_name
-            if not tenant_actual:
-                try:
-                    tenant_actual = current_tenant.get()
-                except LookupError:
-                    tenant_actual = "default"  # Fallback si no hay contexto
-            
+            # Tu lógica de enviar link nuevamente
+            tenant_actual = tenant_name or current_tenant.get() or "default"
             url_web = construir_url_actualizar_perfil(numero, tenant_name=tenant_actual)
+
             mensaje = (
                 f"💬 Haz clic en el enlace para comenzar la encuesta 📋\n\n"
                 f"{url_web}\n\n"
@@ -1667,7 +1722,7 @@ def _process_new_user_onboarding(mensaje: dict, numero: str, texto: str, texto_l
             )
             enviar_mensaje(numero, mensaje)
         return {"status": "ok"}
-    
+
     return None
 
 
@@ -1721,178 +1776,253 @@ def _process_admin_creador_message(numero: str, texto_lower: str, rol: str) -> d
     return {"status": "ok"}
 
 
-def _process_single_message(mensaje: dict, tenant_name: str) -> dict:
+def _process_tiktok_live_link(numero, texto, tenant_name):
+    pass
+
+
+def _process_single_message(mensaje: dict, tenant_name: str, datos_normalizados: dict = None) -> dict:
     """
-    Procesa un mensaje individual del webhook.
-    
-    Returns:
-        Dict con status
+    Maneja Onboarding, Admins y Fallback.
+    Ya NO maneja lógica de evaluación de aspirantes (delegada al servicio superior).
     """
-    numero = mensaje.get("from")
-    tipo = mensaje.get("type")
-    paso = obtener_flujo(numero)
+    # Si no nos pasaron datos normalizados (por compatibilidad), los extraemos
+    if not datos_normalizados:
+        tipo, texto, payload = _normalizar_entrada_whatsapp(mensaje)
+        numero = mensaje.get("from")
+        paso = obtener_flujo(numero)
+    else:
+        numero = datos_normalizados["wa_id"]
+        tipo = datos_normalizados["tipo"]
+        texto = datos_normalizados["texto"]
+        payload = datos_normalizados["payload"]
+        paso = datos_normalizados["paso"]
+
+    texto_lower = texto.lower()
+
+    # Consultamos usuario (si no lo tenemos cacheado)
     usuario_bd = buscar_usuario_por_telefono(numero)
     rol = obtener_rol_usuario(numero) if usuario_bd else None
-    
-    # Obtener el texto antes de cualquier uso
-    texto = mensaje.get("text", {}).get("body", "").strip()
-    texto_lower = texto.lower()
-    
-    # CHAT LIBRE (prioridad alta)
-    if paso == "chat_libre":
-        return _process_chat_libre_message(mensaje, numero)
 
+    print(f"📍 [General Flow] número={numero}, rol={rol}, paso={paso}")
 
+    # ---------------------------------------------------------
+    # 🗑️ SECCIÓN ELIMINADA: "esperando_link_tiktok_live"
+    # MOTIVO: Ya fue manejado por procesar_flujo_aspirante() antes de llegar aquí.
+    # ---------------------------------------------------------
 
-    # 🔹 2) NUEVO PASO: si el usuario YA es aspirante y está en
-    # 'esperando_link_tiktok_live', procesar aquí el link
-    if (
-        usuario_bd
-        and rol == "aspirante"
-        and paso == "esperando_link_tiktok_live"
-        and tipo == "text"
-    ):
-        return _process_tiktok_live_link(numero, texto, tenant_name)
-
-    
-    # MENSAJES INTERACTIVOS (botones)
-    if tipo == "interactive":
+    # ---------------------------------------------------------
+    # 1. MENSAJES INTERACTIVOS (Botones de Onboarding/Admin)
+    # ---------------------------------------------------------
+    # Si el flujo de aspirantes no capturó el botón, quizás es un botón de registro
+    if tipo == "interactive" or payload:
+        # Aquí puedes manejar botones que NO sean de evaluación (ej: "Aceptar Términos")
         return _process_interactive_message(mensaje, numero, paso)
-    
-    print(f"📍 [DEBUG] número={numero}, paso={paso}, texto='{texto_lower}'")
-    
-    # NUEVO USUARIO: FLUJO DE ONBOARDING
-    if tipo == "text" and not usuario_bd:
-        resultado = _process_new_user_onboarding(mensaje, numero, texto, texto_lower, paso, tenant_name)
-        if resultado:
-            return resultado
-    
-    # ASPIRANTE EN BASE DE DATOS
-    if usuario_bd and rol == "aspirante":
-        return _process_aspirante_message(mensaje, numero, texto_lower, rol, tenant_name)
-    
-    # ADMIN O CREADOR EN BD
-    if usuario_bd and rol in ("admin", "creador", "creadores"):
+
+    # ---------------------------------------------------------
+    # 2. NUEVO USUARIO: FLUJO DE ONBOARDING (Registro)
+    # ---------------------------------------------------------
+    if not usuario_bd:
+        # Si es texto y no existe, iniciamos registro
+        if tipo == "text":
+            resultado = _process_new_user_onboarding(mensaje, numero, texto, texto_lower, paso, tenant_name)
+            if resultado:
+                return resultado
+
+    # ---------------------------------------------------------
+    # 3. ADMIN O CREADOR YA REGISTRADO (Menú Admin)
+    # ---------------------------------------------------------
+    if usuario_bd and rol in ("admin", "creador"):
+        # Nota: Si es 'creador' pero estaba en flujo de evaluación,
+        # el Nivel 2 lo hubiera interceptado. Si llega aquí, es un mensaje genérico.
         return _process_admin_creador_message(numero, texto_lower, rol)
-    
-    print(f"🟣 DEBUG CHAT LIBRE - paso actual: {paso}")
-    return {"status": "ok"}
+
+    # ---------------------------------------------------------
+    # 4. FALLBACK / CHATBOT GENÉRICO
+    # ---------------------------------------------------------
+    # Si el usuario es aspirante pero escribió algo que el flujo de evaluación
+    # no entendió (y procesar_flujo_aspirante retornó False), cae aquí.
+    # Aquí puedes conectar tu IA o mandar mensaje por defecto.
+
+    print(f"🤖 Delegando a ChatBot IA (Fallback): {texto_lower}")
+    # return chatbot_response(numero, texto)
+
+    return {"status": "ok_fallback"}
 
 
-@router.post("/webhook")
-async def whatsapp_webhook(request: Request):
-    """
-    Endpoint principal para recibir webhooks de WhatsApp.
-    
-    Procesa diferentes tipos de eventos:
-    - account_update: Eventos de actualización de cuenta
-    - messages: Mensajes de usuarios
-    """
-    data = await request.json()
-    print("📩 Webhook recibido:", json.dumps(data, indent=2))
+# def _process_single_message(mensaje: dict, tenant_name: str) -> dict:
+#     """
+#     Procesa un mensaje individual del webhook.
+#
+#     Returns:
+#         Dict con status
+#     """
+#     numero = mensaje.get("from")
+#     tipo = mensaje.get("type")
+#     paso = obtener_flujo(numero)
+#     usuario_bd = buscar_usuario_por_telefono(numero)
+#     rol = obtener_rol_usuario(numero) if usuario_bd else None
+#
+#     # Obtener el texto antes de cualquier uso
+#     texto = mensaje.get("text", {}).get("body", "").strip()
+#     texto_lower = texto.lower()
+#
+#     # CHAT LIBRE (prioridad alta)
+#     if paso == "chat_libre":
+#         return _process_chat_libre_message(mensaje, numero)
+#
+#
+#
+#     # 🔹 2) NUEVO PASO: si el usuario YA es aspirante y está en
+#     # 'esperando_link_tiktok_live', procesar aquí el link
+#     if (
+#         usuario_bd
+#         and rol == "aspirante"
+#         and paso == "esperando_link_tiktok_live"
+#         and tipo == "text"
+#     ):
+#         return _process_tiktok_live_link(numero, texto, tenant_name)
+#
+#
+#     # MENSAJES INTERACTIVOS (botones)
+#     if tipo == "interactive":
+#         return _process_interactive_message(mensaje, numero, paso)
+#
+#     print(f"📍 [DEBUG] número={numero}, paso={paso}, texto='{texto_lower}'")
+#
+#     # NUEVO USUARIO: FLUJO DE ONBOARDING
+#     if tipo == "text" and not usuario_bd:
+#         resultado = _process_new_user_onboarding(mensaje, numero, texto, texto_lower, paso, tenant_name)
+#         if resultado:
+#             return resultado
+#
+#     # ASPIRANTE EN BASE DE DATOS
+#     if usuario_bd and rol == "aspirante":
+#         return _process_aspirante_message(mensaje, numero, texto_lower, rol, tenant_name)
+#
+#     # ADMIN O CREADOR EN BD
+#     if usuario_bd and rol in ("admin", "creador", "creadores"):
+#         return _process_admin_creador_message(numero, texto_lower, rol)
+#
+#     print(f"🟣 DEBUG CHAT LIBRE - paso actual: {paso}")
+#     return {"status": "ok"}
 
-    try:
-        # Extraer datos del webhook
-        webhook_data = _extract_webhook_data(data)
-        if not webhook_data:
-            return {"status": "ok"}
-        
-        entry = webhook_data["entry"]
-        change = webhook_data["change"]
-        value = webhook_data["value"]
-        field = webhook_data["field"]
-        event = webhook_data["event"]
+#
 
-        # CASO 1: EVENTOS DE WHATSAPP BUSINESS ACCOUNT (account_update)
-        if field == "account_update":
-            return _handle_account_update_event(entry, change, value, event)
-
-        # CASO 2: MENSAJES NORMALES CON PHONE_NUMBER_ID
-        metadata = value.get("metadata", {})
-        phone_number_id = metadata.get("phone_number_id")
-
-        # Configurar contexto del tenant
-        cuenta_info = _setup_tenant_context(phone_number_id)
-        if not cuenta_info:
-            return {"status": "ignored"}
-
-        tenant_name = cuenta_info["tenant_name"]
-        display_phone_number = metadata.get("display_phone_number", "")
-
-        # CASO 3: PROCESAR STATUSES (actualizaciones de estado de mensajes)
-        statuses = value.get("statuses", [])
-        if statuses:
-            try:
-                for st in statuses:
-                    actualizar_mensaje_desde_status(
-                        tenant=tenant_name,
-                        phone_number_id=phone_number_id,
-                        display_phone_number=display_phone_number,
-                        status_obj=st,
-                        raw_payload=value
-                    )
-            except Exception as e:
-                print(f"⚠️ Error al procesar statuses (continuando procesamiento): {e}")
-                traceback.print_exc()
-
-        # Obtener mensajes
-        mensajes = value.get("messages", [])
-        if not mensajes:
-            return {"status": "ok"}
-
-        # Procesar cada mensaje
-        for mensaje in mensajes:
-            # Registrar mensaje entrante en BD
-            try:
-                wa_id = mensaje.get("from")
-                message_id = mensaje.get("id")
-                tipo = mensaje.get("type")
-                
-                # Extraer contenido según el tipo de mensaje
-                content = None
-                if tipo == "text":
-                    content = mensaje.get("text", {}).get("body", "")
-                elif tipo == "audio":
-                    content = f"[Audio: {mensaje.get('audio', {}).get('id', 'unknown')}]"
-                elif tipo == "image":
-                    content = f"[Image: {mensaje.get('image', {}).get('id', 'unknown')}]"
-                elif tipo == "video":
-                    content = f"[Video: {mensaje.get('video', {}).get('id', 'unknown')}]"
-                elif tipo == "document":
-                    content = f"[Document: {mensaje.get('document', {}).get('filename', 'unknown')}]"
-                elif tipo == "interactive":
-                    content = f"[Interactive: {mensaje.get('interactive', {}).get('type', 'unknown')}]"
-                else:
-                    content = f"[{tipo}]"
-                
-                # Registrar el mensaje
-                registrar_mensaje_recibido(
-                    tenant=tenant_name,
-                    phone_number_id=phone_number_id,
-                    display_phone_number=display_phone_number,
-                    wa_id=wa_id,
-                    message_id=message_id,
-                    content=content,
-                    raw_payload=mensaje
-                )
-            except Exception as e:
-                print(f"⚠️ Error al registrar mensaje en BD (continuando procesamiento): {e}")
-                traceback.print_exc()
-            
-            # Procesar el mensaje normalmente
-            _process_single_message(mensaje, tenant_name)
-
-    except (IndexError, KeyError, TypeError) as e:
-        print(f"❌ Error de estructura en webhook (datos inválidos): {e}")
-        traceback.print_exc()
-    except LookupError as e:
-        print(f"❌ Error de contexto en webhook: {e}")
-        traceback.print_exc()
-    except Exception as e:
-        print(f"❌ Error inesperado procesando webhook: {e}")
-        traceback.print_exc()
-
-    return {"status": "ok"}
+# @router.post("/webhook")
+# async def whatsapp_webhook(request: Request):
+#     """
+#     Endpoint principal para recibir webhooks de WhatsApp.
+#
+#     Procesa diferentes tipos de eventos:
+#     - account_update: Eventos de actualización de cuenta
+#     - messages: Mensajes de usuarios
+#     """
+#     data = await request.json()
+#     print("📩 Webhook recibido:", json.dumps(data, indent=2))
+#
+#     try:
+#         # Extraer datos del webhook
+#         webhook_data = _extract_webhook_data(data)
+#         if not webhook_data:
+#             return {"status": "ok"}
+#
+#         entry = webhook_data["entry"]
+#         change = webhook_data["change"]
+#         value = webhook_data["value"]
+#         field = webhook_data["field"]
+#         event = webhook_data["event"]
+#
+#         # CASO 1: EVENTOS DE WHATSAPP BUSINESS ACCOUNT (account_update)
+#         if field == "account_update":
+#             return _handle_account_update_event(entry, change, value, event)
+#
+#         # CASO 2: MENSAJES NORMALES CON PHONE_NUMBER_ID
+#         metadata = value.get("metadata", {})
+#         phone_number_id = metadata.get("phone_number_id")
+#
+#         # Configurar contexto del tenant
+#         cuenta_info = _setup_tenant_context(phone_number_id)
+#         if not cuenta_info:
+#             return {"status": "ignored"}
+#
+#         tenant_name = cuenta_info["tenant_name"]
+#         display_phone_number = metadata.get("display_phone_number", "")
+#
+#         # CASO 3: PROCESAR STATUSES (actualizaciones de estado de mensajes)
+#         statuses = value.get("statuses", [])
+#         if statuses:
+#             try:
+#                 for st in statuses:
+#                     actualizar_mensaje_desde_status(
+#                         tenant=tenant_name,
+#                         phone_number_id=phone_number_id,
+#                         display_phone_number=display_phone_number,
+#                         status_obj=st,
+#                         raw_payload=value
+#                     )
+#             except Exception as e:
+#                 print(f"⚠️ Error al procesar statuses (continuando procesamiento): {e}")
+#                 traceback.print_exc()
+#
+#         # Obtener mensajes
+#         mensajes = value.get("messages", [])
+#         if not mensajes:
+#             return {"status": "ok"}
+#
+#         # Procesar cada mensaje
+#         for mensaje in mensajes:
+#             # Registrar mensaje entrante en BD
+#             try:
+#                 wa_id = mensaje.get("from")
+#                 message_id = mensaje.get("id")
+#                 tipo = mensaje.get("type")
+#
+#                 # Extraer contenido según el tipo de mensaje
+#                 content = None
+#                 if tipo == "text":
+#                     content = mensaje.get("text", {}).get("body", "")
+#                 elif tipo == "audio":
+#                     content = f"[Audio: {mensaje.get('audio', {}).get('id', 'unknown')}]"
+#                 elif tipo == "image":
+#                     content = f"[Image: {mensaje.get('image', {}).get('id', 'unknown')}]"
+#                 elif tipo == "video":
+#                     content = f"[Video: {mensaje.get('video', {}).get('id', 'unknown')}]"
+#                 elif tipo == "document":
+#                     content = f"[Document: {mensaje.get('document', {}).get('filename', 'unknown')}]"
+#                 elif tipo == "interactive":
+#                     content = f"[Interactive: {mensaje.get('interactive', {}).get('type', 'unknown')}]"
+#                 else:
+#                     content = f"[{tipo}]"
+#
+#                 # Registrar el mensaje
+#                 registrar_mensaje_recibido(
+#                     tenant=tenant_name,
+#                     phone_number_id=phone_number_id,
+#                     display_phone_number=display_phone_number,
+#                     wa_id=wa_id,
+#                     message_id=message_id,
+#                     content=content,
+#                     raw_payload=mensaje
+#                 )
+#
+#             except Exception as e:
+#                 print(f"⚠️ Error al registrar mensaje en BD (continuando procesamiento): {e}")
+#                 traceback.print_exc()
+#
+#             # Procesar el mensaje normalmente
+#             _process_single_message(mensaje, tenant_name)
+#
+#     except (IndexError, KeyError, TypeError) as e:
+#         print(f"❌ Error de estructura en webhook (datos inválidos): {e}")
+#         traceback.print_exc()
+#     except LookupError as e:
+#         print(f"❌ Error de contexto en webhook: {e}")
+#         traceback.print_exc()
+#     except Exception as e:
+#         print(f"❌ Error inesperado procesando webhook: {e}")
+#         traceback.print_exc()
+#
+#     return {"status": "ok"}
 
 
 def mensaje_inicio_encuesta() -> str:
@@ -2079,68 +2209,7 @@ def consolidar_perfil_web(data: ConsolidarInput):
 # REGISTRO DE MENSAJES DE STATUS
 # ============================
 
-def actualizar_mensaje_desde_status(
-    tenant: str,
-    phone_number_id: str,
-    display_phone_number: str,
-    status_obj: dict,
-    raw_payload: dict,
-) -> None:
-    """
-    Actualiza el estado de un mensaje en la BD basado en el webhook de status.
 
-    - tenant: tenant/subdominio (ej: 'pruebas', 'prestige')
-    - phone_number_id: phone_number_id WABA
-    - display_phone_number: número de negocio
-    - status_obj: dict del status individual (de value["statuses"][i])
-    - raw_payload: el bloque "value" completo o el status_obj
-    """
-    try:
-        message_id = status_obj.get("id")
-        status = status_obj.get("status")
-        recipient_id = status_obj.get("recipient_id")
-        timestamp = status_obj.get("timestamp")
-
-        error = (status_obj.get("errors") or [None])[0]  # primer error o None
-
-        error_code = error.get("code") if error else None
-        error_title = error.get("title") if error else None
-        error_message = error.get("message") if error else None
-        error_details = (error.get("error_data") or {}).get("details") if error else None
-
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE whatsapp_messages
-                    SET
-                        status = %s,
-                        error_code = %s,
-                        error_title = %s,
-                        error_message = %s,
-                        error_details = %s,
-                        raw_payload = %s,
-                        updated_at = NOW(),
-                        last_status_at = TO_TIMESTAMP(%s)
-                    WHERE message_id = %s
-                      AND tenant = %s;
-                    """,
-                    (
-                        status,
-                        error_code,
-                        error_title,
-                        error_message,
-                        error_details,
-                        json.dumps(raw_payload),
-                        int(timestamp) if timestamp else None,
-                        message_id,
-                        tenant,
-                    ),
-                )
-        print(f"📊 Status actualizado para mensaje {message_id}: {status}")
-    except Exception as e:
-        print(f"❌ Error al actualizar status del mensaje {status_obj.get('id', 'unknown')}: {e}")
-        traceback.print_exc()
 
 
 # ============================
@@ -2959,3 +3028,1063 @@ def normalizar_numero(numero: str) -> str:
 
     # Último fallback: devolver tal cual
     return numero
+
+
+
+
+# ------------------------------------------------
+# ------------------------------------------------
+# ------------------------------------------------
+# ------------------------------------------------
+
+ESTADOS_TERMINALES = {
+    "rechazado_inicial",
+    "rechazado_prueba_tiktok",
+    "rechazado_entrevista",
+    "invitacion_usuario_rechazada"
+}
+
+
+def obtener_estado_aspirante(tenant: str, wa_id: str) -> str | None:
+    """
+    Retorna el nombre_estado actual del aspirante según su wa_id.
+    """
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT ea.nombre_estado
+                    FROM aspirantes a
+                    JOIN aspirante_estado_actual ae 
+                        ON ae.id_aspirante = a.id_aspirante
+                    JOIN estados_aspirante ea 
+                        ON ea.id_estado_aspirante = ae.id_estado_aspirante
+                    WHERE a.wa_id = %s
+                      AND ea.estado_activo = TRUE
+                    LIMIT 1
+                """, (wa_id,))
+
+                resultado = cur.fetchone()
+
+                return resultado[0] if resultado else None
+
+    except (OperationalError, DatabaseError) as e:
+        print(f"❌ Error de base de datos al obtener estado del aspirante: {e}")
+        traceback.print_exc()
+        return None
+
+    except Exception as e:
+        print(f"❌ Error inesperado al obtener estado del aspirante: {e}")
+        traceback.print_exc()
+        return None
+
+
+
+
+def enviar_menu_por_estado(token, wa_id, estado):
+    if not estado:
+        return
+
+    enviar_menu_interactivo(
+        token=token,
+        recipient=wa_id,
+        estado=estado
+    )
+
+
+import requests
+
+
+# Función para enviar un mensaje con botones interactivos
+def enviar_menu_interactivo(token, recipient, estado):
+    """
+    Genera y envía un menú interactivo a un usuario dependiendo del estado del aspirante.
+
+    :param token: Token de autenticación de WhatsApp Cloud API.
+    :param recipient: Número de teléfono del destinatario (incluyendo el código de país, ej. +57).
+    :param estado: Estado del aspirante que define el menú (ej: 'post_encuesta_inicial').
+    """
+    url = f"https://graph.facebook.com/v19.0/{recipient}/messages"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    # Menús y mensajes dependiendo del estado
+    menus = {
+        "post_encuesta_inicial": {
+            "header": "Explora la información sobre el proceso de Prestige Agency.",
+            "buttons": [
+                {"id": "proceso_incorporacion", "title": "Proceso de Incorporación en Prestige Agency"},
+                {"id": "beneficios_agencia", "title": "Beneficios de pertenecer a nuestra Agencia"},
+                {"id": "rol_creador", "title": "Rol de Creador de Contenido"}
+            ]
+        },
+        "solicitud_agendamiento_tiktok": {
+            "header": "Consulta tu Diagnóstico Inicial y coordina tu prueba TikTok LIVE.",
+            "buttons": [
+                {"id": "dx_inicial", "title": "Mi Dx Inicial"},
+                {"id": "agenda_tiktok", "title": "Agenda Prueba tikTok LIVE"}
+            ]
+        },
+        "solicitud_agendamiento_entrevista": {
+            "header": "Consulta tu Diagnóstico Completo y coordina tu prueba de Entrevista.",
+            "buttons": [
+                {"id": "dx_completo", "title": "Mi Dx Completo"},
+                {"id": "agenda_entrevista", "title": "Agenda Prueba Entrevista"}
+            ]
+        }
+    }
+
+    # Validar si el estado existe en el diccionario de menús
+    if estado not in menus:
+        print(f"Estado '{estado}' no tiene un menú asociado.")
+        return
+
+    # Generar el cuerpo del mensaje
+    menu = menus[estado]
+    body_text = menu["header"]
+    buttons = [{"type": "reply", "reply": {"id": btn["id"], "title": btn["title"]}} for btn in menu["buttons"]]
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": recipient,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": body_text},
+            "action": {"buttons": buttons}
+        }
+    }
+
+    # Realizar la solicitud HTTP POST
+    response = requests.post(url, headers=headers, json=payload)
+
+    # Manejo de respuesta
+    if response.status_code == 200:
+        print(f"Menú enviado exitosamente al destinatario: {recipient}")
+    else:
+        print(f"Error al enviar menú: {response.json()}")
+
+
+def generar_y_enviar_dx_inicial(tenant, wa_id):
+    pass
+
+
+def generar_y_enviar_dx_completo(tenant, wa_id):
+    pass
+
+
+def enviar_link_agenda_tiktok(wa_id):
+    pass
+
+
+def enviar_link_agenda_entrevista(wa_id):
+    pass
+
+
+def procesar_boton_interactivo(
+    tenant: str,
+    wa_id: str,
+    phone_number_id: str,
+    button_id: str
+):
+    """
+    Router central para botones interactivos.
+    """
+
+    # ---- MENÚ POST ENCUESTA INICIAL ----
+    if button_id == "proceso_incorporacion":
+        enviar_texto_simple(
+            wa_id,
+            "📌 El proceso incluye evaluación inicial, prueba y acompañamiento continuo."
+        )
+
+    elif button_id == "beneficios_agencia":
+        enviar_texto_simple(
+            wa_id,
+            "✨ Beneficios: formación, acompañamiento y crecimiento en TikTok LIVE."
+        )
+
+    elif button_id == "rol_creador":
+        enviar_texto_simple(
+            wa_id,
+            "🎥 Como creador realizarás transmisiones en TikTok LIVE siguiendo lineamientos."
+        )
+
+    # ---- DX / AGENDA ----
+    elif button_id == "dx_inicial":
+        generar_y_enviar_dx_inicial(tenant, wa_id)
+
+    elif button_id == "dx_completo":
+        generar_y_enviar_dx_completo(tenant, wa_id)
+
+    elif button_id == "agenda_tiktok":
+        enviar_link_agenda_tiktok(wa_id)
+
+    elif button_id == "agenda_entrevista":
+        enviar_link_agenda_entrevista(wa_id)
+
+    else:
+        enviar_texto_simple(
+            wa_id,
+            "⚠️ Opción no reconocida."
+        )
+
+
+def send_whatsapp_text(wa_id, texto):
+    pass
+
+
+def enviar_texto_simple(wa_id, texto):
+    send_whatsapp_text(wa_id, texto)
+
+
+
+# ---------------------------
+# ----VERSION WEBHOOK ANTERIOR-------
+# ---------------------------
+
+@router.post("/webhook")
+async def whatsapp_webhookV0(request: Request):
+    """
+    Endpoint principal para recibir webhooks de WhatsApp.
+    """
+    data = await request.json()
+    print("📩 Webhook recibido:", json.dumps(data, indent=2))
+
+    try:
+        webhook_data = _extract_webhook_data(data)
+        if not webhook_data:
+            return {"status": "ok"}
+
+        entry = webhook_data["entry"]
+        change = webhook_data["change"]
+        value = webhook_data["value"]
+        field = webhook_data["field"]
+        event = webhook_data["event"]
+
+        # ==============================
+        # CASO 1: account_update
+        # ==============================
+        if field == "account_update":
+            return _handle_account_update_event(entry, change, value, event)
+
+        # ==============================
+        # METADATA / TENANT
+        # ==============================
+        metadata = value.get("metadata", {})
+        phone_number_id = metadata.get("phone_number_id")
+
+        cuenta_info = _setup_tenant_context(phone_number_id)
+        if not cuenta_info:
+            return {"status": "ignored"}
+
+        tenant_name = cuenta_info["tenant_name"]
+        display_phone_number = metadata.get("display_phone_number", "")
+
+        # ==============================
+        # CASO 2: STATUSES
+        # ==============================
+        statuses = value.get("statuses", [])
+        if statuses:
+            for st in statuses:
+                try:
+                    actualizar_mensaje_desde_status(
+                        tenant=tenant_name,
+                        phone_number_id=phone_number_id,
+                        display_phone_number=display_phone_number,
+                        status_obj=st,
+                        raw_payload=value
+                    )
+                except Exception as e:
+                    print(f"⚠️ Error procesando status: {e}")
+                    traceback.print_exc()
+
+        # ==============================
+        # CASO 3: MENSAJES
+        # ==============================
+        mensajes = value.get("messages", [])
+        if not mensajes:
+            return {"status": "ok"}
+
+        for mensaje in mensajes:
+            procesado = False  # 🔑 CLAVE
+
+            wa_id = mensaje.get("from")
+            message_id = mensaje.get("id")
+            tipo = mensaje.get("type")
+
+            # ==============================
+            # REGISTRO EN BD
+            # ==============================
+            try:
+                if tipo == "text":
+                    content = mensaje.get("text", {}).get("body", "")
+                elif tipo == "audio":
+                    content = f"[Audio: {mensaje.get('audio', {}).get('id', 'unknown')}]"
+                elif tipo == "image":
+                    content = f"[Image: {mensaje.get('image', {}).get('id', 'unknown')}]"
+                elif tipo == "video":
+                    content = f"[Video: {mensaje.get('video', {}).get('id', 'unknown')}]"
+                elif tipo == "document":
+                    content = f"[Document: {mensaje.get('document', {}).get('filename', 'unknown')}]"
+                elif tipo == "interactive":
+                    content = "[Interactive]"
+                else:
+                    content = f"[{tipo}]"
+
+                registrar_mensaje_recibido(
+                    tenant=tenant_name,
+                    phone_number_id=phone_number_id,
+                    display_phone_number=display_phone_number,
+                    wa_id=wa_id,
+                    message_id=message_id,
+                    content=content,
+                    raw_payload=mensaje
+                )
+            except Exception as e:
+                print(f"⚠️ Error registrando mensaje: {e}")
+                traceback.print_exc()
+
+            # ==================================================
+            # 🟢 PRIORIDAD 1: MENÚ POR ESTADO (mensaje normal)
+            # ==================================================
+            if tipo in ["text", "audio", "image", "video", "document"]:
+                estado = obtener_estado_aspirante(tenant_name, wa_id)
+
+                if estado:
+                    enviar_menu_por_estado(
+                        token=cuenta_info["access_token"],
+                        wa_id=wa_id,
+                        estado=estado
+                    )
+                    procesado = True
+
+            # ==================================================
+            # 🟢 PRIORIDAD 2: INTERACTIVE (botones)
+            # ==================================================
+            if tipo == "interactive":
+                interactive = mensaje.get("interactive", {})
+                itype = interactive.get("type")
+
+                if itype == "button_reply":
+                    button_reply = interactive.get("button_reply", {})
+                    button_title = button_reply.get("title", "").strip().lower()
+
+                    # ------------------------------------
+                    # REENGANCHE (plantillas y cualquier botón "sí / no")
+                    # ------------------------------------
+                    if button_title in ("sí", "si", "yes", "continuar"):
+                        estado = obtener_estado_aspirante(tenant_name, wa_id)
+                        if estado:
+                            enviar_menu_por_estado(
+                                token=cuenta_info["access_token"],
+                                wa_id=wa_id,
+                                estado=estado
+                            )
+                        procesado = True
+
+                    elif button_title in ("no", "ahora no"):
+                        enviar_texto_simple(
+                            wa_id,
+                            "Perfecto 👍 Si deseas continuar más adelante, escríbenos."
+                        )
+                        procesado = True
+
+                    # ------------------------------------
+                    # BOTONES NORMALES (menús interactivos)
+                    # ------------------------------------
+                    else:
+                        # Aquí sí usamos el ID porque viene de mensajes interactivos NO plantilla
+                        button_id = button_reply.get("id")
+
+                        procesar_boton_interactivo(
+                            tenant=tenant_name,
+                            wa_id=wa_id,
+                            phone_number_id=phone_number_id,
+                            button_id=button_id
+                        )
+                        procesado = True
+
+            # ==================================================
+            # 🔁 DELEGAR A CHAT CONVERSACIONAL
+            # ==================================================
+            if not procesado:
+                _process_single_message(mensaje, tenant_name)
+
+        return {"status": "ok"}
+
+    except (IndexError, KeyError, TypeError) as e:
+        print(f"❌ Error estructura webhook: {e}")
+        traceback.print_exc()
+    except LookupError as e:
+        print(f"❌ Error contexto tenant: {e}")
+        traceback.print_exc()
+    except Exception as e:
+        print(f"❌ Error inesperado webhook: {e}")
+        traceback.print_exc()
+
+    return {"status": "ok"}
+
+
+
+
+# ---------------------------------------------------------
+# ---------------------------------------------------------
+# ---------------------------------------------------------
+# ---------NUEVO CODIGO 15 DIC 2025-------------
+# ---------------------------------------------------------
+# ---------------------------------------------------------
+# ---------------------------------------------------------
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+router = APIRouter()
+
+
+class EstadoEvalInput(BaseModel):
+    creador_id: int
+    estado_evaluacion: str
+
+
+@router.post("/actualizar-estado-aspirante")
+def actualizar_estado_aspirante(data: EstadoEvalInput):
+    try:
+        # 1. Obtener credenciales del Tenant (Igual que en tu ejemplo)
+        # Descomentarear para producción
+        # subdominio = current_tenant.get()
+        subdominio = 'test'
+        # Asumo que esta función ya la tienes importada
+        cuenta = obtener_cuenta_por_subdominio(subdominio)
+
+        if not cuenta:
+            return JSONResponse(
+                {"error": f"No se encontraron credenciales para {subdominio}"},
+                status_code=404
+            )
+
+        token_cliente = cuenta["access_token"]
+        phone_id_cliente = cuenta["phone_number_id"]
+        business_name = cuenta.get("business_name", "la agencia")
+
+        # 2. Contexto (Opcional, si usas logs globales)
+        current_token.set(token_cliente)
+        current_phone_id.set(phone_id_cliente)
+
+        # 2. Obtener datos del creador
+        # info_creador = obtener_info_creador(data.creador_id)
+        telefono = "573153638069"  # Mock
+
+        # 3. Guardar nuevo estado en BD
+        guardar_estado_eval(data.creador_id, data.estado_evaluacion)
+
+        # 4. Verificar ventana 24hrs (Tarea 2 - Parte A aplicada al envío)
+        en_ventana = obtener_status_24hrs(telefono)
+
+        if en_ventana:
+            print("✅ En ventana: Enviando Mensaje Interactivo + Botón Opciones")
+            Enviar_msg_estado(
+                data.creador_id,
+                data.estado_evaluacion,
+                phone_id_cliente,
+                token_cliente,
+                telefono
+            )
+        else:
+            print("⚠️ Fuera de ventana: Enviando Plantilla + Botón Opciones")
+            enviar_plantilla_estado_evaluacion(
+                data.creador_id,
+                data.estado_evaluacion,
+                phone_id_cliente,
+                token_cliente,
+                telefono
+            )
+
+        return {"message": "Estado actualizado y notificación enviada"}
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return {"error": str(e)}
+
+
+
+
+def procesar_evento_webhook(body, phone_id_cliente, token_cliente):
+    """
+    Función principal llamada desde tu ruta @router.post("/webhook")
+    """
+    try:
+        entry = body['entry'][0]
+        changes = entry['changes'][0]
+        value = changes['value']
+
+        if 'messages' not in value:
+            return  # No es un mensaje (puede ser status 'read', etc)
+
+        message = value['messages'][0]
+        telefono = message['from']
+        tipo_mensaje = message['type']
+
+        # 1. Identificar al creador y su estado actual
+        creador_id = obtener_creador_id_por_telefono(telefono)
+        estado_actual = buscar_estado_creador(creador_id)
+
+        print(f"📩 Msg de {telefono} | Estado DB: {estado_actual} | Tipo: {tipo_mensaje}")
+
+        # --- CAPTURA DE BOTONES (Interactive y Template) ---
+        boton_id = None
+
+        # A. Clic en botón de Plantilla
+        if tipo_mensaje == 'button':
+            boton_id = message['button']['payload']
+
+        # B. Clic en botón Interactivo (Menú normal)
+        elif tipo_mensaje == 'interactive':
+            tipo_interaccion = message['interactive']['type']
+            if tipo_interaccion == 'button_reply':
+                boton_id = message['interactive']['button_reply']['id']
+
+        # --- LÓGICA DE BOTONES ---
+        if boton_id:
+            # Caso 1: El botón es "Opciones" (viene de msg inicial o plantilla)
+            if boton_id == "BTN_ABRIR_MENU_OPCIONES":
+                Enviar_menu_quickreply(creador_id, estado_actual, phone_id_cliente, token_cliente, telefono)
+
+            # Caso 2: Es una opción específica (Ej: "Enviar Link")
+            else:
+                accion_menu_estado_evaluacion(creador_id, boton_id, phone_id_cliente, token_cliente, estado_actual,
+                                              telefono)
+
+            return  # Fin del procesamiento de botón
+
+        # --- CAPTURA DE TEXTO (URL) ---
+        if tipo_mensaje == 'text':
+            texto_usuario = message['text']['body']
+
+            # Validar si estamos esperando una URL
+            if estado_actual == 'solicitud_link_enviado':
+
+                es_valido = validar_url_link_tiktok_live(texto_usuario)
+
+                if es_valido:
+                    guardar_link_tiktok_live(creador_id, texto_usuario)
+                    # Opcional: Avanzar al siguiente estado
+                    guardar_estado_eval(creador_id, "revision_link_tiktok")
+                    enviar_texto_simple(telefono, "✅ ¡Link recibido! Lo revisaremos pronto.", phone_id_cliente,
+                                        token_cliente)
+                else:
+                    enviar_texto_simple(telefono,
+                                        "❌ El link no parece válido. Asegúrate de que sea de TikTok y vuelve a intentarlo.",
+                                        phone_id_cliente, token_cliente)
+
+            else:
+                # Si escribe texto y no esperamos nada, quizás reactivar menú
+                # Opcional: Chequear 24h si quisieras responder proactivamente,
+                # pero como el usuario ACABA de escribir, la ventana está abierta.
+                pass
+
+    except Exception as e:
+        print(f"❌ Error webhook: {e}")
+
+
+# services/aspirant_flow.py
+
+def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, payload_id):
+    """
+    Intenta manejar el mensaje basándose en el estado del aspirante.
+    Retorna True si procesó el mensaje, False si debe pasar al siguiente nivel (Chatbot).
+    """
+    # 1. Identificar al creador y estado
+    # (Estas funciones deben venir de tu capa de base de datos)
+    creador_id = obtener_creador_id_por_telefono(wa_id)
+    if not creador_id:
+        return False  # No es aspirante, pasar al bot normal
+
+    estado_actual = buscar_estado_creador(creador_id)
+    token_cliente = current_token.get()  # O pasarlo como argumento
+
+    print(f"🕵️‍♂️ Procesando Aspirante {wa_id} | Estado: {estado_actual}")
+
+    # ====================================================
+    # CASO A: CLIC EN BOTONES (Payloads)
+    # ====================================================
+    if payload_id:
+        # A.1 Botón "Opciones" (Viene de Plantilla o Mensaje previo)
+        if payload_id == "BTN_ABRIR_MENU_OPCIONES":
+            Enviar_menu_quickreply(creador_id, estado_actual, phone_number_id, token_cliente, wa_id)
+            return True
+
+        # A.2 Acciones específicas del menú
+        # Verificamos si el payload empieza con BTN_ para saber si es nuestro
+        if payload_id.startswith("BTN_"):
+            accion_menu_estado_evaluacion(creador_id, payload_id, phone_number_id, token_cliente, estado_actual, wa_id)
+            return True
+
+    # ====================================================
+    # CASO B: TEXTO (Validación de URL)
+    # ====================================================
+    if tipo == "text" and estado_actual == "solicitud_link_enviado":
+        es_valido = validar_url_link_tiktok_live(texto)
+
+        if es_valido:
+            guardar_link_tiktok_live(creador_id, texto)
+            # Avanzar estado
+            guardar_estado_eval(creador_id, "revision_link_tiktok")
+            enviar_texto_simple(wa_id, "✅ Link recibido. Lo revisaremos pronto.", phone_number_id, token_cliente)
+        else:
+            enviar_texto_simple(wa_id, "❌ Link no válido. Asegúrate de copiar la URL de TikTok completa.",
+                                phone_number_id, token_cliente)
+
+        return True  # Procesado, no contestar con el bot IA
+
+    # ====================================================
+    # CASO C: MENÚ POR ESTADO (Reenganche por texto)
+    # ====================================================
+    # Si escribe algo y no es URL, pero tiene un estado activo,
+    # le recordamos sus opciones enviando el menú de nuevo.
+    if tipo == "text" and estado_actual:
+        # Opcional: Solo si pasaron X horas o si la intención no es clara
+        Enviar_msg_estado(creador_id, estado_actual, phone_number_id, token_cliente, wa_id)
+        return True
+
+    return False  # Si no coincide nada, dejar que el bot conversacional responda
+
+
+# --- SUB-FUNCIONES DE ORQUESTACIÓN ---
+
+async def _procesar_mensaje_unico(mensaje, tenant_name, phone_number_id, token_access):
+    wa_id = mensaje.get("from")
+
+    # 1. NORMALIZAR (Hacerlo una sola vez)
+    tipo, texto, payload = _normalizar_entrada_whatsapp(mensaje)
+
+    # 2. LOGGING / BD (Tu lógica de registro existente)
+    # registrar_mensaje_recibido(...)
+
+    # 3. 🟢 PRIORIDAD 1: Chat Libre (Intervención Humana)
+    # Consultamos flujo antes de nada. Si está hablando con humano, nadie interrumpe.
+    paso_actual = obtener_flujo(wa_id)
+    if paso_actual == "chat_libre":
+        return _process_chat_libre_message(mensaje, wa_id)
+
+    # 4. 🟢 PRIORIDAD 2: Flujo de Aspirantes (Evaluación / Links / Estados)
+    # Llamamos a tu NUEVA lógica.
+    procesado_aspirante = procesar_flujo_aspirante(
+        tenant=tenant_name,
+        phone_number_id=phone_number_id,
+        wa_id=wa_id,
+        tipo=tipo,
+        texto=texto,
+        payload_id=payload  # Pasamos el payload ya limpio
+    )
+
+    if procesado_aspirante:
+        # ✅ Si la lógica de aspirantes manejó el mensaje (ej: guardó el link de tiktok),
+        # TERMINAMOS AQUÍ. No llamamos a _process_single_message.
+        return {"status": "handled_by_aspirant_flow"}
+
+    # 5. 🟢 PRIORIDAD 3: Flujo General (Onboarding / Admin / Bot Conversacional)
+    # Si llegamos aquí, es porque NO es un aspirante en evaluación activa
+    # o escribió algo que el flujo de evaluación no entendió.
+    return _process_single_message(
+        mensaje=mensaje,
+        tenant_name=tenant_name,
+        # OPTIMIZACIÓN: Pasamos los datos ya procesados para no buscarlos de nuevo
+        datos_normalizados={"wa_id": wa_id, "tipo": tipo, "texto": texto, "payload": payload, "paso": paso_actual}
+    )
+
+def _normalizar_entrada_whatsapp(mensaje):
+    """
+    Convierte la estructura compleja de Meta en 3 variables simples.
+    Retorna: (tipo_simple, texto_visible, payload_oculto)
+    """
+    tipo = mensaje.get("type")
+    texto = None
+    payload = None
+
+    if tipo == "text":
+        texto = mensaje["text"]["body"]
+
+    elif tipo == "button":  # Respuesta de Plantilla
+        texto = mensaje["button"]["text"]
+        payload = mensaje["button"]["payload"]
+
+    elif tipo == "interactive":  # Respuesta de Menú
+        interactive = mensaje["interactive"]
+        itype = interactive["type"]
+
+        if itype == "button_reply":
+            texto = interactive["button_reply"]["title"]
+            payload = interactive["button_reply"]["id"]
+        elif itype == "list_reply":
+            texto = interactive["list_reply"]["title"]
+            payload = interactive["list_reply"]["id"]
+
+    # Manejo de multimedia si es necesario
+    elif tipo in ["image", "audio", "document"]:
+        texto = f"[{tipo}]"
+
+    return tipo, texto, payload
+
+
+@router.post("/webhook")
+async def whatsapp_webhook(request: Request):
+    data = await request.json()
+
+    # 1. Extracción Inicial
+    webhook_data = _extract_webhook_data(data)
+    if not webhook_data:
+        return {"status": "ok"}
+
+    value = webhook_data["value"]
+
+    # 2. Contexto del Tenant (Grupo Administrativo)
+    metadata = value.get("metadata", {})
+    phone_number_id = metadata.get("phone_number_id")
+    cuenta_info = _setup_tenant_context(phone_number_id)
+
+    if not cuenta_info:
+        return {"status": "ignored"}
+
+    tenant_name = cuenta_info["tenant_name"]
+    token_access = cuenta_info["access_token"]
+
+    # 3. Manejo de Status (Sent/Delivered/Read)
+    statuses = value.get("statuses", [])
+    if statuses:
+        # AHORA PASAMOS EL TOKEN TAMBIÉN
+        await _handle_statuses(
+            statuses=statuses,
+            tenant_name=tenant_name,
+            phone_number_id=phone_number_id,
+            token_access=cuenta_info["access_token"],  # <--- IMPORTANTE AGREGAR ESTO
+            raw_payload=value
+        )
+        return {"status": "ok"}
+
+    # 4. Manejo de Mensajes (Core Logic)
+    if "messages" in value:
+        for mensaje in value["messages"]:
+            await _procesar_mensaje_unico(
+                mensaje,
+                tenant_name,
+                phone_number_id,
+                token_access
+            )
+
+    return {"status": "ok"}
+
+
+# --- SUB-FUNCIONES DE ORQUESTACIÓN ---
+
+async def _procesar_mensaje_unico(mensaje, tenant_name, phone_number_id, token):
+    wa_id = mensaje.get("from")
+
+    # A. Normalizar datos (Abstraer si es template button o interactive button)
+    tipo, texto, payload_id = _normalizar_entrada_whatsapp(mensaje)
+
+    # B. Registro en Base de Datos (Logging)
+    try:
+        registrar_mensaje_recibido(
+            tenant=tenant_name,
+            phone_number_id=phone_number_id,
+            display_phone_number=mensaje.get("from"),  # Ajustar según metadata
+            wa_id=wa_id,
+            message_id=mensaje.get("id"),
+            content=f"[{tipo}] {texto or ''} {payload_id or ''}",
+            raw_payload=mensaje
+        )
+    except Exception as e:
+        print(f"⚠️ Log Error: {e}")
+
+    # C. CADENA DE RESPONSABILIDAD (La lógica de prioridades)
+
+    # NIVEL 1: Flujo de Aspirantes (Tu requerimiento específico)
+    #
+    procesado_aspirante = procesar_flujo_aspirante(
+        tenant=tenant_name,
+        phone_number_id=phone_number_id,
+        wa_id=wa_id,
+        tipo=tipo,
+        texto=texto,
+        payload_id=payload_id
+    )
+
+    if procesado_aspirante:
+        return  # ✅ Ya se manejó, detenemos el flujo aquí.
+
+    # NIVEL 2: Reenganche Genérico (Si/No) - Opcional, legacy code
+    if payload_id in ["BTN_SI", "BTN_NO"] or texto.lower() in ["si", "no"]:
+        # Tu lógica antigua de sí/no genérica
+        pass
+
+        # NIVEL 3: Chat Conversacional (Fallback AI)
+    # Si no es aspirante o no está en un estado que bloquee el chat
+    print(f"🤖 Delegando a ChatBot: {wa_id}")
+    _process_single_message(mensaje, tenant_name)
+
+
+def _normalizar_entrada_whatsapp(mensaje):
+    """
+    Convierte la estructura compleja de Meta en 3 variables simples.
+    Retorna: (tipo_simple, texto_visible, payload_oculto)
+    """
+    tipo = mensaje.get("type")
+    texto = None
+    payload = None
+
+    if tipo == "text":
+        texto = mensaje["text"]["body"]
+
+    elif tipo == "button":  # Respuesta de Plantilla
+        texto = mensaje["button"]["text"]
+        payload = mensaje["button"]["payload"]
+
+    elif tipo == "interactive":  # Respuesta de Menú
+        interactive = mensaje["interactive"]
+        itype = interactive["type"]
+
+        if itype == "button_reply":
+            texto = interactive["button_reply"]["title"]
+            payload = interactive["button_reply"]["id"]
+        elif itype == "list_reply":
+            texto = interactive["list_reply"]["title"]
+            payload = interactive["list_reply"]["id"]
+
+    # Manejo de multimedia si es necesario
+    elif tipo in ["image", "audio", "document"]:
+        texto = f"[{tipo}]"
+
+    return tipo, texto, payload
+
+
+import traceback
+
+async def _procesar_error_envio(status_obj, tenant, phone_id, token):
+    """
+    Analiza por qué falló el mensaje y toma acciones correctivas.
+    """
+    errors = status_obj.get("errors", [])
+    recipient_id = status_obj.get("recipient_id")  # El teléfono del usuario
+
+    for error in errors:
+        code = error.get("code")
+        message = error.get("message")
+
+        print(f"❌ Error de entrega a {recipient_id}: Código {code} - {message}")
+
+        # ---------------------------------------------------------
+        # ERROR 131047: Re-engagement Message (Ventana 24h cerrada)
+        # ---------------------------------------------------------
+        if code == 131047:
+            print(f"🔄 INTENTO DE RECUPERACIÓN: Enviando plantilla a {recipient_id}...")
+
+            # 1. Identificar al aspirante
+            # Nota: Usamos recipient_id como wa_id (teléfono)
+            creador_id = obtener_creador_id_por_telefono(recipient_id)
+
+            if creador_id:
+                # 2. Buscar en qué estado se quedó para enviar la plantilla correcta
+                estado_actual = buscar_estado_creador(creador_id)
+
+                if estado_actual:
+                    # 3. Enviar la PLANTILLA correspondiente
+                    # Esta función ya la definimos en "Tarea 3" y sabe qué template usar
+                    enviar_plantilla_estado_evaluacion(
+                        creador_id=creador_id,
+                        estado_evaluacion=estado_actual,
+                        phone_id=phone_id,
+                        token=token,
+                        telefono=recipient_id
+                    )
+                    print(f"✅ Plantilla de recuperación enviada a {recipient_id}")
+                else:
+                    print(f"⚠️ No se encontró estado para creador {creador_id}, no se pudo enviar plantilla.")
+            else:
+                print(f"⚠️ El destinatario {recipient_id} no es un aspirante registrado.")
+
+        # ---------------------------------------------------------
+        # OTROS ERRORES (Opcional)
+        # ---------------------------------------------------------
+        elif code == 131026:
+            print("⚠️ Mensaje no entregado: Usuario bloqueó al bot o no tiene WhatsApp.")
+            # Aquí podrías marcar al usuario como 'inactivo' en tu BD
+
+
+# def _process_new_user_onboarding(mensaje: dict, numero: str, texto: str, texto_lower: str, paso: Optional[str | int], tenant_name: str) -> Optional[dict]:
+#     """
+#     Procesa el flujo de onboarding para nuevos usuarios.
+#
+#     Returns:
+#         Dict con status si se procesó, None si no aplica
+#     """
+#     tipo = mensaje.get("type")
+#     if tipo != "text":
+#         return None
+#
+#     # Si el paso guardado no tiene sentido, reiniciamos el flujo
+#     if paso not in [None, "esperando_usuario_tiktok", "confirmando_nombre", "esperando_inicio_encuesta"]:
+#         print(f"⚠️ Reiniciando flujo para {numero}, paso anterior: {paso}")
+#         eliminar_flujo(numero)
+#         paso = None
+#
+#     # Inicio del flujo
+#     if paso is None:
+#         enviar_mensaje(numero, Mensaje_bienvenida)
+#         actualizar_flujo(numero, "esperando_usuario_tiktok")
+#         return {"status": "ok"}
+#
+#     # Se espera usuario de TikTok
+#     if paso == "esperando_usuario_tiktok":
+#         usuario_tiktok = texto.strip()
+#         aspirante = buscar_aspirante_por_usuario_tiktok(usuario_tiktok)
+#         if aspirante:
+#             nombre = aspirante.get("nickname") or aspirante.get("nombre_real") or "(sin nombre)"
+#             enviar_mensaje(numero, mensaje_confirmar_nombre(nombre))
+#             actualizar_flujo(numero, "confirmando_nombre")
+#             # ✅ Guardar en Redis (con fallback a memoria si falla)
+#             try:
+#                 redis_set_temp(numero, aspirante, ttl=900)  # 15 minutos
+#             except Exception as e:
+#                 print(f"⚠️ Redis falló, usando memoria como fallback para {numero}: {e}")
+#                 usuarios_temp[numero] = aspirante
+#         else:
+#             enviar_mensaje(numero, "❌ No encontramos ese usuario de TikTok. ¿Podrías verificarlo?")
+#         return {"status": "ok"}
+#
+#     # Confirmar nickname y actualizar teléfono
+#     if paso == "confirmando_nombre":
+#         if texto_lower in ["si", "sí", "s"]:
+#             # ✅ Leer de Redis (con fallback a memoria si falla)
+#             aspirante = redis_get_temp(numero)
+#             if not aspirante:
+#                 # Fallback a memoria si Redis no tiene el dato
+#                 aspirante = usuarios_temp.get(numero)
+#                 if aspirante:
+#                     print(f"⚠️ Datos encontrados en memoria (fallback) para {numero}")
+#
+#             if aspirante:
+#                 actualizar_telefono_aspirante(aspirante["id"], numero)
+#                 # ✅ Limpiar de Redis y memoria después de usar
+#                 try:
+#                     redis_delete_temp(numero)
+#                 except Exception as e:
+#                     print(f"⚠️ Error eliminando de Redis para {numero}: {e}")
+#                 usuarios_temp.pop(numero, None)  # Limpiar también de memoria
+#
+#             enviar_inicio_encuesta(numero)
+#             actualizar_flujo(numero, "esperando_inicio_encuesta")
+#         elif texto_lower in ["no", "n"]:
+#             enviar_mensaje(numero, "❌ Por favor verifica tu nombre o usuario de TikTok.")
+#             # Limpiar datos temporales si el usuario rechaza
+#             try:
+#                 redis_delete_temp(numero)
+#             except Exception:
+#                 pass
+#             usuarios_temp.pop(numero, None)
+#         else:
+#             enviar_mensaje(numero, "⚠️ Por favor responde solo *sí* o *no* para continuar.")
+#         return {"status": "ok"}
+#
+#     # Si el usuario está esperando iniciar la encuesta pero escribe texto
+#     if paso == "esperando_inicio_encuesta":
+#         if texto_lower.strip() != "":
+#             # ✅ Usar el parámetro tenant_name (ya disponible desde _process_single_message)
+#             # Fallback al contexto si el parámetro no está disponible por alguna razón
+#             tenant_actual = tenant_name
+#             if not tenant_actual:
+#                 try:
+#                     tenant_actual = current_tenant.get()
+#                 except LookupError:
+#                     tenant_actual = "default"  # Fallback si no hay contexto
+#
+#             url_web = construir_url_actualizar_perfil(numero, tenant_name=tenant_actual)
+#             mensaje = (
+#                 f"💬 Haz clic en el enlace para comenzar la encuesta 📋\n\n"
+#                 f"{url_web}\n\n"
+#                 f"Puedes hacerlo desde tu celular o computadora."
+#             )
+#             enviar_mensaje(numero, mensaje)
+#         return {"status": "ok"}
+#
+#     return None
+
+# async def _procesar_mensaje_unico(mensaje, tenant_name, phone_number_id, token):
+#     wa_id = mensaje.get("from")
+#
+#     # A. Normalizar datos (Abstraer si es template button o interactive button)
+#     tipo, texto, payload_id = _normalizar_entrada_whatsapp(mensaje)
+#
+#     # B. Registro en Base de Datos (Logging)
+#     try:
+#         registrar_mensaje_recibido(
+#             tenant=tenant_name,
+#             phone_number_id=phone_number_id,
+#             display_phone_number=mensaje.get("from"),  # Ajustar según metadata
+#             wa_id=wa_id,
+#             message_id=mensaje.get("id"),
+#             content=f"[{tipo}] {texto or ''} {payload_id or ''}",
+#             raw_payload=mensaje
+#         )
+#     except Exception as e:
+#         print(f"⚠️ Log Error: {e}")
+#
+#     # C. CADENA DE RESPONSABILIDAD (La lógica de prioridades)
+#
+#     # NIVEL 1: Flujo de Aspirantes (Tu requerimiento específico)
+#     #
+#     procesado_aspirante = procesar_flujo_aspirante(
+#         tenant=tenant_name,
+#         phone_number_id=phone_number_id,
+#         wa_id=wa_id,
+#         tipo=tipo,
+#         texto=texto,
+#         payload_id=payload_id
+#     )
+#
+#     if procesado_aspirante:
+#         return  # ✅ Ya se manejó, detenemos el flujo aquí.
+#
+#     # NIVEL 2: Reenganche Genérico (Si/No) - Opcional, legacy code
+#     if payload_id in ["BTN_SI", "BTN_NO"] or texto.lower() in ["si", "no"]:
+#         # Tu lógica antigua de sí/no genérica
+#         pass
+#
+#         # NIVEL 3: Chat Conversacional (Fallback AI)
+#     # Si no es aspirante o no está en un estado que bloquee el chat
+#     print(f"🤖 Delegando a ChatBot: {wa_id}")
+#     _process_single_message(mensaje, tenant_name)
+
+
+# Importar tus funciones de lógica de negocio (ajusta los imports según tu estructura)
+# from services.aspirant_service import buscar_estado_creador, obtener_creador_id_por_telefono, enviar_plantilla_estado_evaluacion
+# from services.db_service import actualizar_mensaje_desde_status
+
+# async def _handle_statuses(statuses, tenant_name, phone_number_id, token_access, raw_payload):
+#     """
+#     Procesa la lista de estados (sent, delivered, read, failed).
+#     Detecta errores de ventana de 24h y dispara la recuperación con plantillas.
+#     """
+#     for status_obj in statuses:
+#         try:
+#             # 1. ACTUALIZAR BD (Siempre se hace, sea éxito o error)
+#             # Esta función actualiza el estado del mensaje en tu tabla de historial
+#             actualizar_mensaje_desde_status(
+#                 tenant=tenant_name,
+#                 phone_number_id=phone_number_id,
+#                 display_phone_number=status_obj.get("recipient_id"),
+#                 status_obj=status_obj,
+#                 raw_payload=raw_payload
+#             )
+#
+#             # 2. DETECCIÓN DE ERRORES CRÍTICOS
+#             if status_obj.get("status") == "failed":
+#                 await _procesar_error_envio(status_obj, tenant_name, phone_number_id, token_access)
+#
+#         except Exception as e:
+#             print(f"⚠️ Error procesando status individual: {e}")
+#             traceback.print_exc()
+
+
+

@@ -1,0 +1,373 @@
+import os
+from fastapi import APIRouter, HTTPException, Depends
+import logging
+
+from DataBase import get_connection_context
+
+logger = logging.getLogger("uvicorn.error")
+
+router = APIRouter()   # ← ESTE ES EL ROUTER QUE VAS A IMPORTAR EN main.py
+
+import re
+import requests
+import json
+from datetime import datetime, timedelta
+
+
+# --- MOCK DE BASE DE DATOS (Reemplaza con tu lógica real SQL) ---
+def guardar_estado_eval(creador_id, estado):
+    # UPDATE perfil_creador SET estado_evaluacion = estado WHERE creador_id = creador_id
+    print(f"💾 BD: Estado actualizado a '{estado}' para ID {creador_id}")
+
+
+def buscar_estado_creador(creador_id):
+    # SELECT estado_evaluacion FROM perfil_creador WHERE creador_id = ...
+    # Retorno simulado para el ejemplo:
+    return "solicitud_prueba_tiktok"
+
+
+def obtener_creador_id_por_telefono(telefono):
+    # SELECT creador_id FROM perfil_creador WHERE telefono = ...
+    return 3236
+
+
+def guardar_link_tiktok_live(creador_id, url):
+    # UPDATE perfil_creador SET link_tiktok = url WHERE ...
+    print(f"💾 URL guardada: {url}")
+
+
+def obtener_status_24hrs(telefono):
+    # Consultar last_interaction en BD
+    # Si (now - last_interaction) > 24h return False (Fuera de ventana)
+    # Si (now - last_interaction) < 24h return True (Dentro de ventana)
+    return True  # Simulamos que está dentro para pruebas
+
+
+# --- FUNCIONES LÓGICAS ---
+
+def validar_url_link_tiktok_live(url):
+    """Valida si es un link de TikTok válido."""
+    patron = r"(https?://)?(www\.|vm\.|vt\.)?tiktok\.com/.*"
+    return bool(re.match(patron, url))
+
+
+def Enviar_msg_estado(creador_id, estado_evaluacion, phone_id, token, telefono):
+    """
+    Envía mensaje motivante + Botón 'Opciones' (QuickReply).
+    Se usa cuando estamos DENTRO de la ventana de 24h.
+    """
+    mensajes = {
+        "solicitud_prueba_tiktok": "¡Vas genial! Es hora de demostrar tu talento en vivo.",
+        "documentacion": "Ya casi terminamos, solo faltan tus papeles."
+    }
+
+    texto = mensajes.get(estado_evaluacion, "Hola, tenemos novedades de tu proceso.")
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": telefono,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": texto},
+            "action": {
+                "buttons": [
+                    {
+                        "type": "reply",
+                        "reply": {"id": "BTN_ABRIR_MENU_OPCIONES", "title": "Opciones"}
+                    }
+                ]
+            }
+        }
+    }
+    enviar_a_meta(payload, phone_id, token)
+
+
+def enviar_plantilla_estado_evaluacion(creador_id, estado_evaluacion, phone_id, token, telefono):
+    """
+    Envía una plantilla aprobada por Meta.
+    Se usa cuando estamos FUERA de la ventana de 24h.
+    """
+    # Mapeo: Estado -> Nombre de Plantilla en Meta
+    plantillas = {
+        "solicitud_prueba_tiktok": "plantilla_solicitud_tiktok",  # Debe existir en Meta
+        "documentacion": "plantilla_solicitud_docs"
+    }
+
+    nombre_template = plantillas.get(estado_evaluacion, "plantilla_generica_estado")
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": telefono,
+        "type": "template",
+        "template": {
+            "name": nombre_template,
+            "language": {"code": "es"},
+            "components": [
+                {
+                    "type": "button",
+                    "sub_type": "quick_reply",
+                    "index": "0",
+                    "parameters": [{"type": "payload", "payload": "BTN_ABRIR_MENU_OPCIONES"}]
+                }
+            ]
+        }
+    }
+    enviar_a_meta(payload, phone_id, token)
+
+
+def Enviar_menu_quickreply(creador_id, estado_evaluacion, phone_id, token, telefono):
+    """
+    Envía el menú real de opciones según el estado.
+    Se ejecuta cuando el usuario da clic en "Opciones".
+    """
+    botones = []
+    texto_menu = "Elige una opción:"
+
+    if estado_evaluacion == "solicitud_prueba_tiktok":
+        texto_menu = "¿Listo para tu prueba?"
+        botones = [
+            {"id": "BTN_ENVIAR_LINK_TIKTOK", "titulo": "Enviar Link Live"},
+            {"id": "BTN_VER_TUTORIAL", "titulo": "Ver Tutorial"}
+        ]
+    elif estado_evaluacion == "documentacion":
+        botones = [
+            {"id": "BTN_SUBIR_CEDULA", "titulo": "Subir Cédula"},
+            {"id": "BTN_HABLAR_ASESOR", "titulo": "Hablar Asesor"}
+        ]
+
+    # Construir estructura API (Máximo 3 botones para QuickReply interactivo)
+    botones_api = [{"type": "reply", "reply": b} for b in botones]
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": telefono,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": texto_menu},
+            "action": {"buttons": botones_api}
+        }
+    }
+    enviar_a_meta(payload, phone_id, token)
+
+
+def accion_menu_estado_evaluacion(creador_id, button_id, phone_id, token, estado_evaluacion, telefono):
+    """
+    Ejecuta la acción final cuando el usuario selecciona una opción del menú.
+    """
+    print(f"⚡ Ejecutando acción: {button_id} para estado {estado_evaluacion}")
+
+    if button_id == "BTN_ENVIAR_LINK_TIKTOK" and estado_evaluacion == "solicitud_prueba_tiktok":
+        # 1. Cambiar estado para esperar texto
+        guardar_estado_eval(creador_id, "solicitud_link_enviado")
+
+        # 2. Pedir al usuario que escriba
+        enviar_texto_simple(telefono, "Por favor, pega aquí la URL de tu TikTok Live:", phone_id, token)
+
+    elif button_id == "BTN_VER_TUTORIAL":
+        enviar_texto_simple(telefono, "Aquí tienes el tutorial: https://youtube.com/...", phone_id, token)
+
+    elif button_id == "BTN_SUBIR_CEDULA":
+        enviar_texto_simple(telefono, "Por favor toma una foto a tu cédula y envíala.", phone_id, token)
+
+
+# --- UTILS API ---
+def enviar_a_meta(data, phone_id, token):
+    url = f"https://graph.facebook.com/v19.0/{phone_id}/messages"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    res = requests.post(url, headers=headers, json=data)
+    print(f"Meta Response: {res.status_code}")
+
+
+def enviar_texto_simple(telefono, texto, phone_id, token):
+    data = {
+        "messaging_product": "whatsapp",
+        "to": telefono,
+        "type": "text",
+        "text": {"body": texto}
+    }
+    enviar_a_meta(data, phone_id, token)
+
+
+import traceback
+
+
+# Importar tus funciones de lógica de negocio (ajusta los imports según tu estructura)
+# from services.aspirant_service import buscar_estado_creador, obtener_creador_id_por_telefono, enviar_plantilla_estado_evaluacion
+# from services.db_service import actualizar_mensaje_desde_status
+
+async def _handle_statuses(statuses, tenant_name, phone_number_id, token_access, raw_payload):
+    """
+    Procesa la lista de estados (sent, delivered, read, failed).
+    Detecta errores de ventana de 24h y dispara la recuperación con plantillas.
+    """
+    for status_obj in statuses:
+        try:
+            # 1. ACTUALIZAR BD (Siempre se hace, sea éxito o error)
+            # Esta función actualiza el estado del mensaje en tu tabla de historial
+            actualizar_mensaje_desde_status(
+                tenant=tenant_name,
+                phone_number_id=phone_number_id,
+                display_phone_number=status_obj.get("recipient_id"),
+                status_obj=status_obj,
+                raw_payload=raw_payload
+            )
+
+            # 2. DETECCIÓN DE ERRORES CRÍTICOS
+            if status_obj.get("status") == "failed":
+                await _procesar_error_envio(status_obj, tenant_name, phone_number_id, token_access)
+
+        except Exception as e:
+            print(f"⚠️ Error procesando status individual: {e}")
+            traceback.print_exc()
+
+def actualizar_mensaje_desde_status(
+    tenant: str,
+    phone_number_id: str,
+    display_phone_number: str,
+    status_obj: dict,
+    raw_payload: dict,
+) -> None:
+    """
+    Actualiza el estado de un mensaje en la BD basado en el webhook de status.
+
+    - tenant: tenant/subdominio (ej: 'pruebas', 'prestige')
+    - phone_number_id: phone_number_id WABA
+    - display_phone_number: número de negocio
+    - status_obj: dict del status individual (de value["statuses"][i])
+    - raw_payload: el bloque "value" completo o el status_obj
+    """
+    try:
+        message_id = status_obj.get("id")
+        status = status_obj.get("status")
+        recipient_id = status_obj.get("recipient_id")
+        timestamp = status_obj.get("timestamp")
+
+        error = (status_obj.get("errors") or [None])[0]  # primer error o None
+
+        error_code = error.get("code") if error else None
+        error_title = error.get("title") if error else None
+        error_message = error.get("message") if error else None
+        error_details = (error.get("error_data") or {}).get("details") if error else None
+
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE whatsapp_messages
+                    SET
+                        status = %s,
+                        error_code = %s,
+                        error_title = %s,
+                        error_message = %s,
+                        error_details = %s,
+                        raw_payload = %s,
+                        updated_at = NOW(),
+                        last_status_at = TO_TIMESTAMP(%s)
+                    WHERE message_id = %s
+                      AND tenant = %s;
+                    """,
+                    (
+                        status,
+                        error_code,
+                        error_title,
+                        error_message,
+                        error_details,
+                        json.dumps(raw_payload),
+                        int(timestamp) if timestamp else None,
+                        message_id,
+                        tenant,
+                    ),
+                )
+        print(f"📊 Status actualizado para mensaje {message_id}: {status}")
+    except Exception as e:
+        print(f"❌ Error al actualizar status del mensaje {status_obj.get('id', 'unknown')}: {e}")
+        traceback.print_exc()
+
+
+async def _procesar_error_envio(status_obj, tenant, phone_id, token):
+    """
+    Analiza por qué falló el mensaje y toma acciones correctivas.
+    """
+    errors = status_obj.get("errors", [])
+    recipient_id = status_obj.get("recipient_id")  # El teléfono del usuario
+
+    for error in errors:
+        code = error.get("code")
+        message = error.get("message")
+
+        print(f"❌ Error de entrega a {recipient_id}: Código {code} - {message}")
+
+        # ---------------------------------------------------------
+        # ERROR 131047: Re-engagement Message (Ventana 24h cerrada)
+        # ---------------------------------------------------------
+        if code == 131047:
+            print(f"🔄 INTENTO DE RECUPERACIÓN: Enviando plantilla a {recipient_id}...")
+
+            # 1. Identificar al aspirante
+            # Nota: Usamos recipient_id como wa_id (teléfono)
+            creador_id = obtener_creador_id_por_telefono(recipient_id)
+
+            if creador_id:
+                # 2. Buscar en qué estado se quedó para enviar la plantilla correcta
+                estado_actual = buscar_estado_creador(creador_id)
+
+                if estado_actual:
+                    # 3. Enviar la PLANTILLA correspondiente
+                    # Esta función ya la definimos en "Tarea 3" y sabe qué template usar
+                    enviar_plantilla_estado_evaluacion(
+                        creador_id=creador_id,
+                        estado_evaluacion=estado_actual,
+                        phone_id=phone_id,
+                        token=token,
+                        telefono=recipient_id
+                    )
+                    print(f"✅ Plantilla de recuperación enviada a {recipient_id}")
+                else:
+                    print(f"⚠️ No se encontró estado para creador {creador_id}, no se pudo enviar plantilla.")
+            else:
+                print(f"⚠️ El destinatario {recipient_id} no es un aspirante registrado.")
+
+        # ---------------------------------------------------------
+        # OTROS ERRORES (Opcional)
+        # ---------------------------------------------------------
+        elif code == 131026:
+            print("⚠️ Mensaje no entregado: Usuario bloqueó al bot o no tiene WhatsApp.")
+            # Aquí podrías marcar al usuario como 'inactivo' en tu BD
+
+
+def enviar_confirmacion_interactiva(numero, nickname, phone_id, token):
+    """
+    Envía un mensaje con dos botones: SÍ y NO.
+    """
+    url = f"https://graph.facebook.com/v19.0/{phone_id}/messages"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    mensaje_texto = f"Encontramos el usuario: *{nickname}*. ¿Eres tú?"
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": numero,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": mensaje_texto},
+            "action": {
+                "buttons": [
+                    {
+                        "type": "reply",
+                        "reply": {"id": "BTN_CONFIRM_YES", "title": "Sí, soy yo"}
+                    },
+                    {
+                        "type": "reply",
+                        "reply": {"id": "BTN_CONFIRM_NO", "title": "No, corregir"}
+                    }
+                ]
+            }
+        }
+    }
+    try:
+        requests.post(url, headers=headers, json=payload)
+    except Exception as e:
+        print(f"Error enviando botones: {e}")
