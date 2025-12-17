@@ -3456,21 +3456,27 @@ def actualizar_estado_aspirante(data: EstadoEvalInput):
         # subdominio = current_tenant.get()
         subdominio = 'test'
         # Asumo que esta función ya la tienes importada
-        cuenta = obtener_cuenta_por_subdominio(subdominio)
+        # cuenta = obtener_cuenta_por_subdominio(subdominio)
 
-        if not cuenta:
-            return JSONResponse(
-                {"error": f"No se encontraron credenciales para {subdominio}"},
-                status_code=404
-            )
+        # if not cuenta:
+        #     return JSONResponse(
+        #         {"error": f"No se encontraron credenciales para {subdominio}"},
+        #         status_code=404
+        #     )
+        #
+        # token_cliente = cuenta["access_token"]
+        # phone_id_cliente = cuenta["phone_number_id"]
+        # business_name = cuenta.get("business_name", "la agencia")
 
-        token_cliente = cuenta["access_token"]
-        phone_id_cliente = cuenta["phone_number_id"]
-        business_name = cuenta.get("business_name", "la agencia")
 
-        # 2. Contexto (Opcional, si usas logs globales)
-        current_token.set(token_cliente)
-        current_phone_id.set(phone_id_cliente)
+        token_cliente = 'EAAJ4EEYGr4MBP6vKlAOhKzDM0bZBINqLxM5vQZAkSbxdyTAiv0muncuvZBZBhAoDdTshsz1FmEvqdZByWfYQA8VcL3g8BIWMQZCNGBrZAWZAz6HRSzSgP2WV93B962N4e3VmLCfTtO2nsBfl53i9qVXX9ywTOdsuhYaSf3W3IVS5MdKvl53lppC2zV9qlIZCYvQacmsXZBoSgVDZAiD6zKZBOOLN3FVzE90xKAF1y07zECxiGb2bVxoi2jGjEIBA'
+        phone_id_cliente ='840551055814715'
+        business_name = 'Prestige Agency'
+
+
+        # # 2. Contexto (Opcional, si usas logs globales)
+        # current_token.set(token_cliente)
+        # current_phone_id.set(phone_id_cliente)
 
         # 2. Obtener datos del creador
         # info_creador = obtener_info_creador(data.creador_id)
