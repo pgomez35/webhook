@@ -3738,40 +3738,42 @@ def _normalizar_entrada_whatsapp(mensaje):
 async def whatsapp_webhook(request: Request):
     data = await request.json()
 
-    # 1. Extracción Inicial
-    webhook_data = _extract_webhook_data(data)
-    if not webhook_data:
-        return {"status": "ok"}
+    try:
+        webhook_data = _extract_webhook_data(data)
+        if not webhook_data:
+            return {"status": "ok"}
 
-    value = webhook_data["value"]
+        field = webhook_data.get("field")
+        value = webhook_data.get("value")
 
-    # 2. Contexto del Tenant (Grupo Administrativo)
-    metadata = value.get("metadata", {})
-    phone_number_id = metadata.get("phone_number_id")
-    cuenta_info = _setup_tenant_context(phone_number_id)
+        # 1. account_update
+        if field == "account_update":
+            return {"status": "ok"}
 
-    if not cuenta_info:
-        return {"status": "ignored"}
+        # 2. Contexto tenant
+        metadata = value.get("metadata", {})
+        phone_number_id = metadata.get("phone_number_id")
 
-    tenant_name = cuenta_info["tenant_name"]
-    token_access = cuenta_info["access_token"]
+        cuenta_info = _setup_tenant_context(phone_number_id)
+        if not cuenta_info:
+            return {"status": "ignored"}
 
-    # 3. Manejo de Status (Sent/Delivered/Read)
-    statuses = value.get("statuses", [])
-    if statuses:
-        # AHORA PASAMOS EL TOKEN TAMBIÉN
-        await _handle_statuses(
-            statuses=statuses,
-            tenant_name=tenant_name,
-            phone_number_id=phone_number_id,
-            token_access=cuenta_info["access_token"],  # <--- IMPORTANTE AGREGAR ESTO
-            raw_payload=value
-        )
-        return {"status": "ok"}
+        tenant_name = cuenta_info["tenant_name"]
+        token_access = cuenta_info["access_token"]
 
-    # 4. Manejo de Mensajes (Core Logic)
-    if "messages" in value:
-        for mensaje in value["messages"]:
+        # 3. Statuses (SIN return)
+        statuses = value.get("statuses", [])
+        if statuses:
+            await _handle_statuses(
+                statuses=statuses,
+                tenant_name=tenant_name,
+                phone_number_id=phone_number_id,
+                token_access=token_access,
+                raw_payload=value
+            )
+
+        # 4. Mensajes
+        for mensaje in value.get("messages", []):
             await _procesar_mensaje_unico(
                 mensaje,
                 tenant_name,
@@ -3779,7 +3781,60 @@ async def whatsapp_webhook(request: Request):
                 token_access
             )
 
+    except Exception as e:
+        print("❌ Error webhook:", e)
+        traceback.print_exc()
+
     return {"status": "ok"}
+
+
+
+# @router.post("/webhook")
+# async def whatsapp_webhookV2(request: Request):
+#     data = await request.json()
+#
+#     # 1. Extracción Inicial
+#     webhook_data = _extract_webhook_data(data)
+#     if not webhook_data:
+#         return {"status": "ok"}
+#
+#     value = webhook_data["value"]
+#
+#     # 2. Contexto del Tenant (Grupo Administrativo)
+#     metadata = value.get("metadata", {})
+#     phone_number_id = metadata.get("phone_number_id")
+#     cuenta_info = _setup_tenant_context(phone_number_id)
+#
+#     if not cuenta_info:
+#         return {"status": "ignored"}
+#
+#     tenant_name = cuenta_info["tenant_name"]
+#     token_access = cuenta_info["access_token"]
+#
+#     # 3. Manejo de Status (Sent/Delivered/Read)
+#     statuses = value.get("statuses", [])
+#     if statuses:
+#         # AHORA PASAMOS EL TOKEN TAMBIÉN
+#         await _handle_statuses(
+#             statuses=statuses,
+#             tenant_name=tenant_name,
+#             phone_number_id=phone_number_id,
+#             token_access=cuenta_info["access_token"],  # <--- IMPORTANTE AGREGAR ESTO
+#             raw_payload=value
+#         )
+#         return {"status": "ok"}
+#
+#     # 4. Manejo de Mensajes (Core Logic)
+#     if "messages" in value:
+#         for mensaje in value["messages"]:
+#             await _procesar_mensaje_unico(
+#                 mensaje,
+#                 tenant_name,
+#                 phone_number_id,
+#                 token_access
+#             )
+#
+#     return {"status": "ok"}
 
 
 # --- SUB-FUNCIONES DE ORQUESTACIÓN ---
