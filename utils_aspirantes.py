@@ -115,29 +115,27 @@ def enviar_plantilla_estado_evaluacion(creador_id, estado_evaluacion, phone_id, 
     }
     enviar_a_meta(payload, phone_id, token)
 
-
 def Enviar_menu_quickreply(creador_id, estado_evaluacion, phone_id, token, telefono):
-    """
-    Envía el menú real de opciones según el estado.
-    Se ejecuta cuando el usuario da clic en "Opciones".
-    """
     botones = []
     texto_menu = "Elige una opción:"
 
     if estado_evaluacion == "solicitud_prueba_tiktok":
         texto_menu = "¿Listo para tu prueba?"
         botones = [
-            {"id": "BTN_ENVIAR_LINK_TIKTOK", "titulo": "Enviar Link Live"},
-            {"id": "BTN_VER_TUTORIAL", "titulo": "Ver Tutorial"}
-        ]
-    elif estado_evaluacion == "documentacion":
-        botones = [
-            {"id": "BTN_SUBIR_CEDULA", "titulo": "Subir Cédula"},
-            {"id": "BTN_HABLAR_ASESOR", "titulo": "Hablar Asesor"}
+            {"id": "BTN_ENVIAR_LINK_TIKTOK", "title": "Enviar Link Live"},
+            {"id": "BTN_VER_TUTORIAL", "title": "Ver Tutorial"}
         ]
 
-    # Construir estructura API (Máximo 3 botones para QuickReply interactivo)
-    botones_api = [{"type": "reply", "reply": b} for b in botones]
+    botones_api = [
+        {
+            "type": "reply",
+            "reply": {
+                "id": b["id"],
+                "title": b["title"]
+            }
+        }
+        for b in botones
+    ]
 
     payload = {
         "messaging_product": "whatsapp",
@@ -149,6 +147,7 @@ def Enviar_menu_quickreply(creador_id, estado_evaluacion, phone_id, token, telef
             "action": {"buttons": botones_api}
         }
     }
+
     enviar_a_meta(payload, phone_id, token)
 
 
@@ -371,3 +370,38 @@ def enviar_confirmacion_interactiva(numero, nickname, phone_id, token):
         requests.post(url, headers=headers, json=payload)
     except Exception as e:
         print(f"Error enviando botones: {e}")
+
+# def Enviar_menu_quickreply(creador_id, estado_evaluacion, phone_id, token, telefono):
+#     """
+#     Envía el menú real de opciones según el estado.
+#     Se ejecuta cuando el usuario da clic en "Opciones".
+#     """
+#     botones = []
+#     texto_menu = "Elige una opción:"
+#
+#     if estado_evaluacion == "solicitud_prueba_tiktok":
+#         texto_menu = "¿Listo para tu prueba?"
+#         botones = [
+#             {"id": "BTN_ENVIAR_LINK_TIKTOK", "titulo": "Enviar Link Live"},
+#             {"id": "BTN_VER_TUTORIAL", "titulo": "Ver Tutorial"}
+#         ]
+#     elif estado_evaluacion == "documentacion":
+#         botones = [
+#             {"id": "BTN_SUBIR_CEDULA", "titulo": "Subir Cédula"},
+#             {"id": "BTN_HABLAR_ASESOR", "titulo": "Hablar Asesor"}
+#         ]
+#
+#     # Construir estructura API (Máximo 3 botones para QuickReply interactivo)
+#     botones_api = [{"type": "reply", "reply": b} for b in botones]
+#
+#     payload = {
+#         "messaging_product": "whatsapp",
+#         "to": telefono,
+#         "type": "interactive",
+#         "interactive": {
+#             "type": "button",
+#             "body": {"text": texto_menu},
+#             "action": {"buttons": botones_api}
+#         }
+#     }
+#     enviar_a_meta(payload, phone_id, token)
