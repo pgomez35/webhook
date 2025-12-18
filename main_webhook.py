@@ -3790,8 +3790,7 @@ async def _procesar_mensaje_unico(mensaje, tenant_name, phone_number_id, token):
             wa_id=wa_id,
             tipo=tipo,
             texto=texto,
-            payload_id=payload_id,
-            token_cliente=token
+            payload_id=payload_id
         )
 
         if procesado_aspirante:
