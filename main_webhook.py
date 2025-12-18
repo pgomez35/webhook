@@ -1574,8 +1574,158 @@ def _process_interactive_message(mensaje: dict, numero: str, paso: Optional[str 
     
     return {"status": "ok"}
 
-
 def _process_new_user_onboarding(
+    mensaje: dict,
+    numero: str,
+    tipo: str,
+    texto: str,
+    texto_lower: str,
+    payload: str,
+    paso: str | None,
+    tenant_name: str,
+    phone_id: str,
+    token: str
+) -> dict | None:
+    """
+    Flujo de onboarding con confirmación por botones.
+    """
+
+    # -----------------------------------------------------
+    # VALIDACIÓN DE TIPO
+    # -----------------------------------------------------
+    if tipo not in ("text", "interactive"):
+        return None
+
+    # -----------------------------------------------------
+    # VALIDAR / REINICIAR FLUJO
+    # -----------------------------------------------------
+    pasos_validos = {
+        None,
+        "esperando_usuario_tiktok",
+        "confirmando_nombre",
+        "encuesta_enviada"
+    }
+
+    if paso not in pasos_validos:
+        eliminar_flujo(numero)
+        paso = None
+
+    # -----------------------------------------------------
+    # PASO 0 - BIENVENIDA
+    # -----------------------------------------------------
+    if paso is None:
+        enviar_mensaje(
+            numero,
+            "¡Hola! 👋 Bienvenido.\n\n"
+            "Para comenzar, por favor escribe tu *usuario de TikTok* (sin @)."
+        )
+        actualizar_flujo(numero, "esperando_usuario_tiktok")
+        return {"status": "ok"}
+
+    # -----------------------------------------------------
+    # PASO 1 - ESPERANDO USUARIO TIKTOK
+    # -----------------------------------------------------
+    if paso == "esperando_usuario_tiktok":
+
+        if tipo != "text":
+            enviar_mensaje(numero, "✍️ Por favor escribe tu usuario de TikTok.")
+            return {"status": "ok"}
+
+        usuario_tiktok = texto.strip().lstrip("@")
+        aspirante = buscar_aspirante_por_usuario_tiktok(usuario_tiktok)
+
+        if not aspirante:
+            enviar_mensaje(
+                numero,
+                "❌ No encontramos ese usuario.\n"
+                "Verifica e inténtalo nuevamente."
+            )
+            return {"status": "ok"}
+
+        nombre = aspirante.get("nickname") or aspirante.get("nombre_real") or "(sin nombre)"
+
+        # Guardar temporal
+        redis_set_temp(numero, aspirante, ttl=900)
+
+        # Enviar confirmación
+        enviar_confirmacion_interactiva(
+            numero=numero,
+            nombre=nombre,
+            phone_id=phone_id,
+            token=token
+        )
+
+        actualizar_flujo(numero, "confirmando_nombre")
+        return {"status": "ok"}
+
+    # -----------------------------------------------------
+    # PASO 2 - CONFIRMACIÓN
+    # -----------------------------------------------------
+    if paso == "confirmando_nombre":
+
+        es_si = payload == "BTN_CONFIRM_YES" or texto_lower in ("si", "sí", "s", "yes")
+        es_no = payload == "BTN_CONFIRM_NO" or texto_lower in ("no", "n")
+
+        if es_si:
+            aspirante = redis_get_temp(numero)
+
+            if not aspirante:
+                enviar_mensaje(
+                    numero,
+                    "⏳ La sesión expiró. Escribe tu usuario de TikTok nuevamente."
+                )
+                actualizar_flujo(numero, "esperando_usuario_tiktok")
+                return {"status": "ok"}
+
+            actualizar_telefono_aspirante(aspirante["id"], numero)
+
+            redis_delete_temp(numero)
+
+            url_encuesta = construir_url_actualizar_perfil(
+                numero,
+                tenant_name=tenant_name
+            )
+
+            enviar_mensaje(
+                numero,
+                f"📋 ¡Perfecto!\n\n"
+                f"Para continuar, completa la siguiente encuesta:\n\n{url_encuesta}"
+            )
+
+            actualizar_flujo(numero, "encuesta_enviada")
+            return {"status": "ok"}
+
+        if es_no:
+            redis_delete_temp(numero)
+            enviar_mensaje(
+                numero,
+                "👌 Entendido.\n"
+                "Escribe nuevamente tu usuario de TikTok correcto."
+            )
+            actualizar_flujo(numero, "esperando_usuario_tiktok")
+            return {"status": "ok"}
+
+        enviar_mensaje(
+            numero,
+            "⚠️ Por favor selecciona *Sí* o *No* usando los botones."
+        )
+        return {"status": "ok"}
+
+    # -----------------------------------------------------
+    # PASO FINAL - ENCUESTA YA ENVIADA
+    # -----------------------------------------------------
+    if paso == "encuesta_enviada":
+        enviar_mensaje(
+            numero,
+            "📋 Ya te enviamos el enlace de la encuesta.\n"
+            "Si necesitas ayuda, escríbenos."
+        )
+        return {"status": "ok"}
+
+    return None
+
+
+def _process_new_user_onboarding2(
         mensaje: dict,
         numero: str,
         texto: str,
@@ -3691,6 +3841,89 @@ async def whatsapp_webhook(request: Request):
 
 
 async def _procesar_mensaje_unico(mensaje, tenant_name, phone_number_id, token):
+    """
+    Orquestador principal:
+    1. Normaliza
+    2. Registra mensaje
+    3. Onboarding (nuevo usuario)
+    4. Flujo Aspirante
+    5. Flujo General
+    """
+
+    wa_id = mensaje.get("from")
+
+    # ---------------------------------------------------------
+    # A. NORMALIZACIÓN
+    # ---------------------------------------------------------
+    tipo, texto, payload_id = _normalizar_entrada_whatsapp(mensaje)
+    texto_lower = (texto or "").lower()
+
+    # ---------------------------------------------------------
+    # B. LOG EN BD
+    # ---------------------------------------------------------
+    try:
+        registrar_mensaje_recibido(
+            tenant=tenant_name,
+            phone_number_id=phone_number_id,
+            display_phone_number=wa_id,
+            wa_id=wa_id,
+            message_id=mensaje.get("id"),
+            content=f"[{tipo}] {texto or ''} {payload_id or ''}",
+            raw_payload=mensaje
+        )
+    except Exception as e:
+        print(f"⚠️ Log Error (No crítico): {e}")
+
+    # ---------------------------------------------------------
+    # C. ONBOARDING (PRIMERO)
+    # ---------------------------------------------------------
+    paso = obtener_flujo(wa_id)
+    usuario_bd = buscar_usuario_por_telefono(wa_id)
+
+    if not usuario_bd:
+        resultado = _process_new_user_onboarding(
+            mensaje=mensaje,
+            numero=wa_id,
+            tipo=tipo,
+            texto=texto,
+            texto_lower=texto_lower,
+            payload=payload_id,
+            paso=paso,
+            tenant_name=tenant_name,
+            phone_id=phone_number_id,
+            token=token
+        )
+
+        if resultado:
+            return
+
+    # ---------------------------------------------------------
+    # D. FLUJO ASPIRANTE
+    # ---------------------------------------------------------
+    try:
+        procesado_aspirante = procesar_flujo_aspirante(
+            tenant=tenant_name,
+            phone_number_id=phone_number_id,
+            wa_id=wa_id,
+            tipo=tipo,
+            texto=texto,
+            payload_id=payload_id,
+            token_cliente=token
+        )
+
+        if procesado_aspirante:
+            return
+
+    except Exception as e:
+        print(f"❌ Error flujo aspirante: {e}")
+
+    # ---------------------------------------------------------
+    # E. FLUJO GENERAL
+    # ---------------------------------------------------------
+    _process_single_message(mensaje, tenant_name)
+
+
+async def _procesar_mensaje_unicoV1(mensaje, tenant_name, phone_number_id, token):
     wa_id = mensaje.get("from")
 
     # A. Normalización
