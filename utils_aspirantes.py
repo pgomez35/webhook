@@ -23,6 +23,11 @@ def guardar_estado_eval(creador_id, estado):
 def buscar_estado_creador(creador_id):
     # SELECT estado_evaluacion FROM perfil_creador WHERE creador_id = ...
     # Retorno simulado para el ejemplo:
+    return "inicio_onboarding"
+
+def buscar_estado_creadorV0(creador_id):
+    # SELECT estado_evaluacion FROM perfil_creador WHERE creador_id = ...
+    # Retorno simulado para el ejemplo:
     return "solicitud_prueba_tiktok"
 
 

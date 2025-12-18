@@ -1780,12 +1780,12 @@ def _process_tiktok_live_link(numero, texto, tenant_name):
     pass
 
 
-def _process_single_message(mensaje: dict, tenant_name: str, datos_normalizados: dict = None) -> dict:
+def _process_single_message(mensaje: dict, tenant_name: str, datos_normalizados: dict = None):
     """
-    Maneja Onboarding, Admins y Fallback.
-    Ya NO maneja lógica de evaluación de aspirantes (delegada al servicio superior).
+    Maneja Admins, Creadores y Fallback.
+    NO maneja onboarding ni evaluación.
     """
-    # Si no nos pasaron datos normalizados (por compatibilidad), los extraemos
+
     if not datos_normalizados:
         tipo, texto, payload = _normalizar_entrada_whatsapp(mensaje)
         numero = mensaje.get("from")
@@ -1797,55 +1797,29 @@ def _process_single_message(mensaje: dict, tenant_name: str, datos_normalizados:
         payload = datos_normalizados["payload"]
         paso = datos_normalizados["paso"]
 
-    texto_lower = texto.lower()
+    texto_lower = texto.lower() if texto else ""
 
-    # Consultamos usuario (si no lo tenemos cacheado)
     usuario_bd = buscar_usuario_por_telefono(numero)
     rol = obtener_rol_usuario(numero) if usuario_bd else None
 
     print(f"📍 [General Flow] número={numero}, rol={rol}, paso={paso}")
 
     # ---------------------------------------------------------
-    # 🗑️ SECCIÓN ELIMINADA: "esperando_link_tiktok_live"
-    # MOTIVO: Ya fue manejado por procesar_flujo_aspirante() antes de llegar aquí.
+    # 1. INTERACTIVOS (NO aspirantes)
     # ---------------------------------------------------------
-
-    # ---------------------------------------------------------
-    # 1. MENSAJES INTERACTIVOS (Botones de Onboarding/Admin)
-    # ---------------------------------------------------------
-    # Si el flujo de aspirantes no capturó el botón, quizás es un botón de registro
     if tipo == "interactive" or payload:
-        # Aquí puedes manejar botones que NO sean de evaluación (ej: "Aceptar Términos")
         return _process_interactive_message(mensaje, numero, paso)
 
     # ---------------------------------------------------------
-    # 2. NUEVO USUARIO: FLUJO DE ONBOARDING (Registro)
-    # ---------------------------------------------------------
-    if not usuario_bd:
-        # Si es texto y no existe, iniciamos registro
-        if tipo == "text":
-            resultado = _process_new_user_onboarding(mensaje, numero, texto, texto_lower, paso, tenant_name)
-            if resultado:
-                return resultado
-
-    # ---------------------------------------------------------
-    # 3. ADMIN O CREADOR YA REGISTRADO (Menú Admin)
+    # 2. ADMIN / CREADOR
     # ---------------------------------------------------------
     if usuario_bd and rol in ("admin", "creador"):
-        # Nota: Si es 'creador' pero estaba en flujo de evaluación,
-        # el Nivel 2 lo hubiera interceptado. Si llega aquí, es un mensaje genérico.
         return _process_admin_creador_message(numero, texto_lower, rol)
 
     # ---------------------------------------------------------
-    # 4. FALLBACK / CHATBOT GENÉRICO
+    # 3. FALLBACK
     # ---------------------------------------------------------
-    # Si el usuario es aspirante pero escribió algo que el flujo de evaluación
-    # no entendió (y procesar_flujo_aspirante retornó False), cae aquí.
-    # Aquí puedes conectar tu IA o mandar mensaje por defecto.
-
-    print(f"🤖 Delegando a ChatBot IA (Fallback): {texto_lower}")
-    # return chatbot_response(numero, texto)
-
+    print(f"🤖 Fallback IA: {texto_lower}")
     return {"status": "ok_fallback"}
 
 
@@ -2828,46 +2802,6 @@ def enviar_citas_agendadas(numero: str) -> None:
     )
 
 
-
-def buscar_usuario_por_telefono(numero: str):
-    try:
-        numero = normalizar_numero(numero)
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-                # Buscar en creadores
-                cur.execute("""
-                    SELECT c.id, c.nickname, COALESCE(NULLIF(TRIM(c.nickname), ''), c.nombre_real) AS nombre ,
-                           COALESCE(r.nombre, 'aspirante') AS rol
-                    FROM creadores c
-                    LEFT JOIN roles r ON c.rol_id = r.id
-                    WHERE c.telefono = %s OR c.whatsapp = %s
-                    LIMIT 1;
-                """, (numero, numero))
-                row = cur.fetchone()
-                if row:
-                    return dict(zip([desc[0] for desc in cur.description], row))
-
-                # Buscar en admin_usuario
-                cur.execute("""
-                    SELECT id, username AS nickname,
-                           nombre_completo AS nombre,
-                           'admin' AS rol
-                    FROM admin_usuario
-                    WHERE telefono = %s
-                    LIMIT 1;
-                """, (numero,))
-                row = cur.fetchone()
-                if row:
-                    return dict(zip([desc[0] for desc in cur.description], row))
-                return None
-
-    except Exception as e:
-        import traceback
-        print("❌ Error al buscar usuario por teléfono:", e)
-        traceback.print_exc()
-        return None
-
-
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "https://talentum-manager.com")
 
 def construir_url_portal_citas(token: str, tenant_name: Optional[str] = None) -> str:
@@ -3659,46 +3593,6 @@ def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, payloa
 
 # --- SUB-FUNCIONES DE ORQUESTACIÓN ---
 
-async def _procesar_mensaje_unico(mensaje, tenant_name, phone_number_id, token_access):
-    wa_id = mensaje.get("from")
-
-    # 1. NORMALIZAR (Hacerlo una sola vez)
-    tipo, texto, payload = _normalizar_entrada_whatsapp(mensaje)
-
-    # 2. LOGGING / BD (Tu lógica de registro existente)
-    # registrar_mensaje_recibido(...)
-
-    # 3. 🟢 PRIORIDAD 1: Chat Libre (Intervención Humana)
-    # Consultamos flujo antes de nada. Si está hablando con humano, nadie interrumpe.
-    paso_actual = obtener_flujo(wa_id)
-    if paso_actual == "chat_libre":
-        return _process_chat_libre_message(mensaje, wa_id)
-
-    # 4. 🟢 PRIORIDAD 2: Flujo de Aspirantes (Evaluación / Links / Estados)
-    # Llamamos a tu NUEVA lógica.
-    procesado_aspirante = procesar_flujo_aspirante(
-        tenant=tenant_name,
-        phone_number_id=phone_number_id,
-        wa_id=wa_id,
-        tipo=tipo,
-        texto=texto,
-        payload_id=payload  # Pasamos el payload ya limpio
-    )
-
-    if procesado_aspirante:
-        # ✅ Si la lógica de aspirantes manejó el mensaje (ej: guardó el link de tiktok),
-        # TERMINAMOS AQUÍ. No llamamos a _process_single_message.
-        return {"status": "handled_by_aspirant_flow"}
-
-    # 5. 🟢 PRIORIDAD 3: Flujo General (Onboarding / Admin / Bot Conversacional)
-    # Si llegamos aquí, es porque NO es un aspirante en evaluación activa
-    # o escribió algo que el flujo de evaluación no entendió.
-    return _process_single_message(
-        mensaje=mensaje,
-        tenant_name=tenant_name,
-        # OPTIMIZACIÓN: Pasamos los datos ya procesados para no buscarlos de nuevo
-        datos_normalizados={"wa_id": wa_id, "tipo": tipo, "texto": texto, "payload": payload, "paso": paso_actual}
-    )
 
 def _normalizar_entrada_whatsapp(mensaje):
     """
@@ -3743,12 +3637,20 @@ async def whatsapp_webhook(request: Request):
         if not webhook_data:
             return {"status": "ok"}
 
-        field = webhook_data.get("field")
+        entry = webhook_data.get("entry")
+        change = webhook_data.get("change")
         value = webhook_data.get("value")
+        field = webhook_data.get("field")
+        event = webhook_data.get("event")
 
-        # 1. account_update
+        # 1. account_update (NO usa tenant ni phone_number_id)
         if field == "account_update":
-            return {"status": "ok"}
+            return _handle_account_update_event(
+                entry=entry,
+                change=change,
+                value=value,
+                event=event
+            )
 
         # 2. Contexto tenant
         metadata = value.get("metadata", {})
@@ -3788,102 +3690,81 @@ async def whatsapp_webhook(request: Request):
     return {"status": "ok"}
 
 
-
-# @router.post("/webhook")
-# async def whatsapp_webhookV2(request: Request):
-#     data = await request.json()
-#
-#     # 1. Extracción Inicial
-#     webhook_data = _extract_webhook_data(data)
-#     if not webhook_data:
-#         return {"status": "ok"}
-#
-#     value = webhook_data["value"]
-#
-#     # 2. Contexto del Tenant (Grupo Administrativo)
-#     metadata = value.get("metadata", {})
-#     phone_number_id = metadata.get("phone_number_id")
-#     cuenta_info = _setup_tenant_context(phone_number_id)
-#
-#     if not cuenta_info:
-#         return {"status": "ignored"}
-#
-#     tenant_name = cuenta_info["tenant_name"]
-#     token_access = cuenta_info["access_token"]
-#
-#     # 3. Manejo de Status (Sent/Delivered/Read)
-#     statuses = value.get("statuses", [])
-#     if statuses:
-#         # AHORA PASAMOS EL TOKEN TAMBIÉN
-#         await _handle_statuses(
-#             statuses=statuses,
-#             tenant_name=tenant_name,
-#             phone_number_id=phone_number_id,
-#             token_access=cuenta_info["access_token"],  # <--- IMPORTANTE AGREGAR ESTO
-#             raw_payload=value
-#         )
-#         return {"status": "ok"}
-#
-#     # 4. Manejo de Mensajes (Core Logic)
-#     if "messages" in value:
-#         for mensaje in value["messages"]:
-#             await _procesar_mensaje_unico(
-#                 mensaje,
-#                 tenant_name,
-#                 phone_number_id,
-#                 token_access
-#             )
-#
-#     return {"status": "ok"}
-
-
-# --- SUB-FUNCIONES DE ORQUESTACIÓN ---
-
 async def _procesar_mensaje_unico(mensaje, tenant_name, phone_number_id, token):
     wa_id = mensaje.get("from")
 
-    # A. Normalizar datos (Abstraer si es template button o interactive button)
+    # A. Normalización
     tipo, texto, payload_id = _normalizar_entrada_whatsapp(mensaje)
+    texto_lower = texto.lower() if texto else ""
 
-    # B. Registro en Base de Datos (Logging)
+    # B. Logging
     try:
         registrar_mensaje_recibido(
             tenant=tenant_name,
             phone_number_id=phone_number_id,
-            display_phone_number=mensaje.get("from"),  # Ajustar según metadata
+            display_phone_number=wa_id,
             wa_id=wa_id,
             message_id=mensaje.get("id"),
             content=f"[{tipo}] {texto or ''} {payload_id or ''}",
             raw_payload=mensaje
         )
     except Exception as e:
-        print(f"⚠️ Log Error: {e}")
+        print(f"⚠️ Log Error (No crítico): {e}")
 
-    # C. CADENA DE RESPONSABILIDAD (La lógica de prioridades)
+    # ---------------------------------------------------------
+    # 🆕 NIVEL 1: ONBOARDING (PRIORIDAD ABSOLUTA)
+    # ---------------------------------------------------------
+    usuario_bd = buscar_usuario_por_telefono(wa_id)
+    paso = obtener_flujo(wa_id)
 
-    # NIVEL 1: Flujo de Aspirantes (Tu requerimiento específico)
-    #
-    procesado_aspirante = procesar_flujo_aspirante(
-        tenant=tenant_name,
-        phone_number_id=phone_number_id,
-        wa_id=wa_id,
-        tipo=tipo,
-        texto=texto,
-        payload_id=payload_id
-    )
+    if not usuario_bd and tipo == "text":
+        resultado = _process_new_user_onboarding(
+            mensaje=mensaje,
+            numero=wa_id,
+            texto=texto,
+            texto_lower=texto_lower,
+            paso=paso,
+            tenant_name=tenant_name,
+            payload=payload_id,
+            phone_id=phone_number_id,
+            token=token
+        )
+        if resultado:
+            return  # ⛔ nadie más responde
 
-    if procesado_aspirante:
-        return  # ✅ Ya se manejó, detenemos el flujo aquí.
+    # ---------------------------------------------------------
+    # NIVEL 2: FLUJO ASPIRANTE
+    # ---------------------------------------------------------
+    try:
+        procesado_aspirante = procesar_flujo_aspirante(
+            tenant=tenant_name,
+            phone_number_id=phone_number_id,
+            wa_id=wa_id,
+            tipo=tipo,
+            texto=texto,
+            payload_id=payload_id,
+            token_cliente=token
+        )
 
-    # NIVEL 2: Reenganche Genérico (Si/No) - Opcional, legacy code
-    if payload_id in ["BTN_SI", "BTN_NO"] or texto.lower() in ["si", "no"]:
-        # Tu lógica antigua de sí/no genérica
-        pass
+        if procesado_aspirante:
+            return
 
-        # NIVEL 3: Chat Conversacional (Fallback AI)
-    # Si no es aspirante o no está en un estado que bloquee el chat
-    print(f"🤖 Delegando a ChatBot: {wa_id}")
-    _process_single_message(mensaje, tenant_name)
+    except Exception as e:
+        print(f"❌ Error en flujo aspirante: {e}")
+
+    # ---------------------------------------------------------
+    # NIVEL 3: FLUJO GENERAL (Admin / Bot)
+    # ---------------------------------------------------------
+    datos_normalizados = {
+        "wa_id": wa_id,
+        "tipo": tipo,
+        "texto": texto,
+        "payload": payload_id,
+        "paso": paso
+    }
+
+    _process_single_message(mensaje, tenant_name, datos_normalizados)
+
 
 
 def _normalizar_entrada_whatsapp(mensaje):
@@ -4148,4 +4029,144 @@ async def _procesar_error_envio(status_obj, tenant, phone_id, token):
 #             traceback.print_exc()
 
 
+
+# async def _procesar_mensaje_unico(mensaje, tenant_name, phone_number_id, token_access):
+#     wa_id = mensaje.get("from")
+#
+#     # 1. NORMALIZAR (Hacerlo una sola vez)
+#     tipo, texto, payload = _normalizar_entrada_whatsapp(mensaje)
+#
+#     # 2. LOGGING / BD (Tu lógica de registro existente)
+#     # registrar_mensaje_recibido(...)
+#
+#     # 3. 🟢 PRIORIDAD 1: Chat Libre (Intervención Humana)
+#     # Consultamos flujo antes de nada. Si está hablando con humano, nadie interrumpe.
+#     paso_actual = obtener_flujo(wa_id)
+#     if paso_actual == "chat_libre":
+#         return _process_chat_libre_message(mensaje, wa_id)
+#
+#     # 4. 🟢 PRIORIDAD 2: Flujo de Aspirantes (Evaluación / Links / Estados)
+#     # Llamamos a tu NUEVA lógica.
+#     procesado_aspirante = procesar_flujo_aspirante(
+#         tenant=tenant_name,
+#         phone_number_id=phone_number_id,
+#         wa_id=wa_id,
+#         tipo=tipo,
+#         texto=texto,
+#         payload_id=payload  # Pasamos el payload ya limpio
+#     )
+#
+#     if procesado_aspirante:
+#         # ✅ Si la lógica de aspirantes manejó el mensaje (ej: guardó el link de tiktok),
+#         # TERMINAMOS AQUÍ. No llamamos a _process_single_message.
+#         return {"status": "handled_by_aspirant_flow"}
+#
+#     # 5. 🟢 PRIORIDAD 3: Flujo General (Onboarding / Admin / Bot Conversacional)
+#     # Si llegamos aquí, es porque NO es un aspirante en evaluación activa
+#     # o escribió algo que el flujo de evaluación no entendió.
+#     return _process_single_message(
+#         mensaje=mensaje,
+#         tenant_name=tenant_name,
+#         # OPTIMIZACIÓN: Pasamos los datos ya procesados para no buscarlos de nuevo
+#         datos_normalizados={"wa_id": wa_id, "tipo": tipo, "texto": texto, "payload": payload, "paso": paso_actual}
+#     )
+
+
+# async def _procesar_mensaje_unico(mensaje, tenant_name, phone_number_id, token):
+#     wa_id = mensaje.get("from")
+#
+#     # A. Normalizar datos (Abstraer si es template button o interactive button)
+#     tipo, texto, payload_id = _normalizar_entrada_whatsapp(mensaje)
+#
+#     # B. Registro en Base de Datos (Logging)
+#     try:
+#         registrar_mensaje_recibido(
+#             tenant=tenant_name,
+#             phone_number_id=phone_number_id,
+#             display_phone_number=mensaje.get("from"),  # Ajustar según metadata
+#             wa_id=wa_id,
+#             message_id=mensaje.get("id"),
+#             content=f"[{tipo}] {texto or ''} {payload_id or ''}",
+#             raw_payload=mensaje
+#         )
+#     except Exception as e:
+#         print(f"⚠️ Log Error: {e}")
+#
+#     # C. CADENA DE RESPONSABILIDAD (La lógica de prioridades)
+#
+#     # NIVEL 1: Flujo de Aspirantes (Tu requerimiento específico)
+#     #
+#     procesado_aspirante = procesar_flujo_aspirante(
+#         tenant=tenant_name,
+#         phone_number_id=phone_number_id,
+#         wa_id=wa_id,
+#         tipo=tipo,
+#         texto=texto,
+#         payload_id=payload_id
+#     )
+#
+#     if procesado_aspirante:
+#         return  # ✅ Ya se manejó, detenemos el flujo aquí.
+#
+#     # NIVEL 2: Reenganche Genérico (Si/No) - Opcional, legacy code
+#     if payload_id in ["BTN_SI", "BTN_NO"] or texto.lower() in ["si", "no"]:
+#         # Tu lógica antigua de sí/no genérica
+#         pass
+#
+#         # NIVEL 3: Chat Conversacional (Fallback AI)
+#     # Si no es aspirante o no está en un estado que bloquee el chat
+#     print(f"🤖 Delegando a ChatBot: {wa_id}")
+#     _process_single_message(mensaje, tenant_name)
+
+
+
+# @router.post("/webhook")
+# async def whatsapp_webhookV2(request: Request):
+#     data = await request.json()
+#
+#     # 1. Extracción Inicial
+#     webhook_data = _extract_webhook_data(data)
+#     if not webhook_data:
+#         return {"status": "ok"}
+#
+#     value = webhook_data["value"]
+#
+#     # 2. Contexto del Tenant (Grupo Administrativo)
+#     metadata = value.get("metadata", {})
+#     phone_number_id = metadata.get("phone_number_id")
+#     cuenta_info = _setup_tenant_context(phone_number_id)
+#
+#     if not cuenta_info:
+#         return {"status": "ignored"}
+#
+#     tenant_name = cuenta_info["tenant_name"]
+#     token_access = cuenta_info["access_token"]
+#
+#     # 3. Manejo de Status (Sent/Delivered/Read)
+#     statuses = value.get("statuses", [])
+#     if statuses:
+#         # AHORA PASAMOS EL TOKEN TAMBIÉN
+#         await _handle_statuses(
+#             statuses=statuses,
+#             tenant_name=tenant_name,
+#             phone_number_id=phone_number_id,
+#             token_access=cuenta_info["access_token"],  # <--- IMPORTANTE AGREGAR ESTO
+#             raw_payload=value
+#         )
+#         return {"status": "ok"}
+#
+#     # 4. Manejo de Mensajes (Core Logic)
+#     if "messages" in value:
+#         for mensaje in value["messages"]:
+#             await _procesar_mensaje_unico(
+#                 mensaje,
+#                 tenant_name,
+#                 phone_number_id,
+#                 token_access
+#             )
+#
+#     return {"status": "ok"}
+
+
+# --- SUB-FUNCIONES DE ORQUESTACIÓN ---
 
