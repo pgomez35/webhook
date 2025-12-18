@@ -1581,11 +1581,12 @@ from typing import Optional
 def _process_new_user_onboarding(
     mensaje: dict,
     numero: str,
+    tipo: str,                     # ✅ AGREGADO
     texto: str,
     texto_lower: str,
+    payload: str,
     paso: Optional[str | int],
     tenant_name: str,
-    payload: str = None,
     phone_id: str = None,
     token: str = None
 ) -> Optional[dict]:
