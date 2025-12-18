@@ -3048,38 +3048,7 @@ ESTADOS_TERMINALES = {
 }
 
 
-def obtener_estado_aspirante(tenant: str, wa_id: str) -> str | None:
-    """
-    Retorna el nombre_estado actual del aspirante según su wa_id.
-    """
-    try:
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT ea.nombre_estado
-                    FROM aspirantes a
-                    JOIN aspirante_estado_actual ae 
-                        ON ae.id_aspirante = a.id_aspirante
-                    JOIN estados_aspirante ea 
-                        ON ea.id_estado_aspirante = ae.id_estado_aspirante
-                    WHERE a.wa_id = %s
-                      AND ea.estado_activo = TRUE
-                    LIMIT 1
-                """, (wa_id,))
 
-                resultado = cur.fetchone()
-
-                return resultado[0] if resultado else None
-
-    except (OperationalError, DatabaseError) as e:
-        print(f"❌ Error de base de datos al obtener estado del aspirante: {e}")
-        traceback.print_exc()
-        return None
-
-    except Exception as e:
-        print(f"❌ Error inesperado al obtener estado del aspirante: {e}")
-        traceback.print_exc()
-        return None
 
 
 
@@ -3248,187 +3217,187 @@ def enviar_texto_simple(wa_id, texto):
 # ----VERSION WEBHOOK ANTERIOR-------
 # ---------------------------
 
-@router.post("/webhook")
-async def whatsapp_webhookV0(request: Request):
-    """
-    Endpoint principal para recibir webhooks de WhatsApp.
-    """
-    data = await request.json()
-    print("📩 Webhook recibido:", json.dumps(data, indent=2))
-
-    try:
-        webhook_data = _extract_webhook_data(data)
-        if not webhook_data:
-            return {"status": "ok"}
-
-        entry = webhook_data["entry"]
-        change = webhook_data["change"]
-        value = webhook_data["value"]
-        field = webhook_data["field"]
-        event = webhook_data["event"]
-
-        # ==============================
-        # CASO 1: account_update
-        # ==============================
-        if field == "account_update":
-            return _handle_account_update_event(entry, change, value, event)
-
-        # ==============================
-        # METADATA / TENANT
-        # ==============================
-        metadata = value.get("metadata", {})
-        phone_number_id = metadata.get("phone_number_id")
-
-        cuenta_info = _setup_tenant_context(phone_number_id)
-        if not cuenta_info:
-            return {"status": "ignored"}
-
-        tenant_name = cuenta_info["tenant_name"]
-        display_phone_number = metadata.get("display_phone_number", "")
-
-        # ==============================
-        # CASO 2: STATUSES
-        # ==============================
-        statuses = value.get("statuses", [])
-        if statuses:
-            for st in statuses:
-                try:
-                    actualizar_mensaje_desde_status(
-                        tenant=tenant_name,
-                        phone_number_id=phone_number_id,
-                        display_phone_number=display_phone_number,
-                        status_obj=st,
-                        raw_payload=value
-                    )
-                except Exception as e:
-                    print(f"⚠️ Error procesando status: {e}")
-                    traceback.print_exc()
-
-        # ==============================
-        # CASO 3: MENSAJES
-        # ==============================
-        mensajes = value.get("messages", [])
-        if not mensajes:
-            return {"status": "ok"}
-
-        for mensaje in mensajes:
-            procesado = False  # 🔑 CLAVE
-
-            wa_id = mensaje.get("from")
-            message_id = mensaje.get("id")
-            tipo = mensaje.get("type")
-
-            # ==============================
-            # REGISTRO EN BD
-            # ==============================
-            try:
-                if tipo == "text":
-                    content = mensaje.get("text", {}).get("body", "")
-                elif tipo == "audio":
-                    content = f"[Audio: {mensaje.get('audio', {}).get('id', 'unknown')}]"
-                elif tipo == "image":
-                    content = f"[Image: {mensaje.get('image', {}).get('id', 'unknown')}]"
-                elif tipo == "video":
-                    content = f"[Video: {mensaje.get('video', {}).get('id', 'unknown')}]"
-                elif tipo == "document":
-                    content = f"[Document: {mensaje.get('document', {}).get('filename', 'unknown')}]"
-                elif tipo == "interactive":
-                    content = "[Interactive]"
-                else:
-                    content = f"[{tipo}]"
-
-                registrar_mensaje_recibido(
-                    tenant=tenant_name,
-                    phone_number_id=phone_number_id,
-                    display_phone_number=display_phone_number,
-                    wa_id=wa_id,
-                    message_id=message_id,
-                    content=content,
-                    raw_payload=mensaje
-                )
-            except Exception as e:
-                print(f"⚠️ Error registrando mensaje: {e}")
-                traceback.print_exc()
-
-            # ==================================================
-            # 🟢 PRIORIDAD 1: MENÚ POR ESTADO (mensaje normal)
-            # ==================================================
-            if tipo in ["text", "audio", "image", "video", "document"]:
-                estado = obtener_estado_aspirante(tenant_name, wa_id)
-
-                if estado:
-                    enviar_menu_por_estado(
-                        token=cuenta_info["access_token"],
-                        wa_id=wa_id,
-                        estado=estado
-                    )
-                    procesado = True
-
-            # ==================================================
-            # 🟢 PRIORIDAD 2: INTERACTIVE (botones)
-            # ==================================================
-            if tipo == "interactive":
-                interactive = mensaje.get("interactive", {})
-                itype = interactive.get("type")
-
-                if itype == "button_reply":
-                    button_reply = interactive.get("button_reply", {})
-                    button_title = button_reply.get("title", "").strip().lower()
-
-                    # ------------------------------------
-                    # REENGANCHE (plantillas y cualquier botón "sí / no")
-                    # ------------------------------------
-                    if button_title in ("sí", "si", "yes", "continuar"):
-                        estado = obtener_estado_aspirante(tenant_name, wa_id)
-                        if estado:
-                            enviar_menu_por_estado(
-                                token=cuenta_info["access_token"],
-                                wa_id=wa_id,
-                                estado=estado
-                            )
-                        procesado = True
-
-                    elif button_title in ("no", "ahora no"):
-                        enviar_texto_simple(
-                            wa_id,
-                            "Perfecto 👍 Si deseas continuar más adelante, escríbenos."
-                        )
-                        procesado = True
-
-                    # ------------------------------------
-                    # BOTONES NORMALES (menús interactivos)
-                    # ------------------------------------
-                    else:
-                        # Aquí sí usamos el ID porque viene de mensajes interactivos NO plantilla
-                        button_id = button_reply.get("id")
-
-                        procesar_boton_interactivo(
-                            tenant=tenant_name,
-                            wa_id=wa_id,
-                            phone_number_id=phone_number_id,
-                            button_id=button_id
-                        )
-                        procesado = True
-
-            # ==================================================
-            # 🔁 DELEGAR A CHAT CONVERSACIONAL
-            # ==================================================
-            if not procesado:
-                _process_single_message(mensaje, tenant_name)
-
-        return {"status": "ok"}
-
-    except (IndexError, KeyError, TypeError) as e:
-        print(f"❌ Error estructura webhook: {e}")
-        traceback.print_exc()
-    except LookupError as e:
-        print(f"❌ Error contexto tenant: {e}")
-        traceback.print_exc()
-    except Exception as e:
-        print(f"❌ Error inesperado webhook: {e}")
-        traceback.print_exc()
-
-    return {"status": "ok"}
+# @router.post("/webhook")
+# async def whatsapp_webhookV0(request: Request):
+#     """
+#     Endpoint principal para recibir webhooks de WhatsApp.
+#     """
+#     data = await request.json()
+#     print("📩 Webhook recibido:", json.dumps(data, indent=2))
+#
+#     try:
+#         webhook_data = _extract_webhook_data(data)
+#         if not webhook_data:
+#             return {"status": "ok"}
+#
+#         entry = webhook_data["entry"]
+#         change = webhook_data["change"]
+#         value = webhook_data["value"]
+#         field = webhook_data["field"]
+#         event = webhook_data["event"]
+#
+#         # ==============================
+#         # CASO 1: account_update
+#         # ==============================
+#         if field == "account_update":
+#             return _handle_account_update_event(entry, change, value, event)
+#
+#         # ==============================
+#         # METADATA / TENANT
+#         # ==============================
+#         metadata = value.get("metadata", {})
+#         phone_number_id = metadata.get("phone_number_id")
+#
+#         cuenta_info = _setup_tenant_context(phone_number_id)
+#         if not cuenta_info:
+#             return {"status": "ignored"}
+#
+#         tenant_name = cuenta_info["tenant_name"]
+#         display_phone_number = metadata.get("display_phone_number", "")
+#
+#         # ==============================
+#         # CASO 2: STATUSES
+#         # ==============================
+#         statuses = value.get("statuses", [])
+#         if statuses:
+#             for st in statuses:
+#                 try:
+#                     actualizar_mensaje_desde_status(
+#                         tenant=tenant_name,
+#                         phone_number_id=phone_number_id,
+#                         display_phone_number=display_phone_number,
+#                         status_obj=st,
+#                         raw_payload=value
+#                     )
+#                 except Exception as e:
+#                     print(f"⚠️ Error procesando status: {e}")
+#                     traceback.print_exc()
+#
+#         # ==============================
+#         # CASO 3: MENSAJES
+#         # ==============================
+#         mensajes = value.get("messages", [])
+#         if not mensajes:
+#             return {"status": "ok"}
+#
+#         for mensaje in mensajes:
+#             procesado = False  # 🔑 CLAVE
+#
+#             wa_id = mensaje.get("from")
+#             message_id = mensaje.get("id")
+#             tipo = mensaje.get("type")
+#
+#             # ==============================
+#             # REGISTRO EN BD
+#             # ==============================
+#             try:
+#                 if tipo == "text":
+#                     content = mensaje.get("text", {}).get("body", "")
+#                 elif tipo == "audio":
+#                     content = f"[Audio: {mensaje.get('audio', {}).get('id', 'unknown')}]"
+#                 elif tipo == "image":
+#                     content = f"[Image: {mensaje.get('image', {}).get('id', 'unknown')}]"
+#                 elif tipo == "video":
+#                     content = f"[Video: {mensaje.get('video', {}).get('id', 'unknown')}]"
+#                 elif tipo == "document":
+#                     content = f"[Document: {mensaje.get('document', {}).get('filename', 'unknown')}]"
+#                 elif tipo == "interactive":
+#                     content = "[Interactive]"
+#                 else:
+#                     content = f"[{tipo}]"
+#
+#                 registrar_mensaje_recibido(
+#                     tenant=tenant_name,
+#                     phone_number_id=phone_number_id,
+#                     display_phone_number=display_phone_number,
+#                     wa_id=wa_id,
+#                     message_id=message_id,
+#                     content=content,
+#                     raw_payload=mensaje
+#                 )
+#             except Exception as e:
+#                 print(f"⚠️ Error registrando mensaje: {e}")
+#                 traceback.print_exc()
+#
+#             # ==================================================
+#             # 🟢 PRIORIDAD 1: MENÚ POR ESTADO (mensaje normal)
+#             # ==================================================
+#             if tipo in ["text", "audio", "image", "video", "document"]:
+#                 estado = obtener_estado_aspirante(tenant_name, wa_id)
+#
+#                 if estado:
+#                     enviar_menu_por_estado(
+#                         token=cuenta_info["access_token"],
+#                         wa_id=wa_id,
+#                         estado=estado
+#                     )
+#                     procesado = True
+#
+#             # ==================================================
+#             # 🟢 PRIORIDAD 2: INTERACTIVE (botones)
+#             # ==================================================
+#             if tipo == "interactive":
+#                 interactive = mensaje.get("interactive", {})
+#                 itype = interactive.get("type")
+#
+#                 if itype == "button_reply":
+#                     button_reply = interactive.get("button_reply", {})
+#                     button_title = button_reply.get("title", "").strip().lower()
+#
+#                     # ------------------------------------
+#                     # REENGANCHE (plantillas y cualquier botón "sí / no")
+#                     # ------------------------------------
+#                     if button_title in ("sí", "si", "yes", "continuar"):
+#                         estado = obtener_estado_aspirante(tenant_name, wa_id)
+#                         if estado:
+#                             enviar_menu_por_estado(
+#                                 token=cuenta_info["access_token"],
+#                                 wa_id=wa_id,
+#                                 estado=estado
+#                             )
+#                         procesado = True
+#
+#                     elif button_title in ("no", "ahora no"):
+#                         enviar_texto_simple(
+#                             wa_id,
+#                             "Perfecto 👍 Si deseas continuar más adelante, escríbenos."
+#                         )
+#                         procesado = True
+#
+#                     # ------------------------------------
+#                     # BOTONES NORMALES (menús interactivos)
+#                     # ------------------------------------
+#                     else:
+#                         # Aquí sí usamos el ID porque viene de mensajes interactivos NO plantilla
+#                         button_id = button_reply.get("id")
+#
+#                         procesar_boton_interactivo(
+#                             tenant=tenant_name,
+#                             wa_id=wa_id,
+#                             phone_number_id=phone_number_id,
+#                             button_id=button_id
+#                         )
+#                         procesado = True
+#
+#             # ==================================================
+#             # 🔁 DELEGAR A CHAT CONVERSACIONAL
+#             # ==================================================
+#             if not procesado:
+#                 _process_single_message(mensaje, tenant_name)
+#
+#         return {"status": "ok"}
+#
+#     except (IndexError, KeyError, TypeError) as e:
+#         print(f"❌ Error estructura webhook: {e}")
+#         traceback.print_exc()
+#     except LookupError as e:
+#         print(f"❌ Error contexto tenant: {e}")
+#         traceback.print_exc()
+#     except Exception as e:
+#         print(f"❌ Error inesperado webhook: {e}")
+#         traceback.print_exc()
+#
+#     return {"status": "ok"}
 
 
 
@@ -4470,152 +4439,186 @@ async def _procesar_error_envio(status_obj, tenant, phone_id, token):
 #     return None
 
 
-def _process_new_user_onboarding2(
-    mensaje: dict,
-    numero: str,
-    tipo: str,
-    texto: str,
-    texto_lower: str,
-    payload: str,
-    paso: str | None,
-    tenant_name: str,
-    phone_id: str,
-    token: str
-) -> dict | None:
-    """
-    Flujo de onboarding con confirmación por botones.
-    """
+# def _process_new_user_onboarding2(
+#     mensaje: dict,
+#     numero: str,
+#     tipo: str,
+#     texto: str,
+#     texto_lower: str,
+#     payload: str,
+#     paso: str | None,
+#     tenant_name: str,
+#     phone_id: str,
+#     token: str
+# ) -> dict | None:
+#     """
+#     Flujo de onboarding con confirmación por botones.
+#     """
+#
+#     # -----------------------------------------------------
+#     # VALIDACIÓN DE TIPO
+#     # -----------------------------------------------------
+#     if tipo not in ("text", "interactive"):
+#         return None
+#
+#     # -----------------------------------------------------
+#     # VALIDAR / REINICIAR FLUJO
+#     # -----------------------------------------------------
+#     pasos_validos = {
+#         None,
+#         "esperando_usuario_tiktok",
+#         "confirmando_nombre",
+#         "encuesta_enviada"
+#     }
+#
+#     if paso not in pasos_validos:
+#         eliminar_flujo(numero)
+#         paso = None
+#
+#     # -----------------------------------------------------
+#     # PASO 0 - BIENVENIDA
+#     # -----------------------------------------------------
+#     if paso is None:
+#         enviar_mensaje(
+#             numero,
+#             "¡Hola! 👋 Bienvenido.\n\n"
+#             "Para comenzar, por favor escribe tu *usuario de TikTok* (sin @)."
+#         )
+#         actualizar_flujo(numero, "esperando_usuario_tiktok")
+#         return {"status": "ok"}
+#
+#     # -----------------------------------------------------
+#     # PASO 1 - ESPERANDO USUARIO TIKTOK
+#     # -----------------------------------------------------
+#     if paso == "esperando_usuario_tiktok":
+#
+#         if tipo != "text":
+#             enviar_mensaje(numero, "✍️ Por favor escribe tu usuario de TikTok.")
+#             return {"status": "ok"}
+#
+#         usuario_tiktok = texto.strip().lstrip("@")
+#         aspirante = buscar_aspirante_por_usuario_tiktok(usuario_tiktok)
+#
+#         if not aspirante:
+#             enviar_mensaje(
+#                 numero,
+#                 "❌ No encontramos ese usuario.\n"
+#                 "Verifica e inténtalo nuevamente."
+#             )
+#             return {"status": "ok"}
+#
+#         nombre = aspirante.get("nickname") or aspirante.get("nombre_real") or "(sin nombre)"
+#
+#         # Guardar temporal
+#         redis_set_temp(numero, aspirante, ttl=900)
+#
+#         # Enviar confirmación
+#         enviar_confirmacion_interactiva(
+#             numero=numero,
+#             nickname=nombre,  # ✅ CORRECTO
+#             phone_id=phone_id,
+#             token=token
+#         )
+#
+#         actualizar_flujo(numero, "confirmando_nombre")
+#         return {"status": "ok"}
+#
+#     # -----------------------------------------------------
+#     # PASO 2 - CONFIRMACIÓN
+#     # -----------------------------------------------------
+#     if paso == "confirmando_nombre":
+#
+#         es_si = payload == "BTN_CONFIRM_YES" or texto_lower in ("si", "sí", "s", "yes")
+#         es_no = payload == "BTN_CONFIRM_NO" or texto_lower in ("no", "n")
+#
+#         if es_si:
+#             aspirante = redis_get_temp(numero)
+#
+#             if not aspirante:
+#                 enviar_mensaje(
+#                     numero,
+#                     "⏳ La sesión expiró. Escribe tu usuario de TikTok nuevamente."
+#                 )
+#                 actualizar_flujo(numero, "esperando_usuario_tiktok")
+#                 return {"status": "ok"}
+#
+#             actualizar_telefono_aspirante(aspirante["id"], numero)
+#
+#             redis_delete_temp(numero)
+#
+#             url_encuesta = construir_url_actualizar_perfil(
+#                 numero,
+#                 tenant_name=tenant_name
+#             )
+#
+#             enviar_mensaje(
+#                 numero,
+#                 f"📋 ¡Perfecto!\n\n"
+#                 f"Para continuar, completa la siguiente encuesta:\n\n{url_encuesta}"
+#             )
+#
+#             actualizar_flujo(numero, "encuesta_enviada")
+#             return {"status": "ok"}
+#
+#         if es_no:
+#             redis_delete_temp(numero)
+#             enviar_mensaje(
+#                 numero,
+#                 "👌 Entendido.\n"
+#                 "Escribe nuevamente tu usuario de TikTok correcto."
+#             )
+#             actualizar_flujo(numero, "esperando_usuario_tiktok")
+#             return {"status": "ok"}
+#
+#         enviar_mensaje(
+#             numero,
+#             "⚠️ Por favor selecciona *Sí* o *No* usando los botones."
+#         )
+#         return {"status": "ok"}
+#
+#     # -----------------------------------------------------
+#     # PASO FINAL - ENCUESTA YA ENVIADA
+#     # -----------------------------------------------------
+#     if paso == "encuesta_enviada":
+#         enviar_mensaje(
+#             numero,
+#             "📋 Ya te enviamos el enlace de la encuesta.\n"
+#             "Si necesitas ayuda, escríbenos."
+#         )
+#         return {"status": "ok"}
+#
+#     return None
 
-    # -----------------------------------------------------
-    # VALIDACIÓN DE TIPO
-    # -----------------------------------------------------
-    if tipo not in ("text", "interactive"):
-        return None
 
-    # -----------------------------------------------------
-    # VALIDAR / REINICIAR FLUJO
-    # -----------------------------------------------------
-    pasos_validos = {
-        None,
-        "esperando_usuario_tiktok",
-        "confirmando_nombre",
-        "encuesta_enviada"
-    }
-
-    if paso not in pasos_validos:
-        eliminar_flujo(numero)
-        paso = None
-
-    # -----------------------------------------------------
-    # PASO 0 - BIENVENIDA
-    # -----------------------------------------------------
-    if paso is None:
-        enviar_mensaje(
-            numero,
-            "¡Hola! 👋 Bienvenido.\n\n"
-            "Para comenzar, por favor escribe tu *usuario de TikTok* (sin @)."
-        )
-        actualizar_flujo(numero, "esperando_usuario_tiktok")
-        return {"status": "ok"}
-
-    # -----------------------------------------------------
-    # PASO 1 - ESPERANDO USUARIO TIKTOK
-    # -----------------------------------------------------
-    if paso == "esperando_usuario_tiktok":
-
-        if tipo != "text":
-            enviar_mensaje(numero, "✍️ Por favor escribe tu usuario de TikTok.")
-            return {"status": "ok"}
-
-        usuario_tiktok = texto.strip().lstrip("@")
-        aspirante = buscar_aspirante_por_usuario_tiktok(usuario_tiktok)
-
-        if not aspirante:
-            enviar_mensaje(
-                numero,
-                "❌ No encontramos ese usuario.\n"
-                "Verifica e inténtalo nuevamente."
-            )
-            return {"status": "ok"}
-
-        nombre = aspirante.get("nickname") or aspirante.get("nombre_real") or "(sin nombre)"
-
-        # Guardar temporal
-        redis_set_temp(numero, aspirante, ttl=900)
-
-        # Enviar confirmación
-        enviar_confirmacion_interactiva(
-            numero=numero,
-            nickname=nombre,  # ✅ CORRECTO
-            phone_id=phone_id,
-            token=token
-        )
-
-        actualizar_flujo(numero, "confirmando_nombre")
-        return {"status": "ok"}
-
-    # -----------------------------------------------------
-    # PASO 2 - CONFIRMACIÓN
-    # -----------------------------------------------------
-    if paso == "confirmando_nombre":
-
-        es_si = payload == "BTN_CONFIRM_YES" or texto_lower in ("si", "sí", "s", "yes")
-        es_no = payload == "BTN_CONFIRM_NO" or texto_lower in ("no", "n")
-
-        if es_si:
-            aspirante = redis_get_temp(numero)
-
-            if not aspirante:
-                enviar_mensaje(
-                    numero,
-                    "⏳ La sesión expiró. Escribe tu usuario de TikTok nuevamente."
-                )
-                actualizar_flujo(numero, "esperando_usuario_tiktok")
-                return {"status": "ok"}
-
-            actualizar_telefono_aspirante(aspirante["id"], numero)
-
-            redis_delete_temp(numero)
-
-            url_encuesta = construir_url_actualizar_perfil(
-                numero,
-                tenant_name=tenant_name
-            )
-
-            enviar_mensaje(
-                numero,
-                f"📋 ¡Perfecto!\n\n"
-                f"Para continuar, completa la siguiente encuesta:\n\n{url_encuesta}"
-            )
-
-            actualizar_flujo(numero, "encuesta_enviada")
-            return {"status": "ok"}
-
-        if es_no:
-            redis_delete_temp(numero)
-            enviar_mensaje(
-                numero,
-                "👌 Entendido.\n"
-                "Escribe nuevamente tu usuario de TikTok correcto."
-            )
-            actualizar_flujo(numero, "esperando_usuario_tiktok")
-            return {"status": "ok"}
-
-        enviar_mensaje(
-            numero,
-            "⚠️ Por favor selecciona *Sí* o *No* usando los botones."
-        )
-        return {"status": "ok"}
-
-    # -----------------------------------------------------
-    # PASO FINAL - ENCUESTA YA ENVIADA
-    # -----------------------------------------------------
-    if paso == "encuesta_enviada":
-        enviar_mensaje(
-            numero,
-            "📋 Ya te enviamos el enlace de la encuesta.\n"
-            "Si necesitas ayuda, escríbenos."
-        )
-        return {"status": "ok"}
-
-    return None
+# def obtener_estado_aspirante(tenant: str, wa_id: str) -> str | None:
+#     """
+#     Retorna el nombre_estado actual del aspirante según su wa_id.
+#     """
+#     try:
+#         with get_connection_context() as conn:
+#             with conn.cursor() as cur:
+#                 cur.execute("""
+#                     SELECT ea.nombre_estado
+#                     FROM aspirantes a
+#                     JOIN aspirante_estado_actual ae
+#                         ON ae.id_aspirante = a.id_aspirante
+#                     JOIN estados_aspirante ea
+#                         ON ea.id_estado_aspirante = ae.id_estado_aspirante
+#                     WHERE a.wa_id = %s
+#                       AND ea.estado_activo = TRUE
+#                     LIMIT 1
+#                 """, (wa_id,))
+#
+#                 resultado = cur.fetchone()
+#
+#                 return resultado[0] if resultado else None
+#
+#     except (OperationalError, DatabaseError) as e:
+#         print(f"❌ Error de base de datos al obtener estado del aspirante: {e}")
+#         traceback.print_exc()
+#         return None
+#
+#     except Exception as e:
+#         print(f"❌ Error inesperado al obtener estado del aspirante: {e}")
+#         traceback.print_exc()
+#         return None
