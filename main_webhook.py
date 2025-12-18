@@ -1650,7 +1650,7 @@ def _process_new_user_onboarding(
         # Enviar confirmación
         enviar_confirmacion_interactiva(
             numero=numero,
-            nombre=nombre,
+            nickname=texto.strip(),  # ✅ correcto
             phone_id=phone_id,
             token=token
         )
@@ -1724,156 +1724,6 @@ def _process_new_user_onboarding(
 
     return None
 
-
-def _process_new_user_onboarding2(
-        mensaje: dict,
-        numero: str,
-        texto: str,
-        texto_lower: str,
-        paso: Optional[str | int],
-        tenant_name: str,
-        payload: str = None,  # <--- Nuevo argumento (o extráelo dentro)
-        phone_id: str = None,  # <--- Necesarios para enviar botones
-        token: str = None  # <--- Necesarios para enviar botones
-) -> Optional[dict]:
-    """
-    Procesa el flujo de onboarding para nuevos usuarios con botones interactivos.
-    """
-    tipo = mensaje.get("type")
-
-    # 1. VALIDACIÓN DE TIPO (Ahora permitimos texto E interactive)
-    if tipo not in ["text", "interactive"]:
-        return None
-
-    # Si el payload no vino como argumento, intentamos extraerlo aquí
-    if not payload and tipo == "interactive":
-        try:
-            payload = mensaje.get("interactive", {}).get("button_reply", {}).get("id")
-        except:
-            pass
-
-    # Reinicio de flujo si el estado es inválido
-    if paso not in [None, "esperando_usuario_tiktok", "confirmando_nombre", "esperando_inicio_encuesta"]:
-        print(f"⚠️ Reiniciando flujo para {numero}, paso anterior: {paso}")
-        eliminar_flujo(numero)
-        paso = None
-
-    # -----------------------------------------------------
-    # PASO 0: INICIO
-    # -----------------------------------------------------
-    if paso is None:
-        enviar_mensaje(numero, "¡Hola! 👋 Bienvenido.\nPara comenzar, por favor escribe tu *usuario de TikTok* (sin @).")
-        actualizar_flujo(numero, "esperando_usuario_tiktok")
-        return {"status": "ok"}
-
-    # -----------------------------------------------------
-    # PASO 1: ESPERANDO USUARIO TIKTOK
-    # -----------------------------------------------------
-    if paso == "esperando_usuario_tiktok":
-        # Aquí esperamos texto, no botones
-        if tipo != "text":
-            enviar_mensaje(numero, "Por favor escribe tu usuario de TikTok.")
-            return {"status": "ok"}
-
-        usuario_tiktok = texto.strip()
-        aspirante = buscar_aspirante_por_usuario_tiktok(usuario_tiktok)
-
-        if aspirante:
-            nombre = aspirante.get("nickname") or aspirante.get("nombre_real") or "(sin nombre)"
-
-            # --- CAMBIO CLAVE: Usamos botones en vez de texto plano ---
-            # Si tenemos credenciales enviamos botones, si no, texto plano (fallback)
-            if phone_id and token:
-                enviar_confirmacion_interactiva(numero, nombre, phone_id, token)
-            else:
-                enviar_mensaje(numero, f"Encontramos el usuario: *{nombre}*. ¿Eres tú? (Responde SÍ o NO)")
-
-            actualizar_flujo(numero, "confirmando_nombre")
-
-            # Guardar en Redis/Memoria
-            try:
-                redis_set_temp(numero, aspirante, ttl=900)
-            except Exception as e:
-                print(f"⚠️ Redis falló, usando memoria: {e}")
-                usuarios_temp[numero] = aspirante
-        else:
-            enviar_mensaje(numero,
-                           "❌ No encontramos ese usuario en nuestra base de datos. Verifica y escríbelo nuevamente.")
-
-        return {"status": "ok"}
-
-    # -----------------------------------------------------
-    # PASO 2: CONFIRMANDO NOMBRE (Botones o Texto)
-    # -----------------------------------------------------
-    if paso == "confirmando_nombre":
-
-        # A. EL USUARIO DIJO QUE SÍ (Botón o Texto)
-        es_si_boton = (payload == "BTN_CONFIRM_YES")
-        es_si_texto = (tipo == "text" and texto_lower in ["si", "sí", "s", "y", "yes"])
-
-        if es_si_boton or es_si_texto:
-            # Recuperar datos
-            aspirante = redis_get_temp(numero)
-            if not aspirante:
-                aspirante = usuarios_temp.get(numero)  # Fallback memoria
-
-            if aspirante:
-                actualizar_telefono_aspirante(aspirante["id"], numero)
-
-                # Limpiar temporales
-                try:
-                    redis_delete_temp(numero)
-                except:
-                    pass
-                usuarios_temp.pop(numero, None)
-
-                # Avanzar a encuesta
-                enviar_inicio_encuesta(numero)  # Asumo que esta función envía el texto de bienvenida a la encuesta
-                actualizar_flujo(numero, "esperando_inicio_encuesta")
-            else:
-                # Caso borde: Se expiró el caché
-                enviar_mensaje(numero, "⏳ La sesión expiró. Por favor escribe tu usuario de TikTok nuevamente.")
-                actualizar_flujo(numero, "esperando_usuario_tiktok")
-
-        # B. EL USUARIO DIJO QUE NO (Botón o Texto)
-        elif payload == "BTN_CONFIRM_NO" or (tipo == "text" and texto_lower in ["no", "n"]):
-            enviar_mensaje(numero, "Entendido. Por favor escribe nuevamente tu usuario de TikTok correcto:")
-
-            # Limpiar datos erróneos
-            try:
-                redis_delete_temp(numero)
-            except:
-                pass
-            usuarios_temp.pop(numero, None)
-
-            # 🔄 REGRESAR AL PASO ANTERIOR
-            actualizar_flujo(numero, "esperando_usuario_tiktok")
-
-        # C. ESCRIBIÓ OTRA COSA
-        else:
-            enviar_mensaje(numero, "⚠️ No te entendí. Por favor selecciona una de las opciones.")
-            # Opcional: Reenviar los botones aquí si quieres ser insistente
-
-        return {"status": "ok"}
-
-    # -----------------------------------------------------
-    # PASO 3: ESPERANDO LINK (Encuesta)
-    # -----------------------------------------------------
-    if paso == "esperando_inicio_encuesta":
-        if texto_lower.strip() != "":
-            # Tu lógica de enviar link nuevamente
-            tenant_actual = tenant_name or current_tenant.get() or "default"
-            url_web = construir_url_actualizar_perfil(numero, tenant_name=tenant_actual)
-
-            mensaje = (
-                f"💬 Haz clic en el enlace para comenzar la encuesta 📋\n\n"
-                f"{url_web}\n\n"
-                f"Puedes hacerlo desde tu celular o computadora."
-            )
-            enviar_mensaje(numero, mensaje)
-        return {"status": "ok"}
-
-    return None
 
 
 def _process_aspirante_message(mensaje: dict, numero: str, texto_lower: str, rol: str, tenant_name: str) -> dict:
@@ -4402,4 +4252,156 @@ async def _procesar_error_envio(status_obj, tenant, phone_id, token):
 
 
 # --- SUB-FUNCIONES DE ORQUESTACIÓN ---
+
+
+# def _process_new_user_onboarding2(
+#         mensaje: dict,
+#         numero: str,
+#         texto: str,
+#         texto_lower: str,
+#         paso: Optional[str | int],
+#         tenant_name: str,
+#         payload: str = None,  # <--- Nuevo argumento (o extráelo dentro)
+#         phone_id: str = None,  # <--- Necesarios para enviar botones
+#         token: str = None  # <--- Necesarios para enviar botones
+# ) -> Optional[dict]:
+#     """
+#     Procesa el flujo de onboarding para nuevos usuarios con botones interactivos.
+#     """
+#     tipo = mensaje.get("type")
+#
+#     # 1. VALIDACIÓN DE TIPO (Ahora permitimos texto E interactive)
+#     if tipo not in ["text", "interactive"]:
+#         return None
+#
+#     # Si el payload no vino como argumento, intentamos extraerlo aquí
+#     if not payload and tipo == "interactive":
+#         try:
+#             payload = mensaje.get("interactive", {}).get("button_reply", {}).get("id")
+#         except:
+#             pass
+#
+#     # Reinicio de flujo si el estado es inválido
+#     if paso not in [None, "esperando_usuario_tiktok", "confirmando_nombre", "esperando_inicio_encuesta"]:
+#         print(f"⚠️ Reiniciando flujo para {numero}, paso anterior: {paso}")
+#         eliminar_flujo(numero)
+#         paso = None
+#
+#     # -----------------------------------------------------
+#     # PASO 0: INICIO
+#     # -----------------------------------------------------
+#     if paso is None:
+#         enviar_mensaje(numero, "¡Hola! 👋 Bienvenido.\nPara comenzar, por favor escribe tu *usuario de TikTok* (sin @).")
+#         actualizar_flujo(numero, "esperando_usuario_tiktok")
+#         return {"status": "ok"}
+#
+#     # -----------------------------------------------------
+#     # PASO 1: ESPERANDO USUARIO TIKTOK
+#     # -----------------------------------------------------
+#     if paso == "esperando_usuario_tiktok":
+#         # Aquí esperamos texto, no botones
+#         if tipo != "text":
+#             enviar_mensaje(numero, "Por favor escribe tu usuario de TikTok.")
+#             return {"status": "ok"}
+#
+#         usuario_tiktok = texto.strip()
+#         aspirante = buscar_aspirante_por_usuario_tiktok(usuario_tiktok)
+#
+#         if aspirante:
+#             nombre = aspirante.get("nickname") or aspirante.get("nombre_real") or "(sin nombre)"
+#
+#             # --- CAMBIO CLAVE: Usamos botones en vez de texto plano ---
+#             # Si tenemos credenciales enviamos botones, si no, texto plano (fallback)
+#             if phone_id and token:
+#                 enviar_confirmacion_interactiva(numero, nombre, phone_id, token)
+#             else:
+#                 enviar_mensaje(numero, f"Encontramos el usuario: *{nombre}*. ¿Eres tú? (Responde SÍ o NO)")
+#
+#             actualizar_flujo(numero, "confirmando_nombre")
+#
+#             # Guardar en Redis/Memoria
+#             try:
+#                 redis_set_temp(numero, aspirante, ttl=900)
+#             except Exception as e:
+#                 print(f"⚠️ Redis falló, usando memoria: {e}")
+#                 usuarios_temp[numero] = aspirante
+#         else:
+#             enviar_mensaje(numero,
+#                            "❌ No encontramos ese usuario en nuestra base de datos. Verifica y escríbelo nuevamente.")
+#
+#         return {"status": "ok"}
+#
+#     # -----------------------------------------------------
+#     # PASO 2: CONFIRMANDO NOMBRE (Botones o Texto)
+#     # -----------------------------------------------------
+#     if paso == "confirmando_nombre":
+#
+#         # A. EL USUARIO DIJO QUE SÍ (Botón o Texto)
+#         es_si_boton = (payload == "BTN_CONFIRM_YES")
+#         es_si_texto = (tipo == "text" and texto_lower in ["si", "sí", "s", "y", "yes"])
+#
+#         if es_si_boton or es_si_texto:
+#             # Recuperar datos
+#             aspirante = redis_get_temp(numero)
+#             if not aspirante:
+#                 aspirante = usuarios_temp.get(numero)  # Fallback memoria
+#
+#             if aspirante:
+#                 actualizar_telefono_aspirante(aspirante["id"], numero)
+#
+#                 # Limpiar temporales
+#                 try:
+#                     redis_delete_temp(numero)
+#                 except:
+#                     pass
+#                 usuarios_temp.pop(numero, None)
+#
+#                 # Avanzar a encuesta
+#                 enviar_inicio_encuesta(numero)  # Asumo que esta función envía el texto de bienvenida a la encuesta
+#                 actualizar_flujo(numero, "esperando_inicio_encuesta")
+#             else:
+#                 # Caso borde: Se expiró el caché
+#                 enviar_mensaje(numero, "⏳ La sesión expiró. Por favor escribe tu usuario de TikTok nuevamente.")
+#                 actualizar_flujo(numero, "esperando_usuario_tiktok")
+#
+#         # B. EL USUARIO DIJO QUE NO (Botón o Texto)
+#         elif payload == "BTN_CONFIRM_NO" or (tipo == "text" and texto_lower in ["no", "n"]):
+#             enviar_mensaje(numero, "Entendido. Por favor escribe nuevamente tu usuario de TikTok correcto:")
+#
+#             # Limpiar datos erróneos
+#             try:
+#                 redis_delete_temp(numero)
+#             except:
+#                 pass
+#             usuarios_temp.pop(numero, None)
+#
+#             # 🔄 REGRESAR AL PASO ANTERIOR
+#             actualizar_flujo(numero, "esperando_usuario_tiktok")
+#
+#         # C. ESCRIBIÓ OTRA COSA
+#         else:
+#             enviar_mensaje(numero, "⚠️ No te entendí. Por favor selecciona una de las opciones.")
+#             # Opcional: Reenviar los botones aquí si quieres ser insistente
+#
+#         return {"status": "ok"}
+#
+#     # -----------------------------------------------------
+#     # PASO 3: ESPERANDO LINK (Encuesta)
+#     # -----------------------------------------------------
+#     if paso == "esperando_inicio_encuesta":
+#         if texto_lower.strip() != "":
+#             # Tu lógica de enviar link nuevamente
+#             tenant_actual = tenant_name or current_tenant.get() or "default"
+#             url_web = construir_url_actualizar_perfil(numero, tenant_name=tenant_actual)
+#
+#             mensaje = (
+#                 f"💬 Haz clic en el enlace para comenzar la encuesta 📋\n\n"
+#                 f"{url_web}\n\n"
+#                 f"Puedes hacerlo desde tu celular o computadora."
+#             )
+#             enviar_mensaje(numero, mensaje)
+#         return {"status": "ok"}
+#
+#     return None
+
 
