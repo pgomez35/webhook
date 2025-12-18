@@ -1581,7 +1581,6 @@ from typing import Optional
 def _process_new_user_onboarding(
     mensaje: dict,
     numero: str,
-    tipo: str,                     # ✅ AGREGADO
     texto: str,
     texto_lower: str,
     payload: str,
@@ -3769,7 +3768,6 @@ async def _procesar_mensaje_unico(mensaje, tenant_name, phone_number_id, token):
         resultado = _process_new_user_onboarding(
             mensaje=mensaje,
             numero=wa_id,
-            tipo=tipo,
             texto=texto,
             texto_lower=texto_lower,
             payload=payload_id,
