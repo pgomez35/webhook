@@ -23,7 +23,7 @@ def guardar_estado_eval(creador_id, estado):
 def buscar_estado_creador(creador_id):
     # SELECT estado_evaluacion FROM perfil_creador WHERE creador_id = ...
     # Retorno simulado para el ejemplo:
-    return "solicitud_prueba_tiktok"
+    return "solicitud_agendamiento_tiktok"
 
 def obtener_creador_id_por_telefono(telefono):
     # SELECT creador_id FROM perfil_creador WHERE telefono = ...
@@ -56,7 +56,7 @@ def Enviar_msg_estado(creador_id, estado_evaluacion, phone_id, token, telefono):
     Se usa cuando estamos DENTRO de la ventana de 24h.
     """
     mensajes = {
-        "solicitud_prueba_tiktok": "¡Vas genial! Es hora de demostrar tu talento en vivo.",
+        "solicitud_agendamiento_tiktok": "¡Vas genial! Es hora de demostrar tu talento en vivo.",
         "documentacion": "Ya casi terminamos, solo faltan tus papeles."
     }
 
@@ -89,7 +89,7 @@ def enviar_plantilla_estado_evaluacion(creador_id, estado_evaluacion, phone_id, 
     """
     # Mapeo: Estado -> Nombre de Plantilla en Meta
     plantillas = {
-        "solicitud_prueba_tiktok": "plantilla_solicitud_tiktok",  # Debe existir en Meta
+        "solicitud_agendamiento_tiktok": "plantilla_solicitud_tiktok",  # Debe existir en Meta
         "documentacion": "plantilla_solicitud_docs"
     }
 
@@ -115,10 +115,275 @@ def enviar_plantilla_estado_evaluacion(creador_id, estado_evaluacion, phone_id, 
     enviar_a_meta(payload, phone_id, token)
 
 def Enviar_menu_quickreply(creador_id, estado_evaluacion, phone_id, token, telefono):
+    texto_menu = "Elige una opción:"
+    botones = []
+
+    MENUS = {
+
+        "post_encuesta_inicial": {
+            "texto": "¿Cómo deseas continuar?",
+            "botones": [
+                ("MENU_PROCESO_INCORPORACION", "Proceso de incorporación a Prestige"),
+            ]
+        },
+
+        "solicitud_agendamiento_tiktok": {
+            "texto": "Es momento de tu prueba en TikTok LIVE 🎥",
+            "botones": [
+                ("MENU_AGENDAR_PRUEBA_TIKTOK", "Agendar prueba de TikTok LIVE"),
+                ("MENU_VER_GUIA_PRUEBA", "Ver guía de la prueba"),
+            ]
+        },
+
+        "usuario_agendo_prueba_tiktok": {
+            "texto": "Gestiona tu prueba de TikTok LIVE",
+            "botones": [
+                ("MENU_INGRESAR_LINK_TIKTOK", "Ingresar link de TikTok LIVE"),
+                ("MENU_MODIFICAR_CITA_PRUEBA", "Modificar cita de la prueba"),
+                ("MENU_VER_GUIA_PRUEBA", "Ver guía de la prueba"),
+            ]
+        },
+
+        "solicitud_agendamiento_entrevista": {
+            "texto": "Siguiente paso: entrevista con un asesor",
+            "botones": [
+                ("MENU_AGENDAR_ENTREVISTA", "Agendar entrevista con un asesor"),
+            ]
+        },
+
+        "usuario_agendo_entrevista": {
+            "texto": "Gestiona tu entrevista",
+            "botones": [
+                ("MENU_MODIFICAR_CITA_ENTREVISTA", "Modificar cita de entrevista"),
+            ]
+        },
+
+        "solicitud_agendamiento_tiktok2": {
+            "texto": "Continuamos con una segunda prueba 🎥",
+            "botones": [
+                ("MENU_AGENDAR_PRUEBA_TIKTOK_2", "Agendar prueba #2 de TikTok LIVE"),
+                ("MENU_RESULTADO_PRUEBA_1", "Resultado prueba #1"),
+            ]
+        },
+
+        "usuario_agendo_prueba_tiktok2": {
+            "texto": "Gestiona tu prueba #2 de TikTok LIVE",
+            "botones": [
+                ("MENU_INGRESAR_LINK_TIKTOK_2", "Ingresar link de TikTok LIVE #2"),
+                ("MENU_MODIFICAR_CITA_PRUEBA_2", "Modificar cita de la prueba #2"),
+                ("MENU_VER_GUIA_PRUEBA_2", "Ver guía de la prueba #2"),
+            ]
+        },
+
+        "solicitud_agendamiento_entrevista2": {
+            "texto": "Agendemos tu entrevista final",
+            "botones": [
+                ("MENU_AGENDAR_ENTREVISTA", "Agendar entrevista con un asesor"),
+            ]
+        },
+
+        "usuario_agendo_entrevista2": {
+            "texto": "Gestiona tu entrevista",
+            "botones": [
+                ("MENU_MODIFICAR_CITA_ENTREVISTA", "Modificar cita de la entrevista"),
+                ("MENU_TEMAS_ENTREVISTA_2", "Temas a tratar en entrevista #2"),
+            ]
+        },
+
+        "solicitud_invitacion_tiktok": {
+            "texto": "Consulta el estado de tu proceso",
+            "botones": [
+                ("MENU_ESTADO_PROCESO", "Estado del proceso"),
+            ]
+        },
+
+        "invitacion_tiktok_aceptada": {
+            "texto": "Tu proceso con TikTok está activo ✅",
+            "botones": [
+                ("MENU_ESTADO_PROCESO", "Estado del proceso"),
+            ]
+        },
+
+        "solicitud_invitacion_usuario": {
+            "texto": "Estás a un paso de unirte a la agencia 🚀",
+            "botones": [
+                ("MENU_VENTAJAS_AGENCIA", "Ventajas de pertenecer a la agencia"),
+                ("MENU_ACEPTAR_INCORPORACION", "Aceptar incorporación a la agencia"),
+            ]
+        },
+    }
+
+    menu = MENUS.get(estado_evaluacion)
+
+    if not menu:
+        return  # Estado sin menú
+
+    texto_menu = menu["texto"]
+    botones = menu["botones"]
+
+    botones_api = [
+        {
+            "type": "reply",
+            "reply": {
+                "id": boton_id,
+                "title": titulo
+            }
+        }
+        for boton_id, titulo in botones
+    ]
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": telefono,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": texto_menu},
+            "action": {"buttons": botones_api}
+        }
+    }
+
+    enviar_a_meta(payload, phone_id, token)
+
+def Enviar_menu_quickreply(creador_id, estado_evaluacion, phone_id, token, telefono):
+    texto_menu = "Elige una opción:"
+    botones = []
+
+    MENUS = {
+
+        "post_encuesta_inicial": {
+            "texto": "¿Cómo deseas continuar?",
+            "botones": [
+                ("MENU_PROCESO_INCORPORACION", "Proceso de incorporación a Prestige"),
+                ("MENU_PREGUNTAS_FRECUENTES", "Preguntas Frecuentes"),
+            ]
+        },
+
+        "solicitud_agendamiento_tiktok": {
+            "texto": "Es momento de tu prueba en TikTok LIVE 🎥",
+            "botones": [
+                ("MENU_AGENDAR_PRUEBA_TIKTOK", "Agendar prueba de TikTok LIVE"),
+                ("MENU_VER_GUIA_PRUEBA", "Ver guía de la prueba"),
+                ("MENU_CHAT_ASESOR", "Hablar con un asesor")
+            ]
+        },
+
+        "usuario_agendo_prueba_tiktok": {
+            "texto": "Gestiona tu prueba de TikTok LIVE",
+            "botones": [
+                ("MENU_INGRESAR_LINK_TIKTOK", "Ingresar link de TikTok LIVE"),
+                ("MENU_MODIFICAR_CITA_PRUEBA", "Modificar cita de la prueba"),
+                ("MENU_VER_GUIA_PRUEBA", "Ver guía de la prueba"),
+            ]
+        },
+
+        "solicitud_agendamiento_entrevista": {
+            "texto": "Siguiente paso: entrevista con un asesor",
+            "botones": [
+                ("MENU_AGENDAR_ENTREVISTA", "Agendar entrevista con un asesor"),
+            ]
+        },
+
+        "usuario_agendo_entrevista": {
+            "texto": "Gestiona tu entrevista",
+            "botones": [
+                ("MENU_MODIFICAR_CITA_ENTREVISTA", "Modificar cita de entrevista"),
+            ]
+        },
+
+        "solicitud_agendamiento_tiktok2": {
+            "texto": "Continuamos con una segunda prueba 🎥",
+            "botones": [
+                ("MENU_AGENDAR_PRUEBA_TIKTOK_2", "Agendar prueba #2 de TikTok LIVE"),
+                ("MENU_RESULTADO_PRUEBA_1", "Resultado prueba #1"),
+            ]
+        },
+
+        "usuario_agendo_prueba_tiktok2": {
+            "texto": "Gestiona tu prueba #2 de TikTok LIVE",
+            "botones": [
+                ("MENU_INGRESAR_LINK_TIKTOK_2", "Ingresar link de TikTok LIVE #2"),
+                ("MENU_MODIFICAR_CITA_PRUEBA_2", "Modificar cita de la prueba #2"),
+                ("MENU_VER_GUIA_PRUEBA_2", "Ver guía de la prueba #2"),
+            ]
+        },
+
+        "solicitud_agendamiento_entrevista2": {
+            "texto": "Agendemos tu entrevista final",
+            "botones": [
+                ("MENU_AGENDAR_ENTREVISTA", "Agendar entrevista con un asesor"),
+            ]
+        },
+
+        "usuario_agendo_entrevista2": {
+            "texto": "Gestiona tu entrevista",
+            "botones": [
+                ("MENU_MODIFICAR_CITA_ENTREVISTA", "Modificar cita de la entrevista"),
+                ("MENU_TEMAS_ENTREVISTA_2", "Temas a tratar en entrevista #2"),
+            ]
+        },
+
+        "solicitud_invitacion_tiktok": {
+            "texto": "Consulta el estado de tu proceso",
+            "botones": [
+                ("MENU_ESTADO_PROCESO", "Estado del proceso"),
+            ]
+        },
+
+        "invitacion_tiktok_aceptada": {
+            "texto": "Tu proceso con TikTok está activo ✅",
+            "botones": [
+                ("MENU_ESTADO_PROCESO", "Estado del proceso"),
+            ]
+        },
+
+        "solicitud_invitacion_usuario": {
+            "texto": "Estás a un paso de unirte a la agencia 🚀",
+            "botones": [
+                ("MENU_VENTAJAS_AGENCIA", "Ventajas de pertenecer a la agencia"),
+                ("MENU_ACEPTAR_INCORPORACION", "Aceptar incorporación a la agencia"),
+            ]
+        },
+    }
+
+    menu = MENUS.get(estado_evaluacion)
+
+    if not menu:
+        return  # Estado sin menú
+
+    texto_menu = menu["texto"]
+    botones = menu["botones"]
+
+    botones_api = [
+        {
+            "type": "reply",
+            "reply": {
+                "id": boton_id,
+                "title": titulo
+            }
+        }
+        for boton_id, titulo in botones
+    ]
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": telefono,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": texto_menu},
+            "action": {"buttons": botones_api}
+        }
+    }
+
+    enviar_a_meta(payload, phone_id, token)
+
+
+def Enviar_menu_quickreplyV0(creador_id, estado_evaluacion, phone_id, token, telefono):
     botones = []
     texto_menu = "Elige una opción:"
 
-    if estado_evaluacion == "solicitud_prueba_tiktok":
+    if estado_evaluacion == "solicitud_agendamiento_tiktok":
         texto_menu = "¿Listo para tu prueba?"
         botones = [
             {"id": "BTN_ENVIAR_LINK_TIKTOK", "title": "Enviar Link Live"},
@@ -152,11 +417,127 @@ def Enviar_menu_quickreply(creador_id, estado_evaluacion, phone_id, token, telef
 
 def accion_menu_estado_evaluacion(creador_id, button_id, phone_id, token, estado_evaluacion, telefono):
     """
+    Ejecuta la acción correspondiente al botón presionado en el menú de opciones.
+    """
+    print(f"⚡ Ejecutando acción: {button_id} (Estado origen: {estado_evaluacion})")
+
+    # =================================================================
+    # GRUPO 1: INGRESO DE DATOS (Cambian estado para esperar texto)
+    # =================================================================
+
+    if button_id == "MENU_INGRESAR_LINK_TIKTOK":
+        # Cambiamos estado para que el próximo mensaje de texto sea capturado como URL
+        guardar_estado_eval(creador_id, "esperando_link_tiktok_live")
+        enviar_texto_simple(telefono, "🔗 Por favor, pega aquí el enlace de tu TikTok LIVE:", phone_id, token)
+
+    elif button_id == "MENU_INGRESAR_LINK_TIKTOK_2":
+        guardar_estado_eval(creador_id, "esperando_link_tiktok_live_2")
+        enviar_texto_simple(telefono, "🔗 Por favor, pega aquí el enlace de tu **segundo** TikTok LIVE:", phone_id,
+                            token)
+
+    # =================================================================
+    # GRUPO 2: AGENDAMIENTO Y CALENDARIOS (Envío de Links)
+    # =================================================================
+
+    elif button_id == "MENU_AGENDAR_PRUEBA_TIKTOK":
+        enviar_texto_simple(telefono, "📅 Agenda tu prueba aquí: https://calendly.com/tu-agencia/prueba-tiktok",
+                            phone_id, token)
+
+    elif button_id == "MENU_AGENDAR_PRUEBA_TIKTOK_2":
+        enviar_texto_simple(telefono,
+                            "📅 Agenda tu segunda prueba aquí: https://calendly.com/tu-agencia/prueba-tiktok-2",
+                            phone_id, token)
+
+    elif button_id == "MENU_AGENDAR_ENTREVISTA":
+        enviar_texto_simple(telefono,
+                            "👔 Agenda tu entrevista con un asesor aquí: https://calendly.com/tu-agencia/entrevista",
+                            phone_id, token)
+
+    elif button_id in ["MENU_MODIFICAR_CITA_PRUEBA", "MENU_MODIFICAR_CITA_PRUEBA_2", "MENU_MODIFICAR_CITA_ENTREVISTA"]:
+        enviar_texto_simple(telefono,
+                            "🔄 Puedes reprogramar tu cita usando el mismo enlace que te enviamos al agendar, o contacta a soporte si tienes problemas.",
+                            phone_id, token)
+
+    # =================================================================
+    # GRUPO 3: INFORMACIÓN Y GUÍAS (Envío de Texto/PDF/Links)
+    # =================================================================
+
+    elif button_id == "MENU_VER_GUIA_PRUEBA":
+        enviar_texto_simple(telefono, "📘 Aquí tienes la guía para tu prueba: https://tu-agencia.com/guia-tiktok-pdf",
+                            phone_id, token)
+        # O podrías enviar un documento real usando enviar_documento(...)
+
+    elif button_id == "MENU_VER_GUIA_PRUEBA_2":
+        enviar_texto_simple(telefono, "📘 Guía avanzada para la prueba #2: https://tu-agencia.com/guia-tiktok-2-pdf",
+                            phone_id, token)
+
+    elif button_id == "MENU_PROCESO_INCORPORACION":
+        msg = ("🏢 *Proceso de Incorporación:*\n"
+               "1. Evaluación de perfil\n"
+               "2. Prueba de transmisión\n"
+               "3. Entrevista final\n"
+               "4. Firma de contrato")
+        enviar_texto_simple(telefono, msg, phone_id, token)
+
+    elif button_id == "MENU_PREGUNTAS_FRECUENTES":
+        enviar_texto_simple(telefono, "❓ Revisa nuestras dudas frecuentes aquí: https://tu-agencia.com/faq", phone_id,
+                            token)
+
+    elif button_id == "MENU_VENTAJAS_AGENCIA":
+        msg = ("🚀 *Ventajas Prestige:*\n"
+               "✅ Soporte 24/7\n"
+               "✅ Monetización mejorada\n"
+               "✅ Eventos exclusivos")
+        enviar_texto_simple(telefono, msg, phone_id, token)
+
+    elif button_id == "MENU_TEMAS_ENTREVISTA_2":
+        enviar_texto_simple(telefono,
+                            "📝 En la entrevista hablaremos de: Disponibilidad, Metas financieras y Reglamento interno.",
+                            phone_id, token)
+
+    # =================================================================
+    # GRUPO 4: ESTADOS Y RESULTADOS
+    # =================================================================
+
+    elif button_id == "MENU_RESULTADO_PRUEBA_1":
+        # Aquí podrías consultar la BD real. Por ahora simulamos:
+        enviar_texto_simple(telefono, "📊 Tu prueba #1 fue: *APROBADA* (Puntaje: 85/100). ¡Sigue así!", phone_id, token)
+
+    elif button_id == "MENU_ESTADO_PROCESO":
+        enviar_texto_simple(telefono, f"📍 Tu estado actual es: *{estado_evaluacion}*.", phone_id, token)
+
+    # =================================================================
+    # GRUPO 5: ACCIONES CRÍTICAS (Aceptar oferta / Hablar con Humano)
+    # =================================================================
+
+    elif button_id == "MENU_ACEPTAR_INCORPORACION":
+        guardar_estado_eval(creador_id, "incorporacion_en_tramite")
+        enviar_texto_simple(telefono,
+                            "🎉 ¡Bienvenido a la familia! Un administrador te contactará pronto para finalizar el papeleo.",
+                            phone_id, token)
+        # Opcional: Notificar al admin aquí
+
+    elif button_id == "MENU_CHAT_ASESOR":
+        # Aquí podrías cambiar el flujo a "chat_libre" para que intervenga un humano
+        # actualizar_flujo(telefono, "chat_libre")
+        enviar_texto_simple(telefono, "💬 Hemos notificado a un asesor. Te escribirá en breve.", phone_id, token)
+
+    # =================================================================
+    # DEFAULT
+    # =================================================================
+    else:
+        print(f"⚠️ Botón sin acción definida: {button_id}")
+        enviar_texto_simple(telefono, "Esta opción está en mantenimiento.", phone_id, token)
+
+
+
+def accion_menu_estado_evaluacionV0(creador_id, button_id, phone_id, token, estado_evaluacion, telefono):
+    """
     Ejecuta la acción final cuando el usuario selecciona una opción del menú.
     """
     print(f"⚡ Ejecutando acción: {button_id} para estado {estado_evaluacion}")
 
-    if button_id == "BTN_ENVIAR_LINK_TIKTOK" and estado_evaluacion == "solicitud_prueba_tiktok":
+    if button_id == "BTN_ENVIAR_LINK_TIKTOK" and estado_evaluacion == "solicitud_agendamiento_tiktok":
         # 1. Cambiar estado para esperar texto
         guardar_estado_eval(creador_id, "solicitud_link_enviado")
 
@@ -378,7 +759,7 @@ def enviar_confirmacion_interactiva(numero, nickname, phone_id, token):
 #     botones = []
 #     texto_menu = "Elige una opción:"
 #
-#     if estado_evaluacion == "solicitud_prueba_tiktok":
+#     if estado_evaluacion == "solicitud_agendamiento_tiktok":
 #         texto_menu = "¿Listo para tu prueba?"
 #         botones = [
 #             {"id": "BTN_ENVIAR_LINK_TIKTOK", "titulo": "Enviar Link Live"},
