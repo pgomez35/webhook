@@ -39,6 +39,8 @@ from Excel import *
 
 import cloudinary
 
+from utils import actualizar_info_phone
+
 cloudinary.config(
     cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
     api_key=os.environ["CLOUDINARY_API_KEY"],
@@ -73,6 +75,9 @@ from main_EvaluacionAspirante import router as EvaluacionAspirante_router
 from main_entrevistas import router as entrevistas_router
 from utils_aspirantes import router as utils_aspirantes_router
 from chatbot_estados_aspirante import router as chatbot_estados_aspirante_router
+from main_auth import router as main_auth_router
+
+
 # ⚙️ Inicializar FastAPI
 app = FastAPI()
 
@@ -101,6 +106,9 @@ app.include_router(EvaluacionAspirante_router, tags=["Evaluacion Aspirante"])
 app.include_router(entrevistas_router, tags=["entrevistas"])
 app.include_router(utils_aspirantes_router, tags=["utils aspirantes"])
 app.include_router(chatbot_estados_aspirante_router, tags=["chatbot estados aspirante"])
+app.include_router(main_auth_router, tags=["auth"])
+
+
 
 # ✅ Crear carpeta persistente de audios si no existe
 AUDIO_DIR = "audios"
@@ -157,17 +165,15 @@ async def global_exception_handler(request, exc):
 
 def guardar_token_en_bd(token_dict, nombre='calendar'):
     try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO google_tokens (nombre, token_json, actualizado)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (nombre)
-            DO UPDATE SET token_json = EXCLUDED.token_json, actualizado = EXCLUDED.actualizado;
-        """, (nombre, json.dumps(token_dict), datetime.utcnow()))
-        conn.commit()
-        cur.close()
-        conn.close()
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO google_tokens (nombre, token_json, actualizado)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (nombre)
+                    DO UPDATE SET token_json = EXCLUDED.token_json, actualizado = EXCLUDED.actualizado;
+                """, (nombre, json.dumps(token_dict), datetime.utcnow()))
+                conn.commit()
         logger.info("✅ Token guardado en la base de datos.")
     except Exception as e:
         logger.error(f"❌ Error al guardar el token en la base de datos: {e}")
@@ -175,25 +181,23 @@ def guardar_token_en_bd(token_dict, nombre='calendar'):
 
 def leer_token_de_bd(nombre='calendar'):
     try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT token_json FROM google_tokens WHERE nombre = %s LIMIT 1;",
-            (nombre,)
-        )
-        fila = cur.fetchone()
-        cur.close()
-        conn.close()
-        if not fila:
-            raise Exception(f"⚠️ No se encontró ningún token con nombre '{nombre}' en la base de datos.")
-        # Puede salir como str o dict, asegúrate de parsear
-        token_info = fila[0]
-        if isinstance(token_info, str):
-            token_info = json.loads(token_info)
-        # Asegura el campo type
-        if "type" not in token_info:
-            token_info["type"] = "authorized_user"
-        return token_info
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT token_json FROM google_tokens WHERE nombre = %s LIMIT 1;",
+                    (nombre,)
+                )
+                fila = cur.fetchone()
+                if not fila:
+                    raise Exception(f"⚠️ No se encontró ningún token con nombre '{nombre}' en la base de datos.")
+                # Puede salir como str o dict, asegúrate de parsear
+                token_info = fila[0]
+                if isinstance(token_info, str):
+                    token_info = json.loads(token_info)
+                # Asegura el campo type
+                if "type" not in token_info:
+                    token_info["type"] = "authorized_user"
+                return token_info
     except Exception as e:
         logger.error(f"❌ Error al leer el token de la base de datos: {e}")
         raise
@@ -327,51 +331,41 @@ def obtener_eventos_google_id(time_min: datetime = None, time_max: datetime = No
     participantes_por_evento: Dict[str, List[Dict]] = {}
     responsables_por_evento: Dict[str, int] = {}  # ✅ NUEVO diccionario para responsable_id
 
-    conn = None
     try:
-        conn = get_connection()
-        cur = conn.cursor()
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                if unique_event_ids:
+                    placeholders = ",".join(["%s"] * len(unique_event_ids))
+                    sql = f"""
+                        SELECT 
+                            a.google_event_id,
+                            a.responsable_id,
+                            c.id,
+                            COALESCE(NULLIF(c.nombre_real, ''), c.nickname) AS nombre,
+                            c.nickname
+                        FROM agendamientos_participantes ap
+                        JOIN creadores c ON c.id = ap.creador_id
+                        JOIN agendamientos a ON a.id = ap.agendamiento_id
+                        WHERE a.google_event_id IN ({placeholders})
+                    """
+                    cur.execute(sql, tuple(unique_event_ids))
+                    rows = cur.fetchall()
 
-        if unique_event_ids:
-            placeholders = ",".join(["%s"] * len(unique_event_ids))
-            sql = f"""
-                SELECT 
-                    a.google_event_id,
-                    a.responsable_id,
-                    c.id,
-                    COALESCE(NULLIF(c.nombre_real, ''), c.nickname) AS nombre,
-                    c.nickname
-                FROM agendamientos_participantes ap
-                JOIN creadores c ON c.id = ap.creador_id
-                JOIN agendamientos a ON a.id = ap.agendamiento_id
-                WHERE a.google_event_id IN ({placeholders})
-            """
-            cur.execute(sql, tuple(unique_event_ids))
-            rows = cur.fetchall()
-
-            # ✅ Ajuste: recorremos filas y guardamos tanto participantes como responsable
-            for google_event_id, responsable_id, creador_id, nombre, nickname in rows:
-                # Registrar participantes
-                participantes_por_evento.setdefault(google_event_id, []).append({
-                    "id": creador_id,
-                    "nombre": nombre,
-                    "nickname": nickname
-                })
-                # Registrar responsable (una sola vez por evento)
-                if google_event_id not in responsables_por_evento:
-                    responsables_por_evento[google_event_id] = responsable_id
-
-        cur.close()
+                    # ✅ Ajuste: recorremos filas y guardamos tanto participantes como responsable
+                    for google_event_id, responsable_id, creador_id, nombre, nickname in rows:
+                        # Registrar participantes
+                        participantes_por_evento.setdefault(google_event_id, []).append({
+                            "id": creador_id,
+                            "nombre": nombre,
+                            "nickname": nickname
+                        })
+                        # Registrar responsable (una sola vez por evento)
+                        if google_event_id not in responsables_por_evento:
+                            responsables_por_evento[google_event_id] = responsable_id
     except Exception as e:
         logger.error(f"❌ Error obteniendo participantes: {e}")
         logger.error(traceback.format_exc())
         participantes_por_evento = {}
-    finally:
-        if conn:
-            try:
-                conn.close()
-            except:
-                pass
 
     # ✅ Construcción final incluyendo responsable_id
     resultado: List[EventoOut] = []
@@ -461,20 +455,18 @@ def obtener_eventosV0() -> List[EventoOut]:
                         break
 
             # Obtener participantes desde la base de datos
-            conn = get_connection()
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT c.id, c.nombre_real as nombre, c.nickname
-                FROM agendamientos_participantes ap
-                JOIN creadores c ON c.id = ap.creador_id
-                JOIN agendamientos a ON a.id = ap.agendamiento_id
-                WHERE a.google_event_id = %s
-            """, (event_id,))
-            participantes = cur.fetchall()
-            participantes_ids = [p[0] for p in participantes]
-            participantes_out = [{"id": p[0], "nombre": p[1], "nickname": p[2]} for p in participantes]
-            cur.close()
-            conn.close()
+            with get_connection_context() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT c.id, c.nombre_real as nombre, c.nickname
+                        FROM agendamientos_participantes ap
+                        JOIN creadores c ON c.id = ap.creador_id
+                        JOIN agendamientos a ON a.id = ap.agendamiento_id
+                        WHERE a.google_event_id = %s
+                    """, (event_id,))
+                    participantes = cur.fetchall()
+                    participantes_ids = [p[0] for p in participantes]
+                    participantes_out = [{"id": p[0], "nombre": p[1], "nickname": p[2]} for p in participantes]
 
 
             if inicio and fin:
@@ -779,7 +771,7 @@ from googleapiclient.errors import HttpError
 #         raise HTTPException(status_code=500, detail=str(e))
 
 from fastapi import Depends,status
-from auth import *
+from main_auth import *
 from schemas import EventoOut, EventoIn
 import traceback, logging
 from uuid import uuid4
@@ -789,8 +781,6 @@ logger = logging.getLogger(__name__)
 
 @app.post("/api/eventos", response_model=EventoOut)
 def crear_eventoV0(evento: EventoIn, usuario_actual: dict = Depends(obtener_usuario_actual)):
-    conn = get_connection()
-    cur = conn.cursor()
     try:
         if evento.fin <= evento.inicio:
             raise HTTPException(status_code=400, detail="La fecha de fin debe ser posterior a la fecha de inicio.")
@@ -807,44 +797,46 @@ def crear_eventoV0(evento: EventoIn, usuario_actual: dict = Depends(obtener_usua
         link_meet = google_event.get("hangoutLink") if evento.requiere_meet else None
         google_event_id = google_event.get("id")
 
-        # 2. Insertar agendamiento principal
-        cur.execute("""
-            INSERT INTO agendamientos (
-                titulo, descripcion, fecha_inicio, fecha_fin,
-                link_meet, estado, responsable_id, google_event_id
-            )
-            VALUES (%s, %s, %s, %s, %s, 'programado', %s, %s)
-            RETURNING id;
-        """, (
-            evento.titulo,
-            evento.descripcion,
-            evento.inicio,
-            evento.fin,
-            link_meet,
-            usuario_actual["id"],
-            google_event_id
-        ))
-        agendamiento_id = cur.fetchone()[0]
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                # 2. Insertar agendamiento principal
+                cur.execute("""
+                    INSERT INTO agendamientos (
+                        titulo, descripcion, fecha_inicio, fecha_fin,
+                        link_meet, estado, responsable_id, google_event_id
+                    )
+                    VALUES (%s, %s, %s, %s, %s, 'programado', %s, %s)
+                    RETURNING id;
+                """, (
+                    evento.titulo,
+                    evento.descripcion,
+                    evento.inicio,
+                    evento.fin,
+                    link_meet,
+                    usuario_actual["id"],
+                    google_event_id
+                ))
+                agendamiento_id = cur.fetchone()[0]
 
-        # 3. Insertar participantes
-        for participante_id in evento.participantes_ids:
-            cur.execute("""
-                INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
-                VALUES (%s, %s)
-            """, (agendamiento_id, participante_id))
+                # 3. Insertar participantes
+                for participante_id in evento.participantes_ids:
+                    cur.execute("""
+                        INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
+                        VALUES (%s, %s)
+                    """, (agendamiento_id, participante_id))
 
-        # 4. Consultar nombres/nicknames
-        cur.execute("""
-            SELECT id, nombre_real as nombre, nickname
-            FROM creadores
-            WHERE id = ANY(%s)
-        """, (evento.participantes_ids,))
-        participantes = [
-            {"id": row[0], "nombre": row[1], "nickname": row[2]}
-            for row in cur.fetchall()
-        ]
+                # 4. Consultar nombres/nicknames
+                cur.execute("""
+                    SELECT id, nombre_real as nombre, nickname
+                    FROM creadores
+                    WHERE id = ANY(%s)
+                """, (evento.participantes_ids,))
+                participantes = [
+                    {"id": row[0], "nombre": row[1], "nickname": row[2]}
+                    for row in cur.fetchall()
+                ]
 
-        conn.commit()
+                conn.commit()
 
         return EventoOut(
             id=google_event_id,
@@ -858,14 +850,12 @@ def crear_eventoV0(evento: EventoIn, usuario_actual: dict = Depends(obtener_usua
             origen="google_calendar"
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
-        conn.rollback()
         print("❌ Error creando evento:", e)
         # raise HTTPException(status_code=500, detail="Error creando evento")
         raise HTTPException(status_code=500, detail=f"Error creando evento: {str(e)}")
-    finally:
-        cur.close()
-        conn.close()
 
 # from uuid import uuid4
 # from datetime import datetime
@@ -1716,88 +1706,38 @@ async def obtener_usuario_por_username(username: str):
 
     return usuario
 
-# === LOGIN ===
-@app.post("/login", response_model=TokenResponse)
-async def login_usuario(credentials: dict = Body(...)):
-    username = credentials.get("username", "").strip().lower()
-    password = credentials.get("password", "")
-    if not username or not password:
-        raise HTTPException(status_code=400, detail="Username y password son requeridos")
-
-    # validar usuario
-    resultado = autenticar_admin_usuario(username, password)
-    if resultado["status"] != "ok":
-        raise HTTPException(status_code=401, detail=resultado["mensaje"])
-
-    usuario = resultado["usuario"]
-
-    # generar tokens
-    access_token = crear_access_token(usuario)
-    refresh_token = crear_refresh_token(usuario)
-
-    return TokenResponse(
-        usuario=UsuarioOut(id=usuario["id"], nombre=usuario["nombre"], rol=usuario["rol"]),
-        access_token=access_token,
-        refresh_token=refresh_token,
-        token_type="bearer",
-        mensaje="Login exitoso"
-    )
-
-
-# === REFRESH ===
-@app.post("/refresh", response_model=TokenResponse)
-async def refresh_token(data: dict = Body(...)):
-    token = data.get("refresh_token")
-    if not token:
-        raise HTTPException(status_code=400, detail="refresh_token requerido")
-
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        if payload.get("tipo") != "refresh":
-            raise HTTPException(status_code=401, detail="Token inválido")
-
-        user_id = payload.get("sub")
-
-        # validar usuario en DB
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT id, nombre_completo AS nombre, rol, activo FROM admin_usuario WHERE id = %s",
-                (user_id,),
-            )
-            row = cursor.fetchone()
-
-        if not row or not row[3]:
-            raise HTTPException(status_code=401, detail="Usuario no encontrado o inactivo")
-
-        usuario = {"id": row[0], "nombre": row[1], "rol": row[2]}
-        new_access_token = crear_access_token(usuario)
-
-        return TokenResponse(
-            access_token=new_access_token,
-            refresh_token=token,  # opcional: devolver el mismo refresh token
-            token_type="bearer",
-            mensaje="Access token renovado",
-            usuario=UsuarioOut(**usuario)
-        )
-
-    except ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="refresh_token expirado")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="refresh_token inválido")
+# # === LOGIN ===
+# @app.post("/login", response_model=TokenResponse)
+# async def login_usuario(credentials: dict = Body(...)):
+#     username = credentials.get("username", "").strip().lower()
+#     password = credentials.get("password", "")
+#     if not username or not password:
+#         raise HTTPException(status_code=400, detail="Username y password son requeridos")
+#
+#     # validar usuario
+#     resultado = autenticar_admin_usuario(username, password)
+#     if resultado["status"] != "ok":
+#         raise HTTPException(status_code=401, detail=resultado["mensaje"])
+#
+#     usuario = resultado["usuario"]
+#
+#     # generar tokens
+#     access_token = crear_access_token(usuario)
+#     refresh_token = crear_refresh_token(usuario)
+#
+#     return TokenResponse(
+#         usuario=UsuarioOut(id=usuario["id"], nombre=usuario["nombre"], rol=usuario["rol"]),
+#         access_token=access_token,
+#         refresh_token=refresh_token,
+#         token_type="bearer",
+#         mensaje="Login exitoso"
+#     )
 
 
-# === /me ===
-@app.get("/me", response_model=UsuarioOut, tags=["Auth"])
-async def get_me(usuario_actual: dict = Depends(obtener_usuario_actual)):
-    if not usuario_actual:
-        raise HTTPException(status_code=401, detail="Usuario no autenticado")
 
-    return UsuarioOut(
-        id=usuario_actual["id"],
-        nombre=usuario_actual["nombre"],
-        rol=usuario_actual["rol"],
-    )
+
+
+
 
 
 # # === LOGIN ===
@@ -2158,7 +2098,7 @@ def actualizar_datos_personales(creador_id: int, datos: DatosPersonalesInput):
             detail="Error al actualizar datos personales"
         )
 
-from auth import obtener_usuario_actual  # o el nombre correcto del archivo
+from main_auth import obtener_usuario_actual  # o el nombre correcto del archivo
 
 @app.put(
     "/api/perfil_creador/{creador_id}/evaluacion_cualitativa",
@@ -2372,7 +2312,7 @@ def guardar_resumen_final(creador_id: int, datos: GuardarResumenInput):
                     "creador_id": creador_id,
                     # Campos mínimos
                 }
-                entrevista_creada = insertar_entrevista(entrevista_payload)
+                # entrevista_creada = insertar_entrevista(entrevista_payload)
 
             elif estado_id == 5:
                 # Crear invitación mínima
@@ -2635,114 +2575,101 @@ async def obtener_responsables_agenda():
 @app.get("/api/creadores_activos", response_model=List[CreadorActivoDB])
 def listar_creadores_activos():
     try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM creadores_activos")
-        rows = cur.fetchall()
-        columns = [desc[0] for desc in cur.description]
-        result = [dict(zip(columns, row)) for row in rows]
-        return result
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM creadores_activos")
+                rows = cur.fetchall()
+                columns = [desc[0] for desc in cur.description]
+                result = [dict(zip(columns, row)) for row in rows]
+                return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if conn:
-            conn.close()
 
 # 2. Obtener un creador activo por ID
 @app.get("/api/creadores_activos/{id}", response_model=CreadorActivoConManager)
 def obtener_creador_activo(id: int):
-    conn = None
     try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT ca.*, au.nombre_completo AS manager_nombre
-            FROM creadores_activos ca
-            LEFT JOIN admin_usuario au ON ca.manager_id = au.id
-            WHERE ca.id = %s
-        """, (id,))
-        row = cur.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Creador no encontrado")
-        columns = [desc[0] for desc in cur.description]
-        return dict(zip(columns, row))
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT ca.*, au.nombre_completo AS manager_nombre
+                    FROM creadores_activos ca
+                    LEFT JOIN admin_usuario au ON ca.manager_id = au.id
+                    WHERE ca.id = %s
+                """, (id,))
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Creador no encontrado")
+                columns = [desc[0] for desc in cur.description]
+                return dict(zip(columns, row))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if conn:
-            conn.close()
 
 # 3. Agregar un nuevo creador activo
 @app.post("/api/creadores_activos", response_model=CreadorActivoDB, status_code=201)
 def agregar_creador_activo(creador: CreadorActivoCreate):
     try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO creadores_activos (
-                creador_id, nombre, usuario_tiktok, foto, categoria, estado, manager_id,
-                horario_lives, tiempo_disponible, fecha_incorporacion, fecha_graduacion,
-                seguidores, videos, me_gusta, diamantes, horas_live, numero_partidas, dias_emision
-            ) VALUES (
-                %(creador_id)s, %(nombre)s, %(usuario_tiktok)s, %(foto)s, %(categoria)s, %(estado)s, %(manager_id)s,
-                %(horario_lives)s, %(tiempo_disponible)s, %(fecha_incorporacion)s, %(fecha_graduacion)s,
-                %(seguidores)s, %(videos)s, %(me_gusta)s, %(diamantes)s, %(horas_live)s, %(numero_partidas)s, %(dias_emision)s
-            ) RETURNING *;
-        """, creador.dict())
-        row = cur.fetchone()
-        conn.commit()
-        columns = [desc[0] for desc in cur.description]
-        return dict(zip(columns, row))
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO creadores_activos (
+                        creador_id, nombre, usuario_tiktok, foto, categoria, estado, manager_id,
+                        horario_lives, tiempo_disponible, fecha_incorporacion, fecha_graduacion,
+                        seguidores, videos, me_gusta, diamantes, horas_live, numero_partidas, dias_emision
+                    ) VALUES (
+                        %(creador_id)s, %(nombre)s, %(usuario_tiktok)s, %(foto)s, %(categoria)s, %(estado)s, %(manager_id)s,
+                        %(horario_lives)s, %(tiempo_disponible)s, %(fecha_incorporacion)s, %(fecha_graduacion)s,
+                        %(seguidores)s, %(videos)s, %(me_gusta)s, %(diamantes)s, %(horas_live)s, %(numero_partidas)s, %(dias_emision)s
+                    ) RETURNING *;
+                """, creador.dict())
+                row = cur.fetchone()
+                conn.commit()
+                columns = [desc[0] for desc in cur.description]
+                return dict(zip(columns, row))
     except Exception as e:
-        if conn:
-            conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if conn:
-            conn.close()
 
 # 4. Editar un creador activo existente
 @app.put("/api/creadores_activos/{id}", response_model=CreadorActivoDB)
 def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
     try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            UPDATE creadores_activos SET
-                creador_id=%(creador_id)s,
-                nombre=%(nombre)s,
-                usuario_tiktok=%(usuario_tiktok)s,
-                foto=%(foto)s,
-                categoria=%(categoria)s,
-                estado=%(estado)s,
-                manager_id=%(manager_id)s,
-                horario_lives=%(horario_lives)s,
-                tiempo_disponible=%(tiempo_disponible)s,
-                fecha_incorporacion=%(fecha_incorporacion)s,
-                fecha_graduacion=%(fecha_graduacion)s,
-                seguidores=%(seguidores)s,
-                videos=%(videos)s,
-                me_gusta=%(me_gusta)s,
-                diamantes=%(diamantes)s,
-                horas_live=%(horas_live)s,
-                numero_partidas=%(numero_partidas)s,
-                dias_emision=%(dias_emision)s
-            WHERE id=%(id)s
-            RETURNING *;
-        """, {**creador.dict(), "id": id})
-        row = cur.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Creador no encontrado")
-        conn.commit()
-        columns = [desc[0] for desc in cur.description]
-        return dict(zip(columns, row))
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE creadores_activos SET
+                        creador_id=%(creador_id)s,
+                        nombre=%(nombre)s,
+                        usuario_tiktok=%(usuario_tiktok)s,
+                        foto=%(foto)s,
+                        categoria=%(categoria)s,
+                        estado=%(estado)s,
+                        manager_id=%(manager_id)s,
+                        horario_lives=%(horario_lives)s,
+                        tiempo_disponible=%(tiempo_disponible)s,
+                        fecha_incorporacion=%(fecha_incorporacion)s,
+                        fecha_graduacion=%(fecha_graduacion)s,
+                        seguidores=%(seguidores)s,
+                        videos=%(videos)s,
+                        me_gusta=%(me_gusta)s,
+                        diamantes=%(diamantes)s,
+                        horas_live=%(horas_live)s,
+                        numero_partidas=%(numero_partidas)s,
+                        dias_emision=%(dias_emision)s
+                    WHERE id=%(id)s
+                    RETURNING *;
+                """, {**creador.dict(), "id": id})
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Creador no encontrado")
+                conn.commit()
+                columns = [desc[0] for desc in cur.description]
+                return dict(zip(columns, row))
+    except HTTPException:
+        raise
     except Exception as e:
-        if conn:
-            conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if conn:
-            conn.close()
 
 
 @app.get("/api/admin-usuario_manager", response_model=List[AdminUsuarioManagerResponse])
@@ -2753,145 +2680,130 @@ async def obtener_usuarios_manager():
 
 @app.post("/api/creadores_activos/auto", response_model=dict)
 def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
-    conn = None
     try:
-        conn = get_connection()
-        cur = conn.cursor()
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                # 1. Buscar datos del creador en la tabla creadores
+                cur.execute("""
+                    SELECT
+                        id,
+                        usuario AS usuario_tiktok,
+                        foto_url AS foto,
+                        NULL AS categoria,
+                        'activo' AS estado,
+                        nickname AS nombre
+                    FROM creadores
+                    WHERE id = %s
+                """, (data.creador_id,))
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Creador no encontrado")
 
-        # 1. Buscar datos del creador en la tabla creadores
-        cur.execute("""
-            SELECT
-                id,
-                usuario AS usuario_tiktok,
-                foto_url AS foto,
-                NULL AS categoria,
-                'activo' AS estado,
-                nickname AS nombre
-            FROM creadores
-            WHERE id = %s
-        """, (data.creador_id,))
-        row = cur.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Creador no encontrado")
+                creador = dict(zip([desc[0] for desc in cur.description], row))
 
-        creador = dict(zip([desc[0] for desc in cur.description], row))
+                # 2. Preparar valores para insertar en creadores_activos
+                valores = {
+                    "creador_id": creador["id"],
+                    "usuario_tiktok": creador["usuario_tiktok"],
+                    "foto": creador["foto"],
+                    "categoria": creador["categoria"],
+                    "estado": creador["estado"],
+                    "nombre": creador["nombre"],
+                    "manager_id": data.manager_id,  # puede ser None
+                    "fecha_incorporacion": data.fecha_incorporacion or date.today(),
+                    "horario_lives": None,
+                    "tiempo_disponible": None,
+                    "fecha_graduacion": None,
+                    "seguidores": None,
+                    "videos": None,
+                    "me_gusta": None,
+                    "diamantes": None,
+                    "horas_live": None,
+                    "numero_partidas": None,
+                    "dias_emision": None
+                }
 
-        # 2. Preparar valores para insertar en creadores_activos
-        valores = {
-            "creador_id": creador["id"],
-            "usuario_tiktok": creador["usuario_tiktok"],
-            "foto": creador["foto"],
-            "categoria": creador["categoria"],
-            "estado": creador["estado"],
-            "nombre": creador["nombre"],
-            "manager_id": data.manager_id,  # puede ser None
-            "fecha_incorporacion": data.fecha_incorporacion or date.today(),
-            "horario_lives": None,
-            "tiempo_disponible": None,
-            "fecha_graduacion": None,
-            "seguidores": None,
-            "videos": None,
-            "me_gusta": None,
-            "diamantes": None,
-            "horas_live": None,
-            "numero_partidas": None,
-            "dias_emision": None
-        }
-
-        # 3. Insertar en creadores_activos
-        cur.execute("""
-            INSERT INTO creadores_activos (
-                creador_id, usuario_tiktok, foto, categoria, estado, nombre,
-                manager_id, horario_lives, tiempo_disponible, fecha_incorporacion, fecha_graduacion,
-                seguidores, videos, me_gusta, diamantes, horas_live, numero_partidas, dias_emision
-            ) VALUES (
-                %(creador_id)s, %(usuario_tiktok)s, %(foto)s, %(categoria)s, %(estado)s, %(nombre)s,
-                %(manager_id)s, %(horario_lives)s, %(tiempo_disponible)s, %(fecha_incorporacion)s, %(fecha_graduacion)s,
-                %(seguidores)s, %(videos)s, %(me_gusta)s, %(diamantes)s, %(horas_live)s, %(numero_partidas)s, %(dias_emision)s
-            )
-            RETURNING *;
-        """, valores)
-        new_row = cur.fetchone()
-        conn.commit()
-        columns = [desc[0] for desc in cur.description]
-        return dict(zip(columns, new_row))
+                # 3. Insertar en creadores_activos
+                cur.execute("""
+                    INSERT INTO creadores_activos (
+                        creador_id, usuario_tiktok, foto, categoria, estado, nombre,
+                        manager_id, horario_lives, tiempo_disponible, fecha_incorporacion, fecha_graduacion,
+                        seguidores, videos, me_gusta, diamantes, horas_live, numero_partidas, dias_emision
+                    ) VALUES (
+                        %(creador_id)s, %(usuario_tiktok)s, %(foto)s, %(categoria)s, %(estado)s, %(nombre)s,
+                        %(manager_id)s, %(horario_lives)s, %(tiempo_disponible)s, %(fecha_incorporacion)s, %(fecha_graduacion)s,
+                        %(seguidores)s, %(videos)s, %(me_gusta)s, %(diamantes)s, %(horas_live)s, %(numero_partidas)s, %(dias_emision)s
+                    )
+                    RETURNING *;
+                """, valores)
+                new_row = cur.fetchone()
+                conn.commit()
+                columns = [desc[0] for desc in cur.description]
+                return dict(zip(columns, new_row))
     except HTTPException:
         raise
     except Exception as e:
-        if conn:
-            conn.rollback()
         raise HTTPException(status_code=500, detail=f"Error al crear creador activo: {e}")
-    finally:
-        if conn:
-            conn.close()
 
 # SEGUIMIENTO DE CREADORES
 @app.post("/api/seguimiento_creadores/", response_model=SeguimientoCreadorDB)
 def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
     try:
-        conn = get_connection()
-        cur = conn.cursor()
-
         # 1. Obtener manager_id de creadores_activos
         if not seg.creador_activo_id:
             raise HTTPException(status_code=400, detail="creador_activo_id es requerido")
 
-        cur.execute("""
-            SELECT manager_id FROM creadores_activos WHERE id = %s
-        """, (seg.creador_activo_id,))
-        result = cur.fetchone()
-        if not result:
-            raise HTTPException(status_code=404, detail="No se encontró el creador activo")
-        manager_id = result[0]
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT manager_id FROM creadores_activos WHERE id = %s
+                """, (seg.creador_activo_id,))
+                result = cur.fetchone()
+                if not result:
+                    raise HTTPException(status_code=404, detail="No se encontró el creador activo")
+                manager_id = result[0]
 
-        # 2. Insertar seguimiento usando manager_id obtenido
-        cur.execute("""
-            INSERT INTO seguimiento_creadores (
-                creador_id, creador_activo_id, manager_id, fecha_seguimiento,
-                estrategias_mejora, compromisos
-            ) VALUES (
-                %(creador_id)s, %(creador_activo_id)s, %(manager_id)s, %(fecha_seguimiento)s,
-                %(estrategias_mejora)s, %(compromisos)s
-            )
-            RETURNING *;
-        """, {
-            **seg.dict(),
-            "manager_id": manager_id
-        })
-        row = cur.fetchone()
-        conn.commit()
-        columns = [desc[0] for desc in cur.description]
-        return dict(zip(columns, row))
+                # 2. Insertar seguimiento usando manager_id obtenido
+                cur.execute("""
+                    INSERT INTO seguimiento_creadores (
+                        creador_id, creador_activo_id, manager_id, fecha_seguimiento,
+                        estrategias_mejora, compromisos
+                    ) VALUES (
+                        %(creador_id)s, %(creador_activo_id)s, %(manager_id)s, %(fecha_seguimiento)s,
+                        %(estrategias_mejora)s, %(compromisos)s
+                    )
+                    RETURNING *;
+                """, {
+                    **seg.dict(),
+                    "manager_id": manager_id
+                })
+                row = cur.fetchone()
+                conn.commit()
+                columns = [desc[0] for desc in cur.description]
+                return dict(zip(columns, row))
+    except HTTPException:
+        raise
     except Exception as e:
         print("ERROR:", e)  # o usa logging
-        if conn:
-            conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if conn:
-            conn.close()
 
 @app.get("/api/seguimiento_creadores/creador_activo/{creador_activo_id}", response_model=List[SeguimientoCreadorConManager])
 def listar_seguimientos_por_creador_activo(creador_activo_id: int):
-    conn = None
     try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT sc.*, au.nombre_completo AS manager_nombre
-            FROM seguimiento_creadores sc
-            LEFT JOIN admin_usuario au ON sc.manager_id = au.id
-            WHERE sc.creador_activo_id = %s
-            ORDER BY sc.fecha_seguimiento DESC
-        """, (creador_activo_id,))
-        rows = cur.fetchall()
-        columns = [desc[0] for desc in cur.description]
-        return [dict(zip(columns, row)) for row in rows]
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT sc.*, au.nombre_completo AS manager_nombre
+                    FROM seguimiento_creadores sc
+                    LEFT JOIN admin_usuario au ON sc.manager_id = au.id
+                    WHERE sc.creador_activo_id = %s
+                    ORDER BY sc.fecha_seguimiento DESC
+                """, (creador_activo_id,))
+                rows = cur.fetchall()
+                columns = [desc[0] for desc in cur.description]
+                return [dict(zip(columns, row)) for row in rows]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if conn:
-            conn.close()
 
 @app.post("/estadisticas_creadores/cargar_excel/")
 async def cargar_estadisticas_excel(file: UploadFile = File(...)):
@@ -2913,78 +2825,73 @@ async def cargar_estadisticas_excel(file: UploadFile = File(...)):
             if col not in df.columns:
                 raise HTTPException(status_code=400, detail=f"Falta columna: {col}")
 
-        conn = get_connection()
-        cur = conn.cursor()
-        creados = 0
-        actualizados = 0
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                creados = 0
+                actualizados = 0
 
-        for _, row in df.iterrows():
-            usuario_tiktok = str(row["Nombre de usuario del creador"]).strip()
-            grupo = str(row["Grupo"])
-            seguidores = int(row["Seguidores"])
-            videos = int(row["Vídeos"])
-            me_gusta = int(row["Me gusta"])
-            diamantes = int(row["Diamantes de los últimos 30 días"])
-            duracion_lives = int(row["Duración de emisiones LIVE en los últimos 30 días"])
+                for _, row in df.iterrows():
+                    usuario_tiktok = str(row["Nombre de usuario del creador"]).strip()
+                    grupo = str(row["Grupo"])
+                    seguidores = int(row["Seguidores"])
+                    videos = int(row["Vídeos"])
+                    me_gusta = int(row["Me gusta"])
+                    diamantes = int(row["Diamantes de los últimos 30 días"])
+                    duracion_lives = int(row["Duración de emisiones LIVE en los últimos 30 días"])
 
-            # Buscar el registro en creadores_activos
-            cur.execute("""
-                SELECT id, creador_id FROM creadores_activos WHERE usuario_tiktok = %s
-            """, (usuario_tiktok,))
-            res = cur.fetchone()
-            if not res:
-                continue
+                    # Buscar el registro en creadores_activos
+                    cur.execute("""
+                        SELECT id, creador_id FROM creadores_activos WHERE usuario_tiktok = %s
+                    """, (usuario_tiktok,))
+                    res = cur.fetchone()
+                    if not res:
+                        continue
 
-            creador_activo_id, creador_id = res
+                    creador_activo_id, creador_id = res
 
-            cur.execute("""
-                INSERT INTO estadisticas_creadores (
-                    creador_id, creador_activo_id, fecha_reporte, grupo, diamantes_ult_30, duracion_emsiones_live_ult_30
-                ) VALUES (%s, %s, CURRENT_DATE, %s, %s, %s)
-            """, (
-                creador_id,
-                creador_activo_id,
-                grupo,
-                diamantes,
-                duracion_lives
-            ))
-            creados += 1
+                    cur.execute("""
+                        INSERT INTO estadisticas_creadores (
+                            creador_id, creador_activo_id, fecha_reporte, grupo, diamantes_ult_30, duracion_emsiones_live_ult_30
+                        ) VALUES (%s, %s, CURRENT_DATE, %s, %s, %s)
+                    """, (
+                        creador_id,
+                        creador_activo_id,
+                        grupo,
+                        diamantes,
+                        duracion_lives
+                    ))
+                    creados += 1
 
-            cur.execute("""
-                UPDATE creadores_activos
-                SET seguidores = %s, me_gusta = %s, videos = %s
-                WHERE id = %s
-            """, (seguidores, me_gusta, videos, creador_activo_id))
-            actualizados += 1
+                    cur.execute("""
+                        UPDATE creadores_activos
+                        SET seguidores = %s, me_gusta = %s, videos = %s
+                        WHERE id = %s
+                    """, (seguidores, me_gusta, videos, creador_activo_id))
+                    actualizados += 1
 
-        conn.commit()
-        return {
-            "ok": True,
-            "registros_creados": creados,
-            "registros_actualizados": actualizados
-        }
+                conn.commit()
+                return {
+                    "ok": True,
+                    "registros_creados": creados,
+                    "registros_actualizados": actualizados
+                }
+    except HTTPException:
+        raise
     except Exception as e:
-        if 'conn' in locals() and conn:
-            conn.rollback()
         raise HTTPException(status_code=500, detail=f"Error al procesar el archivo: {e}")
-    finally:
-        if 'conn' in locals() and conn:
-            conn.close()
 
 @app.get("/estadisticas_creadores/{creador_activo_id}")
 def obtener_estadisticas_por_creador(creador_activo_id: int):
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT * FROM estadisticas_creadores WHERE creador_activo_id = %s",
-        (creador_activo_id,)
-    )
-    rows = cur.fetchall()
-    columns = [desc[0] for desc in cur.description]
-    resultados = [dict(zip(columns, row)) for row in rows]
-    cur.close()
-    conn.close()
-    return resultados
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM estadisticas_creadores WHERE creador_activo_id = %s",
+                (creador_activo_id,)
+            )
+            rows = cur.fetchall()
+            columns = [desc[0] for desc in cur.description]
+            resultados = [dict(zip(columns, row)) for row in rows]
+            return resultados
 
 # 1. Subir foto y guardar URL en campo `foto`
 @app.post("/creadores_activos/{creador_activo_id}/foto")
@@ -2999,15 +2906,13 @@ async def subir_foto_creador_activo(creador_activo_id: int, foto: UploadFile = F
             resource_type="image"
         )
         url_foto = result["secure_url"]
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE creadores_activos SET foto = %s WHERE id = %s",
-            (url_foto, creador_activo_id)
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE creadores_activos SET foto = %s WHERE id = %s",
+                    (url_foto, creador_activo_id)
+                )
+                conn.commit()
         return {"foto_url": url_foto}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al subir la foto: {e}")
@@ -3015,17 +2920,15 @@ async def subir_foto_creador_activo(creador_activo_id: int, foto: UploadFile = F
 # 2. Consultar la URL de la foto
 @app.get("/creadores_activos/{creador_activo_id}/foto")
 def obtener_foto_creador_activo(creador_activo_id: int):
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT foto FROM creadores_activos WHERE id = %s", (creador_activo_id,)
-    )
-    res = cur.fetchone()
-    cur.close()
-    conn.close()
-    if not res or not res[0]:
-        raise HTTPException(status_code=404, detail="Foto no encontrada")
-    return {"foto_url": res[0]}
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT foto FROM creadores_activos WHERE id = %s", (creador_activo_id,)
+            )
+            res = cur.fetchone()
+            if not res or not res[0]:
+                raise HTTPException(status_code=404, detail="Foto no encontrada")
+            return {"foto_url": res[0]}
 
 # === Listar todos los aspirantes en proceso de entrevista/invitación ===
 @app.get("/api/creadores/invitacion", tags=["Creadores"])
