@@ -73,8 +73,8 @@ def verificar_password(password_plano: str, password_hash: str) -> bool:
 # ================= DEPENDENCY =================
 def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
     try:
-        print("🔥 [AUTH] Entró a obtener_usuario_actual")
-        print("🔥 [AUTH] Token recibido:", token)
+        print("🟢 [AUTH] Entró a obtener_usuario_actual")
+        print("🟢 [AUTH] Token recibido:", token[:30], "...")
 
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id = payload.get("sub")

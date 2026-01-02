@@ -1,5 +1,6 @@
 # ✅ main.py
 from fastapi import FastAPI, HTTPException, Path, Body, Request,Response, UploadFile, Form,File
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import pandas as pd
@@ -4153,7 +4154,23 @@ async def health_check():
     
     return health_info
 
+@app.on_event("startup")
+def log_routes():
+    logger.info("📌 RUTAS REGISTRADAS:")
+    for route in app.routes:
+        if hasattr(route, "methods"):
+            logger.info(f"➡️ {route.path} {route.methods}")
 
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.error("❌ 422 VALIDATION ERROR")
+    logger.error(f"➡️ URL: {request.method} {request.url}")
+    logger.error(f"➡️ HEADERS: {dict(request.headers)}")
+    logger.error(f"➡️ ERRORS: {exc.errors()}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()}
+    )
 
 # @app.get("/api/perfil_creador/{creador_id}/pre_resumen",
 #          tags=["Resumen Pre-Evaluación"],
