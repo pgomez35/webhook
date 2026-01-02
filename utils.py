@@ -1,5 +1,4 @@
 from datetime import datetime
-import psycopg2
 from dotenv import load_dotenv  # Solo si usas variables de entorno
 import os
 import re
@@ -8,14 +7,12 @@ from fastapi import FastAPI
 from starlette.staticfiles import StaticFiles
 from enviar_msg_wp import enviar_plantilla_generica, enviar_mensaje_texto_simple
 
-from DataBase import guardar_o_actualizar_waba_db,actualizar_phone_info_db
+from DataBase import guardar_o_actualizar_waba_db, actualizar_phone_info_db, get_connection_context
 
 # Cargar variables de entorno (incluye DATABASE_URL)
 load_dotenv()
 
 GRAPH_API_VERSION = os.getenv("GRAPH_API_VERSION")
-
-INTERNAL_DATABASE_URL = os.getenv("EXTERNAL_DATABASE_URL")
 
 import requests
 import os
@@ -95,29 +92,26 @@ def guardar_mensaje(telefono, texto, tipo="recibido", es_audio=False):
             if match:
                 texto = match.group(1)  # Ej: "9998555913574750.ogg"
 
-        conn = psycopg2.connect(INTERNAL_DATABASE_URL)
-        cur = conn.cursor()
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                # Buscar si ya existe el usuario
+                cur.execute("SELECT id FROM creadores WHERE telefono = %s", (telefono,))
+                usuario = cur.fetchone()
 
-        # Buscar si ya existe el usuario
-        cur.execute("SELECT id FROM creadores WHERE telefono = %s", (telefono,))
-        usuario = cur.fetchone()
+                # Insertar usuario si no existe
+                if not usuario:
+                    cur.execute("INSERT INTO creadores (telefono) VALUES (%s) RETURNING id", (telefono,))
+                    usuario_id = cur.fetchone()[0]
+                else:
+                    usuario_id = usuario[0]
 
-        # Insertar usuario si no existe
-        if not usuario:
-            cur.execute("INSERT INTO creadores (telefono) VALUES (%s) RETURNING id", (telefono,))
-            usuario_id = cur.fetchone()[0]
-        else:
-            usuario_id = usuario[0]
+                # Insertar mensaje
+                cur.execute("""
+                    INSERT INTO mensajes (usuario_id, contenido, tipo, es_audio, fecha)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (usuario_id, texto, tipo, es_audio, datetime.now()))
 
-        # Insertar mensaje
-        cur.execute("""
-            INSERT INTO mensajes (usuario_id, contenido, tipo, es_audio, fecha)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (usuario_id, texto, tipo, es_audio, datetime.now()))
-
-        conn.commit()
-        cur.close()
-        conn.close()
+                conn.commit()
 
         print("✅ Mensaje y usuario guardados correctamente.")
     except Exception as e:

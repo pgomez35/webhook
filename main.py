@@ -100,6 +100,11 @@ app.add_middleware(
 )
 
 # Incluir las rutas del módulo perfil_creador_whatsapp
+# ✅ IMPORTANTE: Registrar rutas específicas ANTES de rutas dinámicas
+# El router de auth debe ir ANTES de routers con rutas dinámicas sin prefijo
+app.include_router(main_auth_router, tags=["auth"])
+
+# Resto de routers
 app.include_router(perfil_creador_router, tags=["Perfil Creador WhatsApp"])
 app.include_router(aspirantes_router, tags=["Cargar Aspirantes"])
 app.include_router(agendamiento_router, tags=["Agendamiento"])
@@ -107,7 +112,6 @@ app.include_router(EvaluacionAspirante_router, tags=["Evaluacion Aspirante"])
 app.include_router(entrevistas_router, tags=["entrevistas"])
 app.include_router(utils_aspirantes_router, tags=["utils aspirantes"])
 app.include_router(chatbot_estados_aspirante_router, tags=["chatbot estados aspirante"])
-app.include_router(main_auth_router, tags=["auth"])
 
 
 

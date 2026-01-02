@@ -9,7 +9,7 @@ import psycopg2
 
 from DataBase import get_connection_context
 
-router = APIRouter()   # ← ESTE ES EL ROUTER QUE VAS A IMPORTAR EN main.py
+router = APIRouter(prefix="/api/chatbot-estados", tags=["Chatbot Estados"])   # ← ESTE ES EL ROUTER QUE VAS A IMPORTAR EN main.py
 
 
 
