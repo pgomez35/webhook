@@ -73,6 +73,9 @@ def verificar_password(password_plano: str, password_hash: str) -> bool:
 # ================= DEPENDENCY =================
 def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
     try:
+        print("🔥 [AUTH] Entró a obtener_usuario_actual")
+        print("🔥 [AUTH] Token recibido:", token)
+
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id = payload.get("sub")
 
@@ -139,6 +142,8 @@ async def login_usuario(credentials: dict = Body(...)):
 
 @router.get("/me", response_model=UsuarioOut)
 def get_me(usuario_actual: dict = Depends(obtener_usuario_actual)):
+    print("✅ [ME] Entró al endpoint /me")
+    print("✅ [ME] usuario_actual:", usuario_actual)
     return UsuarioOut(
         id=usuario_actual["id"],
         nombre=usuario_actual["nombre"],

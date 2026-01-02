@@ -33,6 +33,8 @@ class TenantMiddleware(BaseHTTPMiddleware):
     #     return response
 
     async def dispatch(self, request: Request, call_next):
+        print("🧾 [MIDDLEWARE] Authorization header:", request.headers.get("authorization"))
+        
         tenant_name = self._resolve_tenant_name(request)
         tenant_schema = self._build_schema_name(tenant_name)
         
