@@ -1074,7 +1074,12 @@ def autenticar_admin_usuario(username, password):
         
         if not usuario.get("activo"):
             return {"status": "error", "mensaje": "Usuario inactivo"}
-        
+
+        # 🔍 DEBUG AQUÍ
+        print("DEBUG password:", password)
+        print("DEBUG hash:", usuario["password_hash"])
+        print("DEBUG bcrypt result:", verify_password(password, usuario["password_hash"]))
+
         # Verificar contraseña
         if verify_password(password, usuario.get("password_hash", "")):
             # No retornar el password_hash en la respuesta
@@ -2850,7 +2855,7 @@ def registrar_envio_mensaje(
     """
     try:
         # Crea conexión y cursor como en tus otros módulos
-        with get_connection_public_external() as conn:
+        with get_connection_context() as conn:
             with conn.cursor() as cur:
 
                 cur.execute(
