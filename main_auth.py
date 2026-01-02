@@ -107,6 +107,8 @@ def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
 # === LOGIN ===
 @router.post("/login", response_model=TokenResponse)
 async def login_usuario(credentials: dict = Body(...)):
+    print("🔥 ENTRÓ AL LOGIN")
+    print("📥 credentials:", credentials)
     username = credentials.get("username", "").strip().lower()
     password = credentials.get("password", "")
 
