@@ -4638,7 +4638,7 @@ async def _procesar_error_envio(status_obj, tenant, phone_id, token):
 # -------------------------------------------------------
 
 
-from fastapi import APIRouter
+
 from pydantic import BaseModel
 
 # Asegúrate de importar tus funciones y diccionarios
@@ -4719,7 +4719,7 @@ def obtener_datos_envio_aspirante(creador_id):
                              cea.nombre_template
                       FROM creadores c
                                INNER JOIN perfil_creador pc ON c.id = pc.creador_id
-                               INNER JOIN chatbot_estados_aspirante cea ON pc.id_chatbot_estado = cea.id_chatbot_estado
+                               LEFT JOIN chatbot_estados_aspirante cea ON pc.id_chatbot_estado = cea.id_chatbot_estado
                       WHERE c.id = %s \
                       """
                 cur.execute(sql, (creador_id,))
@@ -5058,7 +5058,7 @@ def enviar_a_meta_texto_simple(texto, telefono, phone_id, token):
 # -----------------------------------------------------
 # -----------------------------------------------------
 
-from fastapi import APIRouter, HTTPException
+from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
