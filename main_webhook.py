@@ -3423,8 +3423,8 @@ class EstadoEvalInput(BaseModel):
     estado_evaluacion: str
 
 
-@router.post("/actualizar-estado-aspirante")
-def actualizar_estado_aspirante(data: EstadoEvalInput):
+@router.post("/actualizar-estado-aspiranteV1")
+def actualizar_estado_aspiranteV1(data: EstadoEvalInput):
     try:
         # 1. Obtener credenciales del Tenant (Igual que en tu ejemplo)
         # Descomentarear para producción
@@ -5140,7 +5140,7 @@ def guardar_estado_db(data: ActualizarEstadoRequest):
     Fuerza la actualización del estado de un creador en la base de datos.
     """
     try:
-        exito = actualizar_estado_aspirante(data.creador_id, data.estado_codigo)
+        exito = actualizar_estado_aspirante_(data.creador_id, data.estado_codigo)
 
         if exito:
             return {"status": "success", "mensaje": f"Estado actualizado a '{data.estado_codigo}'."}
