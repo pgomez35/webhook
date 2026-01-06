@@ -124,137 +124,6 @@ def Enviar_menu_quickreply(creador_id, estado_evaluacion, phone_id, token, telef
             "texto": "¿Cómo deseas continuar?",
             "botones": [
                 ("MENU_PROCESO_INCORPORACION", "Proceso de incorporación a Prestige"),
-            ]
-        },
-
-        "solicitud_agendamiento_tiktok": {
-            "texto": "Es momento de tu prueba en TikTok LIVE 🎥",
-            "botones": [
-                ("MENU_AGENDAR_PRUEBA_TIKTOK", "Agendar prueba de TikTok LIVE"),
-                ("MENU_VER_GUIA_PRUEBA", "Ver guía de la prueba"),
-            ]
-        },
-
-        "usuario_agendo_prueba_tiktok": {
-            "texto": "Gestiona tu prueba de TikTok LIVE",
-            "botones": [
-                ("MENU_INGRESAR_LINK_TIKTOK", "Ingresar link de TikTok LIVE"),
-                ("MENU_MODIFICAR_CITA_PRUEBA", "Modificar cita de la prueba"),
-                ("MENU_VER_GUIA_PRUEBA", "Ver guía de la prueba"),
-            ]
-        },
-
-        "solicitud_agendamiento_entrevista": {
-            "texto": "Siguiente paso: entrevista con un asesor",
-            "botones": [
-                ("MENU_AGENDAR_ENTREVISTA", "Agendar entrevista con un asesor"),
-            ]
-        },
-
-        "usuario_agendo_entrevista": {
-            "texto": "Gestiona tu entrevista",
-            "botones": [
-                ("MENU_MODIFICAR_CITA_ENTREVISTA", "Modificar cita de entrevista"),
-            ]
-        },
-
-        "solicitud_agendamiento_tiktok2": {
-            "texto": "Continuamos con una segunda prueba 🎥",
-            "botones": [
-                ("MENU_AGENDAR_PRUEBA_TIKTOK_2", "Agendar prueba #2 de TikTok LIVE"),
-                ("MENU_RESULTADO_PRUEBA_1", "Resultado prueba #1"),
-            ]
-        },
-
-        "usuario_agendo_prueba_tiktok2": {
-            "texto": "Gestiona tu prueba #2 de TikTok LIVE",
-            "botones": [
-                ("MENU_INGRESAR_LINK_TIKTOK_2", "Ingresar link de TikTok LIVE #2"),
-                ("MENU_MODIFICAR_CITA_PRUEBA_2", "Modificar cita de la prueba #2"),
-                ("MENU_VER_GUIA_PRUEBA_2", "Ver guía de la prueba #2"),
-            ]
-        },
-
-        "solicitud_agendamiento_entrevista2": {
-            "texto": "Agendemos tu entrevista final",
-            "botones": [
-                ("MENU_AGENDAR_ENTREVISTA", "Agendar entrevista con un asesor"),
-            ]
-        },
-
-        "usuario_agendo_entrevista2": {
-            "texto": "Gestiona tu entrevista",
-            "botones": [
-                ("MENU_MODIFICAR_CITA_ENTREVISTA", "Modificar cita de la entrevista"),
-                ("MENU_TEMAS_ENTREVISTA_2", "Temas a tratar en entrevista #2"),
-            ]
-        },
-
-        "solicitud_invitacion_tiktok": {
-            "texto": "Consulta el estado de tu proceso",
-            "botones": [
-                ("MENU_ESTADO_PROCESO", "Estado del proceso"),
-            ]
-        },
-
-        "invitacion_tiktok_aceptada": {
-            "texto": "Tu proceso con TikTok está activo ✅",
-            "botones": [
-                ("MENU_ESTADO_PROCESO", "Estado del proceso"),
-            ]
-        },
-
-        "solicitud_invitacion_usuario": {
-            "texto": "Estás a un paso de unirte a la agencia 🚀",
-            "botones": [
-                ("MENU_VENTAJAS_AGENCIA", "Ventajas de pertenecer a la agencia"),
-                ("MENU_ACEPTAR_INCORPORACION", "Aceptar incorporación a la agencia"),
-            ]
-        },
-    }
-
-    menu = MENUS.get(estado_evaluacion)
-
-    if not menu:
-        return  # Estado sin menú
-
-    texto_menu = menu["texto"]
-    botones = menu["botones"]
-
-    botones_api = [
-        {
-            "type": "reply",
-            "reply": {
-                "id": boton_id,
-                "title": titulo
-            }
-        }
-        for boton_id, titulo in botones
-    ]
-
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": telefono,
-        "type": "interactive",
-        "interactive": {
-            "type": "button",
-            "body": {"text": texto_menu},
-            "action": {"buttons": botones_api}
-        }
-    }
-
-    enviar_a_meta(payload, phone_id, token)
-
-def Enviar_menu_quickreply(creador_id, estado_evaluacion, phone_id, token, telefono):
-    texto_menu = "Elige una opción:"
-    botones = []
-
-    MENUS = {
-
-        "post_encuesta_inicial": {
-            "texto": "¿Cómo deseas continuar?",
-            "botones": [
-                ("MENU_PROCESO_INCORPORACION", "Proceso de incorporación a Prestige"),
                 ("MENU_PREGUNTAS_FRECUENTES", "Preguntas Frecuentes"),
             ]
         },
@@ -399,6 +268,137 @@ def Enviar_menu_quickreplyV0(creador_id, estado_evaluacion, phone_id, token, tel
             }
         }
         for b in botones
+    ]
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": telefono,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": texto_menu},
+            "action": {"buttons": botones_api}
+        }
+    }
+
+    enviar_a_meta(payload, phone_id, token)
+
+def Enviar_menu_quickreplyV1(creador_id, estado_evaluacion, phone_id, token, telefono):
+    texto_menu = "Elige una opción:"
+    botones = []
+
+    MENUS = {
+
+        "post_encuesta_inicial": {
+            "texto": "¿Cómo deseas continuar?",
+            "botones": [
+                ("MENU_PROCESO_INCORPORACION", "Proceso de incorporación a Prestige"),
+            ]
+        },
+
+        "solicitud_agendamiento_tiktok": {
+            "texto": "Es momento de tu prueba en TikTok LIVE 🎥",
+            "botones": [
+                ("MENU_AGENDAR_PRUEBA_TIKTOK", "Agendar prueba de TikTok LIVE"),
+                ("MENU_VER_GUIA_PRUEBA", "Ver guía de la prueba"),
+            ]
+        },
+
+        "usuario_agendo_prueba_tiktok": {
+            "texto": "Gestiona tu prueba de TikTok LIVE",
+            "botones": [
+                ("MENU_INGRESAR_LINK_TIKTOK", "Ingresar link de TikTok LIVE"),
+                ("MENU_MODIFICAR_CITA_PRUEBA", "Modificar cita de la prueba"),
+                ("MENU_VER_GUIA_PRUEBA", "Ver guía de la prueba"),
+            ]
+        },
+
+        "solicitud_agendamiento_entrevista": {
+            "texto": "Siguiente paso: entrevista con un asesor",
+            "botones": [
+                ("MENU_AGENDAR_ENTREVISTA", "Agendar entrevista con un asesor"),
+            ]
+        },
+
+        "usuario_agendo_entrevista": {
+            "texto": "Gestiona tu entrevista",
+            "botones": [
+                ("MENU_MODIFICAR_CITA_ENTREVISTA", "Modificar cita de entrevista"),
+            ]
+        },
+
+        "solicitud_agendamiento_tiktok2": {
+            "texto": "Continuamos con una segunda prueba 🎥",
+            "botones": [
+                ("MENU_AGENDAR_PRUEBA_TIKTOK_2", "Agendar prueba #2 de TikTok LIVE"),
+                ("MENU_RESULTADO_PRUEBA_1", "Resultado prueba #1"),
+            ]
+        },
+
+        "usuario_agendo_prueba_tiktok2": {
+            "texto": "Gestiona tu prueba #2 de TikTok LIVE",
+            "botones": [
+                ("MENU_INGRESAR_LINK_TIKTOK_2", "Ingresar link de TikTok LIVE #2"),
+                ("MENU_MODIFICAR_CITA_PRUEBA_2", "Modificar cita de la prueba #2"),
+                ("MENU_VER_GUIA_PRUEBA_2", "Ver guía de la prueba #2"),
+            ]
+        },
+
+        "solicitud_agendamiento_entrevista2": {
+            "texto": "Agendemos tu entrevista final",
+            "botones": [
+                ("MENU_AGENDAR_ENTREVISTA", "Agendar entrevista con un asesor"),
+            ]
+        },
+
+        "usuario_agendo_entrevista2": {
+            "texto": "Gestiona tu entrevista",
+            "botones": [
+                ("MENU_MODIFICAR_CITA_ENTREVISTA", "Modificar cita de la entrevista"),
+                ("MENU_TEMAS_ENTREVISTA_2", "Temas a tratar en entrevista #2"),
+            ]
+        },
+
+        "solicitud_invitacion_tiktok": {
+            "texto": "Consulta el estado de tu proceso",
+            "botones": [
+                ("MENU_ESTADO_PROCESO", "Estado del proceso"),
+            ]
+        },
+
+        "invitacion_tiktok_aceptada": {
+            "texto": "Tu proceso con TikTok está activo ✅",
+            "botones": [
+                ("MENU_ESTADO_PROCESO", "Estado del proceso"),
+            ]
+        },
+
+        "solicitud_invitacion_usuario": {
+            "texto": "Estás a un paso de unirte a la agencia 🚀",
+            "botones": [
+                ("MENU_VENTAJAS_AGENCIA", "Ventajas de pertenecer a la agencia"),
+                ("MENU_ACEPTAR_INCORPORACION", "Aceptar incorporación a la agencia"),
+            ]
+        },
+    }
+
+    menu = MENUS.get(estado_evaluacion)
+
+    if not menu:
+        return  # Estado sin menú
+
+    texto_menu = menu["texto"]
+    botones = menu["botones"]
+
+    botones_api = [
+        {
+            "type": "reply",
+            "reply": {
+                "id": boton_id,
+                "title": titulo
+            }
+        }
+        for boton_id, titulo in botones
     ]
 
     payload = {

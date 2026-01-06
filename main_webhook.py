@@ -14,7 +14,7 @@ from typing import Optional
 # ============================
 import psycopg2
 from dotenv import load_dotenv
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from rapidfuzz import process, fuzz
@@ -41,9 +41,16 @@ from tenant import (
 from utils import *
 from redis_client import redis_set_temp, redis_get_temp, redis_delete_temp
 from utils_aspirantes import guardar_estado_eval, obtener_status_24hrs, Enviar_msg_estado, \
-    enviar_plantilla_estado_evaluacion, obtener_creador_id_por_telefono, buscar_estado_creador, Enviar_menu_quickreply, \
+    enviar_plantilla_estado_evaluacion, buscar_estado_creador, \
     accion_menu_estado_evaluacion, validar_url_link_tiktok_live, guardar_link_tiktok_live, \
     actualizar_mensaje_desde_status, _handle_statuses, enviar_confirmacion_interactiva
+
+
+
+# from utils_aspirantes import guardar_estado_eval, obtener_status_24hrs, Enviar_msg_estado, \
+#     enviar_plantilla_estado_evaluacion, obtener_creador_id_por_telefono, buscar_estado_creador, Enviar_menu_quickreply, \
+#     accion_menu_estado_evaluacion, validar_url_link_tiktok_live, guardar_link_tiktok_live, \
+#     actualizar_mensaje_desde_status, _handle_statuses, enviar_confirmacion_interactiva
 
 load_dotenv()
 
@@ -3482,9 +3489,7 @@ def actualizar_estado_aspirante(data: EstadoEvalInput):
         return {"error": str(e)}
 
 
-
-
-def procesar_evento_webhook(body, phone_id_cliente, token_cliente):
+def procesar_evento_webhook_anticuado(body, phone_id_cliente, token_cliente):
     """
     Función principal llamada desde tu ruta @router.post("/webhook")
     """
@@ -4620,3 +4625,426 @@ async def _procesar_error_envio(status_obj, tenant, phone_id, token):
 #         print(f"❌ Error inesperado al obtener estado del aspirante: {e}")
 #         traceback.print_exc()
 #         return None
+
+
+
+# -------------------------------------------------------
+# -------------------------------------------------------
+# PRUEBA NUEVO MODELOS
+# PRUEBA NUEVO MODELOS
+# PRUEBA NUEVO MODELOS
+# PRUEBA NUEVO MODELOS
+# -------------------------------------------------------
+# -------------------------------------------------------
+
+
+from fastapi import APIRouter
+from pydantic import BaseModel
+
+# Asegúrate de importar tus funciones y diccionarios
+# from services.aspirant_flow import Enviar_menu_quickreply, accion_menu_estado_evaluacion
+# from utils import MENUS (para que el front sepa qué botones existen)
+
+
+# Modelos para la prueba
+class TestSendMenuInput(BaseModel):
+    phone_id: str
+    token: str
+    telefono_destino: str
+    estado_evaluacion: str
+
+class TestSimulateClickInput(BaseModel):
+    creador_id: int
+    button_id: str
+    phone_id: str
+    token: str
+    estado_evaluacion: str
+    telefono_destino: str
+
+@router.post("/enviar-menu")
+def test_enviar_menu(data: TestSendMenuInput):
+    """
+    Prueba unitaria: Envía el menú real a tu celular.
+    """
+    try:
+        # Usamos un creador_id dummy (1) para la prueba
+        Enviar_menu_quickreply(
+            creador_id=1,
+            estado_evaluacion=data.estado_evaluacion,
+            phone_id=data.phone_id,
+            token=data.token,
+            telefono=data.telefono_destino
+        )
+        return {"status": "success", "message": f"Menú '{data.estado_evaluacion}' enviado a {data.telefono_destino}"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@router.post("/simular-clic")
+def test_simular_clic(data: TestSimulateClickInput):
+    """
+    Prueba unitaria: Ejecuta la lógica como si el usuario hubiera hecho clic.
+    NO espera a Meta, ejecuta la función de lógica directamente.
+    """
+    try:
+        # Aquí capturamos lo que haría el sistema (logs, updates de BD simulados)
+        accion_menu_estado_evaluacion(
+            creador_id=data.creador_id,
+            button_id=data.button_id,
+            phone_id=data.phone_id,
+            token=data.token,
+            estado_evaluacion=data.estado_evaluacion,
+            telefono=data.telefono_destino
+        )
+        return {"status": "success", "message": f"Acción '{data.button_id}' ejecutada exitosamente."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+# Asegúrate de tener importado tu context manager
+# from tu_archivo_conexion import get_connection_context
+
+def obtener_datos_envio_aspirante(creador_id):
+    """
+    Obtiene el teléfono del creador y el mensaje/código de su estado actual.
+    Realiza un JOIN entre creadores, perfil_creador y chatbot_estados_aspirante.
+    """
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                # JOIN para traer todo en una sola consulta
+                sql = """
+                      SELECT c.telefono, \
+                             cea.codigo, \
+                             cea.mensaje_chatbot_simple, \
+                             cea.nombre_template
+                      FROM creadores c
+                               INNER JOIN perfil_creador pc ON c.id = pc.creador_id
+                               INNER JOIN chatbot_estados_aspirante cea ON pc.id_chatbot_estado = cea.id_chatbot_estado
+                      WHERE c.id = %s \
+                      """
+                cur.execute(sql, (creador_id,))
+                row = cur.fetchone()
+
+                if row:
+                    return {
+                        "telefono": row[0],
+                        "codigo_estado": row[1],
+                        "mensaje": row[2] or "Hola, selecciona una opción:",
+                        "template": row[3]  # Por si se necesita enviar template
+                    }
+                return None
+
+    except Exception as e:
+        print(f"❌ Error al obtener datos de envío para creador {creador_id}:", e)
+        return None
+
+
+def obtener_mensaje_por_codigo(codigo_estado):
+    """
+    Busca el mensaje de texto asociado a un código de estado específico.
+    Útil para testing o flujos forzados.
+    """
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                sql = """
+                      SELECT mensaje_chatbot_simple
+                      FROM chatbot_estados_aspirante
+                      WHERE codigo = %s \
+                      """
+                cur.execute(sql, (codigo_estado,))
+                row = cur.fetchone()
+
+                if row:
+                    return row[0]
+                return "Selecciona una opción:"
+
+    except Exception as e:
+        print(f"❌ Error al obtener mensaje por código {codigo_estado}:", e)
+        return "Error recuperando mensaje."
+
+
+def actualizar_estado_aspirante_(creador_id, nuevo_codigo_estado):
+    """
+    Actualiza el estado de un aspirante en perfil_creador basándose en el CÓDIGO de estado.
+    Primero busca el ID del estado y luego actualiza.
+    """
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                # 1. Obtener el ID numérico del estado basado en el código texto
+                cur.execute("SELECT id_chatbot_estado FROM chatbot_estados_aspirante WHERE codigo = %s",
+                            (nuevo_codigo_estado,))
+                row = cur.fetchone()
+
+                if not row:
+                    print(f"⚠️ El código de estado '{nuevo_codigo_estado}' no existe en la BD.")
+                    return False
+
+                new_id_estado = row[0]
+
+                # 2. Actualizar el perfil del creador
+                sql_update = """
+                             UPDATE perfil_creador
+                             SET id_chatbot_estado   = %s, \
+                                 fecha_actualizacion = CURRENT_TIMESTAMP
+                             WHERE creador_id = %s \
+                             """
+                cur.execute(sql_update, (new_id_estado, creador_id))
+                conn.commit()
+                print(f"✅ Estado actualizado a '{nuevo_codigo_estado}' (ID: {new_id_estado}) para creador {creador_id}")
+                return True
+
+    except Exception as e:
+        print(f"❌ Error actualizando estado para creador {creador_id}:", e)
+        return False
+
+
+def obtener_creador_id_por_telefono(telefono):
+    """
+    Busca el ID del creador a partir de su número de WhatsApp.
+    """
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                # Nota: Asegúrate de que el formato del teléfono en BD coincida (con o sin +)
+                cur.execute("SELECT id FROM creadores WHERE telefono = %s", (telefono,))
+                row = cur.fetchone()
+
+                if row:
+                    return row[0]
+                return None
+
+    except Exception as e:
+        print(f"❌ Error buscando creador por teléfono {telefono}:", e)
+        return None
+
+
+# Asegúrate de importar la función de actualización de DB
+# from db_service import actualizar_estado_aspirante, obtener_datos_envio_aspirante
+
+
+# Modelo para la petición de actualización
+class ActualizarEstadoRequest(BaseModel):
+    creador_id: int
+    estado_codigo: str
+
+
+@router.get("/obtener-estado-actual/{creador_id}")
+def get_estado_actual(creador_id: int):
+    """
+    Consulta en la BD en qué estado se encuentra el creador.
+    """
+    datos = obtener_datos_envio_aspirante(creador_id)
+    if not datos:
+        raise HTTPException(status_code=404, detail="Creador no encontrado")
+
+    return {
+        "status": "success",
+        "codigo_actual": datos["codigo_estado"],
+        "telefono": datos["telefono"]
+    }
+
+
+@router.post("/guardar-estado-db")
+def guardar_estado_db(data: ActualizarEstadoRequest):
+    """
+    Actualiza el campo id_chatbot_estado en la tabla perfil_creador.
+    """
+    exito = actualizar_estado_aspirante_(data.creador_id, data.estado_codigo)
+
+    if exito:
+        return {"status": "success", "mensaje": f"Estado actualizado a '{data.estado_codigo}' en BD."}
+    else:
+        raise HTTPException(status_code=500, detail="Error al actualizar en Base de Datos")
+
+
+import requests
+import json
+# IMPORTANTE: Importa tus funciones de DB aquí
+
+def Enviar_menu_quickreply(creador_id, estado_evaluacion, phone_id, token, telefono_override=None):
+    """
+    Envía un menú interactivo.
+    - TEXTO y TELÉFONO: Se obtienen dinámicamente de la Base de Datos.
+    - BOTONES: Se obtienen de la configuración local (MENUS), ya que no existen en la tabla.
+    """
+
+    # -------------------------------------------------------------------------
+    # 1. CONFIGURACIÓN DE BOTONES (Estructura Fija)
+    # -------------------------------------------------------------------------
+    # Mantenemos este diccionario SOLO para saber qué botones mostrar en cada caso.
+    # El campo "texto" aquí es solo un fallback por si falla la BD.
+    MENUS = {
+        "post_encuesta_inicial": {
+            "botones": [
+                ("MENU_PROCESO_INCORPORACION", "Proceso de incorporación"),
+                ("MENU_PREGUNTAS_FRECUENTES", "Preguntas Frecuentes"),
+            ]
+        },
+        "solicitud_agendamiento_tiktok": {
+            "botones": [
+                ("MENU_AGENDAR_PRUEBA_TIKTOK", "Agendar prueba Live"),
+                ("MENU_VER_GUIA_PRUEBA", "Ver guía"),
+                ("MENU_CHAT_ASESOR", "Hablar con asesor")
+            ]
+        },
+        "usuario_agendo_prueba_tiktok": {
+            "botones": [
+                ("MENU_INGRESAR_LINK_TIKTOK", "Ingresar link Live"),
+                ("MENU_MODIFICAR_CITA_PRUEBA", "Modificar cita"),
+                ("MENU_VER_GUIA_PRUEBA", "Ver guía"),
+            ]
+        },
+        "solicitud_agendamiento_entrevista": {
+            "botones": [
+                ("MENU_AGENDAR_ENTREVISTA", "Agendar entrevista"),
+            ]
+        },
+        "usuario_agendo_entrevista": {
+            "botones": [
+                ("MENU_MODIFICAR_CITA_ENTREVISTA", "Modificar cita"),
+            ]
+        },
+        "solicitud_agendamiento_tiktok2": {
+            "botones": [
+                ("MENU_AGENDAR_PRUEBA_TIKTOK_2", "Agendar prueba #2"),
+                ("MENU_RESULTADO_PRUEBA_1", "Resultado prueba #1"),
+            ]
+        },
+        "usuario_agendo_prueba_tiktok2": {
+            "botones": [
+                ("MENU_INGRESAR_LINK_TIKTOK_2", "Ingresar link #2"),
+                ("MENU_MODIFICAR_CITA_PRUEBA_2", "Modificar cita #2"),
+                ("MENU_VER_GUIA_PRUEBA_2", "Ver guía #2"),
+            ]
+        },
+        "solicitud_agendamiento_entrevista2": {
+            "botones": [
+                ("MENU_AGENDAR_ENTREVISTA", "Agendar entrevista"),
+            ]
+        },
+        "usuario_agendo_entrevista2": {
+            "botones": [
+                ("MENU_MODIFICAR_CITA_ENTREVISTA", "Modificar cita"),
+                ("MENU_TEMAS_ENTREVISTA_2", "Temas entrevista #2"),
+            ]
+        },
+        "solicitud_invitacion_tiktok": {
+            "botones": [
+                ("MENU_ESTADO_PROCESO", "Estado del proceso"),
+            ]
+        },
+        "invitacion_tiktok_aceptada": {
+            "botones": [
+                ("MENU_ESTADO_PROCESO", "Estado del proceso"),
+            ]
+        },
+        "solicitud_invitacion_usuario": {
+            "botones": [
+                ("MENU_VENTAJAS_AGENCIA", "Ventajas agencia"),
+                ("MENU_ACEPTAR_INCORPORACION", "Aceptar incorporación"),
+            ]
+        },
+    }
+
+    # -------------------------------------------------------------------------
+    # 2. OBTENCIÓN DE DATOS REALES (DB)
+    # -------------------------------------------------------------------------
+    print(f"🏗️ Construyendo menú para estado: {estado_evaluacion}")
+
+    # Variables finales
+    texto_final = "Selecciona una opción:"  # Valor por defecto seguro
+    telefono_destino = telefono_override
+
+    # A. MODO PRODUCCIÓN (Sin override de teléfono)
+    if not telefono_override:
+        # Buscamos en la BD usando tu función SQL real
+        datos_db = obtener_datos_envio_aspirante(creador_id)
+
+        if datos_db:
+            telefono_destino = datos_db["telefono"]
+
+            # Prioridad absoluta al texto de la BD
+            if datos_db["mensaje"]:
+                texto_final = datos_db["mensaje"]
+                print(f"✅ Texto DB cargado: '{texto_final[:20]}...'")
+            else:
+                print("⚠️ El estado en BD no tiene mensaje configurado.")
+        else:
+            print(f"❌ Error CRÍTICO: No se encontraron datos para creador_id {creador_id}")
+            return  # No podemos enviar nada si no hay teléfono
+
+    # B. MODO TESTING (Con override de teléfono desde React)
+    else:
+        # Buscamos solo el mensaje asociado al código de estado
+        msg_db = obtener_mensaje_por_codigo(estado_evaluacion)
+        if msg_db:
+            texto_final = msg_db
+            print(f"✅ (Test) Texto DB cargado para {estado_evaluacion}")
+
+    # -------------------------------------------------------------------------
+    # 3. CONSTRUCCIÓN Y ENVÍO
+    # -------------------------------------------------------------------------
+
+    # Recuperar botones del diccionario
+    menu_config = MENUS.get(estado_evaluacion)
+
+    if not menu_config:
+        print(f"⚠️ No hay botones configurados en Python para: {estado_evaluacion}")
+        # Opcional: Enviar solo texto si no hay botones definidos
+        enviar_a_meta_texto_simple(texto_final, telefono_destino, phone_id, token)
+        return
+
+    botones = menu_config["botones"]
+
+    # Construir estructura de Meta
+    botones_api = [
+        {
+            "type": "reply",
+            "reply": {
+                "id": boton_id,
+                "title": titulo[:20]  # WhatsApp limita títulos a 20 chars
+            }
+        }
+        for boton_id, titulo in botones[:3]  # Max 3 botones
+    ]
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": telefono_destino,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": texto_final},
+            "action": {"buttons": botones_api}
+        }
+    }
+
+    enviar_a_meta(payload, phone_id, token)
+
+
+# --- Funciones Auxiliares de Envío ---
+
+def enviar_a_meta(payload, phone_id, token):
+    url = f"https://graph.facebook.com/v19.0/{phone_id}/messages"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    try:
+        res = requests.post(url, headers=headers, json=payload)
+        print(f"📤 Enviado a Meta: {res.status_code}")
+        if res.status_code not in [200, 201]:
+            print(f"❌ Error Meta: {res.text}")
+    except Exception as e:
+        print(f"❌ Excepción enviando: {e}")
+
+
+def enviar_a_meta_texto_simple(texto, telefono, phone_id, token):
+    """Fallback por si no hay botones"""
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": telefono,
+        "type": "text",
+        "text": {"body": texto}
+    }
+    enviar_a_meta(payload, phone_id, token)
+

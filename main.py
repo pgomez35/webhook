@@ -75,7 +75,7 @@ from main_Agendamiento import router as agendamiento_router
 from main_EvaluacionAspirante import router as EvaluacionAspirante_router
 from main_entrevistas import router as entrevistas_router
 from utils_aspirantes import router as utils_aspirantes_router
-from chatbot_estados_aspirante import router as chatbot_estados_aspirante_router
+from main_chatbot_estados_aspirante import router as chatbot_estados_aspirante_router
 from main_auth import router as main_auth_router
 
 
