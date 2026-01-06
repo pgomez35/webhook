@@ -1075,11 +1075,6 @@ def autenticar_admin_usuario(username, password):
         if not usuario.get("activo"):
             return {"status": "error", "mensaje": "Usuario inactivo"}
 
-        # 🔍 DEBUG AQUÍ
-        print("DEBUG password:", password)
-        print("DEBUG hash:", usuario["password_hash"])
-        print("DEBUG bcrypt result:", verify_password(password, usuario["password_hash"]))
-
         # Verificar contraseña
         if verify_password(password, usuario.get("password_hash", "")):
             # No retornar el password_hash en la respuesta

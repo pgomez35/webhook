@@ -4647,57 +4647,57 @@ from pydantic import BaseModel
 
 
 # Modelos para la prueba
-class TestSendMenuInput(BaseModel):
-    phone_id: str
-    token: str
-    telefono_destino: str
-    estado_evaluacion: str
+# class TestSendMenuInput(BaseModel):
+#     phone_id: str
+#     token: str
+#     telefono_destino: str
+#     estado_evaluacion: str
+#
+# class TestSimulateClickInput(BaseModel):
+#     creador_id: int
+#     button_id: str
+#     phone_id: str
+#     token: str
+#     estado_evaluacion: str
+#     telefono_destino: str
 
-class TestSimulateClickInput(BaseModel):
-    creador_id: int
-    button_id: str
-    phone_id: str
-    token: str
-    estado_evaluacion: str
-    telefono_destino: str
-
-@router.post("/enviar-menu")
-def test_enviar_menu(data: TestSendMenuInput):
-    """
-    Prueba unitaria: Envía el menú real a tu celular.
-    """
-    try:
-        # Usamos un creador_id dummy (1) para la prueba
-        Enviar_menu_quickreply(
-            creador_id=1,
-            estado_evaluacion=data.estado_evaluacion,
-            phone_id=data.phone_id,
-            token=data.token,
-            telefono=data.telefono_destino
-        )
-        return {"status": "success", "message": f"Menú '{data.estado_evaluacion}' enviado a {data.telefono_destino}"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-@router.post("/simular-clic")
-def test_simular_clic(data: TestSimulateClickInput):
-    """
-    Prueba unitaria: Ejecuta la lógica como si el usuario hubiera hecho clic.
-    NO espera a Meta, ejecuta la función de lógica directamente.
-    """
-    try:
-        # Aquí capturamos lo que haría el sistema (logs, updates de BD simulados)
-        accion_menu_estado_evaluacion(
-            creador_id=data.creador_id,
-            button_id=data.button_id,
-            phone_id=data.phone_id,
-            token=data.token,
-            estado_evaluacion=data.estado_evaluacion,
-            telefono=data.telefono_destino
-        )
-        return {"status": "success", "message": f"Acción '{data.button_id}' ejecutada exitosamente."}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+# @router.post("/enviar-menu")
+# def test_enviar_menu(data: TestSendMenuInput):
+#     """
+#     Prueba unitaria: Envía el menú real a tu celular.
+#     """
+#     try:
+#         # Usamos un creador_id dummy (1) para la prueba
+#         Enviar_menu_quickreply(
+#             creador_id=1,
+#             estado_evaluacion=data.estado_evaluacion,
+#             phone_id=data.phone_id,
+#             token=data.token,
+#             telefono=data.telefono_destino
+#         )
+#         return {"status": "success", "message": f"Menú '{data.estado_evaluacion}' enviado a {data.telefono_destino}"}
+#     except Exception as e:
+#         return {"status": "error", "message": str(e)}
+#
+# @router.post("/simular-clic")
+# def test_simular_clic(data: TestSimulateClickInput):
+#     """
+#     Prueba unitaria: Ejecuta la lógica como si el usuario hubiera hecho clic.
+#     NO espera a Meta, ejecuta la función de lógica directamente.
+#     """
+#     try:
+#         # Aquí capturamos lo que haría el sistema (logs, updates de BD simulados)
+#         accion_menu_estado_evaluacion(
+#             creador_id=data.creador_id,
+#             button_id=data.button_id,
+#             phone_id=data.phone_id,
+#             token=data.token,
+#             estado_evaluacion=data.estado_evaluacion,
+#             telefono=data.telefono_destino
+#         )
+#         return {"status": "success", "message": f"Acción '{data.button_id}' ejecutada exitosamente."}
+#     except Exception as e:
+#         return {"status": "error", "message": str(e)}
 
 
 # Asegúrate de tener importado tu context manager
@@ -4825,38 +4825,38 @@ def obtener_creador_id_por_telefono(telefono):
 
 
 # Modelo para la petición de actualización
-class ActualizarEstadoRequest(BaseModel):
-    creador_id: int
-    estado_codigo: str
+# class ActualizarEstadoRequest(BaseModel):
+#     creador_id: int
+#     estado_codigo: str
 
 
-@router.get("/obtener-estado-actual/{creador_id}")
-def get_estado_actual(creador_id: int):
-    """
-    Consulta en la BD en qué estado se encuentra el creador.
-    """
-    datos = obtener_datos_envio_aspirante(creador_id)
-    if not datos:
-        raise HTTPException(status_code=404, detail="Creador no encontrado")
+# @router.get("/obtener-estado-actual/{creador_id}")
+# def get_estado_actual(creador_id: int):
+#     """
+#     Consulta en la BD en qué estado se encuentra el creador.
+#     """
+#     datos = obtener_datos_envio_aspirante(creador_id)
+#     if not datos:
+#         raise HTTPException(status_code=404, detail="Creador no encontrado")
+#
+#     return {
+#         "status": "success",
+#         "codigo_actual": datos["codigo_estado"],
+#         "telefono": datos["telefono"]
+#     }
 
-    return {
-        "status": "success",
-        "codigo_actual": datos["codigo_estado"],
-        "telefono": datos["telefono"]
-    }
 
-
-@router.post("/guardar-estado-db")
-def guardar_estado_db(data: ActualizarEstadoRequest):
-    """
-    Actualiza el campo id_chatbot_estado en la tabla perfil_creador.
-    """
-    exito = actualizar_estado_aspirante_(data.creador_id, data.estado_codigo)
-
-    if exito:
-        return {"status": "success", "mensaje": f"Estado actualizado a '{data.estado_codigo}' en BD."}
-    else:
-        raise HTTPException(status_code=500, detail="Error al actualizar en Base de Datos")
+# @router.post("/guardar-estado-db")
+# def guardar_estado_db(data: ActualizarEstadoRequest):
+#     """
+#     Actualiza el campo id_chatbot_estado en la tabla perfil_creador.
+#     """
+#     exito = actualizar_estado_aspirante_(data.creador_id, data.estado_codigo)
+#
+#     if exito:
+#         return {"status": "success", "mensaje": f"Estado actualizado a '{data.estado_codigo}' en BD."}
+#     else:
+#         raise HTTPException(status_code=500, detail="Error al actualizar en Base de Datos")
 
 
 import requests
@@ -5047,4 +5047,177 @@ def enviar_a_meta_texto_simple(texto, telefono, phone_id, token):
         "text": {"body": texto}
     }
     enviar_a_meta(payload, phone_id, token)
+
+
+
+# ----------CODIGO NUEVO-------------------------------
+# -----------------------------------------------------
+# -----------------------------------------------------
+# -----------------------------------------------------
+# -----------------------------------------------------
+# -----------------------------------------------------
+# -----------------------------------------------------
+
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
+# --- IMPORTACIONES DEL PROYECTO ---
+# Ajusta estas rutas según tu estructura de carpetas real
+
+
+# Router API
+
+
+# --- MODELOS DE DATOS (PYDANTIC) ---
+class EnvioPruebaRequest(BaseModel):
+    creador_id: int
+    estado_codigo: str
+    tenant_name: str  # El Front envía el subdominio (ej: 'webhook_axec') para resolver credenciales
+
+
+class ActualizarEstadoRequest(BaseModel):
+    creador_id: int
+    estado_codigo: str
+
+
+# =============================================================================
+# ENDPOINT 1: LISTAR ESTADOS (Para llenar el Select del Front)
+# =============================================================================
+@router.get("/listar-estados")
+def listar_estados_db():
+    """
+    Obtiene todos los estados posibles de la tabla chatbot_estados_aspirante.
+    """
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                            SELECT codigo, descripcion
+                            FROM chatbot_estados_aspirante
+                            WHERE estado_activo = true
+                            ORDER BY id_chatbot_estado ASC
+                            """)
+                # Retornamos lista de diccionarios
+                estados = [{"codigo": row[0], "descripcion": row[1]} for row in cur.fetchall()]
+        return estados
+    except Exception as e:
+        print(f"❌ Error DB: {e}")
+        raise HTTPException(status_code=500, detail="Error al obtener estados")
+
+
+# =============================================================================
+# ENDPOINT 2: OBTENER ESTADO ACTUAL (Consultar Creador)
+# =============================================================================
+@router.get("/obtener-estado-actual/{creador_id}")
+def get_estado_actual(creador_id: int):
+    """
+    Consulta en qué estado se encuentra un creador específico.
+    """
+    try:
+        datos = obtener_datos_envio_aspirante(creador_id)
+
+        if not datos:
+            raise HTTPException(status_code=404, detail="Creador no encontrado en BD")
+
+        return {
+            "status": "success",
+            "codigo_actual": datos["codigo_estado"],
+            "telefono": datos["telefono"]
+        }
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# ENDPOINT 3: GUARDAR ESTADO MANUALMENTE (Update en BD)
+# =============================================================================
+@router.post("/guardar-estado-db")
+def guardar_estado_db(data: ActualizarEstadoRequest):
+    """
+    Fuerza la actualización del estado de un creador en la base de datos.
+    """
+    try:
+        exito = actualizar_estado_aspirante(data.creador_id, data.estado_codigo)
+
+        if exito:
+            return {"status": "success", "mensaje": f"Estado actualizado a '{data.estado_codigo}'."}
+        else:
+            raise HTTPException(status_code=400, detail="No se pudo actualizar (verifica ID o código).")
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# ENDPOINT 4: ENVIAR MENSAJE SEGURO (Multitenant)
+# =============================================================================
+@router.post("/enviar-mensaje-estado")
+def enviar_mensaje_estado(data: EnvioPruebaRequest):
+    """
+    1. Resuelve credenciales basadas en el tenant (subdominio).
+    2. Establece el contexto seguro.
+    3. Envía el mensaje a WhatsApp.
+    """
+    try:
+        print(f"🔐 Resolviendo credenciales para tenant: {data.tenant_name}")
+
+        # A. OBTENER CREDENCIALES DEL TENANT (Backend Seguro)
+        # Esto evita que el token viaje desde el Front
+        cuenta = obtener_cuenta_por_subdominio(data.tenant_name)
+
+        if not cuenta:
+            return JSONResponse(
+                {"error": f"No se encontraron credenciales para el tenant '{data.tenant_name}'"},
+                status_code=404
+            )
+
+        # Extraer datos sensibles
+        token_cliente = cuenta.get("access_token")
+        phone_id_cliente = cuenta.get("phone_number_id")
+        business_name = cuenta.get("business_name", "Agencia")
+
+        if not token_cliente or not phone_id_cliente:
+            return JSONResponse(
+                {"error": "El tenant existe pero le faltan credenciales (token/phone_id)"},
+                status_code=500
+            )
+
+        # B. ESTABLECER CONTEXTO (Igual que en tu middleware/consolidar)
+        current_token.set(token_cliente)
+        current_phone_id.set(phone_id_cliente)
+        current_business_name.set(business_name)
+
+        # C. VALIDAR DESTINATARIO
+        datos_creador = obtener_datos_envio_aspirante(data.creador_id)
+        if not datos_creador:
+            raise HTTPException(status_code=404, detail=f"Creador ID {data.creador_id} no existe")
+
+        telefono_destino = datos_creador["telefono"]
+
+        # D. EJECUTAR EL ENVÍO
+        # Pasamos las credenciales resueltas aquí
+        Enviar_menu_quickreply(
+            creador_id=data.creador_id,
+            estado_evaluacion=data.estado_codigo,
+            phone_id=phone_id_cliente,
+            token=token_cliente,
+            telefono_override=None  # Usar el de la BD
+        )
+
+        return {
+            "status": "success",
+            "mensaje": f"Menú '{data.estado_codigo}' enviado a {telefono_destino} vía {business_name}"
+        }
+
+    except Exception as e:
+        print(f"❌ Error en envío seguro: {e}")
+        # Retornamos 500 pero con detalle para que lo veas en el log del Front
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
 
