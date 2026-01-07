@@ -3586,7 +3586,10 @@ def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, payloa
         return False
 
     estado_actual = estado_creador["codigo_estado"]
+
+    # -PENDIENTE REVISAR SI NO SE NECESITA ENVIAR MSG CHAT
     msg_chat_bot = estado_creador.get("mensaje_chatbot_simple") or "Selecciona una opción:"
+    # -PENDIENTE REVISAR SI NO SE NECESITA ENVIAR MSG CHAT 
 
     token_cliente = current_token.get()  # O pasarlo como argumento
 
@@ -3598,7 +3601,7 @@ def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, payloa
     if payload_id:
         # A.1 Botón "Opciones" (Viene de Plantilla o Mensaje previo)
         if payload_id == "BTN_ABRIR_MENU_OPCIONES":
-            Enviar_menu_quickreply(creador_id, estado_actual,msg_chat_bot, phone_number_id, token_cliente, wa_id)
+            Enviar_menu_quickreply(creador_id, estado_actual, phone_number_id, token_cliente, wa_id)
             return True
 
         # A.2 Acciones específicas del menú
@@ -4874,7 +4877,7 @@ import json
 MENUS = {
     "post_encuesta_inicial": {
         "botones": [
-            ("MENU_PROCESO_INCORPORACION", "Proceso de incorporación"),
+            ("MENU_PROCESO_INCORPORACION", "Proceso incorporación"),
             ("MENU_PREGUNTAS_FRECUENTES", "Preguntas Frecuentes"),
         ]
     },
@@ -4939,7 +4942,7 @@ MENUS = {
     "solicitud_invitacion_usuario": {
         "botones": [
             ("MENU_VENTAJAS_AGENCIA", "Ventajas agencia"),
-            ("MENU_ACEPTAR_INCORPORACION", "Aceptar incorporación"),
+            ("MENU_ACEPTAR_INCORPORACION", "Acepta incorporación"),
         ]
     },
 }
@@ -5451,12 +5454,12 @@ def Enviar_boton_opciones_unico(
 
     enviar_a_meta(payload, phone_id, token)
 
-def Enviar_menu_quickreply(creador_id, estado_real, msg_chat_bot, phone_id, token, telefono_destino):
+def Enviar_menu_quickreply(creador_id, estado_real, phone_id, token, telefono_destino):
     """
     Envía el MENÚ de opciones (quick replies) basado en el estado REAL.
     Se usa desde webhook al hacer clic en MENU_OPCIONES.
     """
-    texto_final = msg_chat_bot or "Selecciona una opción:"
+    texto_final = "Selecciona una opción:"
 
     print(f"🏗️ Desplegando menú para estado REAL: {estado_real} (creador_id={creador_id})")
 
