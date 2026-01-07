@@ -4864,8 +4864,120 @@ def obtener_creador_id_por_telefono(telefono):
 import requests
 import json
 # IMPORTANTE: Importa tus funciones de DB aquí
+MENUS = {
+    "post_encuesta_inicial": {
+        "botones": [
+            ("MENU_PROCESO_INCORPORACION", "Proceso de incorporación"),
+            ("MENU_PREGUNTAS_FRECUENTES", "Preguntas Frecuentes"),
+        ]
+    },
+    "solicitud_agendamiento_tiktok": {
+        "botones": [
+            ("MENU_AGENDAR_PRUEBA_TIKTOK", "Agendar prueba Live"),
+            ("MENU_VER_GUIA_PRUEBA", "Ver guía"),
+            ("MENU_CHAT_ASESOR", "Hablar con asesor")
+        ]
+    },
+    "usuario_agendo_prueba_tiktok": {
+        "botones": [
+            ("MENU_INGRESAR_LINK_TIKTOK", "Ingresar link Live"),
+            ("MENU_MODIFICAR_CITA_PRUEBA", "Modificar cita"),
+            ("MENU_VER_GUIA_PRUEBA", "Ver guía"),
+        ]
+    },
+    "solicitud_agendamiento_entrevista": {
+        "botones": [
+            ("MENU_AGENDAR_ENTREVISTA", "Agendar entrevista"),
+        ]
+    },
+    "usuario_agendo_entrevista": {
+        "botones": [
+            ("MENU_MODIFICAR_CITA_ENTREVISTA", "Modificar cita"),
+        ]
+    },
+    "solicitud_agendamiento_tiktok2": {
+        "botones": [
+            ("MENU_AGENDAR_PRUEBA_TIKTOK_2", "Agendar prueba #2"),
+            ("MENU_RESULTADO_PRUEBA_1", "Resultado prueba #1"),
+        ]
+    },
+    "usuario_agendo_prueba_tiktok2": {
+        "botones": [
+            ("MENU_INGRESAR_LINK_TIKTOK_2", "Ingresar link #2"),
+            ("MENU_MODIFICAR_CITA_PRUEBA_2", "Modificar cita #2"),
+            ("MENU_VER_GUIA_PRUEBA_2", "Ver guía #2"),
+        ]
+    },
+    "solicitud_agendamiento_entrevista2": {
+        "botones": [
+            ("MENU_AGENDAR_ENTREVISTA", "Agendar entrevista"),
+        ]
+    },
+    "usuario_agendo_entrevista2": {
+        "botones": [
+            ("MENU_MODIFICAR_CITA_ENTREVISTA", "Modificar cita"),
+            ("MENU_TEMAS_ENTREVISTA_2", "Temas entrevista #2"),
+        ]
+    },
+    "solicitud_invitacion_tiktok": {
+        "botones": [
+            ("MENU_ESTADO_PROCESO", "Estado del proceso"),
+        ]
+    },
+    "invitacion_tiktok_aceptada": {
+        "botones": [
+            ("MENU_ESTADO_PROCESO", "Estado del proceso"),
+        ]
+    },
+    "solicitud_invitacion_usuario": {
+        "botones": [
+            ("MENU_VENTAJAS_AGENCIA", "Ventajas agencia"),
+            ("MENU_ACEPTAR_INCORPORACION", "Aceptar incorporación"),
+        ]
+    },
+}
 
-def Enviar_menu_quickreply(creador_id, estado_evaluacion, phone_id, token, telefono_override=None):
+def Enviar_menu_quickreply(
+    *,
+    creador_id: int,
+    estado_evaluacion: str,
+    phone_id: str,
+    token: str,
+    telefono_destino: str,
+    texto_final: str,
+):
+    print(f"🏗️ Construyendo menú para estado: {estado_evaluacion}")
+
+    menu_config = MENUS.get(estado_evaluacion)
+
+    if not menu_config:
+        print(f"⚠️ No hay botones configurados en Python para: {estado_evaluacion}")
+        enviar_a_meta_texto_simple(texto_final, telefono_destino, phone_id, token)
+        return
+
+    botones = menu_config["botones"]
+
+    botones_api = [
+        {"type": "reply", "reply": {"id": boton_id, "title": titulo[:20]}}
+        for boton_id, titulo in botones[:3]
+    ]
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": telefono_destino,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": texto_final},
+            "action": {"buttons": botones_api}
+        }
+    }
+
+    enviar_a_meta(payload, phone_id, token)
+
+
+
+def Enviar_menu_quickreply_V1(creador_id, estado_evaluacion, phone_id, token, telefono_override=None):
     """
     Envía un menú interactivo.
     - TEXTO y TELÉFONO: Se obtienen dinámicamente de la Base de Datos.
@@ -5160,8 +5272,68 @@ def guardar_estado_db(data: ActualizarEstadoRequest):
 # =============================================================================
 # ENDPOINT 4: ENVIAR MENSAJE SEGURO (Multitenant)
 # =============================================================================
+
 @router.post("/enviar-mensaje-estado")
 def enviar_mensaje_estado(data: EnvioPruebaRequest):
+    try:
+        print(f"🔐 Resolviendo credenciales para tenant: {data.tenant_name}")
+
+        cuenta = obtener_cuenta_por_subdominio(data.tenant_name)
+        if not cuenta:
+            return JSONResponse(
+                {"error": f"No se encontraron credenciales para el tenant '{data.tenant_name}'"},
+                status_code=404
+            )
+
+        token_cliente = cuenta.get("access_token")
+        phone_id_cliente = cuenta.get("phone_number_id")
+        business_name = cuenta.get("business_name", "Agencia")
+
+        if not token_cliente or not phone_id_cliente:
+            return JSONResponse(
+                {"error": "El tenant existe pero le faltan credenciales (token/phone_id)"},
+                status_code=500
+            )
+
+        # Contextvars (ideal: reset en finally, pero lo dejo mínimo aquí)
+        current_token.set(token_cliente)
+        current_phone_id.set(phone_id_cliente)
+        current_business_name.set(business_name)
+
+        datos_creador = obtener_datos_envio_aspirante(data.creador_id)
+        if not datos_creador:
+            raise HTTPException(status_code=404, detail=f"Creador ID {data.creador_id} no existe")
+
+        telefono_destino = datos_creador["telefono"]
+        estado_real = datos_creador["codigo_estado"]
+
+        # Texto a enviar: prioridad mensaje_chatbot_simple, luego descripcion, luego default
+        texto_final = (
+            datos_creador.get("mensaje_chatbot_simple")
+        )
+
+        Enviar_menu_quickreply(
+            creador_id=data.creador_id,
+            estado_evaluacion=estado_real,
+            phone_id=phone_id_cliente,
+            token=token_cliente,
+            telefono_destino=telefono_destino,
+            texto_final=texto_final,
+        )
+
+        return {
+            "status": "success",
+            "mensaje": f"Menú '{estado_real}' enviado a {telefono_destino} vía {business_name}"
+        }
+
+    except Exception as e:
+        print(f"❌ Error en envío seguro: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@router.post("/enviar-mensaje-estadoV1")
+def enviar_mensaje_estadoV1(data: EnvioPruebaRequest):
     """
     1. Resuelve credenciales basadas en el tenant (subdominio).
     2. Establece el contexto seguro.
@@ -5207,7 +5379,7 @@ def enviar_mensaje_estado(data: EnvioPruebaRequest):
         # Pasamos las credenciales resueltas aquí
         Enviar_menu_quickreply(
             creador_id=data.creador_id,
-            estado_evaluacion=data.estado_codigo,
+            estado_evaluacion=datos_creador["codigo_estado"],  # ✅ VIENE DE BD
             phone_id=phone_id_cliente,
             token=token_cliente,
             telefono_override=None  # Usar el de la BD
