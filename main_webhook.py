@@ -3589,7 +3589,7 @@ def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, payloa
 
     # -PENDIENTE REVISAR SI NO SE NECESITA ENVIAR MSG CHAT
     msg_chat_bot = estado_creador.get("mensaje_chatbot_simple") or "Selecciona una opción:"
-    # -PENDIENTE REVISAR SI NO SE NECESITA ENVIAR MSG CHAT 
+    # -PENDIENTE REVISAR SI NO SE NECESITA ENVIAR MSG CHAT
 
     token_cliente = current_token.get()  # O pasarlo como argumento
 
@@ -5459,7 +5459,7 @@ def Enviar_menu_quickreply(creador_id, estado_real, phone_id, token, telefono_de
     Envía el MENÚ de opciones (quick replies) basado en el estado REAL.
     Se usa desde webhook al hacer clic en MENU_OPCIONES.
     """
-    texto_final = "Selecciona una opción:"
+    texto_final = "\u00A0"  # NBSP: parece vacío pero cumple requisito
 
     print(f"🏗️ Desplegando menú para estado REAL: {estado_real} (creador_id={creador_id})")
 
