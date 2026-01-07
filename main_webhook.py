@@ -5078,7 +5078,7 @@ class EnvioPruebaRequest(BaseModel):
 
 class ActualizarEstadoRequest(BaseModel):
     creador_id: int
-    estado_codigo: str
+    estado_codigo: Optional[str] = None
 
 
 # =============================================================================
