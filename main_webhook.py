@@ -5459,7 +5459,7 @@ def Enviar_menu_quickreply(creador_id, estado_real, phone_id, token, telefono_de
     Envía el MENÚ de opciones (quick replies) basado en el estado REAL.
     Se usa desde webhook al hacer clic en MENU_OPCIONES.
     """
-    texto_final = "\u00A0"  # NBSP: parece vacío pero cumple requisito
+    texto_final = "Elige una opción"
 
     print(f"🏗️ Desplegando menú para estado REAL: {estado_real} (creador_id={creador_id})")
 
