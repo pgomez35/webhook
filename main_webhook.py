@@ -4967,15 +4967,16 @@ def Enviar_menu_quickreply(creador_id, estado_evaluacion, phone_id, token, telef
         if datos_db:
             telefono_destino = datos_db["telefono"]
 
-            # Prioridad absoluta al texto de la BD
-            if datos_db["mensaje"]:
-                texto_final = datos_db["mensaje"]
+            # Prioridad absoluta al texto de la BD (según tu SELECT)
+            texto_db = datos_db.get("mensaje_chatbot_simple")
+            if texto_db:
+                texto_final = texto_db
                 print(f"✅ Texto DB cargado: '{texto_final[:20]}...'")
             else:
-                print("⚠️ El estado en BD no tiene mensaje configurado.")
+                print("⚠️ El estado en BD no tiene mensaje_chatbot_simple configurado.")
         else:
             print(f"❌ Error CRÍTICO: No se encontraron datos para creador_id {creador_id}")
-            return  # No podemos enviar nada si no hay teléfono
+            return
 
     # B. MODO TESTING (Con override de teléfono desde React)
     else:
