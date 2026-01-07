@@ -21,9 +21,43 @@ def guardar_estado_eval(creador_id, estado):
 
 
 def buscar_estado_creador(creador_id):
-    # SELECT estado_evaluacion FROM perfil_creador WHERE creador_id = ...
-    # Retorno simulado para el ejemplo:
-    return "solicitud_agendamiento_tiktok"
+    """
+    Obtiene el estado actual del creador a partir de perfil_creador
+    y trae:
+    - codigo_estado
+    - mensaje_frontend_simple
+    - mensaje_chatbot_simple
+    """
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                sql = """
+                    SELECT
+                        cea.codigo,
+                        cea.mensaje_frontend_simple,
+                        cea.mensaje_chatbot_simple
+                    FROM perfil_creador pc
+                    INNER JOIN chatbot_estados_aspirante cea
+                        ON pc.id_chatbot_estado = cea.id_chatbot_estado
+                    WHERE pc.creador_id = %s
+                """
+                cur.execute(sql, (creador_id,))
+                row = cur.fetchone()
+
+                if row:
+                    return {
+                        "codigo_estado": row[0],
+                        "mensaje_frontend_simple": row[1],
+                        "mensaje_chatbot_simple": row[2],
+                    }
+
+                return None
+
+    except Exception as e:
+        print(f"❌ Error al buscar estado del creador {creador_id}: {e}")
+        return None
+
+
 
 def obtener_creador_id_por_telefono(telefono):
     # SELECT creador_id FROM perfil_creador WHERE telefono = ...

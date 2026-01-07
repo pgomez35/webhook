@@ -3580,7 +3580,14 @@ def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, payloa
     if not creador_id:
         return False  # No es aspirante, pasar al bot normal
 
-    estado_actual = buscar_estado_creador(creador_id)
+    estado_creador = buscar_estado_creador(creador_id)
+    if not estado_creador or not estado_creador.get("codigo_estado"):
+        print(f"⚠️ creador_id={creador_id} sin estado asociado")
+        return False
+
+    estado_actual = estado_creador["codigo_estado"]
+    msg_chat_bot = estado_creador.get("mensaje_chatbot_simple") or "Selecciona una opción:"
+
     token_cliente = current_token.get()  # O pasarlo como argumento
 
     print(f"🕵️‍♂️ Procesando Aspirante {wa_id} | Estado: {estado_actual}")
@@ -3591,7 +3598,7 @@ def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, payloa
     if payload_id:
         # A.1 Botón "Opciones" (Viene de Plantilla o Mensaje previo)
         if payload_id == "BTN_ABRIR_MENU_OPCIONES":
-            Enviar_menu_quickreply(creador_id, estado_actual, phone_number_id, token_cliente, wa_id)
+            Enviar_menu_quickreply(creador_id, estado_actual,msg_chat_bot, phone_number_id, token_cliente, wa_id)
             return True
 
         # A.2 Acciones específicas del menú
@@ -4938,53 +4945,9 @@ MENUS = {
 }
 
 
-def Enviar_boton_opciones_unico(
-    creador_id: int,
-    estado_evaluacion: str,
-    phone_id: str,
-    token: str,
-    telefono_destino: str,
-    texto_final: str,
-):
-    """
-    Envía un mensaje interactivo con UN (1) botón quick reply.
-    - Texto: texto_final (idealmente mensaje_chatbot_simple desde BD)
-    - Botón: Menú de opciones
-    """
-
-    boton_id = "MENU_OPCIONES"
-    boton_titulo = "Menú de opciones"
-
-    print(f"🏗️ Enviando botón único para estado: {estado_evaluacion}")
-
-    # (Opcional) Si quieres que el id sea trazable por estado:
-    # boton_id = f"{boton_id}__{estado_evaluacion}"
-
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": telefono_destino,
-        "type": "interactive",
-        "interactive": {
-            "type": "button",
-            "body": {"text": texto_final},
-            "action": {
-                "buttons": [
-                    {
-                        "type": "reply",
-                        "reply": {
-                            "id": boton_id,
-                            "title": boton_titulo[:20],  # límite WhatsApp
-                        },
-                    }
-                ]
-            },
-        },
-    }
-
-    enviar_a_meta(payload, phone_id, token)
 
 
-def Enviar_menu_quickreply(
+def Enviar_menu_quickreplyV3(
     *,
     creador_id: int,
     estado_evaluacion: str,
@@ -5443,6 +5406,87 @@ def enviar_mensaje_estadoV1(data: EnvioPruebaRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def Enviar_boton_opciones_unico(
+    creador_id: int,
+    estado_evaluacion: str,
+    phone_id: str,
+    token: str,
+    telefono_destino: str,
+    texto_final: str,
+):
+    """
+    Envía un mensaje interactivo con UN (1) botón quick reply.
+    - Texto: texto_final (idealmente mensaje_chatbot_simple desde BD)
+    - Botón: Menú de opciones
+    """
 
+    boton_id = "BTN_ABRIR_MENU_OPCIONES"
+    boton_titulo = "Menú de opciones"
 
+    print(f"🏗️ Enviando botón único para estado: {estado_evaluacion}")
 
+    # (Opcional) Si quieres que el id sea trazable por estado:
+    # boton_id = f"{boton_id}__{estado_evaluacion}"
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": telefono_destino,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": texto_final},
+            "action": {
+                "buttons": [
+                    {
+                        "type": "reply",
+                        "reply": {
+                            "id": boton_id,
+                            "title": boton_titulo[:20],  # límite WhatsApp
+                        },
+                    }
+                ]
+            },
+        },
+    }
+
+    enviar_a_meta(payload, phone_id, token)
+
+def Enviar_menu_quickreply(creador_id, estado_real, msg_chat_bot, phone_id, token, telefono_destino):
+    """
+    Envía el MENÚ de opciones (quick replies) basado en el estado REAL.
+    Se usa desde webhook al hacer clic en MENU_OPCIONES.
+    """
+    texto_final = msg_chat_bot or "Selecciona una opción:"
+
+    print(f"🏗️ Desplegando menú para estado REAL: {estado_real} (creador_id={creador_id})")
+
+    menu_config = MENUS.get(estado_real)
+    if not menu_config:
+        print(f"⚠️ No hay botones configurados en MENUS para estado: {estado_real}")
+        enviar_a_meta_texto_simple(texto_final, telefono_destino, phone_id, token)
+        return True
+
+    botones = menu_config.get("botones", [])
+    if not botones:
+        print(f"⚠️ MENUS[{estado_real}] no tiene botones")
+        enviar_a_meta_texto_simple(texto_final, telefono_destino, phone_id, token)
+        return True
+
+    botones_api = [
+        {"type": "reply", "reply": {"id": boton_id, "title": titulo[:20]}}
+        for boton_id, titulo in botones[:3]
+    ]
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": telefono_destino,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": texto_final},
+            "action": {"buttons": botones_api},
+        },
+    }
+
+    enviar_a_meta(payload, phone_id, token)
+    return True
