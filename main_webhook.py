@@ -4705,22 +4705,22 @@ from pydantic import BaseModel
 
 def obtener_datos_envio_aspirante(creador_id):
     """
-    Obtiene el teléfono del creador y el mensaje/código de su estado actual.
-    Realiza un JOIN entre creadores, perfil_creador y chatbot_estados_aspirante.
+    Obtiene el teléfono del creador y el estado actual con su metadata.
     """
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                # JOIN para traer todo en una sola consulta
                 sql = """
-                      SELECT c.telefono, \
-                             cea.codigo, \
-                             cea.mensaje_chatbot_simple, \
+                      SELECT c.telefono,
+                             cea.codigo,
+                             cea.descripcion,
+                             cea.mensaje_chatbot_simple,
                              cea.nombre_template
                       FROM creadores c
                                INNER JOIN perfil_creador pc ON c.id = pc.creador_id
-                               LEFT JOIN chatbot_estados_aspirante cea ON pc.id_chatbot_estado = cea.id_chatbot_estado
-                      WHERE c.id = %s \
+                               LEFT JOIN chatbot_estados_aspirante cea 
+                                      ON pc.id_chatbot_estado = cea.id_chatbot_estado
+                      WHERE c.id = %s
                       """
                 cur.execute(sql, (creador_id,))
                 row = cur.fetchone()
@@ -4729,14 +4729,16 @@ def obtener_datos_envio_aspirante(creador_id):
                     return {
                         "telefono": row[0],
                         "codigo_estado": row[1],
-                        "mensaje": row[2] or "Hola, selecciona una opción:",
-                        "template": row[3]  # Por si se necesita enviar template
+                        "descripcion": row[2],
+                        "mensaje_chatbot_simple": row[3],
+                        "nombre_template": row[4]
                     }
                 return None
 
     except Exception as e:
         print(f"❌ Error al obtener datos de envío para creador {creador_id}:", e)
         return None
+
 
 
 def obtener_mensaje_por_codigo(codigo_estado):
@@ -5112,7 +5114,7 @@ def listar_estados_db():
 @router.get("/obtener-estado-actual/{creador_id}")
 def get_estado_actual(creador_id: int):
     """
-    Consulta en qué estado se encuentra un creador específico.
+    Consulta el estado actual de un creador con metadata del chatbot.
     """
     try:
         datos = obtener_datos_envio_aspirante(creador_id)
@@ -5123,8 +5125,11 @@ def get_estado_actual(creador_id: int):
         return {
             "status": "success",
             "codigo_actual": datos["codigo_estado"],
+            "descripcion": datos["descripcion"],
+            "mensaje_chatbot_simple": datos["mensaje_chatbot_simple"],
             "telefono": datos["telefono"]
         }
+
     except HTTPException as he:
         raise he
     except Exception as e:
