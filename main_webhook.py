@@ -3618,7 +3618,7 @@ def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, payloa
 
         # A.2 Acciones específicas del menú
         # Verificamos si el payload empieza con BTN_ para saber si es nuestro
-        if payload_id.startswith("BTN_"):
+        if payload_id.startswith("MENU_"):
             accion_menu_estado_evaluacion(creador_id, payload_id, phone_number_id, token_cliente, estado_actual, wa_id)
             return True
 
@@ -4959,6 +4959,7 @@ MENUS = {
             ("MENU_ACEPTAR_INCORPORACION", "Acepta incorporación"),
         ]
     },
+
 }
 
 

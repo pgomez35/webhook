@@ -73,7 +73,7 @@ def obtener_status_24hrs(telefono):
     # Consultar last_interaction en BD
     # Si (now - last_interaction) > 24h return False (Fuera de ventana)
     # Si (now - last_interaction) < 24h return True (Dentro de ventana)
-    return False  # Simulamos que está dentro para pruebas
+    return True  # Simulamos que está dentro para pruebas
 
 
 # --- FUNCIONES LÓGICAS ---
@@ -449,120 +449,212 @@ def Enviar_menu_quickreplyV1(creador_id, estado_evaluacion, phone_id, token, tel
     enviar_a_meta(payload, phone_id, token)
 
 
-def accion_menu_estado_evaluacion(creador_id, button_id, phone_id, token, estado_evaluacion, telefono):
+def accion_menu_estado_evaluacion(
+    creador_id: int,
+    button_id: str,
+    phone_id: str,
+    token: str,
+    estado_evaluacion: str,
+    telefono: str,
+):
     """
     Ejecuta la acción correspondiente al botón presionado en el menú de opciones.
+
+    - button_id: payload/id recibido desde WhatsApp (ej: "MENU_AGENDAR_ENTREVISTA")
+    - estado_evaluacion: código de estado actual del aspirante (solo informativo para logs)
     """
+
     print(f"⚡ Ejecutando acción: {button_id} (Estado origen: {estado_evaluacion})")
 
-    # =================================================================
-    # GRUPO 1: INGRESO DE DATOS (Cambian estado para esperar texto)
-    # =================================================================
+    # Normalización defensiva
+    button_id = (button_id or "").strip()
 
+    # ==========================================================
+    # GRUPO 1: INGRESO DE DATOS (Cambian estado para esperar texto)
+    # ==========================================================
     if button_id == "MENU_INGRESAR_LINK_TIKTOK":
         # Cambiamos estado para que el próximo mensaje de texto sea capturado como URL
         guardar_estado_eval(creador_id, "esperando_link_tiktok_live")
-        enviar_texto_simple(telefono, "🔗 Por favor, pega aquí el enlace de tu TikTok LIVE:", phone_id, token)
+        enviar_texto_simple(
+            telefono,
+            "🔗 Por favor, pega aquí el enlace de tu TikTok LIVE:",
+            phone_id,
+            token,
+        )
+        return
 
-    elif button_id == "MENU_INGRESAR_LINK_TIKTOK_2":
+    if button_id == "MENU_INGRESAR_LINK_TIKTOK_2":
         guardar_estado_eval(creador_id, "esperando_link_tiktok_live_2")
-        enviar_texto_simple(telefono, "🔗 Por favor, pega aquí el enlace de tu **segundo** TikTok LIVE:", phone_id,
-                            token)
+        enviar_texto_simple(
+            telefono,
+            "🔗 Por favor, pega aquí el enlace de tu *segundo* TikTok LIVE:",
+            phone_id,
+            token,
+        )
+        return
 
-    # =================================================================
+    # ==========================================================
     # GRUPO 2: AGENDAMIENTO Y CALENDARIOS (Envío de Links)
-    # =================================================================
+    # ==========================================================
+    if button_id == "MENU_AGENDAR_PRUEBA_TIKTOK":
+        enviar_texto_simple(
+            telefono,
+            "📅 Agenda tu prueba aquí: https://calendly.com/tu-agencia/prueba-tiktok",
+            phone_id,
+            token,
+        )
+        return
 
-    elif button_id == "MENU_AGENDAR_PRUEBA_TIKTOK":
-        enviar_texto_simple(telefono, "📅 Agenda tu prueba aquí: https://calendly.com/tu-agencia/prueba-tiktok",
-                            phone_id, token)
+    if button_id == "MENU_AGENDAR_PRUEBA_TIKTOK_2":
+        enviar_texto_simple(
+            telefono,
+            "📅 Agenda tu segunda prueba aquí: https://calendly.com/tu-agencia/prueba-tiktok-2",
+            phone_id,
+            token,
+        )
+        return
 
-    elif button_id == "MENU_AGENDAR_PRUEBA_TIKTOK_2":
-        enviar_texto_simple(telefono,
-                            "📅 Agenda tu segunda prueba aquí: https://calendly.com/tu-agencia/prueba-tiktok-2",
-                            phone_id, token)
+    if button_id == "MENU_AGENDAR_ENTREVISTA":
+        enviar_texto_simple(
+            telefono,
+            "👔 Agenda tu entrevista con un asesor aquí: https://calendly.com/tu-agencia/entrevista",
+            phone_id,
+            token,
+        )
+        return
 
-    elif button_id == "MENU_AGENDAR_ENTREVISTA":
-        enviar_texto_simple(telefono,
-                            "👔 Agenda tu entrevista con un asesor aquí: https://calendly.com/tu-agencia/entrevista",
-                            phone_id, token)
+    if button_id in {
+        "MENU_MODIFICAR_CITA_PRUEBA",
+        "MENU_MODIFICAR_CITA_PRUEBA_2",
+        "MENU_MODIFICAR_CITA_ENTREVISTA",
+    }:
+        enviar_texto_simple(
+            telefono,
+            "🔄 Puedes reprogramar tu cita usando el mismo enlace que te enviamos al agendar, "
+            "o contacta a soporte si tienes problemas.",
+            phone_id,
+            token,
+        )
+        return
 
-    elif button_id in ["MENU_MODIFICAR_CITA_PRUEBA", "MENU_MODIFICAR_CITA_PRUEBA_2", "MENU_MODIFICAR_CITA_ENTREVISTA"]:
-        enviar_texto_simple(telefono,
-                            "🔄 Puedes reprogramar tu cita usando el mismo enlace que te enviamos al agendar, o contacta a soporte si tienes problemas.",
-                            phone_id, token)
-
-    # =================================================================
+    # ==========================================================
     # GRUPO 3: INFORMACIÓN Y GUÍAS (Envío de Texto/PDF/Links)
-    # =================================================================
-
-    elif button_id == "MENU_VER_GUIA_PRUEBA":
-        enviar_texto_simple(telefono, "📘 Aquí tienes la guía para tu prueba: https://tu-agencia.com/guia-tiktok-pdf",
-                            phone_id, token)
+    # ==========================================================
+    if button_id == "MENU_VER_GUIA_PRUEBA":
+        enviar_texto_simple(
+            telefono,
+            "📘 Aquí tienes la guía para tu prueba: https://tu-agencia.com/guia-tiktok-pdf",
+            phone_id,
+            token,
+        )
         # O podrías enviar un documento real usando enviar_documento(...)
+        return
 
-    elif button_id == "MENU_VER_GUIA_PRUEBA_2":
-        enviar_texto_simple(telefono, "📘 Guía avanzada para la prueba #2: https://tu-agencia.com/guia-tiktok-2-pdf",
-                            phone_id, token)
+    if button_id == "MENU_VER_GUIA_PRUEBA_2":
+        enviar_texto_simple(
+            telefono,
+            "📘 Guía avanzada para la prueba #2: https://tu-agencia.com/guia-tiktok-2-pdf",
+            phone_id,
+            token,
+        )
+        return
 
-    elif button_id == "MENU_PROCESO_INCORPORACION":
-        msg = ("🏢 *Proceso de Incorporación:*\n"
-               "1. Evaluación de perfil\n"
-               "2. Prueba de transmisión\n"
-               "3. Entrevista final\n"
-               "4. Firma de contrato")
+    if button_id == "MENU_PROCESO_INCORPORACION":
+        msg = (
+            "🏢 *Proceso de Incorporación:*\n"
+            "1. Evaluación de perfil\n"
+            "2. Prueba de transmisión\n"
+            "3. Entrevista final\n"
+            "4. Firma de contrato"
+        )
         enviar_texto_simple(telefono, msg, phone_id, token)
+        return
 
-    elif button_id == "MENU_PREGUNTAS_FRECUENTES":
-        enviar_texto_simple(telefono, "❓ Revisa nuestras dudas frecuentes aquí: https://tu-agencia.com/faq", phone_id,
-                            token)
+    if button_id == "MENU_PREGUNTAS_FRECUENTES":
+        enviar_texto_simple(
+            telefono,
+            "❓ Revisa nuestras dudas frecuentes aquí: https://tu-agencia.com/faq",
+            phone_id,
+            token,
+        )
+        return
 
-    elif button_id == "MENU_VENTAJAS_AGENCIA":
-        msg = ("🚀 *Ventajas Prestige:*\n"
-               "✅ Soporte 24/7\n"
-               "✅ Monetización mejorada\n"
-               "✅ Eventos exclusivos")
+    if button_id == "MENU_VENTAJAS_AGENCIA":
+        msg = (
+            "🚀 *Ventajas Prestige:*\n"
+            "✅ Soporte 24/7\n"
+            "✅ Monetización mejorada\n"
+            "✅ Eventos exclusivos"
+        )
         enviar_texto_simple(telefono, msg, phone_id, token)
+        return
 
-    elif button_id == "MENU_TEMAS_ENTREVISTA_2":
-        enviar_texto_simple(telefono,
-                            "📝 En la entrevista hablaremos de: Disponibilidad, Metas financieras y Reglamento interno.",
-                            phone_id, token)
+    if button_id == "MENU_TEMAS_ENTREVISTA_2":
+        enviar_texto_simple(
+            telefono,
+            "📝 En la entrevista hablaremos de: Disponibilidad, Metas financieras y Reglamento interno.",
+            phone_id,
+            token,
+        )
+        return
 
-    # =================================================================
+    # ==========================================================
     # GRUPO 4: ESTADOS Y RESULTADOS
-    # =================================================================
+    # ==========================================================
+    if button_id == "MENU_RESULTADO_PRUEBA_1":
+        # Aquí podrías consultar la BD real. Por ahora texto fijo:
+        enviar_texto_simple(
+            telefono,
+            "📊 Tu prueba #1 fue: *APROBADA* (Puntaje: 85/100). ¡Sigue así!",
+            phone_id,
+            token,
+        )
+        return
 
-    elif button_id == "MENU_RESULTADO_PRUEBA_1":
-        # Aquí podrías consultar la BD real. Por ahora simulamos:
-        enviar_texto_simple(telefono, "📊 Tu prueba #1 fue: *APROBADA* (Puntaje: 85/100). ¡Sigue así!", phone_id, token)
+    if button_id == "MENU_ESTADO_PROCESO":
+        enviar_texto_simple(
+            telefono,
+            f"📍 Tu estado actual es: *{estado_evaluacion}*.",
+            phone_id,
+            token,
+        )
+        return
 
-    elif button_id == "MENU_ESTADO_PROCESO":
-        enviar_texto_simple(telefono, f"📍 Tu estado actual es: *{estado_evaluacion}*.", phone_id, token)
-
-    # =================================================================
+    # ==========================================================
     # GRUPO 5: ACCIONES CRÍTICAS (Aceptar oferta / Hablar con Humano)
-    # =================================================================
-
-    elif button_id == "MENU_ACEPTAR_INCORPORACION":
+    # ==========================================================
+    if button_id == "MENU_ACEPTAR_INCORPORACION":
         guardar_estado_eval(creador_id, "incorporacion_en_tramite")
-        enviar_texto_simple(telefono,
-                            "🎉 ¡Bienvenido a la familia! Un administrador te contactará pronto para finalizar el papeleo.",
-                            phone_id, token)
+        enviar_texto_simple(
+            telefono,
+            "🎉 ¡Bienvenido a la familia! Un administrador te contactará pronto para finalizar el papeleo.",
+            phone_id,
+            token,
+        )
         # Opcional: Notificar al admin aquí
+        return
 
-    elif button_id == "MENU_CHAT_ASESOR":
+    if button_id == "MENU_CHAT_ASESOR":
         # Aquí podrías cambiar el flujo a "chat_libre" para que intervenga un humano
         # actualizar_flujo(telefono, "chat_libre")
-        enviar_texto_simple(telefono, "💬 Hemos notificado a un asesor. Te escribirá en breve.", phone_id, token)
+        enviar_texto_simple(
+            telefono,
+            "💬 Hemos notificado a un asesor. Te escribirá en breve.",
+            phone_id,
+            token,
+        )
+        return
 
-    # =================================================================
+    # ==========================================================
     # DEFAULT
-    # =================================================================
-    else:
-        print(f"⚠️ Botón sin acción definida: {button_id}")
-        enviar_texto_simple(telefono, "Esta opción está en mantenimiento.", phone_id, token)
-
+    # ==========================================================
+    print(f"⚠️ Botón sin acción definida: {button_id}")
+    enviar_texto_simple(
+        telefono,
+        "Esta opción está en mantenimiento.",
+        phone_id,
+        token,
+    )
 
 
 def accion_menu_estado_evaluacionV0(creador_id, button_id, phone_id, token, estado_evaluacion, telefono):
