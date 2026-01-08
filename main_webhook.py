@@ -5362,7 +5362,7 @@ def enviar_mensaje_estado(data: EnvioPruebaRequest):
         print("⚠️ Fuera de ventana: Enviando PLANTILLA de reconexión")
 
         # Recomendado: nombre del template (el que creaste en Meta)
-        nombre_plantilla = "reconexion_general"
+        nombre_plantilla = "reconexion_general_corta"
 
         # Variables del template:
         # {{1}} = nombre (si no lo tienes, usa un fallback)
