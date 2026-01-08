@@ -73,7 +73,7 @@ def obtener_status_24hrs(telefono):
     # Consultar last_interaction en BD
     # Si (now - last_interaction) > 24h return False (Fuera de ventana)
     # Si (now - last_interaction) < 24h return True (Dentro de ventana)
-    return True  # Simulamos que está dentro para pruebas
+    return False  # Simulamos que está dentro para pruebas
 
 
 # --- FUNCIONES LÓGICAS ---

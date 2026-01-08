@@ -4721,16 +4721,19 @@ def obtener_datos_envio_aspirante(creador_id):
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 sql = """
-                      SELECT c.telefono,
-                             cea.codigo,
-                             cea.descripcion,
-                             cea.mensaje_chatbot_simple,
-                             cea.nombre_template
-                      FROM creadores c
-                               INNER JOIN perfil_creador pc ON c.id = pc.creador_id
-                               LEFT JOIN chatbot_estados_aspirante cea 
-                                      ON pc.id_chatbot_estado = cea.id_chatbot_estado
-                      WHERE c.id = %s
+                    SELECT c.telefono,
+                        COALESCE(c.nickname, c.nombre_real) AS nombre,
+                        cea.codigo,
+                        cea.descripcion,
+                        cea.mensaje_chatbot_simple,
+                        cea.nombre_template
+                    FROM creadores c
+                    INNER JOIN perfil_creador pc
+                        ON pc.creador_id = c.id
+                    LEFT JOIN chatbot_estados_aspirante cea
+                        ON cea.id_chatbot_estado = pc.id_chatbot_estado
+                    WHERE c.id = %s
+                    LIMIT 1     
                       """
                 cur.execute(sql, (creador_id,))
                 row = cur.fetchone()
@@ -5285,6 +5288,8 @@ def guardar_estado_db(data: ActualizarEstadoRequest):
 # =============================================================================
 # ENDPOINT 4: ENVIAR MENSAJE SEGURO (Multitenant)
 # =============================================================================
+from fastapi import HTTPException
+from starlette.responses import JSONResponse
 
 @router.post("/enviar-mensaje-estado")
 def enviar_mensaje_estado(data: EnvioPruebaRequest):
@@ -5308,7 +5313,7 @@ def enviar_mensaje_estado(data: EnvioPruebaRequest):
                 status_code=500
             )
 
-        # Contextvars (ideal: reset en finally, pero lo dejo mínimo aquí)
+        # Contextvars
         current_token.set(token_cliente)
         current_phone_id.set(phone_id_cliente)
         current_business_name.set(business_name)
@@ -5320,38 +5325,68 @@ def enviar_mensaje_estado(data: EnvioPruebaRequest):
         telefono_destino = datos_creador["telefono"]
         estado_real = datos_creador["codigo_estado"]
 
-        # Texto a enviar: prioridad mensaje_chatbot_simple, luego descripcion, luego default
-        texto_final = (
-            datos_creador.get("mensaje_chatbot_simple")
-        )
+        texto_final = datos_creador.get("mensaje_chatbot_simple") or "Selecciona una opción:"
 
-        # Enviar_boton_opciones_unico(
-        #     creador_id=data.creador_id,
-        #     estado_evaluacion=estado_real,
-        #     phone_id=phone_id_cliente,
-        #     token=token_cliente,
-        #     telefono_destino=telefono_destino,
-        #     texto_final=texto_final,
-        # )
+        # ✅ 4) Verificar ventana 24h
+        en_ventana = obtener_status_24hrs(telefono_destino)
 
-        Enviar_menu_quickreply(
-            creador_id=data.creador_id,
-            estado_real=estado_real,
-            msg_chat_bot=texto_final,
-            phone_id=phone_id_cliente,
+        if en_ventana:
+            print("✅ En ventana: Enviando MENÚ quick reply")
+            Enviar_menu_quickreply(
+                creador_id=data.creador_id,
+                estado_real=estado_real,
+                msg_chat_bot=texto_final,
+                phone_id=phone_id_cliente,
+                token=token_cliente,
+                telefono_destino=telefono_destino
+            )
+            return {
+                "status": "success",
+                "mensaje": f"Menú '{estado_real}' enviado a {telefono_destino} vía {business_name}",
+                "en_ventana_24h": True
+            }
+
+        # 🚫 Fuera de ventana: enviar plantilla reconexión general
+        print("⚠️ Fuera de ventana: Enviando PLANTILLA de reconexión")
+
+        # Recomendado: nombre del template (el que creaste en Meta)
+        nombre_plantilla = "reconexion_general_agencia_v1"
+
+        # Variables del template:
+        # {{1}} = nombre (si no lo tienes, usa un fallback)
+        # {{2}} = nombre de la agencia
+        nombre_contacto = (datos_creador.get("nombre") or "👋").strip()
+
+        status_code, resp = enviar_plantilla_generica_parametros(
             token=token_cliente,
-            telefono_destino=telefono_destino
+            phone_number_id=phone_id_cliente,
+            numero_destino=telefono_destino,
+            nombre_plantilla=nombre_plantilla,
+            codigo_idioma="es_CO",
+            parametros=[nombre_contacto, business_name],
+            body_vars_count=2
         )
 
+        if status_code not in (200, 201):
+            raise HTTPException(status_code=502, detail={"error": "meta_template_failed", "meta": resp})
 
+        # 🔔 Importante: aquí NO mandes el menú inmediatamente.
+        # Debes mandarlo cuando el usuario haga clic en "Continuar" (webhook button reply).
         return {
             "status": "success",
-            "mensaje": f"Menú '{estado_real}' enviado a {telefono_destino} vía {business_name}"
+            "mensaje": f"Plantilla de reconexión enviada a {telefono_destino} vía {business_name}",
+            "en_ventana_24h": False,
+            "template": nombre_plantilla,
+            "meta": resp
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ Error en envío seguro: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
 
 
 
@@ -5547,3 +5582,71 @@ def Enviar_menu_quickreply_v4(creador_id, estado_real, phone_id, token, telefono
 
     enviar_a_meta(payload, phone_id, token)
     return True
+
+
+# @router.post("/enviar-mensaje-estado")
+# def enviar_mensaje_estado(data: EnvioPruebaRequest):
+#     try:
+#         print(f"🔐 Resolviendo credenciales para tenant: {data.tenant_name}")
+#
+#         cuenta = obtener_cuenta_por_subdominio(data.tenant_name)
+#         if not cuenta:
+#             return JSONResponse(
+#                 {"error": f"No se encontraron credenciales para el tenant '{data.tenant_name}'"},
+#                 status_code=404
+#             )
+#
+#         token_cliente = cuenta.get("access_token")
+#         phone_id_cliente = cuenta.get("phone_number_id")
+#         business_name = cuenta.get("business_name", "Agencia")
+#
+#         if not token_cliente or not phone_id_cliente:
+#             return JSONResponse(
+#                 {"error": "El tenant existe pero le faltan credenciales (token/phone_id)"},
+#                 status_code=500
+#             )
+#
+#         # Contextvars (ideal: reset en finally, pero lo dejo mínimo aquí)
+#         current_token.set(token_cliente)
+#         current_phone_id.set(phone_id_cliente)
+#         current_business_name.set(business_name)
+#
+#         datos_creador = obtener_datos_envio_aspirante(data.creador_id)
+#         if not datos_creador:
+#             raise HTTPException(status_code=404, detail=f"Creador ID {data.creador_id} no existe")
+#
+#         telefono_destino = datos_creador["telefono"]
+#         estado_real = datos_creador["codigo_estado"]
+#
+#         # Texto a enviar: prioridad mensaje_chatbot_simple, luego descripcion, luego default
+#         texto_final = (
+#             datos_creador.get("mensaje_chatbot_simple")
+#         )
+#
+#         # Enviar_boton_opciones_unico(
+#         #     creador_id=data.creador_id,
+#         #     estado_evaluacion=estado_real,
+#         #     phone_id=phone_id_cliente,
+#         #     token=token_cliente,
+#         #     telefono_destino=telefono_destino,
+#         #     texto_final=texto_final,
+#         # )
+#
+#         Enviar_menu_quickreply(
+#             creador_id=data.creador_id,
+#             estado_real=estado_real,
+#             msg_chat_bot=texto_final,
+#             phone_id=phone_id_cliente,
+#             token=token_cliente,
+#             telefono_destino=telefono_destino
+#         )
+#
+#
+#         return {
+#             "status": "success",
+#             "mensaje": f"Menú '{estado_real}' enviado a {telefono_destino} vía {business_name}"
+#         }
+#
+#     except Exception as e:
+#         print(f"❌ Error en envío seguro: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
