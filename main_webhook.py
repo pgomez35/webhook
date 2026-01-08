@@ -3599,6 +3599,18 @@ def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, payloa
     # CASO A: CLIC EN BOTONES (Payloads)
     # ====================================================
     if payload_id:
+        # ✅ Botón continuar de plantilla
+        if payload_id.strip().lower() == "continuar":
+            Enviar_menu_quickreply(
+                creador_id,
+                estado_actual,
+                msg_chat_bot,
+                phone_number_id,
+                token_cliente,
+                wa_id
+            )
+            return True
+
         # A.1 Botón "Opciones" (Viene de Plantilla o Mensaje previo)
         if payload_id == "BTN_ABRIR_MENU_OPCIONES":
             Enviar_menu_quickreply(creador_id, estado_actual,msg_chat_bot, phone_number_id, token_cliente, wa_id)
@@ -4714,14 +4726,12 @@ from pydantic import BaseModel
 # from tu_archivo_conexion import get_connection_context
 
 def obtener_datos_envio_aspirante(creador_id):
-    """
-    Obtiene el teléfono del creador y el estado actual con su metadata.
-    """
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 sql = """
-                    SELECT c.telefono,
+                    SELECT
+                        c.telefono,
                         COALESCE(c.nickname, c.nombre_real) AS nombre,
                         cea.codigo,
                         cea.descripcion,
@@ -4733,25 +4743,26 @@ def obtener_datos_envio_aspirante(creador_id):
                     LEFT JOIN chatbot_estados_aspirante cea
                         ON cea.id_chatbot_estado = pc.id_chatbot_estado
                     WHERE c.id = %s
-                    LIMIT 1     
-                      """
+                    LIMIT 1
+                """
                 cur.execute(sql, (creador_id,))
                 row = cur.fetchone()
 
-                if row:
-                    return {
-                        "telefono": row[0],
-                        "codigo_estado": row[1],
-                        "descripcion": row[2],
-                        "mensaje_chatbot_simple": row[3],
-                        "nombre_template": row[4]
-                    }
-                return None
+                if not row:
+                    return None
+
+                return {
+                    "telefono": row[0],
+                    "nombre": row[1],                 # ✅ ahora sí llega al template
+                    "codigo_estado": row[2],          # ✅ estado real
+                    "descripcion": row[3],
+                    "mensaje_chatbot_simple": row[4],
+                    "nombre_template": row[5]
+                }
 
     except Exception as e:
         print(f"❌ Error al obtener datos de envío para creador {creador_id}:", e)
         return None
-
 
 
 def obtener_mensaje_por_codigo(codigo_estado):
