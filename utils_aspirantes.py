@@ -69,12 +69,64 @@ def guardar_link_tiktok_live(creador_id, url):
     print(f"💾 URL guardada: {url}")
 
 
-def obtener_status_24hrs(telefono):
-    # Consultar last_interaction en BD
-    # Si (now - last_interaction) > 24h return False (Fuera de ventana)
-    # Si (now - last_interaction) < 24h return True (Dentro de ventana)
-    return False  # Simulamos que está dentro para pruebas
+# def obtener_status_24hrs(telefono):
+#     # Consultar last_interaction en BD
+#     # Si (now - last_interaction) > 24h return False (Fuera de ventana)
+#     # Si (now - last_interaction) < 24h return True (Dentro de ventana)
+#     return False  # Simulamos que está dentro para pruebas
 
+from datetime import datetime, timedelta, timezone
+
+
+# Asegúrate de importar tu gestor de conexión
+# from .db_config import get_connection_context
+
+def obtener_status_24hrs(telefono):
+    """
+    Verifica si el número tiene una sesión de 24h activa (Ventana de Atención).
+    Retorna True si la ventana está ABIERTA.
+    Retorna False si la ventana está CERRADA.
+    """
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                # 1. Buscamos el último mensaje ENTRANTE (inbound) de ese teléfono
+                # Usamos la tabla 'test.whatsapp_messages' que me compartiste
+                query = """
+                        SELECT created_at
+                        FROM whatsapp_messages
+                        WHERE recipient = %s
+                          AND direction = 'inbound'
+                        ORDER BY created_at DESC LIMIT 1 \
+                        """
+                cur.execute(query, (telefono,))
+                row = cur.fetchone()
+
+                # CASO A: El usuario nunca ha escrito
+                if not row:
+                    # print(f"ℹ️ El usuario {telefono} no tiene historial. Ventana CERRADA.")
+                    return False
+
+                # CASO B: Calcular diferencia de tiempo
+                ultima_interaccion = row[0]
+
+                # Obtenemos la hora actual en UTC (porque tu tabla guarda con timezone)
+                ahora = datetime.now(timezone.utc)
+
+                diferencia = ahora - ultima_interaccion
+
+                # Verificamos si pasaron menos de 24 horas
+                if diferencia < timedelta(hours=24):
+                    # print(f"✅ Ventana ABIERTA (Restan: {24 - diferencia.total_seconds()/3600:.1f} horas)")
+                    return True
+                else:
+                    # print(f"⛔ Ventana CERRADA (Último msj hace: {diferencia.days} días)")
+                    return False
+
+    except Exception as e:
+        print(f"❌ Error consultando status 24hrs: {e}")
+        # Por seguridad, si falla la BD, asumimos ventana CERRADA para evitar bloqueos de Meta
+        return False
 
 # --- FUNCIONES LÓGICAS ---
 
