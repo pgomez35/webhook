@@ -3570,6 +3570,118 @@ def procesar_evento_webhook_anticuado(body, phone_id_cliente, token_cliente):
 # services/aspirant_flow.py
 
 def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, payload_id):
+    # [LOG 1] Inicio absoluto
+    print(f"\n📨 [INICIO] Recibido de: {wa_id} | Tipo: {tipo} | Payload: {payload_id} | Texto: '{texto}'")
+
+    """
+    Intenta manejar el mensaje basándose en el estado del aspirante.
+    Retorna True si procesó el mensaje, False si debe pasar al siguiente nivel (Chatbot).
+    """
+
+    # ------------------------------------------------------------------
+    # 1. IDENTIFICACIÓN Y ESTADO (BASE DE DATOS)
+    # ------------------------------------------------------------------
+    creador_id = obtener_creador_id_por_telefono(wa_id)
+    if not creador_id:
+        print("❌ [DEBUG] Usuario no encontrado en tabla creadores. Pasando al Bot General.")
+        return False  # No es aspirante
+
+    estado_creador = buscar_estado_creador(creador_id)
+    if not estado_creador or not estado_creador.get("codigo_estado"):
+        print(f"⚠️ [DEBUG] Creador ID {creador_id} existe pero NO TIENE estado en BD.")
+        return False
+
+    estado_actual = estado_creador["codigo_estado"]
+    msg_chat_bot = estado_creador.get("mensaje_chatbot_simple") or "Selecciona una opción:"
+    token_cliente = current_token.get()
+
+    # [LOG 2] Estado Crucial
+    print(f"💾 [DEBUG] ID Creador: {creador_id} | Estado en BD: '{estado_actual}'")
+
+    # ====================================================
+    # CASO A: CLIC EN BOTONES (Payloads)
+    # ====================================================
+    if payload_id:
+        print(f"🔘 [DEBUG] Procesando botón: {payload_id}")
+
+        # A.1 Botón "Continuar" (Plantillas)
+        if payload_id.strip().lower() == "continuar":
+            print("🚀 [DEBUG] Acción: Reenganche plantilla.")
+            Enviar_menu_quickreply(creador_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
+            return True
+
+        # A.2 Botón "Opciones"
+        if payload_id == "BTN_ABRIR_MENU_OPCIONES":
+            print("📂 [DEBUG] Acción: Abrir menú opciones.")
+            Enviar_menu_quickreply(creador_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
+            return True
+
+        # A.3 Acciones del Menú (MENU_*)
+        if payload_id.startswith("MENU_"):
+            print("⚡ [DEBUG] Acción: Ejecutar lógica de botón de menú.")
+            accion_menu_estado_evaluacion(creador_id, payload_id, phone_number_id, token_cliente, estado_actual, wa_id)
+            return True
+
+    # ====================================================
+    # CASO B: TEXTO ESPERADO (Validación de URL TikTok)
+    # ====================================================
+    # Solo entramos aquí si es texto.
+    if tipo == "text":
+
+        # [LOG 3] Verificación de coincidencia de estado
+        es_estado_espera = (estado_actual == "esperando_link_tiktok_live")
+        print(
+            f"🤔 [DEBUG] ¿Es input de Link? {es_estado_espera} (Actual: '{estado_actual}' vs Esperado: 'esperando_link_tiktok_live')")
+
+        if es_estado_espera:
+            print("🟢 [DEBUG] Estado coincide. Iniciando validación de URL...")
+
+            es_valido = validar_url_link_tiktok_live(texto)
+            print(f"🧐 [DEBUG] Resultado validación URL: {es_valido}")
+
+            if es_valido:
+                print("💾 [DEBUG] URL Válida. Guardando en BD...")
+                guardar_link_tiktok_live(creador_id, texto)
+                guardar_estado_eval(creador_id, "revision_link_tiktok")
+
+                print("📤 [DEBUG] Enviando confirmación de éxito...")
+                # USAMOS TU FUNCIÓN CORRECTA (Token, PhoneID, Destino, Texto)
+                enviar_mensaje_texto_simple(
+                    token_cliente,
+                    phone_number_id,
+                    wa_id,
+                    "✅ Link recibido. Lo revisaremos pronto."
+                )
+            else:
+                print("⛔ [DEBUG] URL Inválida. Enviando mensaje de error...")
+                enviar_mensaje_texto_simple(
+                    token_cliente,
+                    phone_number_id,
+                    wa_id,
+                    "❌ Link no válido. Asegúrate de copiar la URL de TikTok completa."
+                )
+
+            return True  # ✅ DETENER AQUÍ.
+
+    # ====================================================
+    # CASO C: MENÚ POR ESTADO (Reenganche Genérico)
+    # ====================================================
+    if tipo == "text" and estado_actual:
+        print(f"🔄 [DEBUG] Texto recibido en estado '{estado_actual}' (No es link). Reenviando menú.")
+
+        # Si prefieres enviar solo texto, usa enviar_msg_estado.
+        # Si prefieres botones, usa Enviar_menu_quickreply.
+        Enviar_menu_quickreply(creador_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
+
+        return True  # ✅ DETENER AQUÍ.
+
+    print("🔻 [DEBUG] Ningún caso coincidió. Pasando al Bot IA.")
+    return False  # Si no coincide nada, dejar que el bot conversacional responda
+
+def procesar_flujo_aspiranteV1(tenant, phone_number_id, wa_id, tipo, texto, payload_id):
+    # [LOG 1] VER QUÉ LLEGA
+    print(f"📨 INPUT RECIBIDO | User: {wa_id} | Tipo: {tipo} | Payload: {payload_id} | Texto: {texto}")
+
     """
     Intenta manejar el mensaje basándose en el estado del aspirante.
     Retorna True si procesó el mensaje, False si debe pasar al siguiente nivel (Chatbot).
@@ -3586,6 +3698,9 @@ def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, payloa
         return False
 
     estado_actual = estado_creador["codigo_estado"]
+
+    # [LOG 2] VER EL ESTADO REAL EN BD
+    print(f"💾 ESTADO EN BD: '{estado_actual}' (ID Creador: {creador_id})")
 
     # -PENDIENTE REVISAR SI NO SE NECESITA ENVIAR MSG CHAT
     msg_chat_bot = estado_creador.get("mensaje_chatbot_simple") or "Selecciona una opción:"
