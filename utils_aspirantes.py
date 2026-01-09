@@ -14,11 +14,54 @@ import json
 from datetime import datetime, timedelta
 
 
-# --- MOCK DE BASE DE DATOS (Reemplaza con tu lógica real SQL) ---
-def guardar_estado_eval(creador_id, estado):
-    # UPDATE perfil_creador SET estado_evaluacion = estado WHERE creador_id = creador_id
-    print(f"💾 BD: Estado actualizado a '{estado}' para ID {creador_id}")
+# # --- MOCK DE BASE DE DATOS (Reemplaza con tu lógica real SQL) ---
+# def guardar_estado_eval(creador_id, estado):
+#     # UPDATE perfil_creador SET estado_evaluacion = estado WHERE creador_id = creador_id
+#     print(f"💾 BD: Estado actualizado a '{estado}' para ID {creador_id}")
+# Asegúrate de importar tu conexión
+# from .db_config import get_connection_context
 
+def guardar_estado_eval(creador_id, codigo_estado):
+    """
+    Actualiza la tabla perfil_creador con el nuevo estado.
+    1. Busca el ID numérico del estado en 'chatbot_estados_aspirante' usando el código.
+    2. Actualiza 'perfil_creador'.
+    """
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                # PASO 1: Obtener el ID numérico basado en el texto (ej: 'esperando_link...')
+                query_lookup = """
+                               SELECT id_chatbot_estado
+                               FROM chatbot_estados_aspirante
+                               WHERE codigo = %s \
+                               """
+                cur.execute(query_lookup, (codigo_estado,))
+                row = cur.fetchone()
+
+                if not row:
+                    print(
+                        f"❌ ERROR CRÍTICO: El estado '{codigo_estado}' NO EXISTE en la tabla 'chatbot_estados_aspirante'.")
+                    print("💡 Solución: Debes insertar este estado en la tabla de configuración SQL primero.")
+                    return False
+
+                id_estado_numerico = row[0]
+
+                # PASO 2: Actualizar el perfil del creador
+                query_update = """
+                               UPDATE perfil_creador
+                               SET id_chatbot_estado = %s
+                               WHERE creador_id = %s \
+                               """
+                cur.execute(query_update, (id_estado_numerico, creador_id))
+                conn.commit()
+
+                print(f"💾 BD Actualizada: Creador {creador_id} -> Estado '{codigo_estado}' (ID: {id_estado_numerico})")
+                return True
+
+    except Exception as e:
+        print(f"❌ Error al guardar estado en BD: {e}")
+        return False
 
 def buscar_estado_creador(creador_id):
     """
@@ -64,10 +107,79 @@ def obtener_creador_id_por_telefono(telefono):
     return 3236
 
 
-def guardar_link_tiktok_live(creador_id, url):
-    # UPDATE perfil_creador SET link_tiktok = url WHERE ...
-    print(f"💾 URL guardada: {url}")
+# def guardar_link_tiktok_live(creador_id, url):
+#     # UPDATE perfil_creador SET link_tiktok = url WHERE ...
+#     print(f"💾 URL guardada: {url}")
 
+from datetime import datetime
+
+
+# Asegúrate de importar tu conexión
+# from .db_config import get_connection_context
+
+def guardar_link_tiktok_live(creador_id, url_tiktok):
+    """
+    Guarda la URL del Live de TikTok en la tabla de agendamientos.
+    1. Busca el último agendamiento tipo 'LIVE' del creador.
+    2. Si existe, actualiza el campo link_meet.
+    3. Si no existe, crea un nuevo agendamiento en estado 'pendiente'.
+    """
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+
+                # PASO 1: Buscar si ya existe un agendamiento 'LIVE' reciente (pendiente o programado)
+                query_buscar = """
+                               SELECT id \
+                               FROM test.agendamientos
+                               WHERE creador_id = %s
+                                 AND tipo_agendamiento = 'LIVE'
+                               ORDER BY id DESC LIMIT 1 \
+                               """
+                cur.execute(query_buscar, (creador_id,))
+                resultado = cur.fetchone()
+
+                if resultado:
+                    # --- ESCENARIO A: ACTUALIZAR EXISTENTE ---
+                    agendamiento_id = resultado[0]
+                    query_update = """
+                                   UPDATE test.agendamientos
+                                   SET link_meet      = %s,
+                                       actualizado_en = NOW()
+                                   WHERE id = %s \
+                                   """
+                    cur.execute(query_update, (url_tiktok, agendamiento_id))
+                    print(f"💾 Agendamiento {agendamiento_id} actualizado con Link TikTok.")
+
+                else:
+                    # --- ESCENARIO B: CREAR NUEVO (Si no había cita previa) ---
+                    # Creamos un registro base para no perder el link
+                    titulo = f"Prueba TikTok Live - Creador {creador_id}"
+                    descripcion = "El usuario envió el link manualmente a través del Chatbot."
+
+                    query_insert = """
+                                   INSERT INTO test.agendamientos
+                                   (creador_id, tipo_agendamiento, link_meet, estado, titulo, descripcion, creado_en)
+                                   VALUES (%s, 'LIVE', %s, 'pendiente', %s, %s, NOW()) RETURNING id \
+                                   """
+                    cur.execute(query_insert, (creador_id, url_tiktok, titulo, descripcion))
+                    nuevo_id = cur.fetchone()[0]
+
+                    # Opcional: Registrar también en la tabla de participantes para mantener consistencia
+                    query_participante = """
+                                         INSERT INTO test.agendamientos_participantes (agendamiento_id, creador_id, estado)
+                                         VALUES (%s, %s, 'pendiente') \
+                                         """
+                    cur.execute(query_participante, (nuevo_id, creador_id))
+
+                    print(f"🆕 Nuevo agendamiento 'LIVE' creado (ID: {nuevo_id}) con Link TikTok.")
+
+                conn.commit()
+                return True
+
+    except Exception as e:
+        print(f"❌ Error guardando Link TikTok en agendamientos: {e}")
+        return False
 
 # def obtener_status_24hrs(telefono):
 #     # Consultar last_interaction en BD

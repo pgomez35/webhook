@@ -3625,7 +3625,7 @@ def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, payloa
     # ====================================================
     # CASO B: TEXTO (Validación de URL)
     # ====================================================
-    if tipo == "text" and estado_actual == "solicitud_link_enviado":
+    if tipo == "text" and estado_actual == "esperando_link_tiktok_live":
         es_valido = validar_url_link_tiktok_live(texto)
 
         if es_valido:
