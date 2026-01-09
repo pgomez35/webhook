@@ -3625,20 +3625,53 @@ def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, payloa
     # ====================================================
     # CASO B: TEXTO (Validación de URL)
     # ====================================================
-    if tipo == "text" and estado_actual == "esperando_link_tiktok_live":
-        es_valido = validar_url_link_tiktok_live(texto)
+    # if tipo == "text" and estado_actual == "esperando_link_tiktok_live":
+    #     es_valido = validar_url_link_tiktok_live(texto)
+    #
+    #     if es_valido:
+    #         guardar_link_tiktok_live(creador_id, texto)
+    #         # Avanzar estado
+    #         guardar_estado_eval(creador_id, "revision_link_tiktok")
+    #         enviar_texto_simple(wa_id, "✅ Link recibido. Lo revisaremos pronto.", phone_number_id, token_cliente)
+    #     else:
+    #         enviar_texto_simple(wa_id, "❌ Link no válido. Asegúrate de copiar la URL de TikTok completa.",
+    #                             phone_number_id, token_cliente)
+    #
+    #     return True  # Procesado, no contestar con el bot IA
 
-        if es_valido:
-            guardar_link_tiktok_live(creador_id, texto)
-            # Avanzar estado
-            guardar_estado_eval(creador_id, "revision_link_tiktok")
-            enviar_texto_simple(wa_id, "✅ Link recibido. Lo revisaremos pronto.", phone_number_id, token_cliente)
-        else:
-            enviar_texto_simple(wa_id, "❌ Link no válido. Asegúrate de copiar la URL de TikTok completa.",
-                                phone_number_id, token_cliente)
+        # ====================================================
+        # CASO B: TEXTO (Validación de URL)
+        # ====================================================
+        if tipo == "text" and estado_actual == "esperando_link_tiktok_live":
 
-        return True  # Procesado, no contestar con el bot IA
+            es_valido = validar_url_link_tiktok_live(texto)
 
+            if es_valido:
+                guardar_link_tiktok_live(creador_id, texto)
+                guardar_estado_eval(creador_id, "revision_link_tiktok")
+
+                # 📍 CORRECCIÓN: Usamos tu función con el orden correcto de parámetros:
+                # 1. token_cliente
+                # 2. phone_number_id
+                # 3. wa_id (teléfono destino)
+                # 4. Texto
+                enviar_mensaje_texto_simple(
+                    token_cliente,
+                    phone_number_id,
+                    wa_id,
+                    "✅ Link recibido. Lo revisaremos pronto."
+                )
+
+            else:
+                # Aquí también corregimos el orden
+                enviar_mensaje_texto_simple(
+                    token_cliente,
+                    phone_number_id,
+                    wa_id,
+                    "❌ Link no válido. Asegúrate de copiar la URL de TikTok completa."
+                )
+
+            return True
     # ====================================================
     # CASO C: MENÚ POR ESTADO (Reenganche por texto)
     # ====================================================
