@@ -43,9 +43,7 @@ from redis_client import redis_set_temp, redis_get_temp, redis_delete_temp
 from utils_aspirantes import guardar_estado_eval, obtener_status_24hrs, Enviar_msg_estado, \
     enviar_plantilla_estado_evaluacion, buscar_estado_creador, \
     accion_menu_estado_evaluacion, validar_url_link_tiktok_live, guardar_link_tiktok_live, \
-    actualizar_mensaje_desde_status, _handle_statuses, enviar_confirmacion_interactiva
-
-
+    actualizar_mensaje_desde_status, _handle_statuses, enviar_confirmacion_interactiva, manejar_input_link_tiktok
 
 # from utils_aspirantes import guardar_estado_eval, obtener_status_24hrs, Enviar_msg_estado, \
 #     enviar_plantilla_estado_evaluacion, obtener_creador_id_por_telefono, buscar_estado_creador, Enviar_menu_quickreply, \
@@ -3570,6 +3568,80 @@ def procesar_evento_webhook_anticuado(body, phone_id_cliente, token_cliente):
 # services/aspirant_flow.py
 
 def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, payload_id):
+    # [LOG 1] Inicio absoluto
+    print(f"\n📨 [INICIO] Recibido de: {wa_id} | Tipo: {tipo} | Payload: {payload_id} | Texto: '{texto}'")
+
+    """
+    Intenta manejar el mensaje basándose en prioridad:
+    1. Flujos Temporales (Redis)
+    2. Estados de Base de Datos (Postgres)
+    """
+
+    # ------------------------------------------------------------------
+    # 0. SETUP: IDENTIFICACIÓN BÁSICA
+    # ------------------------------------------------------------------
+    creador_id = obtener_creador_id_por_telefono(wa_id)
+    if not creador_id:
+        print("❌ [DEBUG] Usuario no encontrado en tabla creadores. Pasando al Bot General.")
+        return False  # No es aspirante
+
+    token_cliente = current_token.get()
+
+    # =================================================================
+    # ⚡ CAPA 1: INTERCEPTOR REDIS (Alta Prioridad)
+    # =================================================================
+    # Verifica si el usuario quiere ingresar un link o si ya lo estábamos esperando.
+    # Si retorna True, Redis manejó todo y terminamos aquí.
+
+    if manejar_input_link_tiktok(creador_id, wa_id, tipo, texto, payload_id, token_cliente, phone_number_id):
+        return True
+
+    # =================================================================
+    # 🐢 CAPA 2: LÓGICA DE NEGOCIO (Base de Datos)
+    # =================================================================
+    # Si Redis devolvió False, consultamos el estado persistente en Postgres.
+
+    estado_creador = buscar_estado_creador(creador_id)
+    if not estado_creador or not estado_creador.get("codigo_estado"):
+        print(f"⚠️ [DEBUG] Creador ID {creador_id} existe pero NO TIENE estado en BD.")
+        return False
+
+    estado_actual = estado_creador["codigo_estado"]
+    msg_chat_bot = estado_creador.get("mensaje_chatbot_simple") or "Selecciona una opción:"
+
+    print(f"💾 [DEBUG] ID Creador: {creador_id} | Estado BD: '{estado_actual}' (Procesando capa 2)")
+
+    # --- A. CLIC EN BOTONES (Payloads) ---
+    if payload_id:
+        print(f"🔘 [DEBUG] Procesando botón standard: {payload_id}")
+
+        # A.1 Botones de Navegación/Reenganche
+        if payload_id.strip().lower() == "continuar" or payload_id == "BTN_ABRIR_MENU_OPCIONES":
+            print("🚀 [DEBUG] Acción: Mostrar menú actual.")
+            Enviar_menu_quickreply(creador_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
+            return True
+
+        # A.2 Acciones del Menú (MENU_*)
+        # Nota: MENU_INGRESAR_LINK_TIKTOK ya fue atrapado por Redis arriba.
+        # Aquí llegan el resto de botones (Ver guía, Agendar cita, etc.)
+        if payload_id.startswith("MENU_"):
+            print("⚡ [DEBUG] Acción: Ejecutar lógica de botón de menú (BD).")
+            accion_menu_estado_evaluacion(creador_id, payload_id, phone_number_id, token_cliente, estado_actual, wa_id)
+            return True
+
+    # --- B. TEXTO GENÉRICO (Reenganche) ---
+    # Si escribe texto y no fue capturado por Redis (no es un link esperado),
+    # le mostramos el menú de su estado actual.
+    if tipo == "text" and estado_actual:
+        print(f"🔄 [DEBUG] Texto sin contexto temporal. Mostrando menú de estado '{estado_actual}'.")
+        Enviar_menu_quickreply(creador_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
+        return True
+
+    print("🔻 [DEBUG] Ningún caso coincidió. Pasando al Bot IA.")
+    return False
+
+
+def procesar_flujo_aspiranteV2(tenant, phone_number_id, wa_id, tipo, texto, payload_id):
     # [LOG 1] Inicio absoluto
     print(f"\n📨 [INICIO] Recibido de: {wa_id} | Tipo: {tipo} | Payload: {payload_id} | Texto: '{texto}'")
 

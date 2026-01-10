@@ -118,3 +118,44 @@ def redis_delete_temp(numero: str):
         print(f"🗑️ Datos temporales eliminados de Redis para {numero}")
     except Exception as e:
         print(f"⚠️ Error eliminando temp de Redis para {numero}: {e}")
+
+
+# ----------------------------------------
+# ----------------------------------------
+# ----------------------------------------
+# ----------------------------------------
+# ----------------------------------------
+
+# ============================
+# FUNCIONES PARA CONTROL DE FLUJO (Pasos simples)
+# ============================
+
+def actualizar_flujo(numero: str, paso: str, ttl: int = 600):
+    """
+    Guarda el paso actual de la conversación (String simple).
+    TTL default: 10 minutos (600s).
+    """
+    key = f"flow:{numero}"
+    try:
+        r.setex(key, ttl, paso)
+        print(f"⏳ Redis: Usuario {numero} en paso temporal '{paso}'")
+    except Exception as e:
+        print(f"⚠️ Error Redis actualizar_flujo: {e}")
+
+def obtener_flujo(numero: str) -> str | None:
+    """Retorna el paso actual (String) o None."""
+    key = f"flow:{numero}"
+    try:
+        return r.get(key)
+    except Exception as e:
+        print(f"⚠️ Error Redis obtener_flujo: {e}")
+        return None
+
+def eliminar_flujo(numero: str):
+    """Borra el paso actual."""
+    key = f"flow:{numero}"
+    try:
+        r.delete(key)
+        print(f"🗑️ Flujo temporal eliminado para {numero}")
+    except Exception as e:
+        print(f"⚠️ Error Redis eliminar_flujo: {e}")

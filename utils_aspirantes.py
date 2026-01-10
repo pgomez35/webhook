@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends
 import logging
 
 from DataBase import get_connection_context
+from enviar_msg_wp import enviar_mensaje_texto_simple
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -1041,6 +1042,94 @@ def enviar_confirmacion_interactiva(numero, nickname, phone_id, token):
     except Exception as e:
         print(f"Error enviando botones: {e}")
 
+
+
+# --------------------------------------------------------
+# --------------------------------------------------------
+# --------------------------------------------------------
+# --------------------------------------------------------
+# --------------------------------------------------------
+# --------------------------------------------------------
+# --------------CODIGO PARA FLUJO DE LINK DE TIKTOK-
+
+
+# Asegúrate de importar esto al inicio del archivo
+from redis_client import actualizar_flujo, obtener_flujo, eliminar_flujo
+
+
+def manejar_input_link_tiktok(creador_id, wa_id, tipo, texto, payload, token, phone_id):
+    """
+    Gestiona el micro-flujo para capturar el Link de TikTok usando Redis.
+    Retorna True si el mensaje fue procesado (consumido).
+    Retorna False si el router principal debe seguir buscando qué hacer.
+    """
+
+    # 1. Consultar en qué paso temporal está el usuario
+    paso_actual = obtener_flujo(wa_id)
+
+    # ------------------------------------------------------------------
+    # ESCENARIO A: DETONANTE (El usuario hace clic en el botón "Ingresar Link")
+    # ------------------------------------------------------------------
+    if payload == "MENU_INGRESAR_LINK_TIKTOK":
+        print(f"🚀 [REDIS] Iniciando captura de Link para {wa_id}")
+
+        # Guardamos en Redis que estamos esperando el link (TTL 10 min)
+        actualizar_flujo(wa_id, "esperando_input_link_tiktok")
+
+        enviar_mensaje_texto_simple(
+            token, phone_id, wa_id,
+            "🔗 *Ingresa tu Link de Live:*\n\n"
+            "Pega aquí el enlace (ej: tiktok.com/@usuario/live). "
+            "El sistema lo validará automáticamente."
+        )
+        return True  # ✅ Mensaje consumido, no sigue al router
+
+    # ------------------------------------------------------------------
+    # ESCENARIO B: PROCESAMIENTO (El usuario ya estaba esperando y envía texto)
+    # ------------------------------------------------------------------
+    if paso_actual == "esperando_input_link_tiktok":
+
+        # 🛡️ SALIDA DE EMERGENCIA:
+        # Si el usuario se arrepiente y presiona OTRO botón del menú (ej: Ver Guía)
+        if payload and payload.startswith("MENU_"):
+            print(f"⚠️ [REDIS] Usuario cambió de opción. Cancelando espera de Link.")
+            eliminar_flujo(wa_id)
+            return False  # ❌ Devolvemos False para que el router ejecute el nuevo botón
+
+        # Validación de tipo de mensaje
+        if tipo != "text":
+            enviar_mensaje_texto_simple(token, phone_id, wa_id, "✍️ Por favor envía el enlace en formato texto.")
+            return True
+
+        print(f"🔍 [REDIS] Validando URL recibida: {texto}")
+
+        if validar_url_link_tiktok_live(texto):
+            # ✅ ÉXITO
+            # 1. Persistencia Permanente (Postgres)
+            guardar_link_tiktok_live(creador_id, texto)
+            guardar_estado_eval(creador_id, "revision_link_tiktok")  # Avanzamos estado de negocio
+
+            # 2. Limpieza Temporal (Redis) - Ya no necesitamos esperar
+            eliminar_flujo(wa_id)
+
+            # 3. Respuesta
+            enviar_mensaje_texto_simple(
+                token, phone_id, wa_id,
+                "✅ ¡Link guardado! Lo hemos enviado a revisión."
+            )
+        else:
+            # ❌ ERROR (No borramos el flujo en Redis, le damos otra oportunidad)
+            enviar_mensaje_texto_simple(
+                token, phone_id, wa_id,
+                "❌ Enlace no válido.\nVerifica que empiece por 'tiktok.com' y pégalo de nuevo."
+            )
+
+        return True  # ✅ Mensaje consumido
+
+    # Si no es el botón ni estamos esperando nada, ignoramos.
+    return False
+
+
 # def Enviar_menu_quickreply(creador_id, estado_evaluacion, phone_id, token, telefono):
 #     """
 #     Envía el menú real de opciones según el estado.
@@ -1075,3 +1164,12 @@ def enviar_confirmacion_interactiva(numero, nickname, phone_id, token):
 #         }
 #     }
 #     enviar_a_meta(payload, phone_id, token)
+
+
+
+
+
+
+
+
+
