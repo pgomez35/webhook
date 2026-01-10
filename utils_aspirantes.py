@@ -638,15 +638,27 @@ def accion_menu_estado_evaluacion(
     # GRUPO 1: INGRESO DE DATOS (Cambian estado para esperar texto)
     # ==========================================================
     if button_id == "MENU_INGRESAR_LINK_TIKTOK":
-        # Cambiamos estado para que el próximo mensaje de texto sea capturado como URL
-        guardar_estado_eval(creador_id, "esperando_link_tiktok_live")
-        enviar_texto_simple(
-            telefono,
-            "🔗 Por favor, pega aquí el enlace de tu TikTok LIVE:",
-            phone_id,
-            token,
+        print(f"🚀 [DB->REDIS] Activando escucha de Link para {telefono}")
+
+        # A. Activamos la bandera en Redis (OJO: El nombre clave debe ser EXACTO)
+        actualizar_flujo(telefono, "esperando_input_link_tiktok")
+
+        # B. Enviamos el mensaje
+        enviar_mensaje_texto_simple(
+            token, phone_id, telefono,
+            "🔗 *Ingresa tu Link de Live:*\n\n"
+            "Por favor, pega aquí el enlace de tu transmisión (ej: tiktok.com/@usuario/live)."
         )
         return
+        # # Cambiamos estado para que el próximo mensaje de texto sea capturado como URL
+        # guardar_estado_eval(creador_id, "esperando_link_tiktok_live")
+        # enviar_texto_simple(
+        #     telefono,
+        #     "🔗 Por favor, pega aquí el enlace de tu TikTok LIVE:",
+        #     phone_id,
+        #     token,
+        # )
+        # return
 
     if button_id == "MENU_INGRESAR_LINK_TIKTOK_2":
         guardar_estado_eval(creador_id, "esperando_link_tiktok_live_2")
@@ -1058,6 +1070,56 @@ from redis_client import actualizar_flujo, obtener_flujo, eliminar_flujo
 
 
 def manejar_input_link_tiktok(creador_id, wa_id, tipo, texto, payload, token, phone_id):
+    """
+    PROCESADOR: Solo actúa si el usuario ya tiene la bandera de Redis activa.
+    No maneja el clic inicial (eso lo hace accion_menu_estado_evaluacion).
+    """
+    # Consultar Redis
+    paso_actual = obtener_flujo(wa_id)
+
+    # Solo entramos si Redis dice que estamos esperando el link
+    # (La clave "esperando_input_link_tiktok" debe coincidir con la de accion_menu)
+    if paso_actual == "esperando_input_link_tiktok":
+
+        # 🛡️ SALIDA DE EMERGENCIA:
+        # Si el usuario presiona CUALQUIER botón, cancelamos la espera.
+        if payload:
+            print(f"⚠️ [REDIS] Usuario presionó botón '{payload}'. Cancelando espera de Link.")
+            eliminar_flujo(wa_id)
+            return False  # Dejamos pasar para que el Router maneje el botón
+
+        # Validación de tipo de mensaje (debe ser texto)
+        if tipo != "text":
+            enviar_mensaje_texto_simple(token, phone_id, wa_id, "✍️ Por favor envía el enlace en formato texto.")
+            return True
+
+        print(f"🔍 [REDIS] Validando URL recibida: {texto}")
+
+        # Lógica de Validación
+        if validar_url_link_tiktok_live(texto):
+            # ✅ ÉXITO
+            guardar_link_tiktok_live(creador_id, texto)  # Guardar dato
+            guardar_estado_eval(creador_id, "revision_link_tiktok")  # Avanzar estado negocio
+            eliminar_flujo(wa_id)  # Limpiar memoria
+
+            enviar_mensaje_texto_simple(
+                token, phone_id, wa_id,
+                "✅ ¡Link guardado! Lo hemos enviado a revisión."
+            )
+        else:
+            # ❌ ERROR (Damos otra oportunidad sin borrar Redis)
+            enviar_mensaje_texto_simple(
+                token, phone_id, wa_id,
+                "❌ Enlace no válido. Asegúrate de copiar la URL completa (tiktok.com/...) y pégala nuevamente."
+            )
+
+        return True  # Mensaje consumido
+
+    # Si no estamos esperando nada, ignoramos.
+    return False
+
+
+def manejar_input_link_tiktokv1(creador_id, wa_id, tipo, texto, payload, token, phone_id):
     """
     Gestiona el micro-flujo para capturar el Link de TikTok usando Redis.
     Retorna True si el mensaje fue procesado (consumido).
