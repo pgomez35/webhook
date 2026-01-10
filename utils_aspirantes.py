@@ -1077,6 +1077,11 @@ def manejar_input_link_tiktok(creador_id, wa_id, tipo, texto, payload, token, ph
     # Consultar Redis
     paso_actual = obtener_flujo(wa_id)
 
+    # [LOG DE DIAGNÓSTICO CRÍTICO] 🔍
+    print(f"🛑 [DEBUG REDIS] Usuario: '{wa_id}' | Paso en Redis: '{paso_actual}'")
+    print(f"🧐 [DEBUG CHECK] ¿Coincide? '{paso_actual}' == 'esperando_input_link_tiktok'")
+
+
     # Solo entramos si Redis dice que estamos esperando el link
     # (La clave "esperando_input_link_tiktok" debe coincidir con la de accion_menu)
     if paso_actual == "esperando_input_link_tiktok":
