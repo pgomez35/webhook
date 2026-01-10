@@ -1104,7 +1104,7 @@ def manejar_input_link_tiktok(creador_id, wa_id, tipo, texto, payload, token, ph
         if validar_url_link_tiktok_live(texto):
             # ✅ ÉXITO
             guardar_link_tiktok_live(creador_id, texto)  # Guardar dato
-            guardar_estado_eval(creador_id, "revision_link_tiktok")  # Avanzar estado negocio
+            # guardar_estado_eval(creador_id, "revision_link_tiktok")  # Avanzar estado negocio
             eliminar_flujo(wa_id)  # Limpiar memoria
 
             enviar_mensaje_texto_simple(
