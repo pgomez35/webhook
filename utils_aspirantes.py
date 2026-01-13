@@ -1221,20 +1221,27 @@ def manejar_input_link_tiktokv1(creador_id, wa_id, tipo, texto, payload, token, 
 
 # services/db_service.py
 
-def obtener_configuracion_texto(clave, valor_por_defecto="Información no disponible temporalmente."):
+def obtener_configuracion_texto(clave, valor_por_defecto="Información no disponible."):
     """
     Busca un texto configurado en la tabla 'configuracion_agencia'.
     Si no existe, retorna el valor_por_defecto.
+    INCLUYE: Corrección automática de saltos de línea.
     """
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                query = "SELECT valor FROM configuracion_agencia WHERE clave = %s"
+                query = "SELECT valor FROM test.configuracion_agencia WHERE clave = %s"
                 cur.execute(query, (clave,))
                 resultado = cur.fetchone()
 
                 if resultado:
-                    return resultado[0]
+                    texto_bd = resultado[0]
+
+                    # 🪄 LA MAGIA: Convertimos el literal "\n" en un salto de línea real
+                    if texto_bd:
+                        return texto_bd.replace('\\n', '\n')
+
+                    return texto_bd
                 else:
                     return valor_por_defecto
     except Exception as e:
