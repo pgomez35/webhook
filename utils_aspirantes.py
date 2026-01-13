@@ -637,6 +637,28 @@ def accion_menu_estado_evaluacion(
     # ==========================================================
     # GRUPO 1: INGRESO DE DATOS (Cambian estado para esperar texto)
     # ==========================================================
+
+    # A. PREGUNTAS FRECUENTES
+    if button_id == "MENU_PREGUNTAS_FRECUENTES":
+        # Leemos de la BD
+        texto_faq = obtener_configuracion_texto(
+            clave="faq_texto",
+            valor_por_defecto="❓ Estamos actualizando nuestras preguntas frecuentes. Contacta a un asesor."
+        )
+        enviar_mensaje_texto_simple(token, phone_id, telefono, texto_faq)
+        return
+
+    # B. PROCESO DE INCORPORACIÓN
+    if button_id == "MENU_PROCESO_INCORPORACION":
+        texto_proceso = obtener_configuracion_texto(
+            clave="proceso_incorp_texto",
+            valor_por_defecto="🏢 *Proceso:*\n1. Registro\n2. Prueba\n3. Contrato"
+        )
+        enviar_mensaje_texto_simple(token, phone_id, telefono, texto_proceso)
+        return
+
+
+
     if button_id == "MENU_INGRESAR_LINK_TIKTOK":
         print(f"🚀 [DB->REDIS] Activando escucha de Link para {telefono}")
 
@@ -1197,6 +1219,30 @@ def manejar_input_link_tiktokv1(creador_id, wa_id, tipo, texto, payload, token, 
     return False
 
 
+# services/db_service.py
+
+def obtener_configuracion_texto(clave, valor_por_defecto="Información no disponible temporalmente."):
+    """
+    Busca un texto configurado en la tabla 'configuracion_agencia'.
+    Si no existe, retorna el valor_por_defecto.
+    """
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                query = "SELECT valor FROM configuracion_agencia WHERE clave = %s"
+                cur.execute(query, (clave,))
+                resultado = cur.fetchone()
+
+                if resultado:
+                    return resultado[0]
+                else:
+                    return valor_por_defecto
+    except Exception as e:
+        print(f"❌ Error leyendo configuración ({clave}): {e}")
+        return valor_por_defecto
+
+
+
 # def Enviar_menu_quickreply(creador_id, estado_evaluacion, phone_id, token, telefono):
 #     """
 #     Envía el menú real de opciones según el estado.
@@ -1231,6 +1277,7 @@ def manejar_input_link_tiktokv1(creador_id, wa_id, tipo, texto, payload, token, 
 #         }
 #     }
 #     enviar_a_meta(payload, phone_id, token)
+
 
 
 
