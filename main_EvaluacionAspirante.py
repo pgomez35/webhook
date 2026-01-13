@@ -16,7 +16,7 @@ from pydantic import BaseModel, AnyUrl
 from datetime import datetime, timedelta
 from typing import Optional
 
-from auth import obtener_usuario_actual
+from main_auth import obtener_usuario_actual
 from enviar_msg_wp import enviar_plantilla_generica_parametros, enviar_plantilla_generica
 from DataBase import get_connection_context, obtener_cuenta_por_subdominio
 from evaluaciones import evaluar_perfil_pre, diagnostico_perfil_creador_pre, obtener_guardar_pre_resumen
@@ -271,16 +271,56 @@ def actualizar_preevaluacion_perfil(creador_id: int, payload: dict):
 
 
 def actualizar_estado_creador_preevaluacion(creador_id: int, estado: str):
+
+    # 1. Mapeo de Estado de Negocio (Tu lógica actual)
+    # Ejemplo: "APROBADO" -> 100
     estado_id = ESTADO_MAP_PREEVAL.get(estado, ESTADO_DEFAULT)
+
+    id_chatbot = 1
+    # 2. Mapeo de Estado del Chatbot (NUEVO)
+    if estado_id == 7:
+         id_chatbot = 4
+    elif estado_id == 4:
+        id_chatbot = 5
+    elif estado_id == 5:
+        id_chatbot = 15
 
     with get_connection_context() as conn:
         cur = conn.cursor()
 
+        # A. Update original (Tabla creadores)
         cur.execute("""
-            UPDATE creadores
-            SET estado_id = %s
-            WHERE id = %s
-        """, (estado_id, creador_id))
+                    UPDATE creadores
+                    SET estado_id = %s
+                    WHERE id = %s
+                    """, (estado_id, creador_id))
+
+        # B. Nuevo Update (Tabla perfil_creador)
+        # Sincronizamos el estado del bot
+        cur.execute("""
+                    UPDATE perfil_creador
+                    SET id_chatbot_estado = %s,
+                        actualizado_en    = NOW()
+                    WHERE creador_id = %s
+                    """, (id_chatbot, creador_id))
+
+        # Confirmamos ambas transacciones
+        conn.commit()
+
+    print(f"✅ Creador {creador_id} actualizado: Negocio={estado_id}, Chatbot={id_chatbot}")
+
+
+# def actualizar_estado_creador_preevaluacion(creador_id: int, estado: str):
+#     estado_id = ESTADO_MAP_PREEVAL.get(estado, ESTADO_DEFAULT)
+#
+#     with get_connection_context() as conn:
+#         cur = conn.cursor()
+#
+#         cur.execute("""
+#             UPDATE creadores
+#             SET estado_id = %s
+#             WHERE id = %s
+#         """, (estado_id, creador_id))
 
 
 @router.put("/api/perfil_creador/{creador_id}/preevaluacion")
@@ -322,6 +362,44 @@ def actualizar_preevaluacion(
 def generar_token_corto(longitud=10):
     caracteres = string.ascii_letters + string.digits  # A-Z a-z 0-9
     return ''.join(secrets.choice(caracteres) for _ in range(longitud))
+
+
+# services/db_service.py
+
+def forzar_cambio_estado_por_id(creador_id: int, nuevo_id_estado: int):
+    """
+    Actualiza directamente el estado de un aspirante usando el ID numérico del estado.
+
+    Args:
+        creador_id (int): ID del aspirante (ej: 3236).
+        nuevo_id_estado (int): ID del estado (ej: 5 para LIVE, 8 para ENTREVISTA).
+    """
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+
+                # Query directa (sin buscar en tabla de estados)
+                query = """
+                        UPDATE test.perfil_creador
+                        SET id_chatbot_estado = %s,
+                            actualizado_en    = NOW() -- Opcional: para saber cuándo cambió
+                        WHERE id = %s \
+                        """
+
+                cur.execute(query, (nuevo_id_estado, creador_id))
+                conn.commit()
+
+                if cur.rowcount > 0:
+                    print(f"✅ [DB] Creador {creador_id} actualizado al estado ID {nuevo_id_estado}.")
+                    return True
+                else:
+                    print(f"⚠️ [DB] No se encontró el creador ID {creador_id}.")
+                    return False
+
+    except Exception as e:
+        print(f"❌ Error cambiando estado por ID: {e}")
+        return False
+
 
 
 @router.post("/api/agendamientos/aspirante/enviar", response_model=LinkAgendamientoOut)
@@ -376,6 +454,29 @@ def crear_y_enviar_link_agendamiento_aspirante(
                 data.tipo_agendamiento,   # "LIVE" o "ENTREVISTA"
             )
         )
+        # =================================================================
+        # 3.5 🔄 ACTUALIZAR ESTADO (Usando el mismo cursor 'cur')
+        # =================================================================
+        nuevo_estado_id = None
+        if data.tipo_agendamiento == "ENTREVISTA":
+            nuevo_estado_id = 8
+        elif data.tipo_agendamiento == "LIVE":
+            nuevo_estado_id = 5
+
+        if nuevo_estado_id:
+            # Ejecutamos el update DIRECTAMENTE aquí
+            # Nota: Verifica si tu tabla es 'creadores' o 'test.perfil_creador'
+            cur.execute(
+                """
+                UPDATE perfil_creador
+                SET id_chatbot_estado = %s,
+                    actualizado_en    = NOW()
+                WHERE creador_id = %s
+                """,
+                (nuevo_estado_id, data.creador_id)
+            )
+
+        # ✅ COMMIT FINAL: Guarda el Token Y el Estado al mismo tiempo
         conn.commit()
 
     # 4️⃣ Construir URL del agendador
@@ -459,6 +560,17 @@ def enviar_mensaje_no_apto(
         if not telefono:
             raise HTTPException(status_code=400, detail="El aspirante no tiene número registrado.")
 
+        # =========================================================
+        # 1.5) NUEVO: Actualizar estado a 4 (NO APTO)
+        # =========================================================
+        cur.execute("""
+                    UPDATE perfil_creador
+                    SET id_chatbot_estado = 4
+                    WHERE creador_id = %s;
+                    """, (creador_id,))
+
+        # ⚠️ CRÍTICO: Confirmar la transacción para guardar el cambio
+        conn.commit()
 
     # =============================
     # 2) Preparar envío por plantilla
