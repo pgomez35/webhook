@@ -13,7 +13,7 @@ from psycopg2.extras import RealDictCursor
 
 from DataBase import get_connection_context
 from schemas import *
-from auth import obtener_usuario_actual
+from main_auth import obtener_usuario_actual
 
 # Configurar logger
 from tenant import current_tenant
@@ -980,6 +980,198 @@ from typing import Optional, List
 from datetime import datetime, timedelta
 import secrets
 import pytz
+
+
+# ----------
+# ------EDITAR AGENDAMIENTO MOBILE
+# ----------
+
+class AgendamientoUpdateIn(BaseModel):
+    inicio: datetime
+    fin: Optional[datetime] = None
+    timezone: Optional[str] = None
+
+@router.put("/api/agendamientos/{agendamiento_id}", response_model=EventoOut)
+def actualizar_fecha_agendamiento(
+    agendamiento_id: int,
+    data: AgendamientoUpdateIn,
+):
+    """
+    Reagenda una cita existente.
+    - Solo modifica fecha/hora
+    - Mantiene duración si no se envía fin
+    - link_meet solo aplica si tipo_agendamiento = ENTREVISTA
+    """
+
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+
+        try:
+            # 1️⃣ Buscar agendamiento
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    titulo,
+                    descripcion,
+                    fecha_inicio,
+                    fecha_fin,
+                    creador_id,
+                    responsable_id,
+                    estado,
+                    link_meet,
+                    tipo_agendamiento
+                FROM agendamientos
+                WHERE id = %s
+                """,
+                (agendamiento_id,)
+            )
+
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="El agendamiento no existe.")
+
+            (
+                ag_id,
+                titulo_actual,
+                descripcion_actual,
+                inicio_actual,
+                fin_actual,
+                creador_id,
+                responsable_id,
+                estado,
+                link_meet_actual,
+                tipo_agendamiento,
+            ) = row
+
+            # 2️⃣ Calcular inicio (UTC si viene timezone)
+            nuevo_inicio = data.inicio
+            tz = None
+
+            if data.timezone:
+                tz = ZoneInfo(data.timezone)
+                if nuevo_inicio.tzinfo is None:
+                    nuevo_inicio = nuevo_inicio.replace(tzinfo=tz)
+                nuevo_inicio = nuevo_inicio.astimezone(ZoneInfo("UTC"))
+            else:
+                if nuevo_inicio.tzinfo:
+                    nuevo_inicio = nuevo_inicio.astimezone(ZoneInfo("UTC"))
+
+            # 3️⃣ Calcular fin
+            if data.fin:
+                nuevo_fin = data.fin
+                if data.timezone:
+                    if nuevo_fin.tzinfo is None:
+                        nuevo_fin = nuevo_fin.replace(tzinfo=tz)
+                    nuevo_fin = nuevo_fin.astimezone(ZoneInfo("UTC"))
+                else:
+                    if nuevo_fin.tzinfo:
+                        nuevo_fin = nuevo_fin.astimezone(ZoneInfo("UTC"))
+            else:
+                duracion = fin_actual - inicio_actual
+                nuevo_fin = nuevo_inicio + duracion
+
+            if nuevo_fin <= nuevo_inicio:
+                raise HTTPException(
+                    status_code=400,
+                    detail="La fecha de fin debe ser posterior a la fecha de inicio."
+                )
+
+            # # 4️⃣ Regla de negocio: Meet solo para ENTREVISTA
+            # if tipo_agendamiento != "ENTREVISTA":
+            #     link_meet_actual = None
+
+            # 5️⃣ Update BD
+            cur.execute(
+                """
+                UPDATE agendamientos
+                SET fecha_inicio = %s,
+                    fecha_fin = %s,
+                    link_meet = %s,
+                    actualizado_en = NOW()
+                WHERE id = %s
+                """,
+                (
+                    nuevo_inicio,
+                    nuevo_fin,
+                    link_meet_actual,
+                    ag_id,
+                )
+            )
+
+            conn.commit()
+
+            # 6️⃣ Respuesta
+            return EventoOut(
+                id=str(ag_id),
+                titulo=titulo_actual,
+                descripcion=descripcion_actual,
+                inicio=nuevo_inicio,
+                fin=nuevo_fin,
+                creador_id=creador_id,
+                responsable_id=responsable_id,
+                estado=estado,
+                link_meet=link_meet_actual if tipo_agendamiento == "ENTREVISTA" else None,
+                origen="interno",
+            )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"❌ Error actualizando agendamiento {agendamiento_id}: {e}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(
+                status_code=500,
+                detail="Error interno al actualizar el agendamiento."
+            )
+
+@router.delete("/api/agendamientos/{agendamiento_id}")
+def eliminar_agendamiento(agendamiento_id: int):
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+
+        try:
+            # 1️⃣ Verificar que el agendamiento exista
+            cur.execute(
+                """
+                SELECT id, tipo_agendamiento
+                FROM agendamientos
+                WHERE id = %s
+                """,
+                (agendamiento_id,)
+            )
+
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(
+                    status_code=404,
+                    detail="El agendamiento no existe."
+                )
+
+            # 2️⃣ Eliminar agendamiento
+            # (participantes se eliminan por ON DELETE CASCADE)
+            cur.execute(
+                "DELETE FROM agendamientos WHERE id = %s",
+                (agendamiento_id,)
+            )
+
+            return {
+                "ok": True,
+                "mensaje": f"Agendamiento {agendamiento_id} eliminado correctamente"
+            }
+
+        except HTTPException:
+            raise
+
+        except Exception as e:
+            logger.error(f"❌ Error al eliminar agendamiento {agendamiento_id}: {e}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(
+                status_code=500,
+                detail="Error interno al eliminar el agendamiento."
+            )
+
+
 
 
 
