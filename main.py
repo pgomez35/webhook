@@ -77,7 +77,7 @@ from main_entrevistas import router as entrevistas_router
 from utils_aspirantes import router as utils_aspirantes_router
 from main_chatbot_estados_aspirante import router as chatbot_estados_aspirante_router
 from main_auth import router as main_auth_router
-
+from main_diagnostico import router as diagnostico_router
 
 # ⚙️ Inicializar FastAPI
 app = FastAPI()
@@ -112,7 +112,7 @@ app.include_router(EvaluacionAspirante_router, tags=["Evaluacion Aspirante"])
 app.include_router(entrevistas_router, tags=["entrevistas"])
 app.include_router(utils_aspirantes_router, tags=["utils aspirantes"])
 app.include_router(chatbot_estados_aspirante_router, tags=["chatbot estados aspirante"])
-
+app.include_router(diagnostico_router, tags=["diagnostico router"])
 
 
 # ✅ Crear carpeta persistente de audios si no existe
