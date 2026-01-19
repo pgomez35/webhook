@@ -208,10 +208,6 @@ import pytz
 from fastapi import APIRouter, HTTPException
 import traceback
 
-router = APIRouter()
-
-
-
 
 #
 # @router.post("/api/agendamientos/aspirante", response_model=EventoOut)
