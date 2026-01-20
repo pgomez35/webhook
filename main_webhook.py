@@ -1125,7 +1125,35 @@ def mensaje_proteccion_datos() -> str:
     )
 
 
-def mensaje_encuesta_final(nombre: str | None = None) -> str:
+def mensaje_encuesta_final(
+    nombre: str | None = None,
+    url_info: str | None = None
+) -> str:
+    nombre_agencia = current_business_name.get()
+
+    saludo = f"¡Gracias, *{nombre}*! 🙌" if nombre else "¡Gracias! 🙌"
+
+    cuerpo = (
+        f"✅ {saludo}\n\n"
+        f"*{nombre_agencia}* ya recibió tu información y "
+        "nuestro equipo la está evaluando.\n\n"
+        "⏳ El diagnóstico se enviará en las próximas horas.\n\n"
+        "Mientras tanto, puedes conocer cómo funciona el proceso de "
+        "evaluación, incorporación y resolver preguntas frecuentes aquí 👇"
+    )
+
+    if url_info:
+        cuerpo += f"\n\n🔗 {url_info}"
+
+    cuerpo += (
+        "\n\n📌 Importante:\n"
+        "Este enlace se irá actualizando conforme avance tu proceso."
+    )
+
+    return cuerpo
+
+
+def mensaje_encuesta_finalV1(nombre: str | None = None) -> str:
     nombre_agencia = current_business_name.get()
 
     if nombre:
@@ -2168,8 +2196,114 @@ async def api_enviar_solicitar_informacion(data: dict):
         traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
 
+
 @router.post("/consolidar")
 def consolidar_perfil_web(data: ConsolidarInput):
+    try:
+        subdominio = current_tenant.get()
+        cuenta = obtener_cuenta_por_subdominio(subdominio)
+        if not cuenta:
+            return JSONResponse(
+                {"error": f"No se encontraron credenciales para {subdominio}"},
+                status_code=404
+            )
+
+        token_cliente = cuenta["access_token"]
+        phone_id_cliente = cuenta["phone_number_id"]
+        business_name = cuenta.get("business_name", "la agencia")
+
+        # ✅ Contexto WABA
+        current_token.set(token_cliente)
+        current_phone_id.set(phone_id_cliente)
+        current_business_name.set(business_name)
+
+        # -------------------------------
+        # Procesar respuestas
+        # -------------------------------
+        respuestas_dict = None
+        if data.respuestas:
+            respuestas_dict = {}
+            for key, valor in data.respuestas.items():
+                key_int = int(key) if isinstance(key, str) and key.isdigit() else key
+                if key_int == 8:
+                    valor_str = str(valor).strip().lower()
+                    if valor_str in {"no", "n", "0"}:
+                        respuestas_dict[key_int] = "0"
+                    elif valor_str in {"si", "sí", "s", "yes", "y", "1"}:
+                        respuestas_dict[key_int] = "1"
+                    else:
+                        respuestas_dict[key_int] = str(valor)
+                else:
+                    respuestas_dict[key_int] = str(valor) if valor else ""
+            print(f"📋 Respuestas recibidas en request: {respuestas_dict}")
+        else:
+            print("📋 No se recibieron respuestas en request")
+
+        # -------------------------------
+        # Consolidación
+        # -------------------------------
+        consolidar_perfil(
+            data.numero,
+            respuestas_dict=respuestas_dict,
+            tenant_schema=subdominio
+        )
+        eliminar_flujo(data.numero, tenant_schema=subdominio)
+
+        # -------------------------------
+        # Datos del usuario
+        # -------------------------------
+        try:
+            usuario_bd = buscar_usuario_por_telefono(data.numero)
+            nombre_usuario = usuario_bd.get("nombre") if usuario_bd else None
+            creador_id = usuario_bd.get("id") if usuario_bd else None
+        except Exception as e:
+            print(f"⚠️ Error obteniendo usuario {data.numero}: {e}")
+            nombre_usuario = None
+            creador_id = None
+
+        # -------------------------------
+        # Marcar encuesta completada
+        # -------------------------------
+        marcar_encuesta_completada(data.numero)
+
+        # -------------------------------
+        # Construir URL informativa
+        # -------------------------------
+        tenant_key = subdominio if subdominio != "public" else "test"
+        url_info = None
+        if creador_id:
+            url_info = (
+                f"https://{tenant_key}.talentum-manager.com/"
+                f"info-incorporacion?cid={creador_id}"
+            )
+
+        # -------------------------------
+        # Mensaje final + envío
+        # -------------------------------
+        mensaje_final = mensaje_encuesta_final(
+            nombre=nombre_usuario,
+            url_info=url_info
+        )
+        enviar_mensaje(data.numero, mensaje_final)
+
+        print(f"✅ Perfil consolidado y mensaje enviado a {data.numero}")
+
+        return {"ok": True, "msg": "Perfil consolidado correctamente"}
+
+    except Exception as e:
+        print(f"❌ Error en consolidar_perfil_web: {e}")
+        return JSONResponse(
+            {"error": "Error al consolidar el perfil"},
+            status_code=500
+        )
+
+
+
+
+
+
+@router.post("/consolidarV1")
+def consolidar_perfil_webV1(data: ConsolidarInput):
     try:
         subdominio = current_tenant.get()
         cuenta = obtener_cuenta_por_subdominio(subdominio)
