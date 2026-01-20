@@ -114,16 +114,14 @@ class EntrevistaDetalleOut(EntrevistaOut):
 from schemas import EventoIn,EventoOut
 
 from zoneinfo import ZoneInfo
-from main_EvaluacionAspirante import obtener_entrevista_id
-
-
+from main_Agendamiento import obtener_entrevista_id,obtener_entrevista_id
 
 from typing import Optional, Dict, Any
 from datetime import timedelta
 from zoneinfo import ZoneInfo
 
 from DataBase import get_connection_context
-from main_EvaluacionAspirante import obtener_entrevista_id  # ajusta el import según tu estructura
+
 
 def insertar_agendamiento(data: dict) -> Optional[Dict[str, Any]]:
     """
