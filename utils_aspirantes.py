@@ -194,6 +194,7 @@ from datetime import datetime, timedelta, timezone
 # Asegúrate de importar tu gestor de conexión
 # from .db_config import get_connection_context
 
+
 def obtener_status_24hrs(telefono):
     """
     Verifica si el número tiene una sesión de 24h activa (Ventana de Atención).

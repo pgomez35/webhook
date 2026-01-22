@@ -22,6 +22,7 @@ from main_auth import obtener_usuario_actual
 
 # Configurar logger
 from tenant import current_tenant
+from utils_aspirantes import obtener_status_24hrs
 
 logger = logging.getLogger(__name__)
 
@@ -1531,6 +1532,128 @@ def enviar_link_agendamiento_aspirante(
     usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     """
+    Envía un link de agendamiento al aspirante.
+    - Mensaje simple si ventana 24h abierta
+    - Template si ventana cerrada
+    """
+
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+
+        # 1️⃣ Obtener datos del aspirante
+        cur.execute(
+            """
+            SELECT COALESCE(nickname, nombre_real) AS nombre, telefono
+            FROM creadores
+            WHERE id = %s
+            """,
+            (data.creador_id,)
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "El aspirante no existe.")
+
+        nombre_creador, telefono = row
+        if not telefono:
+            raise HTTPException(400, "El aspirante no tiene teléfono registrado.")
+
+        # 2️⃣ Actualizar estado según tipo_agendamiento
+        nuevo_estado_id = None
+        if data.tipo_agendamiento == "ENTREVISTA":
+            nuevo_estado_id = 8
+        elif data.tipo_agendamiento == "LIVE":
+            nuevo_estado_id = 5
+
+        if nuevo_estado_id:
+            cur.execute(
+                """
+                UPDATE perfil_creador
+                SET id_chatbot_estado = %s,
+                    actualizado_en = NOW()
+                WHERE creador_id = %s
+                """,
+                (nuevo_estado_id, data.creador_id)
+            )
+
+        conn.commit()
+
+    # 3️⃣ Construir URL del agendador
+    tenant_key = current_tenant.get() or "test"
+    subdominio = tenant_key if tenant_key != "public" else "test"
+
+    url = (
+        f"https://{subdominio}.talentum-manager.com/agendar"
+        f"?creador_id={data.creador_id}"
+        f"&tipo={data.tipo_agendamiento}"
+        f"&duracion={data.duracion_minutos}"
+        f"&responsable_id={data.responsable_id}"
+    )
+
+    # 4️⃣ Datos comunes
+    cuenta = obtener_cuenta_por_subdominio(tenant_key)
+    business_name = cuenta.get("business_name", "la agencia")
+
+    titulo_cita = (
+        "tu prueba TikTok LIVE"
+        if data.tipo_agendamiento == "LIVE"
+        else "tu entrevista con un asesor"
+    )
+
+    # 5️⃣ Detectar ventana 24h
+    ventana_abierta = obtener_status_24hrs(telefono)
+
+    # 6️⃣ Enviar WhatsApp
+    try:
+        if ventana_abierta:
+            mensaje = (
+                f"Hola {nombre_creador} 👋\n\n"
+                f"Queremos continuar tu proceso con *{business_name}*.\n\n"
+                f"📅 Agenda {titulo_cita} aquí:\n"
+                f"{url}\n\n"
+                f"⏱️ Duración estimada: {data.duracion_minutos} minutos.\n"
+                "Selecciona el horario que prefieras. Si necesitas cambiar la cita, contáctanos."
+            )
+
+            enviar_mensaje(telefono, mensaje)
+
+        else:
+            enviar_plantilla_generica_parametros(
+                token=cuenta["access_token"],
+                phone_number_id=cuenta["phone_number_id"],
+                numero_destino=telefono,
+                nombre_plantilla="agendar_cita_proceso_v1",
+                codigo_idioma="es_CO",
+                parametros=[
+                    nombre_creador or "creador",
+                    business_name,
+                    titulo_cita,
+                    url,
+                    str(data.duracion_minutos),
+                ],
+                body_vars_count=5
+            )
+
+    except Exception as e:
+        logger.exception(
+            "❌ Error enviando link de agendamiento (creador_id=%s): %s",
+            data.creador_id, e
+        )
+
+    # 7️⃣ Respuesta API
+    return LinkAgendamientoOut(
+        token=None,
+        url=url,
+        expiracion=None,
+    )
+
+
+
+@router.post("/api/agendamientos/aspirante/enviarV1", response_model=LinkAgendamientoOut)
+def enviar_link_agendamiento_aspiranteV1(
+    data: CrearLinkAgendamientoIn,
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
+    """
     Envía un link de agendamiento usando creador_id (sin token).
     Actualiza estado del perfil y envía mensaje por WhatsApp.
     """
@@ -1746,13 +1869,132 @@ def crear_y_enviar_link_agendamiento_aspiranteTokenV1(
         expiracion=expiracion,
     )
 
-
 class EnviarNoAptoIn(BaseModel):
     creador_id: int
 
+from typing import Optional
+
+def mensaje_no_apto_simple(nombre: Optional[str], business_name: str) -> str:
+    if nombre:
+        saludo = f"Hola {nombre} 👋\n\n"
+    else:
+        saludo = "Hola 👋\n\n"
+
+    cuerpo = (
+        f"Gracias por tu interés en *{business_name}* y por el tiempo que dedicaste a completar tu información.\n\n"
+        "Después de revisar tu preevaluación, en este momento no cumples con los requisitos "
+        "para continuar en el proceso de selección de creadores de TikTok LIVE.\n\n"
+        "Esto no refleja tu talento ni tu potencial. Te invitamos a seguir fortaleciendo tu contenido "
+        "y métricas, y a postular nuevamente más adelante si lo deseas.\n\n"
+        "Puedes consultar el diagnóstico completo en el portal que te compartimos anteriormente.\n\n"
+        "Te deseamos muchos éxitos en tus próximos proyectos 🙌"
+    )
+
+    return saludo + cuerpo
 
 @router.post("/api/aspirantes/no_apto/enviar")
 def enviar_mensaje_no_apto(
+    data: EnviarNoAptoIn,
+    usuario_actual: dict = Depends(obtener_usuario_actual)
+):
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+
+        # 1️⃣ Obtener aspirante
+        cur.execute("""
+            SELECT id,
+                   COALESCE(nickname, nombre_real) AS nombre,
+                   telefono
+            FROM creadores
+            WHERE id = %s;
+        """, (data.creador_id,))
+        row = cur.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Aspirante no encontrado.")
+
+        creador_id, nombre, telefono = row
+
+        if not telefono:
+            raise HTTPException(status_code=400, detail="El aspirante no tiene número registrado.")
+
+        # 2️⃣ Marcar estado NO APTO
+        cur.execute("""
+            UPDATE perfil_creador
+            SET id_chatbot_estado = 4
+            WHERE creador_id = %s;
+        """, (creador_id,))
+        conn.commit()
+
+    # 3️⃣ Obtener credenciales WABA
+    subdominio = current_tenant.get()
+    cuenta = obtener_cuenta_por_subdominio(subdominio)
+
+    if not cuenta:
+        raise HTTPException(500, f"No hay credenciales WABA para '{subdominio}'.")
+
+    token = cuenta["access_token"]
+    phone_id = cuenta["phone_number_id"]
+    business_name = (
+        cuenta.get("business_name")
+        or cuenta.get("nombre")
+        or "nuestra agencia"
+    )
+
+    # 4️⃣ Verificar ventana de 24h
+    ventana_abierta = obtener_status_24hrs(telefono)
+
+    # ==============================
+    # 5️⃣ ENVÍO CONDICIONAL
+    # ==============================
+    try:
+        if ventana_abierta:
+            # 👉 MENSAJE SIMPLE
+            mensaje = mensaje_no_apto_simple(nombre, business_name)
+            codigo, respuesta = enviar_mensaje(telefono, mensaje)
+
+            return {
+                "status": "ok" if codigo < 300 else "error",
+                "tipo_envio": "mensaje_simple",
+                "codigo_meta": codigo,
+                "respuesta_api": respuesta,
+                "telefono": telefono
+            }
+
+        else:
+            # 👉 PLANTILLA
+            parametros = [
+                nombre or "creador",
+                business_name
+            ]
+
+            codigo, respuesta = enviar_plantilla_generica_parametros(
+                token=token,
+                phone_number_id=phone_id,
+                numero_destino=telefono,
+                nombre_plantilla="no_apto_proceso_v3",
+                codigo_idioma="es_CO",
+                parametros=parametros,
+                body_vars_count=2
+            )
+
+            return {
+                "status": "ok" if codigo < 300 else "error",
+                "tipo_envio": "plantilla",
+                "codigo_meta": codigo,
+                "respuesta_api": respuesta,
+                "telefono": telefono
+            }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error enviando mensaje NO APTO: {str(e)}"
+        )
+
+
+@router.post("/api/aspirantes/no_apto/enviarV1")
+def enviar_mensaje_no_aptoV1(
         data: EnviarNoAptoIn,
         usuario_actual: dict = Depends(obtener_usuario_actual)
 ):
