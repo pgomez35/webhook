@@ -927,7 +927,105 @@ def procesar_respuestas(respuestas):
 
     return datos
 
-def consolidar_perfil(telefono: str, respuestas_dict: dict | None = None, tenant_schema: Optional[str] = None):
+def consolidar_perfil(telefono: str, respuestas_dict: dict | None = None, tenant_schema: str | None = None):
+    """
+    Si el creador existe: actualiza perfil_creador + creadores.
+    Si NO existe: guarda encuesta en aspirante_encuesta_temp para sincronizar después.
+    """
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+
+                # Si no se pasaron respuestas, leerlas de perfil_creador_flujo_temp
+                if respuestas_dict is None:
+                    cur.execute("""
+                        SELECT paso, respuesta
+                        FROM perfil_creador_flujo_temp
+                        WHERE telefono=%s
+                        ORDER BY paso ASC
+                    """, (telefono,))
+                    rows = cur.fetchall()
+                    respuestas_dict = {int(p): r for p, r in rows} if rows else {}
+                    print(f"📋 Respuestas leídas de perfil_creador_flujo_temp: {respuestas_dict}")
+
+                # Procesar respuestas -> dict con nombre, edad, genero, pais, etc.
+                datos_update = procesar_respuestas(respuestas_dict)
+
+                # ✅ Buscar creador
+                cur.execute("SELECT id FROM creadores WHERE telefono=%s LIMIT 1", (telefono,))
+                row = cur.fetchone()
+
+                # -------------------------------------------------------
+                # CASO A) NO EXISTE CREADOR → guardar encuesta temp
+                # -------------------------------------------------------
+                if not row:
+                    # (Opcional) mapear experiencia_tiktok desde experiencia_otras_plataformas
+                    # si quieres columna plana:
+                    experiencia_tiktok = 0
+                    try:
+                        exp = json.loads(datos_update.get("experiencia_otras_plataformas") or "{}")
+                        experiencia_tiktok = exp.get("TikTok Live", 0) or 0
+                    except Exception:
+                        pass
+
+                    datos_temp = {
+                        "nombre": datos_update.get("nombre"),
+                        "edad": datos_update.get("edad"),
+                        "genero": datos_update.get("genero"),
+                        "pais": datos_update.get("pais"),
+                        "ciudad": datos_update.get("ciudad"),
+                        "actividad_actual": datos_update.get("actividad_actual"),
+                        "intencion_trabajo": datos_update.get("intencion_trabajo"),
+                        "tiempo_disponible": datos_update.get("tiempo_disponible"),
+                        "frecuencia_lives": datos_update.get("frecuencia_lives"),
+                        "experiencia_tiktok": experiencia_tiktok,
+                        # si quieres algo como “tiempo_experiencia”:
+                        "tiempo_experiencia": str(respuestas_dict.get(9) or "").strip()
+                    }
+
+                    upsert_encuesta_temp(telefono, datos_temp, respuestas_dict=respuestas_dict)
+                    print(f"⚠️ No existe creador aún. Encuesta guardada en aspirante_encuesta_temp ({telefono}).")
+                    return {"status": "saved_temp", "telefono": telefono}
+
+                creador_id = row[0]
+
+                # -------------------------------------------------------
+                # CASO B) EXISTE CREADOR → actualizar perfil_creador
+                # -------------------------------------------------------
+                datos_update["telefono"] = telefono
+
+                if datos_update.get("nombre"):
+                    cur.execute("""
+                        UPDATE creadores
+                        SET nombre_real=%s
+                        WHERE id=%s
+                    """, (datos_update["nombre"], creador_id))
+
+                set_clause = ", ".join([f"{k}=%s" for k in datos_update.keys()])
+                values = list(datos_update.values())
+                values.append(creador_id)
+
+                cur.execute(f"UPDATE perfil_creador SET {set_clause} WHERE creador_id=%s", values)
+
+                # ✅ (opcional) marcar sincronización en temp si existía
+                cur.execute("""
+                    UPDATE aspirante_encuesta_temp
+                    SET creador_id=%s, sincronizado=TRUE, updated_at=NOW()
+                    WHERE telefono=%s
+                """, (creador_id, telefono))
+
+                conn.commit()
+                print(f"✅ Actualizado perfil_creador y sincronizado temp para {telefono}")
+
+                return {"status": "updated_creador", "creador_id": creador_id}
+
+    except Exception as e:
+        print(f"❌ Error en consolidar_perfil({telefono}): {e}")
+        traceback.print_exc()
+        return {"status": "error", "error": str(e)}
+
+
+def consolidar_perfilV1(telefono: str, respuestas_dict: dict | None = None, tenant_schema: Optional[str] = None):
     """Procesa y actualiza un solo número en perfil_creador con manejo de errores
     
     Args:
@@ -1000,6 +1098,69 @@ def consolidar_perfil(telefono: str, respuestas_dict: dict | None = None, tenant
         traceback.print_exc()
 
     return {"status": "ok"}
+
+
+def upsert_encuesta_temp(telefono: str, datos: dict, respuestas_dict: dict | None = None):
+    """
+    Inserta/actualiza la encuesta del aspirante por telefono.
+    datos: ya procesado (nombre, edad, genero, pais, etc.)
+    respuestas_dict: opcional (se guarda también completo como json)
+    """
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+
+                respuestas_json = json.dumps(respuestas_dict or {}, ensure_ascii=False)
+
+                cur.execute("""
+                    INSERT INTO aspirante_encuesta_inicial (
+                        telefono, nombre, edad, genero, pais, ciudad,
+                        actividad_actual, intencion_trabajo, tiempo_disponible,
+                        frecuencia_lives, experiencia_tiktok, tiempo_experiencia,
+                        respuestas_json, updated_at
+                    )
+                    VALUES (
+                        %s,%s,%s,%s,%s,%s,
+                        %s,%s,%s,
+                        %s,%s,%s,
+                        %s, NOW()
+                    )
+                    ON CONFLICT (telefono) DO UPDATE SET
+                        nombre = EXCLUDED.nombre,
+                        edad = EXCLUDED.edad,
+                        genero = EXCLUDED.genero,
+                        pais = EXCLUDED.pais,
+                        ciudad = EXCLUDED.ciudad,
+                        actividad_actual = EXCLUDED.actividad_actual,
+                        intencion_trabajo = EXCLUDED.intencion_trabajo,
+                        tiempo_disponible = EXCLUDED.tiempo_disponible,
+                        frecuencia_lives = EXCLUDED.frecuencia_lives,
+                        experiencia_tiktok = EXCLUDED.experiencia_tiktok,
+                        tiempo_experiencia = EXCLUDED.tiempo_experiencia,
+                        respuestas_json = EXCLUDED.respuestas_json,
+                        updated_at = NOW();
+                """, (
+                    telefono,
+                    datos.get("nombre"),
+                    datos.get("edad"),
+                    datos.get("genero"),
+                    datos.get("pais"),
+                    datos.get("ciudad"),
+                    datos.get("actividad_actual"),
+                    datos.get("intencion_trabajo"),
+                    datos.get("tiempo_disponible"),
+                    datos.get("frecuencia_lives"),
+                    datos.get("experiencia_tiktok"),
+                    datos.get("tiempo_experiencia"),
+                    respuestas_json
+                ))
+
+                conn.commit()
+                print(f"✅ Encuesta guardada/actualizada en aspirante_encuesta_temp para {telefono}")
+
+    except Exception as e:
+        print(f"❌ Error en upsert_encuesta_temp({telefono}): {e}")
+        traceback.print_exc()
 
 
 # --------------------
