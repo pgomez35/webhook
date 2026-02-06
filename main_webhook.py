@@ -927,7 +927,238 @@ def procesar_respuestas(respuestas):
 
     return datos
 
-def consolidar_perfil(telefono: str, respuestas_dict: dict | None = None, tenant_schema: str | None = None):
+
+# Asumo que ya existen en tu proyecto:
+# - get_connection_context()
+# - current_tenant (contextvar)
+# - procesar_respuestas(respuestas_dict)
+# - validar_aceptar_ciudad(), infer_zona_horaria(), etc. (usadas dentro de procesar_respuestas)
+
+
+def insertar_aspirante_encuesta_inicial(
+    telefono: str,
+    datos: dict,
+    tenant_schema: str
+):
+    """
+    Inserta los datos iniciales del aspirante en {schema}.aspirante_encuesta_inicial
+    SOLO si aún no existe ese teléfono.
+    """
+    try:
+        print("🧪 [ASPIRANTE] Iniciando inserción en aspirante_encuesta_inicial")
+        print(f"📞 [ASPIRANTE] Teléfono: {telefono}")
+        print(f"📦 [ASPIRANTE] Datos recibidos: {datos}")
+
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+
+                # 🔎 Validar existencia previa
+                cur.execute(f"""
+                    SELECT 1
+                    FROM {tenant_schema}.aspirante_encuesta_inicial
+                    WHERE telefono = %s
+                    LIMIT 1
+                """, (telefono,))
+
+                if cur.fetchone():
+                    print(f"ℹ️ [ASPIRANTE] Ya existe registro para {telefono}. No se inserta.")
+                    return {"inserted": False, "reason": "exists"}
+
+                # 👇 Tomar experiencia TikTok Live desde el json (si existe)
+                experiencia_tiktok = 0
+                try:
+                    exp_raw = datos.get("experiencia_otras_plataformas") or "{}"
+                    exp_json = json.loads(exp_raw) if isinstance(exp_raw, str) else (exp_raw or {})
+                    experiencia_tiktok = exp_json.get("TikTok Live", 0) or 0
+                except Exception:
+                    experiencia_tiktok = 0
+
+                # ✅ Insert
+                cur.execute(f"""
+                    INSERT INTO {tenant_schema}.aspirante_encuesta_inicial (
+                        telefono,
+                        nombre,
+                        edad,
+                        genero,
+                        pais,
+                        ciudad,
+                        actividad_actual,
+                        intencion_trabajo,
+                        tiempo_disponible,
+                        frecuencia_lives,
+                        experiencia_tiktok,
+                        tiempo_experiencia,
+                        created_at
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
+                    )
+                """, (
+                    telefono,
+                    datos.get("nombre"),
+                    datos.get("edad"),
+                    datos.get("genero"),
+                    datos.get("pais"),
+                    datos.get("ciudad"),
+                    datos.get("actividad_actual"),
+                    datos.get("intencion_trabajo"),
+                    datos.get("tiempo_disponible"),
+                    datos.get("frecuencia_lives"),
+                    experiencia_tiktok,
+                    # Si tú quieres guardar "tiempo_experiencia" (paso 9) en meses, aquí podrías ponerlo:
+                    # pero en tu procesar_respuestas lo conviertes a años. Si no existe, queda None.
+                    None
+                ))
+
+                conn.commit()
+                print(f"✅ [ASPIRANTE] Insertado correctamente en {tenant_schema}.aspirante_encuesta_inicial")
+                return {"inserted": True}
+
+    except Exception as e:
+        print(f"❌ [ASPIRANTE] Error insertando encuesta inicial para {telefono}: {e}")
+        traceback.print_exc()
+        return {"inserted": False, "error": str(e)}
+
+
+def consolidar_perfil(
+    telefono: str,
+    respuestas_dict: dict | None = None,
+    tenant_schema: Optional[str] = None
+):
+    """
+    Procesa y actualiza un número en perfil_creador con manejo de errores.
+
+    - Lee creador por teléfono en creadores
+    - Si respuestas_dict es None, lee respuestas de {schema}.perfil_creador_flujo_temp
+    - Procesa respuestas (procesar_respuestas)
+    - Inserta en {schema}.aspirante_encuesta_inicial (NUEVO) si no existe aún
+    - Actualiza nombre_real en creadores
+    - Actualiza perfil_creador para ese creador_id
+
+    Retorna {"status": "ok"} si no revienta.
+    """
+    schema = tenant_schema or current_tenant.get() or "public"
+
+    print("🧩 [CONSOLIDAR] ===============================")
+    print(f"🧩 [CONSOLIDAR] Teléfono: {telefono}")
+    print(f"🧩 [CONSOLIDAR] Tenant schema: {schema}")
+    print(f"🧩 [CONSOLIDAR] ¿Respuestas vienen en request? {'SI' if respuestas_dict else 'NO'}")
+
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+
+                # -------------------------------
+                # 1) Buscar creador por teléfono
+                # -------------------------------
+                print("🔎 [CONSOLIDAR] Buscando creador en tabla creadores...")
+                cur.execute(
+                    f"SELECT id, usuario, nombre_real, whatsapp FROM {schema}.creadores WHERE telefono=%s",
+                    (telefono,)
+                )
+                creador = cur.fetchone()
+
+                if not creador:
+                    print(f"⚠️ [CONSOLIDAR] No se encontró creador con telefono {telefono} en {schema}.creadores")
+                    return {"status": "skip", "reason": "no_creator"}
+
+                creador_id = creador[0]
+                print(f"✅ [CONSOLIDAR] creador_id={creador_id}")
+
+                # -------------------------------
+                # 2) Si no hay respuestas, leer de temp
+                # -------------------------------
+                if respuestas_dict is None:
+                    print("📋 [CONSOLIDAR] Leyendo respuestas desde perfil_creador_flujo_temp...")
+                    cur.execute(f"""
+                        SELECT paso, respuesta
+                        FROM {schema}.perfil_creador_flujo_temp
+                        WHERE telefono=%s
+                        ORDER BY paso ASC
+                    """, (telefono,))
+                    rows = cur.fetchall()
+                    respuestas_dict = {int(p): (r or "") for p, r in rows} if rows else {}
+                    print(f"📋 [CONSOLIDAR] Respuestas leídas: {respuestas_dict}")
+                else:
+                    # Normalizar llaves por si vienen como string
+                    respuestas_dict = {
+                        (int(k) if isinstance(k, str) and k.isdigit() else k): (str(v) if v is not None else "")
+                        for k, v in respuestas_dict.items()
+                    }
+                    print(f"📋 [CONSOLIDAR] Respuestas recibidas en request: {respuestas_dict}")
+
+                # -------------------------------
+                # 3) Procesar respuestas
+                # -------------------------------
+                print("⚙️ [CONSOLIDAR] Procesando respuestas...")
+                datos_update = procesar_respuestas(respuestas_dict)
+                print(f"🧠 [CONSOLIDAR] datos_update procesado: {datos_update}")
+
+                # AÑADIMOS teléfono al update de perfil_creador
+                datos_update["telefono"] = telefono
+
+                # -------------------------------
+                # 4) NUEVO: Insertar aspirante inicial
+                # -------------------------------
+                print("🧾 [CONSOLIDAR] Insertando (si aplica) en aspirante_encuesta_inicial...")
+                resp_insert = insertar_aspirante_encuesta_inicial(
+                    telefono=telefono,
+                    datos=datos_update,
+                    tenant_schema=schema
+                )
+                print(f"🧾 [CONSOLIDAR] Resultado inserción aspirante: {resp_insert}")
+
+                # -------------------------------
+                # 5) Actualizar nombre_real en creadores si hay nombre
+                # -------------------------------
+                if datos_update.get("nombre"):
+                    print(f"🧩 [CONSOLIDAR] Actualizando nombre_real='{datos_update['nombre']}' en creadores...")
+                    cur.execute(
+                        f"UPDATE {schema}.creadores SET nombre_real=%s WHERE id=%s",
+                        (datos_update["nombre"], creador_id)
+                    )
+
+                # -------------------------------
+                # 6) UPDATE dinámico perfil_creador
+                # -------------------------------
+                print("🛠️ [CONSOLIDAR] Actualizando perfil_creador...")
+                set_clause = ", ".join([f"{k}=%s" for k in datos_update.keys()])
+                values = list(datos_update.values())
+                values.append(creador_id)
+
+                query = f"UPDATE {schema}.perfil_creador SET {set_clause} WHERE creador_id=%s"
+                print(f"🧾 [CONSOLIDAR] Query UPDATE perfil_creador: {query}")
+                print(f"🧾 [CONSOLIDAR] Values (len={len(values)}): {values}")
+
+                cur.execute(query, values)
+
+                conn.commit()
+                print(f"✅ [CONSOLIDAR] Actualizado perfil_creador para creador_id={creador_id} ({telefono})")
+                print("🧩 [CONSOLIDAR] ===============================")
+
+        return {"status": "ok"}
+
+    except psycopg2.OperationalError as e:
+        print(f"❌ [CONSOLIDAR] Error de conexión BD para {telefono}: {e}")
+        traceback.print_exc()
+        return {"status": "error", "type": "OperationalError", "error": str(e)}
+
+    except psycopg2.IntegrityError as e:
+        print(f"❌ [CONSOLIDAR] Error de integridad BD para {telefono}: {e}")
+        traceback.print_exc()
+        return {"status": "error", "type": "IntegrityError", "error": str(e)}
+
+    except KeyError as e:
+        print(f"❌ [CONSOLIDAR] Clave faltante al consolidar {telefono}: {e}")
+        traceback.print_exc()
+        return {"status": "error", "type": "KeyError", "error": str(e)}
+
+    except Exception as e:
+        print(f"❌ [CONSOLIDAR] Error inesperado al procesar {telefono}: {e}")
+        traceback.print_exc()
+        return {"status": "error", "type": "Exception", "error": str(e)}
+
+
+def consolidar_perfilV2(telefono: str, respuestas_dict: dict | None = None, tenant_schema: str | None = None):
     """
     Si el creador existe: actualiza perfil_creador + creadores.
     Si NO existe: guarda encuesta en aspirante_encuesta_temp para sincronizar después.
