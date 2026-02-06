@@ -1009,7 +1009,7 @@ def consolidar_perfil(telefono: str, respuestas_dict: dict | None = None, tenant
 
                 # ✅ (opcional) marcar sincronización en temp si existía
                 cur.execute("""
-                    UPDATE aspirante_encuesta_temp
+                    UPDATE aspirante_encuesta_inicial
                     SET creador_id=%s, sincronizado=TRUE, updated_at=NOW()
                     WHERE telefono=%s
                 """, (creador_id, telefono))
