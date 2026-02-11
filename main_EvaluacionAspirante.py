@@ -525,15 +525,15 @@ def recalcular_y_guardar_pre_resumen_v2(
 import json
 from fastapi import Depends, HTTPException
 
+import json
+
 def _obtener_pre_resumen_guardado(creador_id: int) -> dict:
-    """
-    Lee perfil_creador y devuelve los campos ya calculados/guardados.
-    NO recalcula.
-    """
     with get_connection_context() as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT
+                    edad,
+                    seguidores,
                     puntaje_estadistica,
                     puntaje_estadistica_categoria,
                     puntaje_general,
@@ -544,7 +544,6 @@ def _obtener_pre_resumen_guardado(creador_id: int) -> dict:
                     puntaje_cualitativo_categoria,
                     puntaje_total,
                     puntaje_total_categoria,
-                    alerta,
                     experiencia_otras_plataformas
                 FROM perfil_creador
                 WHERE creador_id = %s
@@ -556,6 +555,8 @@ def _obtener_pre_resumen_guardado(creador_id: int) -> dict:
         return {"status": "error"}
 
     (
+        edad,
+        seguidores,
         puntaje_estadistica,
         puntaje_estadistica_categoria,
         puntaje_general,
@@ -566,11 +567,20 @@ def _obtener_pre_resumen_guardado(creador_id: int) -> dict:
         puntaje_cualitativo_categoria,
         puntaje_total,
         puntaje_total_categoria,
-        alerta,
         experiencia_otras_plataformas,
     ) = row
 
-    # Normalizar experiencia si viene como string JSON (para diagnóstico)
+    # ✅ calcular alerta (sin columna en DB)
+    alerta = 0
+    try:
+        if edad == 1:
+            alerta = 1
+        elif seguidores is not None and seguidores < 50:
+            alerta = 2
+    except Exception:
+        alerta = 0
+
+    # parse experiencia si viene JSON string
     exp = experiencia_otras_plataformas or {}
     if isinstance(exp, str):
         try:
@@ -580,6 +590,8 @@ def _obtener_pre_resumen_guardado(creador_id: int) -> dict:
 
     return {
         "status": "ok",
+        "edad": edad,
+        "seguidores": seguidores,
         "puntaje_estadistica": puntaje_estadistica,
         "puntaje_estadistica_categoria": puntaje_estadistica_categoria,
         "puntaje_general": puntaje_general,
