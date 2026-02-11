@@ -522,10 +522,164 @@ def recalcular_y_guardar_pre_resumen_v2(
                 "pesos": w,
             }
 
-@router.get("/api/perfil_creador/{creador_id}/pre_resumen",
+import json
+from fastapi import Depends, HTTPException
+
+def _obtener_pre_resumen_guardado(creador_id: int) -> dict:
+    """
+    Lee perfil_creador y devuelve los campos ya calculados/guardados.
+    NO recalcula.
+    """
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    puntaje_estadistica,
+                    puntaje_estadistica_categoria,
+                    puntaje_general,
+                    puntaje_general_categoria,
+                    puntaje_habitos,
+                    puntaje_habitos_categoria,
+                    puntaje_cualitativo,
+                    puntaje_cualitativo_categoria,
+                    puntaje_total,
+                    puntaje_total_categoria,
+                    alerta,
+                    experiencia_otras_plataformas
+                FROM perfil_creador
+                WHERE creador_id = %s
+                LIMIT 1
+            """, (creador_id,))
+            row = cur.fetchone()
+
+    if not row:
+        return {"status": "error"}
+
+    (
+        puntaje_estadistica,
+        puntaje_estadistica_categoria,
+        puntaje_general,
+        puntaje_general_categoria,
+        puntaje_habitos,
+        puntaje_habitos_categoria,
+        puntaje_cualitativo,
+        puntaje_cualitativo_categoria,
+        puntaje_total,
+        puntaje_total_categoria,
+        alerta,
+        experiencia_otras_plataformas,
+    ) = row
+
+    # Normalizar experiencia si viene como string JSON (para diagnóstico)
+    exp = experiencia_otras_plataformas or {}
+    if isinstance(exp, str):
+        try:
+            exp = json.loads(exp)
+        except Exception:
+            exp = {}
+
+    return {
+        "status": "ok",
+        "puntaje_estadistica": puntaje_estadistica,
+        "puntaje_estadistica_categoria": puntaje_estadistica_categoria,
+        "puntaje_general": puntaje_general,
+        "puntaje_general_categoria": puntaje_general_categoria,
+        "puntaje_habitos": puntaje_habitos,
+        "puntaje_habitos_categoria": puntaje_habitos_categoria,
+        "puntaje_cualitativo": puntaje_cualitativo,
+        "puntaje_cualitativo_categoria": puntaje_cualitativo_categoria,
+        "puntaje_total": puntaje_total,
+        "puntaje_total_categoria": puntaje_total_categoria,
+        "alerta": alerta,
+        "experiencia_otras_plataformas": exp,
+    }
+
+
+@router.get(
+    "/api/perfil_creador/{creador_id}/pre_resumen",
+    tags=["Resumen Pre-Evaluación"],
+    response_model=ResumenEvaluacionOutput
+)
+def obtener_pre_resumen(
+    creador_id: int,
+    usuario_actual: dict = Depends(obtener_usuario_actual)
+):
+    # ✅ 1) Leer lo ya calculado/guardado (NO recalcula)
+    resultado = _obtener_pre_resumen_guardado(creador_id)
+    if resultado.get("status") != "ok":
+        raise HTTPException(status_code=404, detail="Perfil no encontrado")
+
+    # ✅ 2) Diagnóstico (usa DB; tu función ya debe parsear JSON internamente)
+    try:
+        # Si tu diagnostico usa obtener_datos_mejoras_perfil_creador y lee DB,
+        # perfecto: no recalcula puntajes.
+        diagnostico = diagnostico_perfil_creador_pre(creador_id, puntajes_calculados=resultado)
+    except Exception:
+        diagnostico = "-"
+
+    texto = (
+        f"📊 Pre-Evaluación:\n"
+        f"Puntaje parcial: {resultado.get('puntaje_total')}\n"
+        f"Categoría: {resultado.get('puntaje_total_categoria')}\n\n"
+        f"🩺 Diagnóstico Preliminar:\n{diagnostico}\n"
+    )
+
+    # ✅ 3) Decision (ya no potencial_estimado; ahora es puntaje_cualitativo)
+    calidad_visual_val = resultado.get("puntaje_cualitativo")
+    puntaje_total_val = resultado.get("puntaje_total")
+
+    # Evitar fallos por None
+    puntaje_total_int = int(round(float(puntaje_total_val))) if puntaje_total_val is not None else 0
+
+    decision = sugerencia_decision_final(
+        resultado.get("alerta") or 0,
+        puntaje_total=puntaje_total_int,
+        calidad_visual_cualitativo=calidad_visual_val
+    )
+
+    # ✅ 4) Respuesta final (solo lectura)
+    return ResumenEvaluacionOutput(
+        status="ok",
+        mensaje="Resumen preliminar consultado",
+
+        puntaje_estadistica=resultado.get("puntaje_estadistica"),
+        puntaje_estadistica_categoria=resultado.get("puntaje_estadistica_categoria"),
+
+        puntaje_general=resultado.get("puntaje_general"),
+        puntaje_general_categoria=resultado.get("puntaje_general_categoria"),
+
+        puntaje_habitos=resultado.get("puntaje_habitos"),
+        puntaje_habitos_categoria=resultado.get("puntaje_habitos_categoria"),
+
+        puntaje_cualitativo=resultado.get("puntaje_cualitativo"),
+        puntaje_cualitativo_categoria=resultado.get("puntaje_cualitativo_categoria"),
+
+        puntaje_total=resultado.get("puntaje_total"),
+        puntaje_total_categoria=resultado.get("puntaje_total_categoria"),
+        # Si ya guardas puntaje_total_categoria, esto podría sobrar:
+        puntaje_total_categoria_Ajustado=convertir_1a5_a_1a3(resultado.get("puntaje_total")),
+
+        # Ya no los tienes si eliminaste ponderado/potencial_estimado
+        puntaje_total_ponderado=None,
+        puntaje_total_ponderado_cat=None,
+
+        diagnostico=texto,
+        mejoras_sugeridas=None,
+
+        potencial_estimado=None,
+        potencial_estimado_texto=None,
+
+        decision_icono=decision.get("decision_icono"),
+        decision=decision.get("decision"),
+        recomendacion=decision.get("recomendacion"),
+    )
+
+
+
+@router.get("/api/perfil_creador/{creador_id}/pre_resumenV1",
          tags=["Resumen Pre-Evaluación"],
          response_model=ResumenEvaluacionOutput)
-def obtener_pre_resumen(creador_id: int, usuario_actual: dict = Depends(obtener_usuario_actual)):
+def obtener_pre_resumenV1(creador_id: int, usuario_actual: dict = Depends(obtener_usuario_actual)):
 
     # Llamamos a la función maestra (puntajes parciales)
     resultado = evaluar_perfil_pre(creador_id)
