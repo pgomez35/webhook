@@ -522,9 +522,6 @@ def recalcular_y_guardar_pre_resumen_v2(
                 "pesos": w,
             }
 
-
-
-
 @router.get("/api/perfil_creador/{creador_id}/pre_resumen",
          tags=["Resumen Pre-Evaluación"],
          response_model=ResumenEvaluacionOutput)
