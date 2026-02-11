@@ -38,9 +38,6 @@ from tenant import current_tenant
 
 _SCHEMA_RE = re.compile(r"^[a-z0-9_]+$")  # validación para schema
 
-_SCHEMA_RE = re.compile(r"^[a-z0-9_]+$")
-
-
 class TenantSchemaError(Exception):
     pass
 
@@ -80,8 +77,6 @@ def get_connection():
         cur.execute(f"SET search_path TO {tenant_schema}, public;")
     return conn
 
-
-    return conn
 
 @contextmanager
 def get_connection_context(schema=None):

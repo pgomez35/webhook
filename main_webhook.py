@@ -30,6 +30,7 @@ from enviar_msg_wp import (
     enviar_plantilla_generica,
     enviar_plantilla_generica_parametros
 )
+from evaluaciones import evaluar_y_actualizar_perfil_pre_encuesta
 
 from main import guardar_mensaje
 from tenant import (
@@ -1096,16 +1097,18 @@ def consolidar_perfil(
                 # AÑADIMOS teléfono al update de perfil_creador
                 datos_update["telefono"] = telefono
 
+                # PENDIENTE REVISAR 11 FEB 2026
                 # -------------------------------
                 # 4) NUEVO: Insertar aspirante inicial
                 # -------------------------------
-                print("🧾 [CONSOLIDAR] Insertando (si aplica) en aspirante_encuesta_inicial...")
-                resp_insert = insertar_aspirante_encuesta_inicial(
-                    telefono=telefono,
-                    datos=datos_update,
-                    tenant_schema=schema
-                )
-                print(f"🧾 [CONSOLIDAR] Resultado inserción aspirante: {resp_insert}")
+                # print("🧾 [CONSOLIDAR] Insertando (si aplica) en aspirante_encuesta_inicial...")
+                # resp_insert = insertar_aspirante_encuesta_inicial(
+                #     telefono=telefono,
+                #     datos=datos_update,
+                #     tenant_schema=schema
+                # )
+                # print(f"🧾 [CONSOLIDAR] Resultado inserción aspirante: {resp_insert}")
+
 
                 # -------------------------------
                 # 5) Actualizar nombre_real en creadores si hay nombre
@@ -2657,6 +2660,18 @@ def consolidar_perfil_web(data: ConsolidarInput):
         # Marcar encuesta completada
         # -------------------------------
         marcar_encuesta_completada(data.numero)
+
+        # -------------------------------
+        # Actualizar Puntajes para el diagnostico
+        # -------------------------------
+
+        try:
+            if creador_id:
+                evaluar_y_actualizar_perfil_pre_encuesta(creador_id)
+            else:
+                print(f"⚠️ No se pudo evaluar: creador_id no encontrado para {data.numero}")
+        except Exception as e:
+            print(f"⚠️ Error evaluando puntajes creador_id={creador_id}: {e}")
 
         # -------------------------------
         # Construir URL informativa

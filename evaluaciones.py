@@ -1,4 +1,6 @@
 # from DataBase import *
+import json
+
 from openai import OpenAI
 from dotenv import load_dotenv
 import os
@@ -1616,8 +1618,85 @@ def mejoras_sugeridas_datos_generales_cortas(edad, genero, idiomas, estudios, pa
 
     return "\n".join(sugerencias)
 
-
 def evaluar_estadisticas_pre(seguidores, siguiendo, videos, likes, duracion):
+
+    # Normalizar entradas
+    seguidores = int(seguidores or 0)
+    videos = int(videos or 0)
+    likes = float(likes or 0)
+    duracion = float(duracion or 0) if duracion is not None else 0
+
+    # Corte duro
+    if seguidores < 50:
+        return {
+            "puntaje_estadistica": 0.0,
+            "puntaje_estadistica_categoria": "bajo"
+        }
+
+    # Likes normalizados
+    if seguidores > 0 and videos > 0:
+        likes_normalizado = likes / (seguidores * videos)
+    elif seguidores > 0:
+        likes_normalizado = likes / seguidores
+    else:
+        likes_normalizado = 0.0
+
+    # Seguidores (0–4)
+    if seguidores <= 500:
+        seg = 2
+    elif seguidores <= 1000:
+        seg = 3
+    else:
+        seg = 4
+
+    # Videos (0–4)
+    if videos <= 0:
+        vid = 0
+    elif videos < 10:
+        vid = 1
+    elif videos <= 20:
+        vid = 2
+    elif videos <= 40:
+        vid = 3
+    else:
+        vid = 4
+
+    # Likes normalizados (0–4)
+    if likes_normalizado <= 0:
+        lik = 0
+    elif likes_normalizado < 0.02:
+        lik = 1
+    elif likes_normalizado <= 0.05:
+        lik = 2
+    elif likes_normalizado <= 0.10:
+        lik = 3
+    else:
+        lik = 4
+
+    # Duración emisiones (0–4)
+    if duracion < 20:
+        dur = 1
+    elif duracion <= 89:
+        dur = 2
+    elif duracion <= 179:
+        dur = 3
+    else:
+        dur = 4
+
+    # Score base
+    score = seg * 0.35 + vid * 0.25 + lik * 0.25 + dur * 0.15
+    score = round(score * (5 / 4), 2)
+
+    # Convertir a bajo / medio / alto
+    categoria = convertir_1a5_a_1a3(score)
+
+    return {
+        "puntaje_estadistica": score,
+        "puntaje_estadistica_categoria": categoria
+    }
+
+
+def evaluar_estadisticas_preV0(seguidores, siguiendo, videos, likes, duracion):
 
     # Corte duro → debe devolver diccionario SIEMPRE
     if seguidores is None or seguidores < 50:
@@ -1706,7 +1785,6 @@ def evaluar_estadisticas_pre(seguidores, siguiendo, videos, likes, duracion):
     }
 
 
-
 def evaluar_datos_generales_pre(edad, genero, pais=None, actividad_actual=None):
     """
     Evaluación PARCIAL de datos generales SIN considerar estudios ni idiomas.
@@ -1715,21 +1793,23 @@ def evaluar_datos_generales_pre(edad, genero, pais=None, actividad_actual=None):
       - Género
       - Actividad actual
       - Bono por país estratégico
+    Devuelve categoría: bajo / medio / alto
     """
 
     # ==== Edad (Rango 1-5) ====
     if edad is None:
         e = 0
     elif edad == 1:
-        # Menores de 18: no apto
+        # Menores de 18: corte duro
+        score_final = 0.0
         return {
-            "puntaje_general": 0,
-            "puntaje_general_categoria": "No apto"
+            "puntaje_general": score_final,
+            "puntaje_general_categoria": convertir_1a5_a_1a3(score_final)  # -> "bajo"
         }
-    elif edad == 2:
-        e = 2
-    elif edad == 3 or edad == 4:
+    elif edad in (2, 3):
         e = 3
+    elif edad == 4:
+        e = 2
     elif edad == 5:
         e = 1
     else:
@@ -1738,59 +1818,153 @@ def evaluar_datos_generales_pre(edad, genero, pais=None, actividad_actual=None):
     # ==== Género ====
     genero_map = {
         "femenino": 3,
-        "masculino": 2,
+        "masculino": 1,
         "otro": 2,
-        "prefiero no decir": 1
+        "prefiero no decir": 2
     }
-    g = genero_map.get(str(genero).lower(), 0)
+    g_key = str(genero).strip().lower() if genero is not None else ""
+    g = genero_map.get(g_key, 0)
 
     # ==== Actividad actual ====
     actividad_map = {
-        "estudiante_tiempo_completo": 2,
-        "estudiante_tiempo_parcial": 1.5,
-        "trabajo_tiempo_completo": 2.5,
+        "estudiante_tiempo_completo": 1,
+        "estudiante_tiempo_parcial": 2,
+        "trabajo_tiempo_completo": 1,
         "trabajo_medio_tiempo": 2,
-        "buscando_empleo": 1.5,
+        "buscando_empleo": 3,
         "emprendiendo": 3,
         "disponible_total": 3,
         "otro": 1
     }
-    act = actividad_map.get(str(actividad_actual).lower(), 0) if actividad_actual else 0
+    act_key = str(actividad_actual).strip().lower() if actividad_actual else ""
+    act = actividad_map.get(act_key, 0)
 
     # ==== Bono por país estratégico ====
-    pais_bonus = ["mexico", "colombia", "argentina"]
-    bonus = 0.5 if pais and str(pais).lower() in pais_bonus else 0
+    pais_bonus = {"colombia", "venezuela"}
+    pais_key = str(pais).strip().lower() if pais else ""
+    bonus = 0.5 if pais_key in pais_bonus else 0
 
-    # ==== Nueva ponderación (sin idiomas ni estudios) ====
+    # ==== Ponderación ====
     score = (
         e * 0.30 +      # Edad
-        g * 0.25 +      # Género
+        g * 0.30 +      # Género
         act * 0.35 +    # Actividad
-        bonus * 0.10    # Bono país
+        bonus * 0.05    # Bono país
     )
 
-    score_final = round(score * (5/3), 2)  # normalización a escala 0-5
+    # Normalización 0–5 (máximo teórico ~3)
+    score_final = round(score * (5 / 3), 2)
 
-    # ==== Categorías ====
-    if score_final == 0:
-        categoria = "No apto"
-    elif score_final < 1.5:
-        categoria = "Muy bajo"
-    elif score_final < 2.5:
-        categoria = "Bajo"
-    elif score_final < 3.5:
-        categoria = "Medio"
-    elif score_final < 4.5:
-        categoria = "Alto"
-    else:
-        categoria = "Excelente"
+    # Categoría bajo/medio/alto (misma lógica que estadísticas)
+    categoria = convertir_1a5_a_1a3(score_final)
 
     return {
         "puntaje_general": score_final,
         "puntaje_general_categoria": categoria
     }
 
+
 def evaluar_preferencias_habitos_pre(
+    exp_otras,
+    tiempo=None,
+    freq_lives=None,
+    intencion=None
+):
+    """
+    Evaluación de preferencias y hábitos para Pre-Evaluación.
+    Usa:
+      - experiencia TikTok Live (años, ej: 0.5 = 6 meses)
+      - tiempo disponible (1–3)
+      - frecuencia de lives (1–4)
+      - intención de trabajo (strings de map_intencion)
+    Devuelve categoría: bajo / medio / alto
+    """
+
+    # ==============================
+    # 1) Experiencia en TikTok Live (0–3)
+    #    0 meses = mala
+    #    1–3 meses = regular
+    #    4–11 meses = buena
+    #    12+ meses = excelente
+    # ==============================
+    exp_tiktok = 0.0
+    if isinstance(exp_otras, dict):
+        try:
+            exp_tiktok = float(exp_otras.get("TikTok Live", 0) or 0)
+        except (ValueError, TypeError):
+            exp_tiktok = 0.0
+
+    if exp_tiktok <= 0:
+        exp = 0
+    elif exp_tiktok <= 0.25:   # hasta 3 meses (3/12)
+        exp = 1
+    elif exp_tiktok < 1:       # 4–11 meses
+        exp = 2
+    else:                      # 12+ meses
+        exp = 3
+
+    # ==============================
+    # 2) Tiempo disponible (1–3)
+    # ==============================
+    try:
+        tiempo_int = int(tiempo) if tiempo is not None else None
+    except (ValueError, TypeError):
+        tiempo_int = None
+
+    tiempo_map = {1: 1, 2: 2, 3: 3}
+    t = tiempo_map.get(tiempo_int, 0)
+
+    # ==============================
+    # 3) Frecuencia lives (1–4)
+    # ==============================
+    try:
+        freq_int = int(freq_lives) if freq_lives is not None else None
+    except (ValueError, TypeError):
+        freq_int = None
+
+    freq_map = {1: 1, 2: 2, 3: 3, 4: 0}
+    f = freq_map.get(freq_int, 0)
+
+    # ==============================
+    # 4) Intención (alineada con map_intencion)
+    # ==============================
+    it_key = str(intencion).strip().lower() if intencion else ""
+    it_map = {
+        "fuente de ingresos principal": 3,
+        "fuente de ingresos secundario": 2,
+        "fuente de ingresos secundaria": 2,
+        "hobby, pero me gustaría profesionalizarlo": 2,
+        "diversión, sin intención profesional": 1,
+        "diversion, sin intención profesional": 1,
+        "no estoy seguro": 0
+    }
+    it = it_map.get(it_key, 0)
+
+    # ==============================
+    # 5) Score base (0–3) -> normalizado a 0–5
+    # ==============================
+    score_base = (
+        exp * 0.40 +
+        t   * 0.25 +
+        f   * 0.25 +
+        it  * 0.10
+    )
+    score = round(score_base * (5 / 3), 2)
+
+    # ==============================
+    # 6) Categoría bajo / medio / alto
+    # ==============================
+    categoria = convertir_1a5_a_1a3(score)
+
+    return {
+        "puntaje_habitos": score,
+        "puntaje_habitos_categoria": categoria
+    }
+
+
+
+
+def evaluar_preferencias_habitos_preV0(
     exp_otras: dict,
     tiempo=None,
     freq_lives=None,
@@ -1936,6 +2110,205 @@ def evaluacion_total_pre(
         "puntaje_total_categoria": categoria
     }
 
+import json
+
+
+import json
+
+def evaluar_y_actualizar_perfil_pre_encuesta(creador_id: int):
+    """
+    Evalúa perfil PRE (sin potencial_estimado), calcula puntajes y
+    actualiza perfil_creador con:
+      puntaje_estadistica, puntaje_estadistica_categoria,
+      puntaje_general, puntaje_general_categoria,
+      puntaje_habitos, puntaje_habitos_categoria,
+      puntaje_total, puntaje_total_categoria
+    Pesos total: 30% / 30% / 40%
+    """
+
+    def safe_float(x):
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return None
+
+    def safe_round(x):
+        return round(x) if isinstance(x, (int, float)) else None
+
+    # -------------------------------
+    # 1) Leer perfil
+    # -------------------------------
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT 
+                        edad,
+                        genero,
+                        pais,
+                        actividad_actual,
+                        seguidores,
+                        siguiendo,
+                        videos,
+                        likes,
+                        duracion_emisiones,
+                        tiempo_disponible,
+                        frecuencia_lives,
+                        intencion_trabajo,
+                        experiencia_otras_plataformas
+                    FROM perfil_creador
+                    WHERE creador_id = %s
+                    LIMIT 1
+                """, (creador_id,))
+                row = cur.fetchone()
+
+                if not row:
+                    return {
+                        "status": "error",
+                        "msg": "No existe perfil_creador para ese creador_id",
+                        "creador_id": creador_id,
+                    }
+
+                (
+                    edad,
+                    genero,
+                    pais,
+                    actividad_actual,
+                    seguidores,
+                    siguiendo,
+                    videos,
+                    likes,
+                    duracion_emisiones,
+                    tiempo_disponible,
+                    frecuencia_lives,
+                    intencion_trabajo,
+                    experiencia_otras_plataformas
+                ) = row
+
+                # Parsear experiencia JSON
+                if not experiencia_otras_plataformas:
+                    experiencia_otras_plataformas = {}
+                elif isinstance(experiencia_otras_plataformas, str):
+                    try:
+                        experiencia_otras_plataformas = json.loads(experiencia_otras_plataformas)
+                    except Exception:
+                        experiencia_otras_plataformas = {}
+
+                # -------------------------------
+                # 2) Sub-evaluaciones (ya traen bajo/medio/alto)
+                # -------------------------------
+                est = evaluar_estadisticas_pre(
+                    seguidores=seguidores,
+                    siguiendo=siguiendo,
+                    videos=videos,
+                    likes=likes,
+                    duracion=duracion_emisiones,
+                )
+
+                gen = evaluar_datos_generales_pre(
+                    edad=edad,
+                    genero=genero,
+                    pais=pais,
+                    actividad_actual=actividad_actual,
+                )
+
+                hab = evaluar_preferencias_habitos_pre(
+                    exp_otras=experiencia_otras_plataformas,
+                    tiempo=tiempo_disponible,
+                    freq_lives=frecuencia_lives,
+                    intencion=intencion_trabajo,
+                )
+
+                puntaje_estadistica = safe_float(est.get("puntaje_estadistica"))
+                cat_estadistica = est.get("puntaje_estadistica_categoria")
+
+                puntaje_general = safe_float(gen.get("puntaje_general"))
+                cat_general = gen.get("puntaje_general_categoria")
+
+                puntaje_habitos = safe_float(hab.get("puntaje_habitos"))
+                cat_habitos = hab.get("puntaje_habitos_categoria")
+
+                # -------------------------------
+                # 3) Puntaje total ponderado 30 / 30 / 40
+                #    Re-normaliza pesos si falta algún componente (None)
+                # -------------------------------
+                suma = 0.0
+                suma_pesos = 0.0
+
+                if puntaje_estadistica is not None:
+                    suma += puntaje_estadistica * 0.30
+                    suma_pesos += 0.30
+                if puntaje_general is not None:
+                    suma += puntaje_general * 0.30
+                    suma_pesos += 0.30
+                if puntaje_habitos is not None:
+                    suma += puntaje_habitos * 0.40
+                    suma_pesos += 0.40
+
+                puntaje_total = round(suma / suma_pesos, 2) if suma_pesos > 0 else None
+                cat_total = convertir_1a5_a_1a3(puntaje_total)
+
+                # -------------------------------
+                # 4) Alertas (igual que antes)
+                # -------------------------------
+                alerta = 0
+                if edad == 1:
+                    alerta = 1
+                elif (seguidores or 0) < 50:
+                    alerta = 2
+
+                # -------------------------------
+                # 5) Update perfil_creador
+                # -------------------------------
+                cur.execute("""
+                    UPDATE perfil_creador
+                    SET
+                        puntaje_estadistica = %s,
+                        puntaje_estadistica_categoria = %s,
+                        puntaje_general = %s,
+                        puntaje_general_categoria = %s,
+                        puntaje_habitos = %s,
+                        puntaje_habitos_categoria = %s,
+                        puntaje_total = %s,
+                        puntaje_total_categoria = %s
+                    WHERE creador_id = %s
+                """, (
+                    safe_round(puntaje_estadistica),
+                    cat_estadistica,
+                    safe_round(puntaje_general),
+                    cat_general,
+                    safe_round(puntaje_habitos),
+                    cat_habitos,
+                    safe_round(puntaje_total),
+                    cat_total,
+                    creador_id
+                ))
+
+                conn.commit()
+
+                # -------------------------------
+                # 6) Respuesta
+                # -------------------------------
+                return {
+                    "status": "ok",
+                    "puntaje_estadistica": safe_round(puntaje_estadistica),
+                    "puntaje_estadistica_categoria": cat_estadistica,
+                    "puntaje_general": safe_round(puntaje_general),
+                    "puntaje_general_categoria": cat_general,
+                    "puntaje_habitos": safe_round(puntaje_habitos),
+                    "puntaje_habitos_categoria": cat_habitos,
+                    "puntaje_total": safe_round(puntaje_total),
+                    "puntaje_total_categoria": cat_total,
+                    "alerta": alerta,
+                }
+
+    except Exception as e:
+        print("❌ Error en evaluar_y_actualizar_perfil_pre_ponderado:", e)
+        return {
+            "status": "error",
+            "msg": "Error evaluando/actualizando perfil",
+            "creador_id": creador_id
+        }
 
 
 def evaluar_perfil_pre(creador_id: int):
@@ -2000,8 +2373,17 @@ def evaluar_perfil_pre(creador_id: int):
                     potencial_estimado
                 ) = row
 
-                if experiencia_otras_plataformas is None:
+                # if experiencia_otras_plataformas is None:
+                #     experiencia_otras_plataformas = {}
+
+                if not experiencia_otras_plataformas:
                     experiencia_otras_plataformas = {}
+                elif isinstance(experiencia_otras_plataformas, str):
+                    try:
+                        experiencia_otras_plataformas = json.loads(experiencia_otras_plataformas)
+                    except Exception:
+                        experiencia_otras_plataformas = {}
+
     except Exception as e:
         print("❌ Error obteniendo perfil:", e)
         return {
