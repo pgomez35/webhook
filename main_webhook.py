@@ -30,7 +30,7 @@ from enviar_msg_wp import (
     enviar_plantilla_generica,
     enviar_plantilla_generica_parametros
 )
-from evaluaciones import evaluar_y_actualizar_perfil_pre_encuesta
+from evaluaciones import evaluar_y_actualizar_perfil_pre_encuesta, diagnostico_perfil_creador_pre
 
 from main import guardar_mensaje
 from tenant import (
@@ -2665,13 +2665,25 @@ def consolidar_perfil_web(data: ConsolidarInput):
         # Actualizar Puntajes para el diagnostico
         # -------------------------------
 
+        # -------------------------------
+        # Actualizar Puntajes + Diagnóstico (guardar en DB)
+        # -------------------------------
         try:
             if creador_id:
+                # 1) calcula y guarda puntajes (tu función)
                 evaluar_y_actualizar_perfil_pre_encuesta(creador_id)
+
+                # 2) genera diagnóstico (usa DB y/o puntajes calculados)
+                diag = diagnostico_perfil_creador_pre(creador_id)
+
+                # 3) guardar diagnóstico en perfil_creador
+                guardar_diagnostico_perfil_creador(creador_id, diag)
+
             else:
-                print(f"⚠️ No se pudo evaluar: creador_id no encontrado para {data.numero}")
+                print(f"⚠️ No se pudo evaluar/diagnosticar: creador_id no encontrado para {data.numero}")
+
         except Exception as e:
-            print(f"⚠️ Error evaluando puntajes creador_id={creador_id}: {e}")
+            print(f"⚠️ Error evaluando/guardando diagnóstico creador_id={creador_id}: {e}")
 
         # -------------------------------
         # Construir URL informativa
@@ -2703,6 +2715,23 @@ def consolidar_perfil_web(data: ConsolidarInput):
             {"error": "Error al consolidar el perfil"},
             status_code=500
         )
+
+def guardar_diagnostico_perfil_creador(creador_id: int, diagnostico: str):
+    if not creador_id:
+        return
+
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE perfil_creador
+                SET diagnostico = %s
+                WHERE creador_id = %s
+            """, (diagnostico or "", creador_id))
+
+            if cur.rowcount == 0:
+                print(f"⚠️ No se actualizó diagnostico: no existe perfil_creador para creador_id={creador_id}")
+            else:
+                print(f"✅ Diagnóstico guardado en perfil_creador (creador_id={creador_id})")
 
 
 
