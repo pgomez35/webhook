@@ -1418,8 +1418,8 @@ def obtener_perfil_creador(creador_id):
                             pc.tipo_contenido,
                             pc.puntaje_estadistica,
                             pc.puntaje_estadistica_categoria,
-                            pc.puntaje_manual,
-                            pc.puntaje_manual_categoria,
+                            pc.puntaje_cualitativo,
+                            pc.puntaje_cualitativo_categoria,
                             pc.puntaje_general,
                             pc.puntaje_general_categoria,
                             pc.puntaje_habitos,
@@ -1505,14 +1505,14 @@ def obtener_datos_mejoras_perfil_creador(creador_id):
                     SELECT  edad,genero,idioma,estudios,pais,actividad_actual,seguidores, siguiendo, likes, videos, duracion_emisiones,dias_emisiones,apariencia,engagement,calidad_contenido,estudios,actividad_actual,tiempo_disponible,frecuencia_lives,experiencia_otras_plataformas,intereses,tipo_contenido,intencion_trabajo,eval_foto,biografia,eval_biografia,biografia_sugerida,metadata_videos,potencial_estimado,
                     puntaje_total,
                     puntaje_estadistica,
-                    puntaje_manual,
+                    puntaje_cualitativo,
                     puntaje_general,
                     puntaje_habitos,
                     puntaje_total_categoria,
                     puntaje_estadistica_categoria,
                     puntaje_habitos_categoria,
                     puntaje_general_categoria,
-                    puntaje_manual_categoria
+                    puntaje_cualitativo_categoria
                     FROM perfil_creador
                     WHERE creador_id = %s
                     LIMIT 1
@@ -1574,7 +1574,7 @@ def obtener_puntajes_perfil_creador(creador_id):
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT puntaje_general, puntaje_estadistica, puntaje_manual, puntaje_habitos,puntaje_general_categoria, puntaje_estadistica_categoria, puntaje_manual_categoria, puntaje_habitos_categoria,puntaje_total,puntaje_total_categoria
+                    SELECT puntaje_general, puntaje_estadistica, puntaje_cualitativo, puntaje_habitos,puntaje_general_categoria, puntaje_estadistica_categoria, puntaje_cualitativo_categoria, puntaje_habitos_categoria,puntaje_total,puntaje_total_categoria
                     FROM perfil_creador
                     WHERE creador_id = %s
                     LIMIT 1
@@ -1608,7 +1608,7 @@ def actualizar_datos_perfil_creador(creador_id, datos_dict):
             "biografia", "apariencia", "engagement", "calidad_contenido",
             "potencial_estimado", "usuario_evalua", "biografia_sugerida",
             "eval_biografia", "eval_foto", "metadata_videos",
-            "puntaje_manual", "puntaje_manual_categoria",
+            "puntaje_cualitativo", "puntaje_cualitativo_categoria",
             # Estadísticas del perfil
             "seguidores", "siguiendo", "videos", "likes",
             "duracion_emisiones", "dias_emisiones",
@@ -1681,7 +1681,7 @@ def actualizar_perfil_creador_(creador_id, evaluacion_dict):
         campos = []
         valores = []
 
-        for campo in ['apariencia', 'engagement', 'calidad_contenido', 'puntaje_total', 'puntaje_manual', 'mejoras_sugeridas_manual','usuario_evalua_inicial']:
+        for campo in ['apariencia', 'engagement', 'calidad_contenido', 'puntaje_total', 'puntaje_cualitativo', 'mejoras_sugeridas_manual','usuario_evalua_inicial']:
             if campo in evaluacion_dict:
                 campos.append(f"{campo} = %s")
                 valores.append(evaluacion_dict[campo])

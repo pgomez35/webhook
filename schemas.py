@@ -110,8 +110,8 @@ class PerfilCreadorSchema(BaseModel):
     apariencia: Optional[int] = Field(None, ge=1, le=10)
     engagement: Optional[int] = Field(None, ge=1, le=10)
     calidad_contenido: Optional[int] = Field(None, ge=1, le=10)
-    puntaje_manual: Optional[float] = Field(None, ge=0, le=100)
-    puntaje_manual_categoria: Optional[str] = Field(None, max_length=20)
+    puntaje_cualitativo: Optional[float] = Field(None, ge=0, le=100)
+    puntaje_cualitativo_categoria: Optional[str] = Field(None, max_length=20)
     usuario_id_evalua: Optional[int] = None
     mejoras_sugeridas_manual: Optional[str] = Field(None, max_length=500)
 
@@ -155,8 +155,8 @@ class PerfilCreadorSchema(BaseModel):
                 "apariencia": 8,
                 "engagement": 7,
                 "calidad_contenido": 9,
-                "puntaje_manual": 80.0,
-                "puntaje_manual_categoria": "Alto",
+                "puntaje_cualitativo": 80.0,
+                "puntaje_cualitativo_categoria": "Alto",
                 "usuario_id_evalua": 5,
                 "mejoras_sugeridas_manual": "Mejorar diseño gráfico.",
                 "horario_preferido": {"mañana": True, "tarde": False},
@@ -251,8 +251,8 @@ class PerfilCreadorSchema(BaseModel):
 # class EvaluacionCualitativaOutput(BaseModel):
 #     status: str
 #     mensaje: str
-#     puntaje_manual: Optional[float] = None
-#     puntaje_manual_categoria: Optional[str] = None
+#     puntaje_cualitativo: Optional[float] = None
+#     puntaje_cualitativo_categoria: Optional[str] = None
 #     mejoras_sugeridas: Optional[str] = None  # O dict si lo devuelves agrupado
 #
 # # === Sección: Contenido / Preferencias ===
@@ -364,8 +364,8 @@ class PerfilCreadorSchema(BaseModel):
 # #     potencial_estimado: Optional[str]
 # #     usuario_evalua: Optional[str]
 # #     mejoras_sugeridas: Optional[str]
-# #     puntaje_manual: Optional[float]
-# #     puntaje_manual_categoria: Optional[str]
+# #     puntaje_cualitativo: Optional[float]
+# #     puntaje_cualitativo_categoria: Optional[str]
 #
 #
 # # === Sección: Estadísticas / Métricas ===
@@ -395,8 +395,8 @@ class PerfilCreadorSchema(BaseModel):
 # class EvaluacionCualitativaResponse(BaseModel):
 #     status: str
 #     mensaje: str
-#     puntaje_manual: float
-#     puntaje_manual_categoria: str
+#     puntaje_cualitativo: float
+#     puntaje_cualitativo_categoria: str
 #     mejoras_sugeridas: Optional[str] = None
 #
 #
@@ -546,8 +546,8 @@ class EvaluacionCualitativaInput(BaseModel):
 class EvaluacionCualitativaOutput(BaseModel):
     status: str
     mensaje: str
-    puntaje_manual: Optional[float] = None
-    puntaje_manual_categoria: Optional[str] = None
+    puntaje_cualitativo: Optional[float] = None
+    puntaje_cualitativo_categoria: Optional[str] = None
     potencial_estimado: Optional[str] = None
 
 class PreferenciasHabitosInput(BaseModel):
@@ -580,8 +580,8 @@ class ResumenEvaluacionOutput(ResumenEvaluacionInput):
     status: Optional[str] = None
     mensaje: Optional[str] = None
 
-    puntaje_manual: Optional[float] = None
-    puntaje_manual_categoria: Optional[str] = None
+    puntaje_cualitativo: Optional[float] = None
+    puntaje_cualitativo_categoria: Optional[str] = None
 
     puntaje_estadistica: Optional[float] = None
     puntaje_estadistica_categoria: Optional[str] = None

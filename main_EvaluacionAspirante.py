@@ -256,43 +256,55 @@ def forzar_cambio_estado_por_id(creador_id: int, nuevo_id_estado: int):
         return False
 
 
-
-
-
 @router.post("/api/perfil_creador/{creador_id}/pre_resumen/calcular",
     tags=["Resumen Pre-Evaluación"]
 )
-def calcular_y_guardar_pre_resumen(
+def actualizar_cualitativo_y_recalcular_pre_encuesta(
     creador_id: int,
-    potencial_estimado: int,   # 👈 Recibe potencial_estimado aquí
+    puntaje_cualitativo: int,  # 0..5
     usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
-    """
-    Recalcula la pre-evaluación y actualiza el potencial_estimado manual.
-    """
     try:
-        # 1️⃣ Actualizar manualmente el campo potencial_estimado en perfil_creador
+        if puntaje_cualitativo is None:
+            raise HTTPException(status_code=400, detail="puntaje_cualitativo es requerido")
+
+        try:
+            puntaje_cualitativo = int(puntaje_cualitativo)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="puntaje_cualitativo debe ser entero")
+
+        if not (0 <= puntaje_cualitativo <= 5):
+            raise HTTPException(status_code=400, detail="puntaje_cualitativo debe estar entre 0 y 5")
+
+        categoria_cualitativa = convertir_1a5_a_1a3(puntaje_cualitativo)
+
+        # 1️⃣ Guardar cualitativo
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
                     UPDATE perfil_creador
-                    SET potencial_estimado = %s
+                    SET puntaje_cualitativo = %s,
+                        puntaje_cualitativo_categoria = %s
                     WHERE creador_id = %s
-                """, (potencial_estimado, creador_id))
-                conn.commit()
+                """, (
+                    puntaje_cualitativo,
+                    categoria_cualitativa,
+                    creador_id
+                ))
 
-        print(f"🔧 potencial_estimado actualizado a {potencial_estimado}")
-
-        # 2️⃣ Ejecuta la función completa que calcula y guarda
-        obtener_guardar_pre_resumen(creador_id)
-        print(f"✅ Pre-evaluación calculada y GUARDADA para creador_id={creador_id}")
-
+        # 2️⃣ Recalcular total ponderado
+        resumen = recalcular_y_guardar_pre_total_ponderado(
+            creador_id=creador_id,
+            puntaje_cualitativo=puntaje_cualitativo
+        )
 
         return {
             "status": "ok",
-            "mensaje": "potencial_estimado actualizado",
+            "mensaje": "puntaje_cualitativo actualizado y total recalculado",
             "creador_id": creador_id,
-            "potencial_estimado": potencial_estimado
+            "puntaje_cualitativo": puntaje_cualitativo,
+            "puntaje_cualitativo_categoria": categoria_cualitativa,
+            "resumen": resumen
         }
 
     except HTTPException:
@@ -302,8 +314,216 @@ def calcular_y_guardar_pre_resumen(
         traceback.print_exc()
         raise HTTPException(
             status_code=500,
-            detail=f"Error al recalcular/guardar pre-evaluación: {str(e)}"
+            detail=f"Error al actualizar cualitativo/recalcular: {str(e)}"
         )
+
+def recalcular_y_guardar_pre_total_ponderado(
+    creador_id: int,
+    puntaje_cualitativo: int | None = None,
+):
+    """
+    Recalcula y guarda puntaje_total con ponderación:
+    estad 20%, personales 20%, hábitos 30%, cualitativo 30%
+    """
+
+    PESOS = {
+        "estadistica": 0.20,
+        "personales": 0.20,
+        "habitos": 0.30,
+        "cualitativo": 0.30,
+    }
+
+    def safe_float(x):
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return None
+
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 
+                    puntaje_estadistica,
+                    puntaje_general,
+                    puntaje_habitos,
+                    puntaje_cualitativo
+                FROM perfil_creador
+                WHERE creador_id = %s
+                LIMIT 1
+            """, (creador_id,))
+            row = cur.fetchone()
+
+            if not row:
+                return {
+                    "status": "error",
+                    "msg": "perfil_creador no encontrado",
+                    "creador_id": creador_id
+                }
+
+            puntaje_est, puntaje_gen, puntaje_hab, puntaje_cual_db = row
+
+            # Prioridad al valor pasado por parámetro
+            puntaje_cual = puntaje_cualitativo if puntaje_cualitativo is not None else puntaje_cual_db
+
+            puntaje_est = safe_float(puntaje_est)
+            puntaje_gen = safe_float(puntaje_gen)
+            puntaje_hab = safe_float(puntaje_hab)
+            puntaje_cual = safe_float(puntaje_cual)
+
+            suma = 0.0
+            suma_pesos = 0.0
+
+            if puntaje_est is not None:
+                suma += puntaje_est * PESOS["estadistica"]
+                suma_pesos += PESOS["estadistica"]
+
+            if puntaje_gen is not None:
+                suma += puntaje_gen * PESOS["personales"]
+                suma_pesos += PESOS["personales"]
+
+            if puntaje_hab is not None:
+                suma += puntaje_hab * PESOS["habitos"]
+                suma_pesos += PESOS["habitos"]
+
+            if puntaje_cual is not None:
+                suma += puntaje_cual * PESOS["cualitativo"]
+                suma_pesos += PESOS["cualitativo"]
+
+            puntaje_total = round(suma / suma_pesos, 2) if suma_pesos > 0 else None
+            puntaje_total_categoria = convertir_1a5_a_1a3(puntaje_total)
+
+            cur.execute("""
+                UPDATE perfil_creador
+                SET puntaje_total = %s,
+                    puntaje_total_categoria = %s
+                WHERE creador_id = %s
+            """, (
+                round(puntaje_total) if puntaje_total is not None else None,
+                puntaje_total_categoria,
+                creador_id
+            ))
+
+            return {
+                "status": "ok",
+                "puntaje_total": puntaje_total,
+                "puntaje_total_categoria": puntaje_total_categoria,
+                "pesos": PESOS
+            }
+
+
+
+
+def recalcular_y_guardar_pre_resumen_v2(
+    creador_id: int,
+    puntaje_cualitativo: int | None = None
+):
+    """
+    Recalcula el total incluyendo:
+      - puntaje_estadistica
+      - puntaje_general
+      - puntaje_habitos
+      - puntaje_manual (cualitativo)
+
+    Guarda en perfil_creador:
+      - puntaje_total
+      - puntaje_total_categoria
+    (y opcionalmente puedes guardar promedios si tienes campos)
+    """
+
+    # Pesos por defecto (ajústalos a tu decisión final)
+    # OJO: esto es solo propuesta. Cambia si tu negocio quiere otra cosa.
+    pesos_default = {
+        "estadistica": 0.20,
+        "general": 0.20,
+        "habitos": 0.30,
+        "cualitativo": 0.30,
+    }
+    w =  pesos_default
+
+    def safe_float(x):
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return None
+
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 
+                    puntaje_estadistica,
+                    puntaje_general,
+                    puntaje_habitos,
+                    puntaje_manual
+                FROM perfil_creador
+                WHERE creador_id = %s
+                LIMIT 1
+            """, (creador_id,))
+            row = cur.fetchone()
+
+            if not row:
+                return {"status": "error", "msg": "perfil_creador no encontrado"}
+
+            puntaje_est, puntaje_gen, puntaje_hab, puntaje_man_db = row
+
+            # Determinar cualitativo: prioridad al parámetro, si no al DB
+            puntaje_cual = puntaje_cualitativo if puntaje_cualitativo is not None else puntaje_man_db
+
+            puntaje_est = safe_float(puntaje_est)
+            puntaje_gen = safe_float(puntaje_gen)
+            puntaje_hab = safe_float(puntaje_hab)
+            puntaje_cual = safe_float(puntaje_cual)
+
+            # Promedios útiles (no guardo si no tienes columnas)
+            puntajes_presentes = [p for p in [puntaje_est, puntaje_gen, puntaje_hab, puntaje_cual] if p is not None]
+            promedio_simple = round(sum(puntajes_presentes) / len(puntajes_presentes), 2) if puntajes_presentes else None
+
+            # Total ponderado con renormalización si falta alguno
+            suma = 0.0
+            suma_pesos = 0.0
+
+            if puntaje_est is not None:
+                suma += puntaje_est * w["estadistica"]
+                suma_pesos += w["estadistica"]
+
+            if puntaje_gen is not None:
+                suma += puntaje_gen * w["general"]
+                suma_pesos += w["general"]
+
+            if puntaje_hab is not None:
+                suma += puntaje_hab * w["habitos"]
+                suma_pesos += w["habitos"]
+
+            if puntaje_cual is not None:
+                suma += puntaje_cual * w["cualitativo"]
+                suma_pesos += w["cualitativo"]
+
+            puntaje_total = round(suma / suma_pesos, 2) if suma_pesos > 0 else None
+            puntaje_total_cat = convertir_1a5_a_1a3(puntaje_total)
+
+            # Guardar total
+            cur.execute("""
+                UPDATE perfil_creador
+                SET puntaje_total = %s,
+                    puntaje_total_categoria = %s
+                WHERE creador_id = %s
+            """, (round(puntaje_total) if puntaje_total is not None else None,
+                  puntaje_total_cat,
+                  creador_id))
+
+            return {
+                "status": "ok",
+                "puntaje_estadistica": puntaje_est,
+                "puntaje_general": puntaje_gen,
+                "puntaje_habitos": puntaje_hab,
+                "puntaje_cualitativo": puntaje_cual,
+                "promedio_simple": promedio_simple,
+                "puntaje_total": puntaje_total,
+                "puntaje_total_categoria": puntaje_total_cat,
+                "pesos": w,
+            }
+
+
+
 
 @router.get("/api/perfil_creador/{creador_id}/pre_resumen",
          tags=["Resumen Pre-Evaluación"],
@@ -356,8 +576,8 @@ def obtener_pre_resumen(creador_id: int, usuario_actual: dict = Depends(obtener_
         puntaje_habitos=resultado.get("puntaje_habitos"),
         puntaje_habitos_categoria=resultado.get("puntaje_habitos_categoria"),
 
-        puntaje_manual=None,
-        puntaje_manual_categoria=None,
+        puntaje_cualitativo=None,
+        puntaje_cualitativo_categoria=None,
 
         puntaje_total=resultado.get("puntaje_total"),
         puntaje_total_categoria=resultado.get("puntaje_total_categoria"),

@@ -47,8 +47,8 @@ def diagnostico_perfil_creador(
             (puntajes_calculados or datos).get("puntaje_estadistica_categoria"),
         ),
         "Calificación Cualitativo": (
-            (puntajes_calculados or datos).get("puntaje_manual"),
-            (puntajes_calculados or datos).get("puntaje_manual_categoria"),
+            (puntajes_calculados or datos).get("puntaje_cualitativo"),
+            (puntajes_calculados or datos).get("puntaje_cualitativo_categoria"),
         ),
         "Calificación Datos personales": (
             (puntajes_calculados or datos).get("puntaje_general"),
@@ -347,8 +347,8 @@ def evaluar_cualitativa(
         categoria = "Excelente"
 
     return {
-        "puntaje_manual": score,
-        "puntaje_manual_categoria": categoria
+        "puntaje_cualitativo": score,
+        "puntaje_cualitativo_categoria": categoria
     }
 
 SLIDER_LABELS = {
@@ -2347,8 +2347,8 @@ def evaluar_perfil_pre(creador_id: int):
                         "puntaje_general_categoria": None,
                         "puntaje_habitos": None,
                         "puntaje_habitos_categoria": None,
-                        "puntaje_manual": None,
-                        "puntaje_manual_categoria": None,
+                        "puntaje_cualitativo": None,
+                        "puntaje_cualitativo_categoria": None,
                         "puntaje_total": None,
                         "puntaje_total_categoria": None,
                         "puntaje_total_ponderado": None,
@@ -2394,8 +2394,8 @@ def evaluar_perfil_pre(creador_id: int):
             "puntaje_general_categoria": None,
             "puntaje_habitos": None,
             "puntaje_habitos_categoria": None,
-            "puntaje_manual": None,
-            "puntaje_manual_categoria": None,
+            "puntaje_cualitativo": None,
+            "puntaje_cualitativo_categoria": None,
             "puntaje_total": None,
             "puntaje_total_categoria": None,
             "puntaje_total_ponderado": None,
@@ -2474,8 +2474,8 @@ def evaluar_perfil_pre(creador_id: int):
         "puntaje_general_categoria": convertir_1a5_a_1a3(puntaje_general),
         "puntaje_habitos": round(puntaje_habitos),
         "puntaje_habitos_categoria": convertir_1a5_a_1a3(puntaje_habitos),
-        "puntaje_manual": None,
-        "puntaje_manual_categoria": None,
+        "puntaje_cualitativo": None,
+        "puntaje_cualitativo_categoria": None,
         "puntaje_total": round(puntaje_total),
         "puntaje_total_categoria": convertir_1a5_a_1a3(puntaje_total),
         "puntaje_total_ponderado": puntaje_total_ponderado,
