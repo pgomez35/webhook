@@ -2833,8 +2833,106 @@ def consolidar_perfil_webV1(data: ConsolidarInput):
 # ============================
 # REGISTRO DE MENSAJES ENTRANTES
 # ============================
-
 def registrar_mensaje_recibido(
+    tenant: str,
+    phone_number_id: str,
+    display_phone_number: str,
+    wa_id: str,
+    message_id: str,
+    content: Optional[str] = None,
+    raw_payload: Optional[dict] = None,
+) -> None:
+    """
+    Registra en BD:
+    1️⃣ Tabla técnica whatsapp_messages
+    2️⃣ Tabla funcional mensajes (para UI del chat)
+    """
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+
+                # ----------------------------------------
+                # 1️⃣ Insert técnico (log WABA)
+                # ----------------------------------------
+                cur.execute(
+                    """
+                    INSERT INTO whatsapp_messages (
+                        tenant,
+                        phone_number_id,
+                        display_phone_number,
+                        recipient,
+                        message_id,
+                        direction,
+                        content,
+                        status,
+                        raw_payload,
+                        last_status_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, 'inbound', %s, 'received', %s, NOW())
+                    ON CONFLICT (message_id) DO NOTHING;
+                    """,
+                    (
+                        tenant,
+                        phone_number_id,
+                        display_phone_number,
+                        wa_id,
+                        message_id,
+                        content,
+                        json.dumps(raw_payload) if raw_payload else None,
+                    ),
+                )
+
+                # ----------------------------------------
+                # 2️⃣ Buscar creador_id por wa_id
+                # ----------------------------------------
+                cur.execute(
+                    """
+                    SELECT id
+                    FROM creadores
+                    WHERE telefono = %s
+                    LIMIT 1
+                    """,
+                    (wa_id,),
+                )
+                row = cur.fetchone()
+
+                if row:
+                    creador_id = row[0]
+
+                    # ----------------------------------------
+                    # 3️⃣ Insert en tabla mensajes (UI)
+                    # ----------------------------------------
+                    cur.execute(
+                        """
+                        INSERT INTO mensajes (
+                            usuario_id,
+                            contenido,
+                            tipo,
+                            es_audio
+                        )
+                        VALUES (%s, %s, 'recibido', %s)
+                        """,
+                        (
+                            creador_id,
+                            content,
+                            False,
+                        ),
+                    )
+                else:
+                    print(f"⚠️ No se encontró creador para wa_id={wa_id}")
+
+            conn.commit()
+
+        print(f"📥 Mensaje inbound registrado correctamente: {message_id}")
+
+    except Exception as e:
+        print(f"❌ Error al registrar mensaje inbound {message_id}: {e}")
+        traceback.print_exc()
+
+
+
+
+def registrar_mensaje_recibidoV0(
     tenant: str,
     phone_number_id: str,
     display_phone_number: str,
