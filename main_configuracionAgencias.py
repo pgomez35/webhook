@@ -267,6 +267,71 @@ def upsert_config_valor(clave: str, data: ConfigUpdateIn = Body(...)):
     return ConfigItemOut(clave=row[0], valor=row[1], actualizado_en=row[2])
 
 
+from typing import List, Optional
+from fastapi import HTTPException, Query
+
+@router.get("/api/configuracion-agencia/full/grupo/{grupo}", response_model=List[ConfigItemFullOut])
+def obtener_config_full_por_grupo(grupo: str):
+    grupo = grupo.strip()
+
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    k.clave,
+                    k.grupo,
+                    k.tipo,
+                    k.valor_default,
+                    k.descripcion,
+                    k.editable,
+                    k.orden,
+                    k.requerido,
+                    k.validacion_regex,
+                    k.actualizado_en,
+                    a.valor,
+                    a.actualizado_en
+                FROM public.configuracion_agencia_keys k
+                LEFT JOIN configuracion_agencia a
+                       ON a.clave = k.clave
+                WHERE k.grupo = %s
+                ORDER BY k.orden ASC, k.clave ASC
+            """, (grupo,))
+            rows = cur.fetchall()
+
+    out = []
+    for r in rows:
+        valor_tenant = r[10] if r[10] is not None and r[10] != "" else r[3]
+        out.append(
+            ConfigItemFullOut(
+                clave=r[0],
+                grupo=r[1],
+                tipo=r[2],
+                valor_default=r[3],
+                descripcion=r[4],
+                editable=r[5],
+                orden=r[6],
+                requerido=r[7],
+                validacion_regex=r[8],
+                actualizado_en=r[9],
+                valor=valor_tenant,
+                valor_actualizado_en=r[11],
+            )
+        )
+    return out
+
+
+
+@router.get("/api/configuracion-agencia/grupos", response_model=List[str])
+def listar_grupos_config():
+    with get_connection_public() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT grupo
+                FROM public.configuracion_agencia_keys
+                ORDER BY grupo ASC
+            """)
+            rows = cur.fetchall()
+    return [r[0] for r in rows]
 
 
 
