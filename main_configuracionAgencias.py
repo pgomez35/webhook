@@ -331,7 +331,7 @@ def listar_grupos_config():
             print("🚀 Ejecutando query")
             cur.execute("""
                 SELECT DISTINCT grupo
-                FROM public.configuracion_agencia_keys
+                FROM configuracion_agencia_keys
                 ORDER BY grupo ASC
             """)
             rows = cur.fetchall()
