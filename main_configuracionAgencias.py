@@ -321,17 +321,38 @@ def obtener_config_full_por_grupo(grupo: str):
 
 
 
-@router.get("/api/configuracion-agencia/grupos", response_model=List[str])
+@router.get("/api/configuracion-agencia/grupos")
 def listar_grupos_config():
+    print("🚀 Entrando a listar_grupos_config")
+
     with get_connection_public() as conn:
+        print("🚀 Conexión abierta")
         with conn.cursor() as cur:
+            print("🚀 Ejecutando query")
             cur.execute("""
                 SELECT DISTINCT grupo
                 FROM public.configuracion_agencia_keys
                 ORDER BY grupo ASC
             """)
             rows = cur.fetchall()
+
+    print("🚀 Query OK")
     return [r[0] for r in rows]
+
+
+
+
+# @router.get("/api/configuracion-agencia/grupos", response_model=List[str])
+# def listar_grupos_config():
+#     with get_connection_public() as conn:
+#         with conn.cursor() as cur:
+#             cur.execute("""
+#                 SELECT DISTINCT grupo
+#                 FROM public.configuracion_agencia_keys
+#                 ORDER BY grupo ASC
+#             """)
+#             rows = cur.fetchall()
+#     return [r[0] for r in rows]
 
 
 
