@@ -1,19 +1,17 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Body
 from pydantic import BaseModel
-from typing import Optional, Dict
+from typing import Optional, List
 from datetime import datetime
+import re
 
 from DataBase import get_connection_context, get_connection_public
 
 router = APIRouter()
 
-from pydantic import BaseModel
-from typing import Optional, List
-from datetime import datetime
+# ==========================================================
+# MODELOS
+# ==========================================================
 
-# -------------------------
-# configuracion_agencia_keys (public)
-# -------------------------
 class ConfigKeyOut(BaseModel):
     clave: str
     grupo: str
@@ -27,9 +25,6 @@ class ConfigKeyOut(BaseModel):
     actualizado_en: Optional[datetime] = None
 
 
-# -------------------------
-# configuracion_agencia (tenant)
-# -------------------------
 class ConfigItemOut(BaseModel):
     clave: str
     valor: str
@@ -37,13 +32,11 @@ class ConfigItemOut(BaseModel):
 
 
 class ConfigUpdateIn(BaseModel):
-    # update de un item: solo el valor (no inventamos nada más)
     valor: str
 
 
-# Para respuestas combinadas (keys + valores)
 class ConfigItemFullOut(BaseModel):
-    # keys (public)
+    # KEYS (public)
     clave: str
     grupo: str
     tipo: str
@@ -53,17 +46,30 @@ class ConfigItemFullOut(BaseModel):
     orden: int
     requerido: bool
     validacion_regex: Optional[str] = None
-    actualizado_en: Optional[datetime] = None  # actualizado_en de KEYS (public)
+    actualizado_en: Optional[datetime] = None  # keys actualizado_en
 
-    # valor actual en tenant (configuracion_agencia)
+    # TENANT
     valor: str
-    valor_actualizado_en: Optional[datetime] = None  # actualizado_en del tenant
+    valor_actualizado_en: Optional[datetime] = None
 
 
-from fastapi import APIRouter, HTTPException
-from typing import List
+# ==========================================================
+# RUTAS FIJAS (SIEMPRE VAN PRIMERO)
+# ==========================================================
 
-router = APIRouter()
+@router.get("/api/configuracion-agencia/grupos", response_model=List[str])
+def listar_grupos_config():
+    with get_connection_public() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT grupo
+                FROM configuracion_agencia_keys
+                ORDER BY grupo ASC
+            """)
+            rows = cur.fetchall()
+
+    return [r[0] for r in rows]
+
 
 @router.get("/api/configuracion-agencia/keys", response_model=List[ConfigKeyOut])
 def listar_config_keys():
@@ -81,7 +87,7 @@ def listar_config_keys():
                     requerido,
                     validacion_regex,
                     actualizado_en
-                FROM public.configuracion_agencia_keys
+                FROM configuracion_agencia_keys
                 ORDER BY grupo ASC, orden ASC, clave ASC
             """)
             rows = cur.fetchall()
@@ -101,68 +107,6 @@ def listar_config_keys():
         )
         for r in rows
     ]
-
-@router.get("/api/configuracion-agencia", response_model=List[ConfigItemOut])
-def listar_config_tenant():
-    with get_connection_context() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT clave, valor, actualizado_en
-                FROM configuracion_agencia
-                ORDER BY clave ASC
-            """)
-            rows = cur.fetchall()
-
-    return [
-        ConfigItemOut(clave=r[0], valor=r[1], actualizado_en=r[2])
-        for r in rows
-    ]
-
-@router.get("/api/configuracion-agencia/{clave}", response_model=ConfigItemOut)
-def obtener_config_por_clave(clave: str):
-    clave = clave.strip()
-
-    with get_connection_context() as conn:
-        with conn.cursor() as cur:
-
-            # 1️⃣ Intentar obtener valor del tenant
-            cur.execute("""
-                SELECT clave, valor, actualizado_en
-                FROM configuracion_agencia
-                WHERE clave = %s
-                LIMIT 1
-            """, (clave,))
-            row = cur.fetchone()
-
-            if row:
-                return ConfigItemOut(
-                    clave=row[0],
-                    valor=row[1],
-                    actualizado_en=row[2]
-                )
-
-            # 2️⃣ Si no existe en el tenant, usar valor_default desde keys
-            cur.execute("""
-                SELECT clave, valor_default, actualizado_en
-                FROM public.configuracion_agencia_keys
-                WHERE clave = %s
-                LIMIT 1
-            """, (clave,))
-            key_row = cur.fetchone()
-
-            if key_row:
-                return ConfigItemOut(
-                    clave=key_row[0],
-                    valor=key_row[1],  # valor_default
-                    actualizado_en=key_row[2]
-                )
-
-    raise HTTPException(
-        status_code=404,
-        detail="Clave de configuración no encontrada"
-    )
-
-
 
 
 @router.get("/api/configuracion-agencia/full", response_model=List[ConfigItemFullOut])
@@ -192,8 +136,7 @@ def obtener_config_full():
 
     out = []
     for r in rows:
-        # si el tenant no tiene valor aún, usamos valor_default (NO insertamos nada)
-        valor_tenant = r[10] if r[10] is not None and r[10] != "" else r[3]
+        valor_final = r[10] if r[10] else r[3]
 
         out.append(
             ConfigItemFullOut(
@@ -206,69 +149,14 @@ def obtener_config_full():
                 orden=r[6],
                 requerido=r[7],
                 validacion_regex=r[8],
-                actualizado_en=r[9],              # keys actualizado_en (public)
-                valor=valor_tenant,               # valor final a mostrar
-                valor_actualizado_en=r[11],       # actualizado_en del tenant
+                actualizado_en=r[9],
+                valor=valor_final,
+                valor_actualizado_en=r[11],
             )
         )
+
     return out
 
-import re
-from fastapi import Body
-
-@router.put("/api/configuracion-agencia/{clave}", response_model=ConfigItemOut)
-def upsert_config_valor(clave: str, data: ConfigUpdateIn = Body(...)):
-    clave = clave.strip()
-
-    with get_connection_context() as conn:
-        with conn.cursor() as cur:
-            # 1) Validar que la clave exista en keys
-            cur.execute("""
-                SELECT editable, requerido, validacion_regex
-                FROM public.configuracion_agencia_keys
-                WHERE clave = %s
-                LIMIT 1
-            """, (clave,))
-            key_row = cur.fetchone()
-
-            if not key_row:
-                raise HTTPException(status_code=404, detail="Clave no existe en configuracion_agencia_keys")
-
-            editable, requerido, validacion_regex = key_row
-
-            if not editable:
-                raise HTTPException(status_code=403, detail="Esta clave no es editable")
-
-            valor = (data.valor or "").strip()
-
-            if requerido and valor == "":
-                raise HTTPException(status_code=422, detail="Este valor es requerido")
-
-            if validacion_regex and valor:
-                try:
-                    if not re.fullmatch(validacion_regex, valor):
-                        raise HTTPException(status_code=422, detail="El valor no cumple la validación")
-                except re.error:
-                    # si el regex está mal guardado en DB, no bloquees por eso
-                    pass
-
-            # 2) UPSERT en tenant
-            cur.execute("""
-                INSERT INTO configuracion_agencia (clave, valor)
-                VALUES (%s, %s)
-                ON CONFLICT (clave)
-                DO UPDATE SET
-                    valor = EXCLUDED.valor,
-                    actualizado_en = now()
-                RETURNING clave, valor, actualizado_en
-            """, (clave, valor))
-            row = cur.fetchone()
-
-    return ConfigItemOut(clave=row[0], valor=row[1], actualizado_en=row[2])
-
-
-from typing import List, Optional
-from fastapi import HTTPException, Query
 
 @router.get("/api/configuracion-agencia/full/grupo/{grupo}", response_model=List[ConfigItemFullOut])
 def obtener_config_full_por_grupo(grupo: str):
@@ -300,7 +188,8 @@ def obtener_config_full_por_grupo(grupo: str):
 
     out = []
     for r in rows:
-        valor_tenant = r[10] if r[10] is not None and r[10] != "" else r[3]
+        valor_final = r[10] if r[10] else r[3]
+
         out.append(
             ConfigItemFullOut(
                 clave=r[0],
@@ -313,47 +202,124 @@ def obtener_config_full_por_grupo(grupo: str):
                 requerido=r[7],
                 validacion_regex=r[8],
                 actualizado_en=r[9],
-                valor=valor_tenant,
+                valor=valor_final,
                 valor_actualizado_en=r[11],
             )
         )
+
     return out
 
 
-
-@router.get("/api/configuracion-agencia/grupos")
-def listar_grupos_config():
-    print("🚀 Entrando a listar_grupos_config")
-
-    with get_connection_public() as conn:
-        print("🚀 Conexión abierta")
+@router.get("/api/configuracion-agencia", response_model=List[ConfigItemOut])
+def listar_config_tenant():
+    with get_connection_context() as conn:
         with conn.cursor() as cur:
-            print("🚀 Ejecutando query")
             cur.execute("""
-                SELECT DISTINCT grupo
-                FROM configuracion_agencia_keys
-                ORDER BY grupo ASC
+                SELECT clave, valor, actualizado_en
+                FROM configuracion_agencia
+                ORDER BY clave ASC
             """)
             rows = cur.fetchall()
 
-    print("🚀 Query OK")
-    return [r[0] for r in rows]
+    return [
+        ConfigItemOut(clave=r[0], valor=r[1], actualizado_en=r[2])
+        for r in rows
+    ]
 
 
+# ==========================================================
+# RUTA DINÁMICA (SIEMPRE AL FINAL)
+# ==========================================================
+
+@router.get("/api/configuracion-agencia/{clave}", response_model=ConfigItemOut)
+def obtener_config_por_clave(clave: str):
+    clave = clave.strip()
+
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+
+            # 1️⃣ Buscar en tenant
+            cur.execute("""
+                SELECT clave, valor, actualizado_en
+                FROM configuracion_agencia
+                WHERE clave = %s
+                LIMIT 1
+            """, (clave,))
+            row = cur.fetchone()
+
+            if row:
+                return ConfigItemOut(
+                    clave=row[0],
+                    valor=row[1],
+                    actualizado_en=row[2]
+                )
+
+            # 2️⃣ Si no existe en tenant, usar default
+            cur.execute("""
+                SELECT clave, valor_default, actualizado_en
+                FROM public.configuracion_agencia_keys
+                WHERE clave = %s
+                LIMIT 1
+            """, (clave,))
+            key_row = cur.fetchone()
+
+            if key_row:
+                return ConfigItemOut(
+                    clave=key_row[0],
+                    valor=key_row[1],
+                    actualizado_en=key_row[2]
+                )
+
+    raise HTTPException(status_code=404, detail="Clave de configuración no encontrada")
 
 
-# @router.get("/api/configuracion-agencia/grupos", response_model=List[str])
-# def listar_grupos_config():
-#     with get_connection_public() as conn:
-#         with conn.cursor() as cur:
-#             cur.execute("""
-#                 SELECT DISTINCT grupo
-#                 FROM public.configuracion_agencia_keys
-#                 ORDER BY grupo ASC
-#             """)
-#             rows = cur.fetchall()
-#     return [r[0] for r in rows]
+@router.put("/api/configuracion-agencia/{clave}", response_model=ConfigItemOut)
+def upsert_config_valor(clave: str, data: ConfigUpdateIn = Body(...)):
+    clave = clave.strip()
 
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
 
+            # Validar existencia en keys
+            cur.execute("""
+                SELECT editable, requerido, validacion_regex
+                FROM public.configuracion_agencia_keys
+                WHERE clave = %s
+                LIMIT 1
+            """, (clave,))
+            key_row = cur.fetchone()
 
+            if not key_row:
+                raise HTTPException(status_code=404, detail="Clave no existe")
 
+            editable, requerido, validacion_regex = key_row
+
+            if not editable:
+                raise HTTPException(status_code=403, detail="Esta clave no es editable")
+
+            valor = (data.valor or "").strip()
+
+            if requerido and valor == "":
+                raise HTTPException(status_code=422, detail="Este valor es requerido")
+
+            if validacion_regex and valor:
+                try:
+                    if not re.fullmatch(validacion_regex, valor):
+                        raise HTTPException(status_code=422, detail="El valor no cumple la validación")
+                except re.error:
+                    pass
+
+            # UPSERT
+            cur.execute("""
+                INSERT INTO configuracion_agencia (clave, valor)
+                VALUES (%s, %s)
+                ON CONFLICT (clave)
+                DO UPDATE SET
+                    valor = EXCLUDED.valor,
+                    actualizado_en = now()
+                RETURNING clave, valor, actualizado_en
+            """, (clave, valor))
+
+            row = cur.fetchone()
+
+    return ConfigItemOut(clave=row[0], valor=row[1], actualizado_en=row[2])
