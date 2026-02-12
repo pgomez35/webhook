@@ -78,7 +78,7 @@ from utils_aspirantes import router as utils_aspirantes_router
 from main_chatbot_estados_aspirante import router as chatbot_estados_aspirante_router
 from main_auth import router as main_auth_router
 from main_diagnostico import router as diagnostico_router
-from main_bienvenida import router as bienvenida_router
+from main_configuracionAgencias import router as bienvenida_router
 
 # ⚙️ Inicializar FastAPI
 app = FastAPI()
