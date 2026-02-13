@@ -2838,49 +2838,61 @@ def registrar_mensaje_recibido(
     telefono: str,
     message_id_meta: str,
     tipo: str,
-    contenido: str = None,
+    contenido: Optional[str] = None,
+    media_url: Optional[str] = None,
 ) -> None:
-    """
-    Guarda mensaje inbound en mensajes_whatsapp
-    """
+
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
 
-                # Buscar o crear creador
+                # ----------------------------------------
+                # 1️⃣ Buscar creador (NO crear si no existe)
+                # ----------------------------------------
                 cur.execute(
-                    "SELECT id FROM creadores WHERE telefono = %s",
-                    (telefono,)
+                    """
+                    SELECT id
+                    FROM creadores
+                    WHERE telefono = %s
+                    LIMIT 1
+                    """,
+                    (telefono,),
                 )
-                usuario = cur.fetchone()
+                row = cur.fetchone()
 
-                if not usuario:
-                    cur.execute(
-                        "INSERT INTO creadores (telefono) VALUES (%s) RETURNING id",
-                        (telefono,)
-                    )
-                    usuario_id = cur.fetchone()[0]
+                usuario_id = row[0] if row else None
+
+                if usuario_id:
+                    print(f"🧾 Mensaje asociado a creador_id={usuario_id}")
                 else:
-                    usuario_id = usuario[0]
+                    print(f"🆕 Mensaje sin creador (usuario_id=NULL)")
 
-                # Detectar si es audio
-                es_audio = tipo == "audio"
-
-                # Insertar en tu tabla real
+                # ----------------------------------------
+                # 2️⃣ Insert mensaje
+                # ----------------------------------------
                 cur.execute(
                     """
                     INSERT INTO mensajes_whatsapp
-                    (usuario_id, telefono, direccion, tipo, contenido,
-                     message_id_meta, estado)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (message_id_meta) DO NOTHING;
-                    """,
                     (
                         usuario_id,
                         telefono,
-                        "recibido",
+                        direccion,
                         tipo,
                         contenido,
+                        media_url,
+                        message_id_meta,
+                        estado
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (message_id_meta) DO NOTHING;
+                    """,
+                    (
+                        usuario_id,        # Puede ser NULL
+                        telefono,
+                        "inbound",
+                        tipo,
+                        contenido,
+                        media_url,
                         message_id_meta,
                         "received",
                     )
