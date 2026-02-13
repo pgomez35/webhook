@@ -189,58 +189,9 @@ def guardar_link_tiktok_live(creador_id, url_tiktok):
 #     return False  # Simulamos que está dentro para pruebas
 
 from datetime import datetime, timedelta, timezone
-
-
 # Asegúrate de importar tu gestor de conexión
 # from .db_config import get_connection_context
 
-
-def obtener_status_24hrs(telefono):
-    """
-    Verifica si el número tiene una sesión de 24h activa (Ventana de Atención).
-    Retorna True si la ventana está ABIERTA.
-    Retorna False si la ventana está CERRADA.
-    """
-    try:
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-                # 1. Buscamos el último mensaje ENTRANTE (inbound) de ese teléfono
-                # Usamos la tabla 'test.whatsapp_messages' que me compartiste
-                query = """
-                        SELECT created_at
-                        FROM whatsapp_messages
-                        WHERE recipient = %s
-                          AND direction = 'inbound'
-                        ORDER BY created_at DESC LIMIT 1 \
-                        """
-                cur.execute(query, (telefono,))
-                row = cur.fetchone()
-
-                # CASO A: El usuario nunca ha escrito
-                if not row:
-                    # print(f"ℹ️ El usuario {telefono} no tiene historial. Ventana CERRADA.")
-                    return False
-
-                # CASO B: Calcular diferencia de tiempo
-                ultima_interaccion = row[0]
-
-                # Obtenemos la hora actual en UTC (porque tu tabla guarda con timezone)
-                ahora = datetime.now(timezone.utc)
-
-                diferencia = ahora - ultima_interaccion
-
-                # Verificamos si pasaron menos de 24 horas
-                if diferencia < timedelta(hours=24):
-                    # print(f"✅ Ventana ABIERTA (Restan: {24 - diferencia.total_seconds()/3600:.1f} horas)")
-                    return True
-                else:
-                    # print(f"⛔ Ventana CERRADA (Último msj hace: {diferencia.days} días)")
-                    return False
-
-    except Exception as e:
-        print(f"❌ Error consultando status 24hrs: {e}")
-        # Por seguridad, si falla la BD, asumimos ventana CERRADA para evitar bloqueos de Meta
-        return False
 
 # --- FUNCIONES LÓGICAS ---
 
@@ -927,6 +878,7 @@ async def _handle_statuses(statuses, tenant_name, phone_number_id, token_access,
             print(f"⚠️ Error procesando status individual: {e}")
             traceback.print_exc()
 
+
 def actualizar_mensaje_desde_status(
     tenant: str,
     phone_number_id: str,
@@ -935,61 +887,40 @@ def actualizar_mensaje_desde_status(
     raw_payload: dict,
 ) -> None:
     """
-    Actualiza el estado de un mensaje en la BD basado en el webhook de status.
-
-    - tenant: tenant/subdominio (ej: 'pruebas', 'prestige')
-    - phone_number_id: phone_number_id WABA
-    - display_phone_number: número de negocio
-    - status_obj: dict del status individual (de value["statuses"][i])
-    - raw_payload: el bloque "value" completo o el status_obj
+    Actualiza el estado de un mensaje en test.mensajes_whatsapp
+    usando message_id_meta.
     """
     try:
         message_id = status_obj.get("id")
         status = status_obj.get("status")
-        recipient_id = status_obj.get("recipient_id")
         timestamp = status_obj.get("timestamp")
 
-        error = (status_obj.get("errors") or [None])[0]  # primer error o None
-
-        error_code = error.get("code") if error else None
-        error_title = error.get("title") if error else None
-        error_message = error.get("message") if error else None
-        error_details = (error.get("error_data") or {}).get("details") if error else None
+        if not message_id:
+            print("⚠️ Status sin message_id_meta, se ignora.")
+            return
 
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    UPDATE whatsapp_messages
+                    UPDATE mensajes_whatsapp
                     SET
-                        status = %s,
-                        error_code = %s,
-                        error_title = %s,
-                        error_message = %s,
-                        error_details = %s,
-                        raw_payload = %s,
-                        updated_at = NOW(),
-                        last_status_at = TO_TIMESTAMP(%s)
-                    WHERE message_id = %s
-                      AND tenant = %s;
+                        estado = %s,
+                        fecha = TO_TIMESTAMP(%s)
+                    WHERE message_id_meta = %s;
                     """,
                     (
                         status,
-                        error_code,
-                        error_title,
-                        error_message,
-                        error_details,
-                        json.dumps(raw_payload),
                         int(timestamp) if timestamp else None,
                         message_id,
-                        tenant,
                     ),
                 )
-        print(f"📊 Status actualizado para mensaje {message_id}: {status}")
-    except Exception as e:
-        print(f"❌ Error al actualizar status del mensaje {status_obj.get('id', 'unknown')}: {e}")
-        traceback.print_exc()
 
+        print(f"📊 Status actualizado para mensaje {message_id}: {status}")
+
+    except Exception as e:
+        print(f"❌ Error actualizando status {status_obj.get('id', 'unknown')}: {e}")
+        traceback.print_exc()
 
 async def _procesar_error_envio(status_obj, tenant, phone_id, token):
     """

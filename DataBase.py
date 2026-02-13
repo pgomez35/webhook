@@ -421,6 +421,45 @@ def actualizar_contacto_info_db(telefono: str, datos: ActualizacionContactoInfo)
         traceback.print_exc()
         return {"status": "error", "mensaje": str(e)}
 
+def obtener_contactos_db_nueva():
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+
+                cur.execute("""
+                    SELECT a.usuario,
+                           a.nickname,
+                           a.nombre_real AS nombre,
+                           a.whatsapp AS telefono,
+                           b.nombre AS estado
+                    FROM creadores a
+                    INNER JOIN estados_creador b ON a.estado_id = b.id
+                    WHERE a.whatsapp IS NOT NULL
+                      AND a.whatsapp != ''
+                      AND a.estado_id IN (1,2,3,4,5)  -- solo proceso activo
+                    ORDER BY a.usuario ASC
+                """)
+
+                contactos = [
+                    {
+                        "usuario": row[0],
+                        "nickname": row[1],
+                        "nombre": row[2],
+                        "telefono": row[3],
+                        "estado": row[4]
+                    }
+                    for row in cur.fetchall()
+                ]
+
+                return contactos
+
+    except Exception as e:
+        print(f"❌ Error obteniendo contactos: {e}")
+        traceback.print_exc()
+        return []
+
+
+
 def obtener_contactos_db(estado: Optional[str] = None):
     try:
         tenant_actual = current_tenant.get()
@@ -468,6 +507,63 @@ def obtener_contactos_db(estado: Optional[str] = None):
         print(f"❌ Error inesperado obteniendo contactos: {e}")
         traceback.print_exc()
         return {"status": "error", "mensaje": str(e)}
+
+
+def guardar_mensaje_nuevo(
+    telefono,
+    contenido=None,
+    direccion="recibido",
+    tipo="texto",
+    media_url=None,
+    message_id_meta=None,
+    estado="sent"
+):
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+
+                # Buscar usuario
+                cur.execute(
+                    "SELECT id FROM creadores WHERE telefono = %s",
+                    (telefono,)
+                )
+                usuario = cur.fetchone()
+
+                if not usuario:
+                    cur.execute(
+                        "INSERT INTO creadores (telefono) VALUES (%s) RETURNING id",
+                        (telefono,)
+                    )
+                    usuario_id = cur.fetchone()[0]
+                else:
+                    usuario_id = usuario[0]
+
+                # Insertar mensaje en NUEVA tabla
+                cur.execute("""
+                    INSERT INTO test.mensajes_whatsapp
+                    (usuario_id, telefono, direccion, tipo, contenido,
+                     media_url, message_id_meta, estado)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    usuario_id,
+                    telefono,
+                    direccion,
+                    tipo,
+                    contenido,
+                    media_url,
+                    message_id_meta,
+                    estado
+                ))
+
+                conn.commit()
+
+        print("✅ Mensaje guardado correctamente.")
+
+    except Exception as e:
+        print(f"❌ Error guardando mensaje: {e}")
+        traceback.print_exc()
+
+
 
 
 def guardar_mensaje(telefono, texto, tipo="recibido", es_audio=False):
@@ -598,7 +694,45 @@ def obtener_contactos():
         traceback.print_exc()
         return []
 
+
 def obtener_mensajes(telefono):
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT contenido,
+                           direccion,
+                           tipo,
+                           fecha
+                    FROM test.mensajes_whatsapp
+                    WHERE telefono = %s
+                    ORDER BY fecha ASC
+                """, (telefono,))
+
+                mensajes = cur.fetchall()
+
+                return [
+                    {
+                        "contenido": contenido,
+                        # 🔁 El front espera que "tipo" sea enviado/recibido
+                        "tipo": direccion,
+                        "fecha": fecha.isoformat(),
+                        # 🔊 Derivado del nuevo campo tipo
+                        "es_audio": True if tipo == "audio" else False
+                    }
+                    for contenido, direccion, tipo, fecha in mensajes
+                ]
+
+    except Exception as e:
+        print(f"❌ Error obteniendo mensajes: {e}")
+        traceback.print_exc()
+        return []
+
+
+
+
+
+def obtener_mensajesV0(telefono):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:

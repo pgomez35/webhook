@@ -2833,103 +2833,66 @@ def consolidar_perfil_webV1(data: ConsolidarInput):
 # ============================
 # REGISTRO DE MENSAJES ENTRANTES
 # ============================
+
 def registrar_mensaje_recibido(
-    tenant: str,
-    phone_number_id: str,
-    display_phone_number: str,
-    wa_id: str,
-    message_id: str,
-    content: Optional[str] = None,
-    raw_payload: Optional[dict] = None,
+    telefono: str,
+    message_id_meta: str,
+    tipo: str,
+    contenido: str = None,
 ) -> None:
     """
-    Registra en BD:
-    1️⃣ Tabla técnica whatsapp_messages
-    2️⃣ Tabla funcional mensajes (para UI del chat)
+    Guarda mensaje inbound en mensajes_whatsapp
     """
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
 
-                # ----------------------------------------
-                # 1️⃣ Insert técnico (log WABA)
-                # ----------------------------------------
+                # Buscar o crear creador
+                cur.execute(
+                    "SELECT id FROM creadores WHERE telefono = %s",
+                    (telefono,)
+                )
+                usuario = cur.fetchone()
+
+                if not usuario:
+                    cur.execute(
+                        "INSERT INTO creadores (telefono) VALUES (%s) RETURNING id",
+                        (telefono,)
+                    )
+                    usuario_id = cur.fetchone()[0]
+                else:
+                    usuario_id = usuario[0]
+
+                # Detectar si es audio
+                es_audio = tipo == "audio"
+
+                # Insertar en tu tabla real
                 cur.execute(
                     """
-                    INSERT INTO whatsapp_messages (
-                        tenant,
-                        phone_number_id,
-                        display_phone_number,
-                        recipient,
-                        message_id,
-                        direction,
-                        content,
-                        status,
-                        raw_payload,
-                        last_status_at
-                    )
-                    VALUES (%s, %s, %s, %s, %s, 'inbound', %s, 'received', %s, NOW())
-                    ON CONFLICT (message_id) DO NOTHING;
+                    INSERT INTO mensajes_whatsapp
+                    (usuario_id, telefono, direccion, tipo, contenido,
+                     message_id_meta, estado)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (message_id_meta) DO NOTHING;
                     """,
                     (
-                        tenant,
-                        phone_number_id,
-                        display_phone_number,
-                        wa_id,
-                        message_id,
-                        content,
-                        json.dumps(raw_payload) if raw_payload else None,
-                    ),
-                )
-
-                # ----------------------------------------
-                # 2️⃣ Buscar creador_id por wa_id
-                # ----------------------------------------
-                cur.execute(
-                    """
-                    SELECT id
-                    FROM creadores
-                    WHERE telefono = %s
-                    LIMIT 1
-                    """,
-                    (wa_id,),
-                )
-                row = cur.fetchone()
-
-                if row:
-                    creador_id = row[0]
-
-                    # ----------------------------------------
-                    # 3️⃣ Insert en tabla mensajes (UI)
-                    # ----------------------------------------
-                    cur.execute(
-                        """
-                        INSERT INTO mensajes (
-                            usuario_id,
-                            contenido,
-                            tipo,
-                            es_audio
-                        )
-                        VALUES (%s, %s, 'recibido', %s)
-                        """,
-                        (
-                            creador_id,
-                            content,
-                            False,
-                        ),
+                        usuario_id,
+                        telefono,
+                        "recibido",
+                        tipo,
+                        contenido,
+                        message_id_meta,
+                        "received",
                     )
-                else:
-                    print(f"⚠️ No se encontró creador para wa_id={wa_id}")
+                )
 
             conn.commit()
 
-        print(f"📥 Mensaje inbound registrado correctamente: {message_id}")
+        print(f"📥 Mensaje inbound registrado correctamente: {message_id_meta}")
 
     except Exception as e:
-        print(f"❌ Error al registrar mensaje inbound {message_id}: {e}")
+        print(f"❌ Error al registrar mensaje inbound {message_id_meta}: {e}")
         traceback.print_exc()
-
-
 
 
 def registrar_mensaje_recibidoV0(
@@ -4635,7 +4598,6 @@ def _normalizar_entrada_whatsapp(mensaje):
 
     return tipo, texto, payload
 
-
 @router.post("/webhook")
 async def whatsapp_webhook(request: Request):
     data = await request.json()
@@ -4699,6 +4661,215 @@ async def whatsapp_webhook(request: Request):
 
 
 async def _procesar_mensaje_unico(mensaje, tenant_name, phone_number_id, token):
+    """
+    Orquestador principal:
+    1. Normaliza
+    2. Registra mensaje
+    3. Onboarding (nuevo usuario)
+    4. Flujo Aspirante
+    5. Flujo General
+    """
+
+    wa_id = mensaje.get("from")
+
+    # ---------------------------------------------------------
+    # A. NORMALIZACIÓN
+    # ---------------------------------------------------------
+    tipo, texto, payload_id = _normalizar_entrada_whatsapp(mensaje)
+    texto_lower = (texto or "").lower()
+
+    # ---------------------------------------------------------
+    # B. LOG EN BD
+    # ---------------------------------------------------------
+    try:
+        registrar_mensaje_recibido(
+            telefono=wa_id,
+            message_id_meta=mensaje.get("id"),
+            tipo=tipo,
+            contenido=f"{texto or ''} {payload_id or ''}".strip()
+        )
+    except Exception as e:
+        print(f"⚠️ Log Error (No crítico): {e}")
+
+    # ---------------------------------------------------------
+    # C. ONBOARDING (PRIMERO)
+    # ---------------------------------------------------------
+    paso = obtener_flujo(wa_id)
+    usuario_bd = buscar_usuario_por_telefono(wa_id)
+
+    if not usuario_bd:
+        resultado = _process_new_user_onboarding(
+            mensaje=mensaje,
+            numero=wa_id,
+            texto=texto,
+            texto_lower=texto_lower,
+            payload=payload_id,
+            paso=paso,
+            tenant_name=tenant_name,
+            phone_id=phone_number_id,
+            token=token
+        )
+
+        if resultado:
+            return
+
+    # ---------------------------------------------------------
+    # D. FLUJO ASPIRANTE
+    # ---------------------------------------------------------
+    try:
+        procesado_aspirante = procesar_flujo_aspirante(
+            tenant=tenant_name,
+            phone_number_id=phone_number_id,
+            wa_id=wa_id,
+            tipo=tipo,
+            texto=texto,
+            payload_id=payload_id
+        )
+
+        if procesado_aspirante:
+            return
+
+    except Exception as e:
+        print(f"❌ Error flujo aspirante: {e}")
+
+    # ---------------------------------------------------------
+    # E. FLUJO GENERAL
+    # ---------------------------------------------------------
+    _process_single_message(mensaje, tenant_name)
+
+
+
+
+
+# @router.post("/webhook")
+# async def whatsapp_webhook(request: Request):
+#     data = await request.json()
+#
+#     try:
+#         webhook_data = _extract_webhook_data(data)
+#         if not webhook_data:
+#             return {"status": "ok"}
+#
+#         entry = webhook_data.get("entry")
+#         change = webhook_data.get("change")
+#         value = webhook_data.get("value")
+#         field = webhook_data.get("field")
+#         event = webhook_data.get("event")
+#
+#         # 1. account_update (NO usa tenant ni phone_number_id)
+#         if field == "account_update":
+#             return _handle_account_update_event(
+#                 entry=entry,
+#                 change=change,
+#                 value=value,
+#                 event=event
+#             )
+#
+#         # 2. Contexto tenant
+#         metadata = value.get("metadata", {})
+#         phone_number_id = metadata.get("phone_number_id")
+#
+#         cuenta_info = _setup_tenant_context(phone_number_id)
+#         if not cuenta_info:
+#             return {"status": "ignored"}
+#
+#         tenant_name = cuenta_info["tenant_name"]
+#         token_access = cuenta_info["access_token"]
+#
+#         # 3. Statuses (SIN return)
+#         statuses = value.get("statuses", [])
+#         if statuses:
+#             await _handle_statuses(
+#                 statuses=statuses,
+#                 tenant_name=tenant_name,
+#                 phone_number_id=phone_number_id,
+#                 token_access=token_access,
+#                 raw_payload=value
+#             )
+#
+#         # 4. Mensajes
+#         for mensaje in value.get("messages", []):
+#             await _procesar_mensaje_unico(
+#                 mensaje,
+#                 phone_number_id,
+#                 token_access
+#             )
+#
+#     except Exception as e:
+#         print("❌ Error webhook:", e)
+#         traceback.print_exc()
+#
+#     return {"status": "ok"}
+#
+#
+# async def _procesar_mensaje_unico(mensaje, phone_number_id, token):
+#
+#     wa_id = mensaje.get("from")
+#
+#     # ---------------------------------------------------------
+#     # A. NORMALIZACIÓN
+#     # ---------------------------------------------------------
+#     tipo, texto, payload_id = _normalizar_entrada_whatsapp(mensaje)
+#     texto_lower = (texto or "").lower()
+#
+#     # ---------------------------------------------------------
+#     # B. LOG EN BD (tabla real)
+#     # ---------------------------------------------------------
+#     try:
+#         registrar_mensaje_recibido(
+#             telefono=wa_id,
+#             message_id_meta=mensaje.get("id"),
+#             tipo=tipo,
+#             contenido=f"{texto or ''} {payload_id or ''}".strip()
+#         )
+#     except Exception as e:
+#         print(f"⚠️ Log Error (No crítico): {e}")
+#
+#     # ---------------------------------------------------------
+#     # C. ONBOARDING
+#     # ---------------------------------------------------------
+#     paso = obtener_flujo(wa_id)
+#     usuario_bd = buscar_usuario_por_telefono(wa_id)
+#
+#     if not usuario_bd:
+#         resultado = _process_new_user_onboarding(
+#             mensaje=mensaje,
+#             numero=wa_id,
+#             texto=texto,
+#             texto_lower=texto_lower,
+#             payload=payload_id,
+#             paso=paso,
+#             phone_id=phone_number_id,
+#             token=token
+#         )
+#
+#         if resultado:
+#             return
+#
+#     # ---------------------------------------------------------
+#     # D. FLUJO ASPIRANTE
+#     # ---------------------------------------------------------
+#     try:
+#         procesado_aspirante = procesar_flujo_aspirante(
+#             wa_id=wa_id,
+#             tipo=tipo,
+#             texto=texto,
+#             payload_id=payload_id
+#         )
+#
+#         if procesado_aspirante:
+#             return
+#
+#     except Exception as e:
+#         print(f"❌ Error flujo aspirante: {e}")
+#
+#     # ---------------------------------------------------------
+#     # E. FLUJO GENERAL
+#     # ---------------------------------------------------------
+#     _process_single_message(mensaje)
+
+
+async def _procesar_mensaje_unicoV0(mensaje, tenant_name, phone_number_id, token):
     """
     Orquestador principal:
     1. Normaliza

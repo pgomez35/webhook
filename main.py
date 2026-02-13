@@ -79,6 +79,7 @@ from main_chatbot_estados_aspirante import router as chatbot_estados_aspirante_r
 from main_auth import router as main_auth_router
 from main_diagnostico import router as diagnostico_router
 from main_configuracionAgencias import router as bienvenida_router
+from main_mensajeria_whatsapp import router as main_mensajeria_whatsapp_router
 
 # ⚙️ Inicializar FastAPI
 app = FastAPI()
@@ -115,14 +116,19 @@ app.include_router(utils_aspirantes_router, tags=["utils aspirantes"])
 app.include_router(chatbot_estados_aspirante_router, tags=["chatbot estados aspirante"])
 app.include_router(diagnostico_router, tags=["diagnostico"])
 app.include_router(bienvenida_router, tags=["bienvenida"])
+app.include_router(main_mensajeria_whatsapp_router, tags=["mensajeria whatsapp"])
 
 
-# ✅ Crear carpeta persistente de audios si no existe
-AUDIO_DIR = "audios"
-os.makedirs(AUDIO_DIR, exist_ok=True)
+# # ✅ Crear carpeta persistente de audios si no existe
+# AUDIO_DIR = "audios"
+# os.makedirs(AUDIO_DIR, exist_ok=True)
+#
+# # ✅ Montar ruta para servir archivos estáticos desde /audios
+# app.mount("/audios", StaticFiles(directory=AUDIO_DIR), name="audios")
 
-# ✅ Montar ruta para servir archivos estáticos desde /audios
-app.mount("/audios", StaticFiles(directory=AUDIO_DIR), name="audios")
+from utils import AUDIO_DIR
+from fastapi.staticfiles import StaticFiles
+
 
 # ✅ Configurar correctamente CORS
 app.add_middleware(
@@ -1229,17 +1235,7 @@ def descargar_audio(audio_id, token, carpeta_destino=AUDIO_DIR):
 def actualizar_contacto_info(telefono: str = Path(...), datos: ActualizacionContactoInfo = Body(...)):
     return actualizar_contacto_info_db(telefono, datos)
 
-@app.get("/contactos")
-def listar_contactos(estado: Optional[str] = None, request: Request = None):
-    from tenant import current_tenant
-    tenant_actual = current_tenant.get()
-    print(f"🔍 [DEBUG /contactos] Tenant actual: {tenant_actual}")
-    if request:
-        print(f"🔍 [DEBUG /contactos] Request state tenant_name: {getattr(request.state, 'tenant_name', 'N/A')}")
-        print(f"🔍 [DEBUG /contactos] Request state agencia: {getattr(request.state, 'agencia', 'N/A')}")
-        print(f"🔍 [DEBUG /contactos] Request host: {request.headers.get('host', 'N/A')}")
-        print(f"🔍 [DEBUG /contactos] Request X-Tenant-Name: {request.headers.get('x-tenant-name', 'N/A')}")
-    return obtener_contactos_db(estado)
+
 
 # ✅ VERIFICACIÓN DEL WEBHOOK (Facebook Developers)
 @app.get("/webhook")
@@ -1378,97 +1374,93 @@ async def recibir_mensaje(request: Request):
 #         print("❌ Error procesando mensaje:", e)
 #         return JSONResponse({"error": str(e)}, status_code=500)
 
-@app.get("/mensajes/{telefono}")
-def listar_mensajes(telefono: str):
-    return obtener_mensajes(telefono)
 
 
 # from fastapi import Request
 # from fastapi.responses import JSONResponse
-from tenant import current_token, current_phone_id, current_business_name
-
-
-@app.post("/mensajes")
-async def api_enviar_mensaje(request: Request, data: dict):
-
-    telefono = data.get("telefono")
-    mensaje = data.get("mensaje")
-    nombre = data.get("nombre", "").strip()
-
-    if not telefono or not mensaje:
-        return JSONResponse({"error": "Faltan datos"}, status_code=400)
-
-    # ✅ Obtener credenciales desde contextvars (multitenant real)
-    TOKEN = current_token.get()
-    PHONE_NUMBER_ID = current_phone_id.get()
-    AGENCIA_NOMBRE = current_business_name.get()
-
-    if not TOKEN or not PHONE_NUMBER_ID:
-        return JSONResponse(
-            {"error": "Credenciales de WhatsApp no configuradas para este tenant"},
-            status_code=500
-        )
-
-    usuario_id = obtener_usuario_id_por_telefono(telefono)
-
-    # ======================================================
-    # FUERA DE VENTANA 24H → PLANTILLA reconexion_general_corta
-    # ======================================================
-
-    if usuario_id and paso_limite_24h(usuario_id):
-
-        print("⏱️ Usuario fuera de 24h. Enviando plantilla reconexion_general_corta")
-
-        plantilla = "reconexion_general_corta"
-
-        # {{1}} = nombre
-        # {{2}} = nombre agencia
-        parametros = [
-            nombre if nombre else "Hola",
-            AGENCIA_NOMBRE or "Nuestro equipo"
-        ]
-
-        codigo, respuesta_api = enviar_plantilla_generica(
-            token=TOKEN,
-            phone_number_id=PHONE_NUMBER_ID,
-            numero_destino=telefono,
-            nombre_plantilla=plantilla,
-            codigo_idioma="es_CO",
-            parametros=parametros
-        )
-
-        guardar_mensaje(
-            telefono,
-            f"[Plantilla reconexion_general_corta enviada: {parametros}]",
-            tipo="enviado"
-        )
-
-        return {
-            "status": "plantilla_auto",
-            "mensaje": "Se envió plantilla por estar fuera de ventana de 24h.",
-            "codigo_api": codigo,
-            "respuesta_api": respuesta_api
-        }
-
-    # ======================================================
-    # DENTRO DE VENTANA → MENSAJE NORMAL
-    # ======================================================
-
-    codigo, respuesta_api = enviar_mensaje_texto_simple(
-        token=TOKEN,
-        numero_id=PHONE_NUMBER_ID,
-        telefono_destino=telefono,
-        texto=mensaje
-    )
-
-    guardar_mensaje(telefono, mensaje, tipo="enviado")
-
-    return {
-        "status": "ok",
-        "mensaje": "Mensaje enviado correctamente",
-        "codigo_api": codigo,
-        "respuesta_api": respuesta_api
-    }
+# from tenant import current_token, current_phone_id, current_business_name
+#
+#
+# @app.post("/mensajes")
+# async def api_enviar_mensaje(request: Request, data: dict):
+#
+#     telefono = data.get("telefono")
+#     mensaje = data.get("mensaje")
+#     nombre = data.get("nombre", "").strip()
+#
+#     if not telefono or not mensaje:
+#         return JSONResponse({"error": "Faltan datos"}, status_code=400)
+#
+#     # ✅ Obtener credenciales desde contextvars (multitenant real)
+#     TOKEN = current_token.get()
+#     PHONE_NUMBER_ID = current_phone_id.get()
+#     AGENCIA_NOMBRE = current_business_name.get()
+#
+#     if not TOKEN or not PHONE_NUMBER_ID:
+#         return JSONResponse(
+#             {"error": "Credenciales de WhatsApp no configuradas para este tenant"},
+#             status_code=500
+#         )
+#
+#     usuario_id = obtener_usuario_id_por_telefono(telefono)
+#
+#     # ======================================================
+#     # FUERA DE VENTANA 24H → PLANTILLA reconexion_general_corta
+#     # ======================================================
+#
+#     if usuario_id and paso_limite_24h(usuario_id):
+#
+#         print("⏱️ Usuario fuera de 24h. Enviando plantilla reconexion_general_corta")
+#
+#         plantilla = "reconexion_general_corta"
+#
+#         # {{1}} = nombre
+#         # {{2}} = nombre agencia
+#         parametros = [
+#             nombre if nombre else "Hola",
+#             AGENCIA_NOMBRE or "Nuestro equipo"
+#         ]
+#
+#         codigo, respuesta_api = enviar_plantilla_generica(
+#             token=TOKEN,
+#             phone_number_id=PHONE_NUMBER_ID,
+#             numero_destino=telefono,
+#             nombre_plantilla=plantilla,
+#             codigo_idioma="es_CO",
+#             parametros=parametros
+#         )
+#
+#         guardar_mensaje(
+#             telefono,"Plantilla de reconexión enviada",
+#             tipo="enviado"
+#         )
+#
+#         return {
+#             "status": "plantilla_auto",
+#             "mensaje": "Se envió plantilla por estar fuera de ventana de 24h.",
+#             "codigo_api": codigo,
+#             "respuesta_api": respuesta_api
+#         }
+#
+#     # ======================================================
+#     # DENTRO DE VENTANA → MENSAJE NORMAL
+#     # ======================================================
+#
+#     codigo, respuesta_api = enviar_mensaje_texto_simple(
+#         token=TOKEN,
+#         numero_id=PHONE_NUMBER_ID,
+#         telefono_destino=telefono,
+#         texto=mensaje
+#     )
+#
+#     guardar_mensaje(telefono, mensaje, tipo="enviado")
+#
+#     return {
+#         "status": "ok",
+#         "mensaje": "Mensaje enviado correctamente",
+#         "codigo_api": codigo,
+#         "respuesta_api": respuesta_api
+#     }
 
 
 
@@ -1519,7 +1511,8 @@ async def api_enviar_mensajeV0(data: dict):
     }
 
 
-@app.post("/mensajes/audio")
+
+@router.post("/mensajes/audio")
 async def api_enviar_audio(telefono: str = Form(...), audio: UploadFile = Form(...)):
     filename_webm = f"{telefono}_{int(datetime.now().timestamp())}.webm"
     ruta_webm = os.path.join(AUDIO_DIR, filename_webm)
@@ -1568,6 +1561,7 @@ async def api_enviar_audio(telefono: str = Form(...), audio: UploadFile = Form(.
         "codigo_api": codigo,
         "respuesta_api": respuesta_api
     }
+
 
 
 # con Drive
