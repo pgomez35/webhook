@@ -1180,7 +1180,47 @@ def obtener_configuracion_texto(clave, valor_por_defecto="Información no dispon
         print(f"❌ Error leyendo configuración ({clave}): {e}")
         return valor_por_defecto
 
+def obtener_status_24hrs(telefono):
+    """
+    Verifica si el número tiene una sesión de 24h activa (Ventana de Atención).
+    Retorna True si la ventana está ABIERTA.
+    Retorna False si la ventana está CERRADA.
+    """
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                # 1. Buscamos el último mensaje ENTRANTE (inbound) de ese teléfono
+                # Usamos la tabla 'test.mensajes_whatsapp'
+                query = """
+                    SELECT fecha
+                    FROM mensajes_whatsapp
+                    WHERE telefono = %s
+                      AND direccion = 'recibido'
+                    ORDER BY fecha DESC
+                    LIMIT 1
+                """
+                cur.execute(query, (telefono,))
+                row = cur.fetchone()
 
+                # CASO A: El usuario nunca ha escrito
+                if not row:
+                    return False
+
+                # CASO B: Calcular diferencia de tiempo
+                ultima_interaccion = row[0]  # TIMESTAMPTZ
+
+                # Obtenemos la hora actual en UTC
+                ahora = datetime.now(timezone.utc)
+
+                diferencia = ahora - ultima_interaccion
+
+                # Verificamos si pasaron menos de 24 horas
+                return diferencia < timedelta(hours=24)
+
+    except Exception as e:
+        print(f"❌ Error consultando status 24hrs: {e}")
+        # Por seguridad, si falla la BD, asumimos ventana CERRADA para evitar bloqueos de Meta
+        return False
 
 # def Enviar_menu_quickreply(creador_id, estado_evaluacion, phone_id, token, telefono):
 #     """
