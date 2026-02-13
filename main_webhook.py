@@ -4697,6 +4697,15 @@ async def _procesar_mensaje_unico(mensaje, tenant_name, phone_number_id, token):
     paso = obtener_flujo(wa_id)
     usuario_bd = buscar_usuario_por_telefono(wa_id)
 
+    print(
+        f"🧾 [DEBUG USER LOOKUP] "
+        f"tenant={tenant_name} | "
+        f"wa_id={wa_id} | "
+        f"usuario_encontrado={'SI' if usuario_bd else 'NO'} | "
+        f"id={usuario_bd.get('id') if usuario_bd else None} | "
+        f"onboarding_completado={usuario_bd.get('onboarding_completado') if usuario_bd else None}"
+    )
+
     if not usuario_bd:
         resultado = _process_new_user_onboarding(
             mensaje=mensaje,
