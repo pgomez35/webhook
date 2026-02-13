@@ -91,6 +91,58 @@ usuarios_temp = {}  # ⚠️ Fallback a memoria si Redis falla (solo para datos 
 # ENVIAR MENSAJES INICIO
 # ============================
 
+
+import traceback
+from typing import Optional
+
+# ✅ NUEVA: no depende de ContextVar (segura para BackgroundTasks)
+def enviar_mensaje_con_credenciales(
+    numero: str,
+    texto: str,
+    token: str,
+    phone_id: str,
+):
+    try:
+        # Validar entrada
+        if not numero or not numero.strip():
+            raise ValueError("Número de teléfono no puede estar vacío")
+        if not texto or not texto.strip():
+            raise ValueError("Texto del mensaje no puede estar vacío")
+        if not token or not token.strip():
+            raise ValueError("Token no puede estar vacío")
+        if not phone_id or not phone_id.strip():
+            raise ValueError("Phone ID no puede estar vacío")
+
+        token_safe = f"...{token[-6:]}"
+        phone_id_safe = f"...{phone_id[-6:]}"
+        print(f"🔐 Token usado: {token_safe}")
+        print(f"📱 Phone ID usado: {phone_id_safe}")
+
+        return enviar_mensaje_texto_simple(
+            token=token.strip(),
+            numero_id=phone_id.strip(),
+            telefono_destino=numero.strip(),
+            texto=texto.strip(),
+        )
+
+    except Exception as e:
+        print(f"❌ Error enviando mensaje a {numero}: {e}")
+        traceback.print_exc()
+        raise
+
+
+# ✅ Wrapper opcional: mantiene compatibilidad con tu código actual (sin tocar todo)
+def enviar_mensaje(numero: str, texto: str):
+    try:
+        token = current_token.get()
+        phone_id = current_phone_id.get()
+        return enviar_mensaje_con_credenciales(numero, texto, token, phone_id)
+    except LookupError as e:
+        print(f"❌ Contexto de tenant no disponible al enviar mensaje a {numero}: {e}")
+        raise
+
+
+
 def enviar_mensaje(numero: str, texto: str):
 
     try:
@@ -2599,9 +2651,12 @@ def lap(tag):
     print(f"⏱️ [CONSOLIDAR] {tag}: {(t - t0)*1000:.0f} ms")
     return t
 
+from fastapi import BackgroundTasks
 
 @router.post("/consolidar")
-def consolidar_perfil_web(data: ConsolidarInput):
+def consolidar_perfil_web(data: ConsolidarInput,
+    background_tasks: BackgroundTasks   # 👈 ESTE ES EL QUE FALTA
+ ):
     try:
 
         lap("inicio")
@@ -2729,7 +2784,15 @@ def consolidar_perfil_web(data: ConsolidarInput):
             nombre=nombre_usuario,
             url_info=url_info
         )
-        enviar_mensaje(data.numero, mensaje_final)
+        # enviar_mensaje(data.numero, mensaje_final)
+
+        background_tasks.add_task(
+            enviar_mensaje_con_credenciales,
+            data.numero,
+            mensaje_final,
+            token_cliente,
+            phone_id_cliente
+        )
 
         lap("enviar_whatsapp")
 
