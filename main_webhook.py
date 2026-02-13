@@ -2643,13 +2643,13 @@ async def api_enviar_solicitar_informacion(data: dict):
         traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
 
-import time
+t = time.perf_counter()
 
-t0 = time.perf_counter()
-def lap(tag):
-    t = time.perf_counter()
-    print(f"⏱️ [CONSOLIDAR] {tag}: {(t - t0)*1000:.0f} ms")
-    return t
+def lap(tag: str):
+    nonlocal t
+    now = time.perf_counter()
+    print(f"⏱️ [CONSOLIDAR] {tag}: {(now - t)*1000:.1f} ms")
+    t = now
 
 from fastapi import BackgroundTasks
 
@@ -2794,7 +2794,7 @@ def consolidar_perfil_web(data: ConsolidarInput,
             phone_id_cliente
         )
 
-        lap("enviar_whatsapp")
+        lap("enqueue_whatsapp")
 
 
         print(f"✅ Perfil consolidado y mensaje enviado a {data.numero}")
