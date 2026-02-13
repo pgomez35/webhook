@@ -2591,10 +2591,21 @@ async def api_enviar_solicitar_informacion(data: dict):
         traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
 
+import time
+
+t0 = time.perf_counter()
+def lap(tag):
+    t = time.perf_counter()
+    print(f"⏱️ [CONSOLIDAR] {tag}: {(t - t0)*1000:.0f} ms")
+    return t
+
 
 @router.post("/consolidar")
 def consolidar_perfil_web(data: ConsolidarInput):
     try:
+
+        lap("inicio")
+
         subdominio = current_tenant.get()
         cuenta = obtener_cuenta_por_subdominio(subdominio)
         if not cuenta:
@@ -2642,7 +2653,12 @@ def consolidar_perfil_web(data: ConsolidarInput):
             respuestas_dict=respuestas_dict,
             tenant_schema=subdominio
         )
+
+        lap("consolidar_perfil")
+
         eliminar_flujo(data.numero, tenant_schema=subdominio)
+
+        lap("eliminar_flujo")
 
         # -------------------------------
         # Datos del usuario
@@ -2661,6 +2677,8 @@ def consolidar_perfil_web(data: ConsolidarInput):
         # -------------------------------
         marcar_encuesta_completada(data.numero)
 
+        lap("marcar_encuesta_completada")
+
         # -------------------------------
         # Actualizar Puntajes para el diagnostico
         # -------------------------------
@@ -2673,11 +2691,19 @@ def consolidar_perfil_web(data: ConsolidarInput):
                 # 1) calcula y guarda puntajes (tu función)
                 evaluar_y_actualizar_perfil_pre_encuesta(creador_id)
 
+                lap("evaluar_y_actualizar")
+
+
                 # 2) genera diagnóstico (usa DB y/o puntajes calculados)
                 diag = diagnostico_perfil_creador_pre(creador_id)
 
+                lap("diagnostico")
+
+
                 # 3) guardar diagnóstico en perfil_creador
                 guardar_diagnostico_perfil_creador(creador_id, diag)
+
+                lap("guardar_diagnostico")
 
             else:
                 print(f"⚠️ No se pudo evaluar/diagnosticar: creador_id no encontrado para {data.numero}")
@@ -2704,6 +2730,9 @@ def consolidar_perfil_web(data: ConsolidarInput):
             url_info=url_info
         )
         enviar_mensaje(data.numero, mensaje_final)
+
+        lap("enviar_whatsapp")
+
 
         print(f"✅ Perfil consolidado y mensaje enviado a {data.numero}")
 
