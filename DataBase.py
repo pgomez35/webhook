@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from schemas import ActualizacionContactoInfo
 from psycopg2.extras import RealDictCursor
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional, List, Dict
 from contextlib import contextmanager
 
@@ -352,8 +352,8 @@ def paso_limite_24h(usuario_id: int):
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT fecha FROM mensajes
-                    WHERE usuario_id = %s AND tipo = 'recibido'
+                    SELECT fecha FROM mensajes_whatsapp
+                    WHERE usuario_id = %s AND direccion = 'recibido'
                     ORDER BY fecha DESC
                     LIMIT 1
                 """, (usuario_id,))
@@ -365,7 +365,7 @@ def paso_limite_24h(usuario_id: int):
                     return True
 
                 ultima_fecha = resultado[0]
-                ahora = datetime.utcnow()
+                ahora = datetime.now(timezone.utc)
                 diferencia = ahora - ultima_fecha
 
                 return diferencia > timedelta(hours=24)
