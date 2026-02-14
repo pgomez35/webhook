@@ -2643,13 +2643,14 @@ async def api_enviar_solicitar_informacion(data: dict):
         traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
 
-t = time.perf_counter()
+import time
+
+tbox = {"t": time.perf_counter()}
 
 def lap(tag: str):
-    nonlocal t
     now = time.perf_counter()
-    print(f"⏱️ [CONSOLIDAR] {tag}: {(now - t)*1000:.1f} ms")
-    t = now
+    print(f"⏱️ [CONSOLIDAR] {tag}: {(now - tbox['t'])*1000:.1f} ms")
+    tbox["t"] = now
 
 from fastapi import BackgroundTasks
 
