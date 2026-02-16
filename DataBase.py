@@ -713,7 +713,7 @@ def obtener_mensajes(telefono):
                            direccion,
                            tipo,
                            fecha
-                    FROM test.mensajes_whatsapp
+                    FROM mensajes_whatsapp
                     WHERE telefono = %s
                     ORDER BY fecha ASC
                 """, (telefono,))

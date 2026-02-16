@@ -226,6 +226,100 @@ async def api_enviar_audio(
         "codigo_api": codigo
     }
 
+@router.post("/mensajes/imagen")
+async def api_enviar_imagen(
+    telefono: str = Form(...),
+    imagen: UploadFile = Form(...)
+):
+    TOKEN = current_token.get()
+    PHONE_NUMBER_ID = current_phone_id.get()
+
+    if not TOKEN or not PHONE_NUMBER_ID:
+        return {"status": "error", "mensaje": "Credenciales no disponibles"}
+
+    timestamp = int(datetime.now().timestamp())
+    filename = f"{telefono}_{timestamp}_{imagen.filename}"
+
+    ruta_imagen = os.path.join(AUDIO_DIR, filename)
+
+    os.makedirs(AUDIO_DIR, exist_ok=True)
+
+    # Guardar archivo original
+    imagen_bytes = await imagen.read()
+    with open(ruta_imagen, "wb") as f:
+        f.write(imagen_bytes)
+
+    # Subir a Cloudinary
+    url_cloudinary = subir_audio_cloudinary(   # 👈 si tienes función genérica mejor
+        ruta_imagen,
+        public_id=filename.split(".")[0]
+    )
+
+    if not url_cloudinary:
+        return {"status": "error", "mensaje": "Error subiendo a Cloudinary"}
+
+    # 🔥 Enviar primero a WhatsApp
+    try:
+        codigo, respuesta_api = enviar_imagen_link(
+            token=TOKEN,
+            numero_id=PHONE_NUMBER_ID,
+            telefono_destino=telefono,
+            url_imagen=url_cloudinary
+        )
+    except Exception as e:
+        return {
+            "status": "error",
+            "mensaje": "Error enviando a WhatsApp",
+            "error": str(e)
+        }
+
+    # 🔥 Guardar SOLO si envío fue exitoso
+    if codigo == 200:
+        message_id_meta = respuesta_api.get("messages", [{}])[0].get("id")
+
+        guardar_mensaje_nuevo(
+            telefono=telefono,
+            contenido=url_cloudinary,
+            direccion="enviado",
+            tipo="image",
+            media_url=url_cloudinary,
+            message_id_meta=message_id_meta,
+            estado="sent"
+        )
+
+    return {
+        "status": "ok",
+        "url_cloudinary": url_cloudinary,
+        "codigo_api": codigo
+    }
+
+def enviar_imagen_link(
+    token,
+    numero_id,
+    telefono_destino,
+    url_imagen
+):
+    url = f"https://graph.facebook.com/v19.0/{numero_id}/messages"
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    data = {
+        "messaging_product": "whatsapp",
+        "to": telefono_destino,
+        "type": "image",
+        "image": {
+            "link": url_imagen
+        }
+    }
+
+    response = requests.post(url, headers=headers, json=data)
+
+    return response.status_code, response.json()
+
+
 
 @router.post("/mensajes/audioV16022026")
 async def api_enviar_audioV6022026(
