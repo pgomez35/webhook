@@ -3,15 +3,16 @@ import os
 import subprocess
 from typing import Optional
 
-from fastapi import APIRouter, Form, UploadFile
+from fastapi import APIRouter, Form, UploadFile, requests
 from starlette.staticfiles import StaticFiles
 
 from DataBase import obtener_usuario_id_por_telefono, paso_limite_24h, guardar_mensaje, guardar_mensaje_nuevo, \
     obtener_mensajes, obtener_contactos_db, obtener_contactos_db_nueva
 from enviar_msg_wp import enviar_plantilla_generica, enviar_mensaje_texto_simple, enviar_audio_base64
-from tenant import current_token, current_phone_id, current_business_name
+from tenant import current_token, current_phone_id, current_business_name, current_tenant
 from fastapi.responses import JSONResponse, PlainTextResponse
-from fastapi import Request
+
+import requests
 
 from utils import AUDIO_DIR, subir_audio_cloudinary
 import os
@@ -231,34 +232,59 @@ async def api_enviar_imagen(
     telefono: str = Form(...),
     imagen: UploadFile = Form(...)
 ):
+    import os
+    from datetime import datetime
+    from fastapi import HTTPException
+
     TOKEN = current_token.get()
     PHONE_NUMBER_ID = current_phone_id.get()
+    TENANT = current_tenant.get()
 
     if not TOKEN or not PHONE_NUMBER_ID:
         return {"status": "error", "mensaje": "Credenciales no disponibles"}
 
+    # --------------------------------------------------
+    # 1️⃣ Validar tipo
+    # --------------------------------------------------
+    if imagen.content_type not in ["image/jpeg", "image/png", "image/jpg"]:
+        raise HTTPException(status_code=400, detail="Tipo de imagen no permitido")
+
+    # --------------------------------------------------
+    # 2️⃣ Guardar temporalmente
+    # --------------------------------------------------
     timestamp = int(datetime.now().timestamp())
     filename = f"{telefono}_{timestamp}_{imagen.filename}"
 
-    ruta_imagen = os.path.join(AUDIO_DIR, filename)
+    MEDIA_DIR = "temp_images"
+    os.makedirs(MEDIA_DIR, exist_ok=True)
 
-    os.makedirs(AUDIO_DIR, exist_ok=True)
+    ruta_imagen = os.path.join(MEDIA_DIR, filename)
 
-    # Guardar archivo original
-    imagen_bytes = await imagen.read()
     with open(ruta_imagen, "wb") as f:
-        f.write(imagen_bytes)
+        f.write(await imagen.read())
 
-    # Subir a Cloudinary
-    url_cloudinary = subir_audio_cloudinary(   # 👈 si tienes función genérica mejor
-        ruta_imagen,
-        public_id=filename.split(".")[0]
-    )
+    # --------------------------------------------------
+    # 3️⃣ Subir a Cloudinary como IMAGE
+    # --------------------------------------------------
+    try:
+        result = cloudinary.uploader.upload(
+            ruta_imagen,
+            folder=f"whatsapp/{TENANT}/images",
+            resource_type="image"
+        )
 
-    if not url_cloudinary:
-        return {"status": "error", "mensaje": "Error subiendo a Cloudinary"}
+        url_cloudinary = result.get("secure_url")
 
-    # 🔥 Enviar primero a WhatsApp
+    except Exception as e:
+        return {
+            "status": "error",
+            "mensaje": "Error subiendo imagen a Cloudinary",
+            "error": str(e)
+        }
+
+    # --------------------------------------------------
+    # 4️⃣ Enviar a WhatsApp
+    # --------------------------------------------------
     try:
         codigo, respuesta_api = enviar_imagen_link(
             token=TOKEN,
@@ -273,7 +299,9 @@ async def api_enviar_imagen(
             "error": str(e)
         }
 
-    # 🔥 Guardar SOLO si envío fue exitoso
+    # --------------------------------------------------
+    # 5️⃣ Guardar SOLO si fue exitoso
+    # --------------------------------------------------
     if codigo == 200:
         message_id_meta = respuesta_api.get("messages", [{}])[0].get("id")
 
@@ -286,6 +314,14 @@ async def api_enviar_imagen(
             message_id_meta=message_id_meta,
             estado="sent"
         )
+
+    # --------------------------------------------------
+    # 6️⃣ Borrar temporal
+    # --------------------------------------------------
+    try:
+        os.remove(ruta_imagen)
+    except:
+        pass
 
     return {
         "status": "ok",
@@ -318,7 +354,6 @@ def enviar_imagen_link(
     response = requests.post(url, headers=headers, json=data)
 
     return response.status_code, response.json()
-
 
 
 @router.post("/mensajes/audioV16022026")
