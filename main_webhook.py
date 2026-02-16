@@ -2982,7 +2982,7 @@ def registrar_mensaje_recibido(
                     (
                         usuario_id,        # Puede ser NULL
                         telefono,
-                        "inbound",
+                        "recibido",
                         tipo,
                         contenido,
                         media_url,
