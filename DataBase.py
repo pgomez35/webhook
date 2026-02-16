@@ -549,7 +549,7 @@ def guardar_mensaje_nuevo(
 
                 # Insertar mensaje en NUEVA tabla
                 cur.execute("""
-                    INSERT INTO test.mensajes_whatsapp
+                    INSERT INTO mensajes_whatsapp
                     (usuario_id, telefono, direccion, tipo, contenido,
                      media_url, message_id_meta, estado)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)

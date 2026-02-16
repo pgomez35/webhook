@@ -145,8 +145,90 @@ async def api_enviar_mensaje(request: Request, data: dict):
 
 from datetime import datetime
 
+
 @router.post("/mensajes/audio")
 async def api_enviar_audio(
+    telefono: str = Form(...),
+    audio: UploadFile = Form(...)
+):
+    TOKEN = current_token.get()
+    PHONE_NUMBER_ID = current_phone_id.get()
+
+    if not TOKEN or not PHONE_NUMBER_ID:
+        return {"status": "error", "mensaje": "Credenciales no disponibles"}
+
+    timestamp = int(datetime.now().timestamp())
+    filename_webm = f"{telefono}_{timestamp}.webm"
+    filename_ogg = f"{telefono}_{timestamp}.ogg"
+
+    ruta_webm = os.path.join(AUDIO_DIR, filename_webm)
+    ruta_ogg = os.path.join(AUDIO_DIR, filename_ogg)
+
+    os.makedirs(AUDIO_DIR, exist_ok=True)
+
+    # Guardar archivo original
+    audio_bytes = await audio.read()
+    with open(ruta_webm, "wb") as f:
+        f.write(audio_bytes)
+
+    # Convertir a opus
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", ruta_webm, "-acodec", "libopus", ruta_ogg],
+            check=True
+        )
+    except subprocess.CalledProcessError:
+        return {"status": "error", "mensaje": "Error convirtiendo audio"}
+
+    # Subir a Cloudinary
+    url_cloudinary = subir_audio_cloudinary(
+        ruta_ogg,
+        public_id=filename_ogg.replace(".ogg", "")
+    )
+
+    if not url_cloudinary:
+        return {"status": "error", "mensaje": "Error subiendo a Cloudinary"}
+
+    # 🔥 Enviar primero a WhatsApp
+    try:
+        codigo, respuesta_api = enviar_audio_base64(
+            token=TOKEN,
+            numero_id=PHONE_NUMBER_ID,
+            telefono_destino=telefono,
+            ruta_audio=ruta_ogg,
+            mimetype="audio/ogg; codecs=opus"
+        )
+    except Exception as e:
+        return {
+            "status": "error",
+            "mensaje": "Error enviando a WhatsApp",
+            "error": str(e)
+        }
+
+    # 🔥 Guardar SOLO si envío fue exitoso
+    if codigo == 200:
+        message_id_meta = respuesta_api.get("messages", [{}])[0].get("id")
+        estado_mensaje = "sent"
+
+    guardar_mensaje_nuevo(
+        telefono=telefono,
+        contenido=url_cloudinary,
+        direccion="enviado",
+        tipo="audio",
+        media_url=url_cloudinary,
+        message_id_meta=respuesta_api.get("messages", [{}])[0].get("id"),
+        estado="sent"
+    )
+
+    return {
+        "status": "ok",
+        "url_cloudinary": url_cloudinary,
+        "codigo_api": codigo
+    }
+
+
+@router.post("/mensajes/audioV16022026")
+async def api_enviar_audioV6022026(
     telefono: str = Form(...),
     audio: UploadFile = Form(...)
 ):
