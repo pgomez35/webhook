@@ -96,7 +96,7 @@ def descargar_audio(audio_id, token, carpeta_destino=AUDIO_DIR):
 # -------------------------------------------------------------------
 # MENSAJES (DB)
 # -------------------------------------------------------------------
-def guardar_mensaje(telefono, texto, tipo="recibido", es_audio=False):
+def guardar_mensaje_old(telefono, texto, tipo="recibido", es_audio=False):
     try:
         # Si es un mensaje de audio, extrae solo el nombre del archivo
         if es_audio and isinstance(texto, str) and texto.startswith("[Audio guardado:"):

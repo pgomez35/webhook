@@ -4784,6 +4784,129 @@ async def _procesar_mensaje_unico(mensaje, tenant_name, phone_number_id, token):
     texto_lower = (texto or "").lower()
 
     # ---------------------------------------------------------
+    # B. LOG EN BD (CON MANEJO ESPECIAL PARA AUDIO)
+    # ---------------------------------------------------------
+    try:
+
+        # 🔥 AUDIO INBOUND
+        if tipo == "audio":
+
+            audio_id = mensaje.get("audio", {}).get("id")
+
+            if audio_id:
+                print(f"🎧 Audio recibido. media_id={audio_id}")
+
+                url_cloudinary = descargar_audio(audio_id, token)
+
+                if url_cloudinary:
+                    contenido_guardar = url_cloudinary
+                    media_url_guardar = url_cloudinary
+                else:
+                    # Fallback seguro si Cloudinary falla
+                    contenido_guardar = "[audio_error_no_subido]"
+                    media_url_guardar = None
+
+            else:
+                print("⚠️ Audio sin media_id")
+                contenido_guardar = "[audio_sin_id]"
+                media_url_guardar = None
+
+            registrar_mensaje_recibido(
+                telefono=wa_id,
+                message_id_meta=mensaje.get("id"),
+                tipo="audio",
+                contenido=contenido_guardar,
+                media_url=media_url_guardar
+            )
+
+        # 🔵 OTROS TIPOS (texto, botones, etc.)
+        else:
+
+            registrar_mensaje_recibido(
+                telefono=wa_id,
+                message_id_meta=mensaje.get("id"),
+                tipo=tipo,
+                contenido=f"{texto or ''} {payload_id or ''}".strip()
+            )
+
+    except Exception as e:
+        print(f"⚠️ Log Error (No crítico): {e}")
+
+    # ---------------------------------------------------------
+    # C. ONBOARDING (PRIMERO)
+    # ---------------------------------------------------------
+    paso = obtener_flujo(wa_id)
+    usuario_bd = buscar_usuario_por_telefono(wa_id)
+
+    print(
+        f"🧾 [DEBUG USER LOOKUP] "
+        f"tenant={tenant_name} | "
+        f"wa_id={wa_id} | "
+        f"usuario_encontrado={'SI' if usuario_bd else 'NO'} | "
+        f"id={usuario_bd.get('id') if usuario_bd else None} | "
+        f"onboarding_completado={usuario_bd.get('onboarding_completado') if usuario_bd else None}"
+    )
+
+    if not usuario_bd:
+        resultado = _process_new_user_onboarding(
+            mensaje=mensaje,
+            numero=wa_id,
+            texto=texto,
+            texto_lower=texto_lower,
+            payload=payload_id,
+            paso=paso,
+            tenant_name=tenant_name,
+            phone_id=phone_number_id,
+            token=token
+        )
+
+        if resultado:
+            return
+
+    # ---------------------------------------------------------
+    # D. FLUJO ASPIRANTE
+    # ---------------------------------------------------------
+    try:
+        procesado_aspirante = procesar_flujo_aspirante(
+            tenant=tenant_name,
+            phone_number_id=phone_number_id,
+            wa_id=wa_id,
+            tipo=tipo,
+            texto=texto,
+            payload_id=payload_id
+        )
+
+        if procesado_aspirante:
+            return
+
+    except Exception as e:
+        print(f"❌ Error flujo aspirante: {e}")
+
+    # ---------------------------------------------------------
+    # E. FLUJO GENERAL
+    # ---------------------------------------------------------
+    _process_single_message(mensaje, tenant_name)
+
+
+async def _procesar_mensaje_unicoV16022026(mensaje, tenant_name, phone_number_id, token):
+    """
+    Orquestador principal:
+    1. Normaliza
+    2. Registra mensaje
+    3. Onboarding (nuevo usuario)
+    4. Flujo Aspirante
+    5. Flujo General
+    """
+
+    wa_id = mensaje.get("from")
+
+    # ---------------------------------------------------------
+    # A. NORMALIZACIÓN
+    # ---------------------------------------------------------
+    tipo, texto, payload_id = _normalizar_entrada_whatsapp(mensaje)
+    texto_lower = (texto or "").lower()
+
+    # ---------------------------------------------------------
     # B. LOG EN BD
     # ---------------------------------------------------------
     try:
