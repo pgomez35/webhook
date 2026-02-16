@@ -28,7 +28,7 @@ cloudinary.config(
 router = APIRouter()
 
 @router.get("/contactos")
-def listar_contactos(estado: Optional[str] = None, request: Request = None):
+def listar_contactos(estado: Optional[int] = None, request: Request = None):
     from tenant import current_tenant
     tenant_actual = current_tenant.get()
     print(f"🔍 [DEBUG /contactos] Tenant actual: {tenant_actual}")

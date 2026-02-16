@@ -421,12 +421,12 @@ def actualizar_contacto_info_db(telefono: str, datos: ActualizacionContactoInfo)
         traceback.print_exc()
         return {"status": "error", "mensaje": str(e)}
 
-def obtener_contactos_db_nueva():
+def obtener_contactos_db_nueva(estado=None):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
 
-                cur.execute("""
+                base_query = """
                     SELECT a.usuario,
                            a.nickname,
                            a.nombre_real AS nombre,
@@ -436,9 +436,19 @@ def obtener_contactos_db_nueva():
                     INNER JOIN estados_creador b ON a.estado_id = b.id
                     WHERE a.whatsapp IS NOT NULL
                       AND a.whatsapp != ''
-                      AND a.estado_id IN (1,2,3,4,5)  -- solo proceso activo
-                    ORDER BY a.usuario ASC
-                """)
+                      AND a.estado_id IN (1,2,3,4,5)
+                """
+
+                params = []
+
+                # 🔥 Filtro dinámico por estado
+                if estado:
+                    base_query += " AND b.id = %s"
+                    params.append(estado)
+
+                base_query += " ORDER BY a.usuario ASC"
+
+                cur.execute(base_query, params)
 
                 contactos = [
                     {
@@ -457,7 +467,6 @@ def obtener_contactos_db_nueva():
         print(f"❌ Error obteniendo contactos: {e}")
         traceback.print_exc()
         return []
-
 
 
 def obtener_contactos_db(estado: Optional[str] = None):
