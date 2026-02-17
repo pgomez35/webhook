@@ -3343,3 +3343,58 @@ from zoneinfo import ZoneInfo
 #         zona_horaria=zona_horaria,
 #         nombre_mostrable=nombre_mostrable,
 #     )
+
+
+# from fastapi import APIRouter, Query, HTTPException
+# from pydantic import BaseModel
+# from typing import List, Optional
+
+class TipoAgendamientoOut(BaseModel):
+    id: int
+    nombre: str
+    color: Optional[str] = None
+    icono: Optional[str] = None
+    activo: bool
+
+@router.get("/agendamientos/tipos", response_model=List[TipoAgendamientoOut])
+def listar_tipos_agendamiento(
+    solo_activos: bool = Query(True, description="Si True, trae solo tipos activos")
+):
+    TENANT = current_tenant.get()
+    if not TENANT:
+        raise HTTPException(status_code=400, detail="Tenant no disponible")
+
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+
+        if solo_activos:
+            cur.execute(
+                """
+                SELECT id, nombre, color, icono, activo
+                FROM tipos_agendamiento
+                WHERE activo = TRUE
+                ORDER BY nombre ASC
+                """
+            )
+        else:
+            cur.execute(
+                """
+                SELECT id, nombre, color, icono, activo
+                FROM tipos_agendamiento
+                ORDER BY nombre ASC
+                """
+            )
+
+        rows = cur.fetchall()
+
+    return [
+        TipoAgendamientoOut(
+            id=r[0],
+            nombre=r[1],
+            color=r[2],
+            icono=r[3],
+            activo=r[4]
+        )
+        for r in rows
+    ]
+
