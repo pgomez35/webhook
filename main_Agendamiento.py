@@ -849,7 +849,7 @@ def obtener_eventos(
                 a.responsable_id,
                 a.estado,
                 a.link_meet,
-                a.tipo_agendamiento
+                a.tipo_agendamiento,
                 a.google_event_id,
                 c.id AS creador_id,
                 COALESCE(NULLIF(c.nombre_real, ''), c.nickname) AS nombre,
