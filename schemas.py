@@ -24,14 +24,16 @@ class EventoIn(BaseModel):
     participantes_ids: List[int] = []  # << agregar esta línea
     link_meet: Optional[str] = None  # ← agregar esto si quieres permitir edición manual
     requiere_meet: Optional[bool] = True  # ✅ nuevo flag
+    tipo_agendamiento: Optional[int] = 1  # ✅ CORRECTO
 
 
 class EventoOut(EventoIn):
     id: str
     link_meet: Optional[str] = None
-    origen: Optional[str] = "google_calendar"  # Para distinguir fuentes
+    origen: Optional[str] = "google_calendar"
     responsable_id: Optional[int] = None
-    participantes: Optional[List[dict]] = None  # ← para devolver nombres, roles, etc
+    participantes: Optional[List[dict]] = None
+    tipo_agendamiento: Optional[int] = 1  # ✅ CORRECTO
 
 # ===============================
 # ESQUEMAS PARA ADMIN_USUARIO
