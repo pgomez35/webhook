@@ -3,7 +3,7 @@ import os
 import subprocess
 from typing import Optional
 
-from fastapi import APIRouter, Form, UploadFile, requests, HTTPException
+from fastapi import APIRouter, Form, UploadFile, requests, HTTPException,Request
 from starlette.staticfiles import StaticFiles
 
 from DataBase import obtener_usuario_id_por_telefono, paso_limite_24h, guardar_mensaje, guardar_mensaje_nuevo, \
@@ -12,11 +12,11 @@ from enviar_msg_wp import enviar_plantilla_generica, enviar_mensaje_texto_simple
 from tenant import current_token, current_phone_id, current_business_name, current_tenant
 from fastapi.responses import JSONResponse, PlainTextResponse
 
-from fastapi import Request
+
 import requests
 
 from utils import AUDIO_DIR, subir_audio_cloudinary
-import os
+from starlette.responses import StreamingResponse
 
 import cloudinary
 
@@ -766,10 +766,10 @@ async def api_enviar_documento(
 
         if metodo_envio == "id":
             # ✅ Para PDF guardamos filename en media_url
-            contenido_guardar = f"whatsapp_media_id:{media_id}"
-            media_url_guardar = documento.filename  # 👈 SOLO nombre
+            contenido_guardar = documento.filename
+            media_url_guardar = f"whatsapp_media_id:{media_id}"
         else:
-            contenido_guardar = url_cloudinary
+            contenido_guardar = documento.filename
             media_url_guardar = url_cloudinary
 
         guardar_mensaje_nuevo(
@@ -1304,3 +1304,74 @@ def enviar_video_link(
     return response.status_code, response.json()
 
 
+
+@router.get("/media/preview/{media_id}")
+def preview_media_pdf(media_id: str):
+    """
+    Preview/stream de un PDF guardado en WhatsApp (Meta) por media_id.
+    Ideal para usar en <iframe src="..."> en el frontend.
+    Requiere auth + tenant (tu middleware debe setear current_token/current_tenant).
+    """
+
+    TOKEN = current_token.get()
+    TENANT = current_tenant.get()
+
+    if not TOKEN:
+        raise HTTPException(status_code=401, detail="Credenciales no disponibles")
+    if not TENANT:
+        raise HTTPException(status_code=400, detail="Tenant no disponible")
+
+    # Permitir que el frontend pase "whatsapp_media_id:xxxx"
+    if media_id.startswith("whatsapp_media_id:"):
+        media_id = media_id.split("whatsapp_media_id:", 1)[1].strip()
+
+    # 1) Pedir a Meta la info del media (incluye URL temporal)
+    info_url = f"https://graph.facebook.com/v19.0/{media_id}"
+    info_params = {"fields": "url,mime_type,sha256,file_size"}
+    info_headers = {"Authorization": f"Bearer {TOKEN}"}
+
+    info_resp = requests.get(info_url, headers=info_headers, params=info_params, timeout=20)
+    try:
+        info_json = info_resp.json()
+    except Exception:
+        info_json = {}
+
+    if info_resp.status_code != 200:
+        raise HTTPException(
+            status_code=info_resp.status_code,
+            detail={"mensaje": "Error obteniendo URL de media en Meta", "respuesta": info_json}
+        )
+
+    media_download_url = info_json.get("url")
+    mime_type = info_json.get("mime_type") or "application/pdf"
+
+    if not media_download_url:
+        raise HTTPException(status_code=500, detail="Meta no devolvió URL de descarga")
+
+    # Si quieres forzar SOLO PDF:
+    if mime_type != "application/pdf":
+        raise HTTPException(status_code=400, detail=f"Este endpoint solo previsualiza PDF. mime_type={mime_type}")
+
+    # 2) Descargar el archivo desde la URL temporal (requiere Bearer token)
+    download_headers = {"Authorization": f"Bearer {TOKEN}"}
+    download_resp = requests.get(media_download_url, headers=download_headers, stream=True, timeout=30)
+
+    if download_resp.status_code != 200:
+        raise HTTPException(
+            status_code=download_resp.status_code,
+            detail={"mensaje": "Error descargando media desde Meta", "respuesta": download_resp.text[:200]}
+        )
+
+    def iter_file():
+        # chunks para streaming
+        for chunk in download_resp.iter_content(chunk_size=1024 * 256):
+            if chunk:
+                yield chunk
+
+    # 3) Responder como inline para preview en iframe
+    headers = {
+        "Content-Disposition": 'inline; filename="documento.pdf"',
+        "Cache-Control": "no-store",
+    }
+
+    return StreamingResponse(iter_file(), media_type="application/pdf", headers=headers)
