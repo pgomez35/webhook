@@ -766,11 +766,11 @@ async def api_enviar_documento(
 
         if metodo_envio == "id":
             # ✅ Para PDF guardamos filename en media_url
-            contenido_guardar = documento.filename
             media_url_guardar = f"whatsapp_media_id:{media_id}"
         else:
-            contenido_guardar = documento.filename
             media_url_guardar = url_cloudinary
+
+        contenido_guardar = f"{documento.filename}|{media_url_guardar}"
 
         guardar_mensaje_nuevo(
             telefono=telefono,
