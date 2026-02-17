@@ -828,9 +828,9 @@ def obtener_eventos(
 
     # ✅ Rango por defecto: 30 días atrás y 30 adelante (como antes)
     if time_min is None:
-        time_min = datetime.utcnow() - timedelta(days=30)
+        time_min = datetime.utcnow() - timedelta(days=60)
     if time_max is None:
-        time_max = datetime.utcnow() + timedelta(days=30)
+        time_max = datetime.utcnow() + timedelta(days=60)
 
     try:
         with get_connection_context() as conn:
@@ -849,6 +849,7 @@ def obtener_eventos(
                 a.responsable_id,
                 a.estado,
                 a.link_meet,
+                a.tipo_agendamiento
                 a.google_event_id,
                 c.id AS creador_id,
                 COALESCE(NULLIF(c.nombre_real, ''), c.nickname) AS nombre,
@@ -883,6 +884,7 @@ def obtener_eventos(
                 responsable_id,
                 estado,
                 link_meet,
+                tipo_agendamiento,
                 google_event_id,
                 creador_id,
                 nombre,
@@ -908,6 +910,7 @@ def obtener_eventos(
                         "responsable_id": responsable_id,
                         "estado": estado,
                         "link_meet": link_meet,
+                        "tipo_agendamiento":tipo_agendamiento,
                         "google_event_id": google_event_id,
                         "origen": origen,
                         "participantes": [],
@@ -940,6 +943,7 @@ def obtener_eventos(
                         participantes_ids=list(ev["participantes_ids"]),
                         participantes=ev["participantes"],
                         link_meet=ev["link_meet"],
+                        tipo_agendamiento=ev["tipo_agendamiento"],
                         responsable_id=ev["responsable_id"],
                         origen=ev["origen"],
                     )
