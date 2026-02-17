@@ -636,8 +636,199 @@ def enviar_documento_id(token, numero_id, telefono_destino, media_id, filename, 
 # --------------------------------------------------
 # 🔹 ENDPOINT PRINCIPAL
 # --------------------------------------------------
+
+
 @router.post("/mensajes/documento")
 async def api_enviar_documento(
+    telefono: str = Form(...),
+    documento: UploadFile = Form(...),
+    caption: str = Form(None)
+):
+    import os
+    from datetime import datetime
+    from fastapi import HTTPException
+
+    TOKEN = current_token.get()
+    PHONE_NUMBER_ID = current_phone_id.get()
+    TENANT = current_tenant.get()
+
+    if not TOKEN or not PHONE_NUMBER_ID:
+        return {"status": "error", "mensaje": "Credenciales no disponibles"}
+    if not TENANT:
+        return {"status": "error", "mensaje": "Tenant no disponible"}
+
+    # --------------------------------------------------
+    # 1️⃣ Validar tipo permitido
+    # --------------------------------------------------
+    allowed_types = [
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/zip",
+        "text/plain"
+    ]
+    if documento.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Tipo de documento no permitido")
+
+    # --------------------------------------------------
+    # 2️⃣ Guardar temporalmente
+    # --------------------------------------------------
+    timestamp = int(datetime.now().timestamp())
+    filename_tmp = f"{telefono}_{timestamp}_{documento.filename}"
+
+    MEDIA_DIR = "temp_documents"
+    os.makedirs(MEDIA_DIR, exist_ok=True)
+    ruta_documento = os.path.join(MEDIA_DIR, filename_tmp)
+
+    with open(ruta_documento, "wb") as f:
+        f.write(await documento.read())
+
+    # --------------------------------------------------
+    # 3️⃣ Subir SIEMPRE a Cloudinary (para UI/preview) (opcional)
+    #    Si NO quieres guardar tanto, puedes comentar este bloque.
+    # --------------------------------------------------
+    url_cloudinary = None
+    try:
+        result = cloudinary.uploader.upload(
+            ruta_documento,
+            folder=f"whatsapp/{TENANT}/documents",
+            resource_type="raw"
+        )
+        url_cloudinary = result.get("secure_url")
+    except Exception as e:
+        # Si Cloudinary es obligatorio para ti, cambia esto a "return error"
+        print("⚠️ Cloudinary falló:", str(e))
+
+    # --------------------------------------------------
+    # 4️⃣ Envío anticipado por tipo:
+    #    PDF -> WhatsApp media_id
+    #    Otros -> link (Cloudinary)
+    # --------------------------------------------------
+    metodo_envio = None
+    media_id = None
+
+    if documento.content_type == "application/pdf":
+        # ✅ PDF por media_id (WhatsApp)
+        codigo_up, resp_up = subir_media_whatsapp(
+            token=TOKEN,
+            phone_number_id=PHONE_NUMBER_ID,
+            ruta_archivo=ruta_documento,
+            mime="application/pdf"
+        )
+
+        if codigo_up != 200 or "id" not in resp_up:
+            try: os.remove(ruta_documento)
+            except: pass
+            return {
+                "status": "error",
+                "mensaje": "Error subiendo PDF a WhatsApp /media",
+                "codigo_upload": codigo_up,
+                "respuesta_upload": resp_up
+            }
+
+        media_id = resp_up["id"]
+        codigo, respuesta_api = enviar_documento_id(
+            token=TOKEN,
+            numero_id=PHONE_NUMBER_ID,
+            telefono_destino=telefono,
+            media_id=media_id,
+            filename=documento.filename,
+            caption=caption
+        )
+        metodo_envio = "id"
+
+    else:
+        # ✅ Otros por link (Cloudinary)
+        if not url_cloudinary:
+            try: os.remove(ruta_documento)
+            except: pass
+            return {
+                "status": "error",
+                "mensaje": "No hay URL de Cloudinary para enviar por link"
+            }
+
+        codigo, respuesta_api = enviar_documento_link(
+            token=TOKEN,
+            numero_id=PHONE_NUMBER_ID,
+            telefono_destino=telefono,
+            url_documento=url_cloudinary,
+            filename=documento.filename
+        )
+        metodo_envio = "link"
+
+        # --------------------------------------------------
+        # 5️⃣ Guardar en BD si fue exitoso
+        # --------------------------------------------------
+    if codigo == 200:
+        message_id_meta = respuesta_api.get("messages", [{}])[0].get("id")
+
+        if metodo_envio == "id":
+            # ✅ Para PDF guardamos filename en media_url
+            contenido_guardar = f"whatsapp_media_id:{media_id}"
+            media_url_guardar = documento.filename  # 👈 SOLO nombre
+        else:
+            contenido_guardar = url_cloudinary
+            media_url_guardar = url_cloudinary
+
+        guardar_mensaje_nuevo(
+            telefono=telefono,
+            contenido=contenido_guardar,
+            direccion="enviado",
+            tipo="document",
+            media_url=media_url_guardar,
+            message_id_meta=message_id_meta,
+            estado="sent"
+        )
+
+    # --------------------------------------------------
+    # 6️⃣ Borrar temporal
+    # --------------------------------------------------
+    try: os.remove(ruta_documento)
+    except: pass
+
+    return {
+        "status": "ok" if codigo == 200 else "error",
+        "metodo_envio": metodo_envio,
+        "url_cloudinary": url_cloudinary,
+        "media_id": media_id,
+        "codigo_api": codigo,
+        "respuesta_api": respuesta_api if codigo != 200 else None
+    }
+
+def enviar_documento_link(
+    token,
+    numero_id,
+    telefono_destino,
+    url_documento,
+    filename
+):
+    url = f"https://graph.facebook.com/v19.0/{numero_id}/messages"
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    data = {
+        "messaging_product": "whatsapp",
+        "to": telefono_destino,
+        "type": "document",
+        "document": {
+            "link": url_documento,
+            "filename": filename
+        }
+    }
+
+    response = requests.post(url, headers=headers, json=data)
+
+    return response.status_code, response.json()
+
+
+
+@router.post("/mensajes/documentoV17022026")
+async def api_enviar_documentoV17022026(
     telefono: str = Form(...),
     documento: UploadFile = Form(...),
     caption: str = Form(None)
@@ -865,33 +1056,6 @@ async def api_enviar_documento(
 #         "codigo_api": codigo
 #     }
 
-# def enviar_documento_link(
-#     token,
-#     numero_id,
-#     telefono_destino,
-#     url_documento,
-#     filename
-# ):
-#     url = f"https://graph.facebook.com/v19.0/{numero_id}/messages"
-#
-#     headers = {
-#         "Authorization": f"Bearer {token}",
-#         "Content-Type": "application/json"
-#     }
-#
-#     data = {
-#         "messaging_product": "whatsapp",
-#         "to": telefono_destino,
-#         "type": "document",
-#         "document": {
-#             "link": url_documento,
-#             "filename": filename
-#         }
-#     }
-#
-#     response = requests.post(url, headers=headers, json=data)
-#
-#     return response.status_code, response.json()
 
 
 
