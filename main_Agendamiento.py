@@ -2688,10 +2688,21 @@ def crear_agendamiento_aspirante_DB(
 
     try:
         tipo_agendamiento = getattr(data, "tipo_agendamiento", None)
-        tipo_agendamiento_id = 3 if tipo_agendamiento == "ENTREVISTA" else 4
+
+        # 🎯 Mapeo más limpio
+        mapa_tipos = {
+            "ENTREVISTA": 3,
+            "LIVE": 4
+        }
+
+        tipo_agendamiento_id = mapa_tipos.get(tipo_agendamiento, 4)
 
         link_meet = getattr(data, "link_meet", None)
         google_event_id = getattr(data, "google_event_id", None)
+
+        # 🔥 Si es LIVE → construir link automáticamente
+        if tipo_agendamiento_id == 4:
+            link_meet = obtener_link_live_por_creador(aspirante_id)
 
         with get_connection_context() as conn:
             with conn.cursor() as cur:
@@ -2763,6 +2774,33 @@ def crear_agendamiento_aspirante_DB(
     except Exception as e:
         print("❌ Error al crear agendamiento y relacionar entrevista:", e)
         return None
+
+def obtener_link_live_por_creador(creador_id: int) -> Optional[str]:
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT usuario
+                    FROM creadores
+                    WHERE id = %s
+                    """,
+                    (creador_id,)
+                )
+                row = cur.fetchone()
+
+                if not row or not row[0]:
+                    return None
+
+                usuario = row[0].strip()
+                return f"https://www.tiktok.com/@{usuario}/live"
+
+    except Exception as e:
+        print("❌ Error obteniendo link LIVE:", e)
+        return None
+
+
+
 
 def obtener_entrevista_id(creador_id: int, usuario_evalua: int) -> Optional[dict]:
     """
