@@ -2687,7 +2687,9 @@ def crear_agendamiento_aspirante_DB(
     """
 
     try:
-        tipo_agendamiento = getattr(data, "tipo_agendamiento", None) or "ENTREVISTA"
+        tipo_agendamiento = getattr(data, "tipo_agendamiento", None)
+        tipo_agendamiento_id = 3 if tipo_agendamiento == "ENTREVISTA" else 4
+
         link_meet = getattr(data, "link_meet", None)
         google_event_id = getattr(data, "google_event_id", None)
 
@@ -2719,7 +2721,7 @@ def crear_agendamiento_aspirante_DB(
                         data.fecha_fin,
                         aspirante_id,
                         responsable_id,
-                        tipo_agendamiento,
+                        tipo_agendamiento_id,
                         link_meet,
                         google_event_id,
                     )
