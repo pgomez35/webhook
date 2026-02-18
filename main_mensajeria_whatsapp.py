@@ -12,6 +12,7 @@ from enviar_msg_wp import enviar_plantilla_generica, enviar_mensaje_texto_simple
 from tenant import current_token, current_phone_id, current_business_name, current_tenant
 from fastapi.responses import JSONResponse, PlainTextResponse
 
+from typing import Optional, Dict, Any, Tuple
 
 import requests
 
@@ -67,52 +68,16 @@ async def api_enviar_mensaje(request: Request, data: dict):
             status_code=500
         )
 
-    usuario_id = obtener_usuario_id_por_telefono(telefono)
-
-    # ======================================================
-    # FUERA DE VENTANA 24H → PLANTILLA
-    # ======================================================
-
-    if usuario_id and paso_limite_24h(usuario_id):
-
-        print("⏱️ Usuario fuera de 24h. Enviando plantilla reconexion_general_corta")
-
-        plantilla = "reconexion_general_corta"
-
-        parametros = [
-            nombre if nombre else "Hola",
-            AGENCIA_NOMBRE or "Nuestro equipo"
-        ]
-
-        codigo, respuesta_api = enviar_plantilla_generica(
-            token=TOKEN,
-            phone_number_id=PHONE_NUMBER_ID,
-            numero_destino=telefono,
-            nombre_plantilla=plantilla,
-            codigo_idioma="es_CO",
-            parametros=parametros
-        )
-
-        # ✅ EXTRAER message_id_meta
-        message_id_meta = None
-        if respuesta_api and "messages" in respuesta_api:
-            message_id_meta = respuesta_api["messages"][0].get("id")
-
-        guardar_mensaje_nuevo(
-            telefono=telefono,
-            contenido="Plantilla de reconexión enviada",
-            direccion="enviado",
-            tipo="texto",
-            message_id_meta=message_id_meta,
-            estado="sent"
-        )
-
-        return {
-            "status": "plantilla_auto",
-            "mensaje": "Se envió plantilla por estar fuera de ventana de 24h.",
-            "codigo_api": codigo,
-            "respuesta_api": respuesta_api
-        }
+    # ✅ 1) Intentar plantilla si fuera de 24h
+    enviada, payload = intentar_plantilla_reconexion_24h(
+        telefono=telefono,
+        nombre=nombre,
+        token=TOKEN,
+        phone_number_id=PHONE_NUMBER_ID,
+        agencia_nombre=AGENCIA_NOMBRE
+    )
+    if enviada:
+        return payload
 
     # ======================================================
     # DENTRO DE VENTANA → MENSAJE NORMAL
@@ -146,12 +111,16 @@ async def api_enviar_mensaje(request: Request, data: dict):
         "respuesta_api": respuesta_api
     }
 
+
+
+
 from datetime import datetime
 
 
 @router.post("/mensajes/audio")
 async def api_enviar_audio(
     telefono: str = Form(...),
+    nombre: str = Form(""),   # ✅ NUEVO PARAMETRO
     audio: UploadFile = Form(...)
 ):
     import os, subprocess
@@ -166,6 +135,17 @@ async def api_enviar_audio(
 
     if not TENANT:
         return {"status": "error", "mensaje": "Tenant no disponible"}
+
+    enviada, payload = intentar_plantilla_reconexion_24h(
+        telefono=telefono,
+        nombre=nombre,  # si no tienes, manda ""
+        token=TOKEN,
+        phone_number_id=PHONE_NUMBER_ID,
+        agencia_nombre=current_business_name.get() or ""
+    )
+    if enviada:
+        return payload
+
 
     timestamp = int(datetime.now().timestamp())
     filename_webm = f"{telefono}_{timestamp}.webm"
@@ -251,6 +231,7 @@ async def api_enviar_audio(
 @router.post("/mensajes/audio-adjunto")
 async def api_enviar_audio_adjunto(
     telefono: str = Form(...),
+    nombre: str = Form(""),   # ✅ NUEVO PARAMETRO
     audio: UploadFile = Form(...)
 ):
     import os
@@ -263,6 +244,16 @@ async def api_enviar_audio_adjunto(
 
     if not TOKEN or not PHONE_NUMBER_ID:
         return {"status": "error", "mensaje": "Credenciales no disponibles"}
+
+    enviada, payload = intentar_plantilla_reconexion_24h(
+        telefono=telefono,
+        nombre=nombre,  # si no tienes, manda ""
+        token=TOKEN,
+        phone_number_id=PHONE_NUMBER_ID,
+        agencia_nombre=current_business_name.get() or ""
+    )
+    if enviada:
+        return payload
 
     # --------------------------------------------------
     # 1️⃣ Validar tipo
@@ -455,6 +446,7 @@ def enviar_audio_link(token, numero_id, telefono_destino, url_audio):
 @router.post("/mensajes/imagen")
 async def api_enviar_imagen(
     telefono: str = Form(...),
+    nombre: str = Form(""),   # ✅ NUEVO PARAMETRO
     imagen: UploadFile = Form(...)
 ):
     import os
@@ -467,6 +459,16 @@ async def api_enviar_imagen(
 
     if not TOKEN or not PHONE_NUMBER_ID:
         return {"status": "error", "mensaje": "Credenciales no disponibles"}
+
+    enviada, payload = intentar_plantilla_reconexion_24h(
+        telefono=telefono,
+        nombre=nombre,  # si no tienes, manda ""
+        token=TOKEN,
+        phone_number_id=PHONE_NUMBER_ID,
+        agencia_nombre=current_business_name.get() or ""
+    )
+    if enviada:
+        return payload
 
     # --------------------------------------------------
     # 1️⃣ Validar tipo
@@ -641,6 +643,7 @@ def enviar_documento_id(token, numero_id, telefono_destino, media_id, filename, 
 @router.post("/mensajes/documento")
 async def api_enviar_documento(
     telefono: str = Form(...),
+    nombre: str = Form(""),   # ✅ NUEVO PARAMETRO
     documento: UploadFile = Form(...),
     caption: str = Form(None)
 ):
@@ -656,6 +659,17 @@ async def api_enviar_documento(
         return {"status": "error", "mensaje": "Credenciales no disponibles"}
     if not TENANT:
         return {"status": "error", "mensaje": "Tenant no disponible"}
+
+
+    enviada, payload = intentar_plantilla_reconexion_24h(
+        telefono=telefono,
+        nombre=nombre,  # si no tienes, manda ""
+        token=TOKEN,
+        phone_number_id=PHONE_NUMBER_ID,
+        agencia_nombre=current_business_name.get() or ""
+    )
+    if enviada:
+        return payload
 
     # --------------------------------------------------
     # 1️⃣ Validar tipo permitido
@@ -1057,8 +1071,6 @@ async def api_enviar_documentoV17022026(
 #     }
 
 
-
-
 @router.post("/mensajes/audioV16022026")
 async def api_enviar_audioV6022026(
     telefono: str = Form(...),
@@ -1161,6 +1173,7 @@ async def api_enviar_audioV6022026(
 @router.post("/mensajes/video")
 async def api_enviar_video(
     telefono: str = Form(...),
+    nombre: str = Form(""),   # ✅ NUEVO PARAMETRO
     video: UploadFile = Form(...)
 ):
     import os
@@ -1173,6 +1186,16 @@ async def api_enviar_video(
 
     if not TOKEN or not PHONE_NUMBER_ID:
         return {"status": "error", "mensaje": "Credenciales no disponibles"}
+
+    enviada, payload = intentar_plantilla_reconexion_24h(
+        telefono=telefono,
+        nombre=nombre,  # si no tienes, manda ""
+        token=TOKEN,
+        phone_number_id=PHONE_NUMBER_ID,
+        agencia_nombre=current_business_name.get() or ""
+    )
+    if enviada:
+        return payload
 
     # --------------------------------------------------
     # 1️⃣ Validar tipo permitido
@@ -1375,3 +1398,62 @@ def preview_media_pdf(media_id: str):
     }
 
     return StreamingResponse(iter_file(), media_type="application/pdf", headers=headers)
+
+
+def intentar_plantilla_reconexion_24h(
+    *,
+    telefono: str,
+    nombre: str = "",
+    token: str,
+    phone_number_id: str,
+    agencia_nombre: str = "",
+    plantilla: str = "reconexion_general_corta",
+    idioma: str = "es_CO",
+) -> Tuple[bool, Dict[str, Any]]:
+
+    if not telefono:
+        return False, {"status": "skip", "reason": "telefono_vacio"}
+
+    if not paso_limite_24h(telefono):
+        return False, {"status": "skip", "reason": "dentro_24h"}
+
+    # ✅ Fuera de 24h → plantilla
+    params = [
+        (nombre or "").strip() or "",
+        agencia_nombre or "Nuestro equipo"
+    ]
+
+    codigo, respuesta_api = enviar_plantilla_generica(
+        token=token,
+        phone_number_id=phone_number_id,
+        numero_destino=telefono,
+        nombre_plantilla=plantilla,
+        codigo_idioma=idioma,
+        parametros=params
+    )
+
+    # message_id_meta
+    message_id_meta = None
+    if respuesta_api and isinstance(respuesta_api, dict) and "messages" in respuesta_api:
+        try:
+            message_id_meta = respuesta_api["messages"][0].get("id")
+        except Exception:
+            pass
+
+    # Guardar en BD
+    guardar_mensaje_nuevo(
+        telefono=telefono,
+        contenido=f"Plantilla auto 24h: {plantilla}",
+        direccion="enviado",
+        tipo="texto",
+        message_id_meta=message_id_meta,
+        estado="sent" if codigo == 200 else "failed"
+    )
+
+    return True, {
+        "status": "plantilla_auto",
+        "mensaje": "Se envió plantilla por estar fuera de ventana de 24h.",
+        "plantilla": plantilla,
+        "codigo_api": codigo,
+        "respuesta_api": respuesta_api
+    }

@@ -346,37 +346,43 @@ def obtener_usuario_id_por_telefono(telefono: str):
         traceback.print_exc()
         return None
 
+from datetime import datetime, timedelta, timezone
+from psycopg2 import OperationalError, DatabaseError
+import traceback
 
-def paso_limite_24h(usuario_id: int):
+def paso_limite_24h(telefono: str) -> bool:
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT fecha FROM mensajes_whatsapp
-                    WHERE usuario_id = %s AND direccion = 'recibido'
+                    SELECT fecha
+                    FROM mensajes_whatsapp
+                    WHERE telefono = %s
+                      AND direccion = 'recibido'
                     ORDER BY fecha DESC
                     LIMIT 1
-                """, (usuario_id,))
-
+                """, (telefono,))
                 resultado = cur.fetchone()
-
+                # 🔹 Si nunca escribió → fuera de ventana
                 if not resultado:
-                    # Si no hay mensajes recibidos, se considera fuera del límite
                     return True
-
                 ultima_fecha = resultado[0]
+                # Asegurar que tenga timezone
+                if ultima_fecha.tzinfo is None:
+                    ultima_fecha = ultima_fecha.replace(tzinfo=timezone.utc)
                 ahora = datetime.now(timezone.utc)
                 diferencia = ahora - ultima_fecha
-
                 return diferencia > timedelta(hours=24)
+
     except (OperationalError, DatabaseError) as e:
         print(f"❌ Error de base de datos verificando límite 24h: {e}")
         traceback.print_exc()
-        return True  # Por seguridad, asumir que sí pasó el límite
+        return True  # Por seguridad
+
     except Exception as e:
         print(f"❌ Error inesperado verificando límite 24h: {e}")
         traceback.print_exc()
-        return True  # Por seguridad, asumir que sí pasó el límite
+        return True  # Por seguridad
 
 def actualizar_contacto_info_db(telefono: str, datos: ActualizacionContactoInfo):
     try:
