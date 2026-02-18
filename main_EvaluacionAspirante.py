@@ -94,14 +94,6 @@ ESTADO_MAP_PREEVAL = {
 ESTADO_DEFAULT = 99  # si no coincide
 
 
-
-
-
-
-
-
-
-
 def actualizar_preevaluacion_perfil(creador_id: int, payload: dict):
     with get_connection_context() as conn:
         cur = conn.cursor()
@@ -155,12 +147,12 @@ def actualizar_estado_creador_preevaluacion(creador_id: int, estado: str):
 
         # B. Nuevo Update (Tabla perfil_creador)
         # Sincronizamos el estado del bot
-        cur.execute("""
-                    UPDATE perfil_creador
-                    SET id_chatbot_estado = %s,
-                        actualizado_en    = NOW()
-                    WHERE creador_id = %s
-                    """, (id_chatbot, creador_id))
+        # cur.execute("""
+        #             UPDATE perfil_creador
+        #             SET id_chatbot_estado = %s,
+        #                 actualizado_en    = NOW()
+        #             WHERE creador_id = %s
+        #             """, (id_chatbot, creador_id))
 
         # Confirmamos ambas transacciones
         conn.commit()
@@ -215,8 +207,6 @@ def actualizar_preevaluacion(
     except Exception as e:
         print("❌ ERROR en actualizar_preevaluacion:", str(e))
         raise HTTPException(status_code=500, detail=str(e))
-
-
 
 
 # services/db_service.py

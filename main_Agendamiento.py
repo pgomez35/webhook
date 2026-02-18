@@ -1878,7 +1878,40 @@ class EnviarNoAptoIn(BaseModel):
 
 from typing import Optional
 
+from typing import Optional
+import traceback
+
+from typing import Optional
+import traceback
+
 def mensaje_no_apto_simple(nombre: Optional[str], business_name: str) -> str:
+
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT valor
+                    FROM configuracion_agencia_keys
+                    WHERE clave = %s
+                    LIMIT 1
+                """, ("mensaje_rechazado",))
+
+                row = cur.fetchone()
+                template_text = row[0] if row and row[0] else None
+
+    except Exception as e:
+        print("❌ Error obteniendo mensaje_rechazado:", e)
+        traceback.print_exc()
+        template_text = None
+
+    # 🔹 Si existe en DB → usarlo tal cual pero formateado
+    if template_text:
+        return template_text.format(
+            nombre=nombre.strip() if nombre and nombre.strip() else "Hola",
+            business_name=business_name
+        )
+
+    # 🔹 Fallback original (exactamente tu mensaje)
     if nombre:
         saludo = f"Hola {nombre} 👋\n\n"
     else:
@@ -1895,6 +1928,51 @@ def mensaje_no_apto_simple(nombre: Optional[str], business_name: str) -> str:
     )
 
     return saludo + cuerpo
+
+
+from typing import Optional
+import traceback
+
+
+def mensaje_invitacion_simple(nombre: Optional[str], business_name: str) -> str:
+
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT valor
+                    FROM configuracion_agencia
+                    WHERE clave = %s
+                    LIMIT 1
+                """, ("mensaje_invitacion",))
+
+                row = cur.fetchone()
+
+                if not row or not row[0]:
+                    raise ValueError("La clave 'mensaje_invitacion' no existe en configuracion_agencia")
+
+                template_text = row[0]
+
+    except Exception as e:
+        print("❌ Error obteniendo mensaje_invitacion:", e)
+        traceback.print_exc()
+        raise  # 🔥 Aquí forzamos a que falle si no existe
+
+    nombre_final = nombre.strip() if nombre and nombre.strip() else "Hola"
+
+    try:
+        return template_text.format(
+            nombre=nombre_final,
+            business_name=business_name
+        )
+    except KeyError as e:
+        print(f"⚠️ Placeholder incorrecto en mensaje_invitacion: {e}")
+        return template_text  # lo envía sin reemplazar si hay error
+
+
+# -----------------------------------------------------
+# ---------------CREAR NUEVO MODULO .PY PRE-EVALUACION------------------------
+# -----------------------------------------------------
 
 @router.post("/api/aspirantes/no_apto/enviar")
 def enviar_mensaje_no_apto(
@@ -1952,7 +2030,7 @@ def enviar_mensaje_no_apto(
     # 5️⃣ ENVÍO CONDICIONAL
     # ==============================
     try:
-        if ventana_abierta:
+        if not ventana_abierta:
             # 👉 MENSAJE SIMPLE
             mensaje = mensaje_no_apto_simple(nombre, business_name)
             codigo, respuesta = enviar_mensaje(telefono, mensaje)
@@ -1977,6 +2055,103 @@ def enviar_mensaje_no_apto(
                 phone_number_id=phone_id,
                 numero_destino=telefono,
                 nombre_plantilla="no_apto_proceso_v3",
+                codigo_idioma="es_CO",
+                parametros=parametros,
+                body_vars_count=2
+            )
+
+            return {
+                "status": "ok" if codigo < 300 else "error",
+                "tipo_envio": "plantilla",
+                "codigo_meta": codigo,
+                "respuesta_api": respuesta,
+                "telefono": telefono
+            }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error enviando mensaje NO APTO: {str(e)}"
+        )
+
+@router.post("/api/aspirantes/invitacion/enviar")
+def enviar_mensaje_invitacion(
+    data: EnviarNoAptoIn,
+    usuario_actual: dict = Depends(obtener_usuario_actual)
+):
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+
+        # 1️⃣ Obtener aspirante
+        cur.execute("""
+            SELECT id,
+                   COALESCE(nickname, nombre_real) AS nombre,
+                   telefono
+            FROM creadores
+            WHERE id = %s;
+        """, (data.creador_id,))
+        row = cur.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Aspirante no encontrado.")
+
+        creador_id, nombre, telefono = row
+
+        if not telefono:
+            raise HTTPException(status_code=400, detail="El aspirante no tiene número registrado.")
+
+        # 2️⃣ Marcar estado NO APTO
+        cur.execute("""
+            UPDATE perfil_creador
+            SET id_chatbot_estado = 4
+            WHERE creador_id = %s;
+        """, (creador_id,))
+        conn.commit()
+
+    # 3️⃣ Obtener credenciales WABA
+    subdominio = current_tenant.get()
+    cuenta = obtener_cuenta_por_subdominio(subdominio)
+
+    if not cuenta:
+        raise HTTPException(500, f"No hay credenciales WABA para '{subdominio}'.")
+
+    token = cuenta["access_token"]
+    phone_id = cuenta["phone_number_id"]
+    business_name = (
+        cuenta.get("business_name")
+        or cuenta.get("nombre")
+        or "nuestra agencia"
+    )
+
+    # 4️⃣ Verificar ventana de 24h
+    ventana_abierta = obtener_status_24hrs(telefono)
+
+    # ==============================
+    # 5️⃣ ENVÍO CONDICIONAL
+    # ==============================
+    try:
+        if not ventana_abierta:
+            # 👉 MENSAJE SIMPLE
+            mensaje = mensaje_invitacion_simple(nombre, business_name)
+            codigo, respuesta = enviar_mensaje(telefono, mensaje)
+
+            return {
+                "status": "ok" if codigo < 300 else "error",
+                "tipo_envio": "mensaje_simple",
+                "codigo_meta": codigo,
+                "respuesta_api": respuesta,
+                "telefono": telefono
+            }
+
+        else:
+            # 👉 PLANTILLA
+            parametros = [nombre, business_name, "https://www.tiktok.com/t/ZMAqjPPCK/"]  # o URL completa según botón
+
+            codigo, respuesta = enviar_plantilla_generica_parametros(
+                token=token,
+                phone_number_id=phone_id,
+                numero_destino=telefono,
+                nombre_plantilla="invitacion_unirse_agencia",
                 codigo_idioma="es_CO",
                 parametros=parametros,
                 body_vars_count=2
