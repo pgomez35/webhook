@@ -1608,7 +1608,7 @@ def enviar_link_agendamiento_aspirante(
 
     # 6️⃣ Enviar WhatsApp
     try:
-        if ventana_abierta:
+        if not ventana_abierta:
             mensaje = (
                 f"Hola {nombre_creador} 👋\n\n"
                 f"Queremos continuar tu proceso con *{business_name}*.\n\n"
@@ -1625,7 +1625,7 @@ def enviar_link_agendamiento_aspirante(
                 token=cuenta["access_token"],
                 phone_number_id=cuenta["phone_number_id"],
                 numero_destino=telefono,
-                nombre_plantilla="agendar_cita_proceso_v1",
+                nombre_plantilla="agendar_cita_general",
                 codigo_idioma="es_CO",
                 parametros=[
                     nombre_creador or "creador",
@@ -2145,7 +2145,7 @@ def enviar_mensaje_invitacion(
 
         else:
             # 👉 PLANTILLA
-            parametros = [nombre, business_name, "https://www.tiktok.com/t/ZMAqjPPCK/"]  # o URL completa según botón
+            parametros = [nombre, business_name, "t/ZMAqjPPCK/"]  # o URL completa según botón
 
             codigo, respuesta = enviar_plantilla_generica_parametros(
                 token=token,
