@@ -498,3 +498,84 @@ def eliminar_tipo_agendamiento(tipo_id: int):
 
 
 
+import re
+from typing import Any, Optional
+
+def _to_bool(v: Any) -> bool:
+    if v is None:
+        return False
+    return str(v).strip().lower() in ("true", "1", "t", "yes", "si", "y", "on")
+
+def _to_number(v: Any) -> Optional[float]:
+    """
+    Devuelve int si es entero, float si tiene decimales.
+    Retorna None si no se puede convertir.
+    """
+    if v is None:
+        return None
+    s = str(v).strip().replace(",", ".")  # por si te llega "3,5"
+    if not s:
+        return None
+    # entero puro
+    if re.fullmatch(r"-?\d+", s):
+        return int(s)
+    # decimal
+    if re.fullmatch(r"-?\d+(\.\d+)?", s):
+        return float(s)
+    return None
+
+def get_config(clave: str) -> Any:
+    """
+    Obtiene el valor de configuracion_agencia (public) según la definición en configuracion_agencia_keys.
+    Si no existe en configuracion_agencia, usa valor_default.
+    Tipos soportados: url, textarea, color, number, boolean, text
+    """
+    if not clave:
+        return None
+
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            # 1) Definición (tipo + default)
+            cur.execute(
+                """
+                SELECT tipo, valor_default
+                FROM public.configuracion_agencia_keys
+                WHERE clave = %s
+                LIMIT 1;
+                """,
+                (clave,)
+            )
+            row_key = cur.fetchone()
+            if not row_key:
+                return None  # clave no existe en keys
+
+            tipo, valor_default = row_key
+
+            # 2) Valor guardado
+            cur.execute(
+                """
+                SELECT valor
+                FROM public.configuracion_agencia
+                WHERE clave = %s
+                LIMIT 1;
+                """,
+                (clave,)
+            )
+            row_val = cur.fetchone()
+
+    valor = row_val[0] if row_val and row_val[0] is not None else valor_default
+    tipo = (tipo or "text").strip().lower()
+
+    # 3) Cast por tipo
+    if tipo in ("text", "url", "textarea", "color"):
+        return "" if valor is None else str(valor)
+
+    if tipo == "boolean":
+        return _to_bool(valor)
+
+    if tipo == "number":
+        n = _to_number(valor)
+        return n  # puede ser int o float o None
+
+    # fallback
+    return valor

@@ -16,6 +16,7 @@ from psycopg2.extras import RealDictCursor
 
 from DataBase import get_connection_context, obtener_cuenta_por_subdominio
 from enviar_msg_wp import enviar_plantilla_generica_parametros
+from main_configuracionAgencias import get_config
 from main_webhook import validar_link_tiktok, enviar_mensaje
 from schemas import *
 from main_auth import obtener_usuario_actual
@@ -685,8 +686,151 @@ def eliminar_evento(evento_id: str):
             raise HTTPException(status_code=500, detail="Error interno al eliminar evento.")
 
 
+
+
 @router.post("/api/eventos", response_model=EventoOut)
 def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario_actual)):
+    # 1) Validación básica
+    if evento.fin <= evento.inicio:
+        raise HTTPException(
+            status_code=400,
+            detail="La fecha de fin debe ser posterior a la fecha de inicio."
+        )
+
+    # 2) Obtener config
+    google_meet_enabled_str = get_config("google_meet_enabled")
+    google_meet_enabled = str(google_meet_enabled_str).lower() in ['true', '1', 't', 'y', 'yes']
+
+    debe_crear_meet = google_meet_enabled and evento.requiere_meet
+
+    link_reunion = evento.link_meet
+    google_event_id = None
+
+    # 3) Siempre intentar crear evento en Google si NO es tipo 1 (ej: entrevista)
+    if evento.tipo_agendamiento != 1:
+        try:
+            google_event = crear_evento_google(
+                resumen=evento.titulo,
+                descripcion=evento.descripcion or "",
+                fecha_inicio=evento.inicio,
+                fecha_fin=evento.fin,
+                requiere_meet=debe_crear_meet,
+            )
+
+            google_event_id = google_event.get("id")
+
+            if debe_crear_meet:
+                link_reunion = google_event.get("hangoutLink")
+
+        except Exception as e:
+            logger.error(f"⚠️ Error creando evento Google Calendar: {e}")
+            logger.error(traceback.format_exc())
+            google_event_id = None
+
+    # =========================================================
+    # 4) AJUSTE: Si tipo_agendamiento == 1 → generar link TikTok
+    # =========================================================
+    if evento.tipo_agendamiento == 1:
+
+        # Validamos que al menos venga 1 participante en el array
+        if not evento.participantes_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="Se requiere al menos un participante (el creador) para generar el link de TikTok LIVE."
+            )
+
+        # Tomamos el primer participante como el creador principal
+        creador_principal_id = evento.participantes_ids[0]
+
+        link_tiktok = obtener_link_live_por_creador(creador_principal_id)
+        if link_tiktok:
+            link_reunion = link_tiktok  # Sobrescribe el manual si lo calcularon
+        else:
+            logger.warning(f"No se pudo generar link LIVE para el creador {creador_principal_id}")
+
+    # 5) Abrimos transacción principal para guardar en BD
+    with get_connection_context() as conn:
+        try:
+            cur = conn.cursor()
+
+            cur.execute("""
+                        INSERT INTO agendamientos (titulo,
+                                                   descripcion,
+                                                   fecha_inicio,
+                                                   fecha_fin,
+                                                   tipo_agendamiento,
+                                                   link_meet,
+                                                   estado,
+                                                   responsable_id,
+                                                   google_event_id)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
+                        """, (
+                            evento.titulo,
+                            evento.descripcion,
+                            evento.inicio,
+                            evento.fin,
+                            evento.tipo_agendamiento,
+                            link_reunion,
+                            "programado",
+                            usuario_actual["id"],
+                            google_event_id
+                        ))
+
+            agendamiento_id = cur.fetchone()[0]
+
+            # 6) Insertar participantes
+            if evento.participantes_ids:
+                for participante_id in evento.participantes_ids:
+                    cur.execute("""
+                                INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
+                                VALUES (%s, %s)
+                                """, (agendamiento_id, participante_id))
+
+            # 7) Consultar datos de participantes
+            participantes = []
+            if evento.participantes_ids:
+                cur.execute("""
+                            SELECT id,
+                                   COALESCE(NULLIF(nombre_real, ''), nickname) AS nombre,
+                                   nickname
+                            FROM creadores
+                            WHERE id = ANY (%s)
+                            """, (evento.participantes_ids,))
+
+                participantes = [
+                    {"id": row[0], "nombre": row[1], "nickname": row[2]}
+                    for row in cur.fetchall()
+                ]
+
+            conn.commit()
+
+            # 8) Respuesta
+            return EventoOut(
+                id=str(agendamiento_id),
+                titulo=evento.titulo,
+                descripcion=evento.descripcion,
+                inicio=evento.inicio,
+                fin=evento.fin,
+                participantes_ids=evento.participantes_ids,
+                participantes=participantes,
+                link_meet=link_reunion,
+                responsable_id=usuario_actual["id"],
+                origen="interno",
+                tipo_agendamiento=evento.tipo_agendamiento,
+                google_event_id=google_event_id,
+            )
+
+        except HTTPException:
+            conn.rollback()
+            raise
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"❌ Error creando evento BD: {e}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(status_code=500, detail="Error guardando el evento en la base de datos.")
+
+@router.post("/api/eventosV00", response_model=EventoOut)
+def crear_eventoV00(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario_actual)):
     with get_connection_context() as conn:
         cur = conn.cursor()
 
@@ -2694,8 +2838,8 @@ def crear_agendamiento_aspirante_DB(
 
         # 🎯 Mapeo más limpio
         mapa_tipos = {
-            "ENTREVISTA": 3,
-            "LIVE": 4
+            "ENTREVISTA": 2,
+            "LIVE": 1
         }
 
         tipo_agendamiento_id = mapa_tipos.get(tipo_agendamiento, 4)
@@ -3592,7 +3736,7 @@ def listar_tipos_agendamiento(
                 SELECT id, nombre, color, icono, activo
                 FROM tipos_agendamiento
                 WHERE activo = TRUE
-                ORDER BY nombre ASC
+                ORDER BY id ASC
                 """
             )
         else:
