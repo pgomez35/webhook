@@ -700,27 +700,27 @@ def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario
 
             # 2️⃣ Crear agendamiento interno
             cur.execute("""
-            INSERT INTO agendamientos (
-                titulo,
-                descripcion,
-                fecha_inicio,
-                fecha_fin,
-                tipo_agendamiento,
-                link_meet,
-                estado,
-                responsable_id,
-                google_event_id
-            ) VALUES (%s, %s, %s, %s, %s, 'programado', %s, NULL)
-            RETURNING id
-        """, (
-            evento.titulo,
-            evento.descripcion,
-            evento.inicio,
-            evento.fin,
-            evento.tipo_agendamiento,
-            evento.link_meet if hasattr(evento, "link_meet") else None,
-            usuario_actual["id"],
-        ))
+                        INSERT INTO agendamientos (titulo,
+                                                   descripcion,
+                                                   fecha_inicio,
+                                                   fecha_fin,
+                                                   tipo_agendamiento,
+                                                   link_meet,
+                                                   estado,
+                                                   responsable_id,
+                                                   google_event_id)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
+                        """, (
+                            evento.titulo,
+                            evento.descripcion,
+                            evento.inicio,
+                            evento.fin,
+                            evento.tipo_agendamiento,
+                            evento.link_meet,
+                            "programado",
+                            usuario_actual["id"],
+                            None
+                        ))
 
             agendamiento_id = cur.fetchone()[0]
 
@@ -763,7 +763,8 @@ def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario
                 participantes=participantes,
                 link_meet=evento.link_meet if hasattr(evento, "link_meet") else None,
                 responsable_id=usuario_actual["id"],
-                origen="interno"
+                origen="interno",
+                tipo_agendamiento=evento.tipo_agendamiento
             )
 
         except Exception as e:
