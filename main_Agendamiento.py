@@ -686,8 +686,6 @@ def eliminar_evento(evento_id: str):
             raise HTTPException(status_code=500, detail="Error interno al eliminar evento.")
 
 
-
-
 @router.post("/api/eventos", response_model=EventoOut)
 def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario_actual)):
     # 1) Validación básica
@@ -706,8 +704,8 @@ def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario
     link_reunion = evento.link_meet
     google_event_id = None
 
-    # 3) Siempre intentar crear evento en Google si NO es tipo 1 (ej: entrevista)
-    if evento.tipo_agendamiento != 1:
+    # 3) intentar crear evento en Google si NO es tipo 1 (ej: entrevista) y se debe crear link de meet
+    if evento.tipo_agendamiento not in (1, 5) and google_meet_enabled:
         try:
             google_event = crear_evento_google(
                 resumen=evento.titulo,
@@ -718,9 +716,7 @@ def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario
             )
 
             google_event_id = google_event.get("id")
-
-            if debe_crear_meet:
-                link_reunion = google_event.get("hangoutLink")
+            link_reunion = google_event.get("hangoutLink")
 
         except Exception as e:
             logger.error(f"⚠️ Error creando evento Google Calendar: {e}")
@@ -730,7 +726,7 @@ def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario
     # =========================================================
     # 4) AJUSTE: Si tipo_agendamiento == 1 → generar link TikTok
     # =========================================================
-    if evento.tipo_agendamiento == 1:
+    if evento.tipo_agendamiento in (1, 5):
 
         # Validamos que al menos venga 1 participante en el array
         if not evento.participantes_ids:
