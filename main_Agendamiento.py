@@ -3574,7 +3574,8 @@ class TipoAgendamientoOut(BaseModel):
     icono: Optional[str] = None
     activo: bool
 
-@router.get("/agendamientos/tipos", response_model=List[TipoAgendamientoOut])
+
+@router.get("/api/agendamientos/tipos", response_model=List[TipoAgendamientoOut])
 def listar_tipos_agendamiento(
     solo_activos: bool = Query(True, description="Si True, trae solo tipos activos")
 ):
