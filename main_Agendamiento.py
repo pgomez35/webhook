@@ -705,6 +705,7 @@ def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario
                 descripcion,
                 fecha_inicio,
                 fecha_fin,
+                tipo_agendamiento,
                 link_meet,
                 estado,
                 responsable_id,
@@ -716,6 +717,7 @@ def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario
             evento.descripcion,
             evento.inicio,
             evento.fin,
+            evento.tipo_agendamiento,
             evento.link_meet if hasattr(evento, "link_meet") else None,
             usuario_actual["id"],
         ))

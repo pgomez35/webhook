@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException, Body
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Body,Query
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
+
 import re
 
 from DataBase import get_connection_context, get_connection_public
@@ -323,3 +324,177 @@ def upsert_config_valor(clave: str, data: ConfigUpdateIn = Body(...)):
             row = cur.fetchone()
 
     return ConfigItemOut(clave=row[0], valor=row[1], actualizado_en=row[2])
+
+# ---------------------------------------------------------
+# ---------------------------------------------------------
+# ----------------TIPOS DE AGENDAMIENTO-----------
+# ---------------------------------------------------------
+# ---------------------------------------------------------
+
+class TipoAgendamientoIn(BaseModel):
+    nombre: str = Field(..., max_length=100)
+    color: Optional[str] = Field(None, max_length=20)   # ej: "#4F46E5"
+    icono: Optional[str] = Field(None, max_length=50)   # ej: "🎉" o "calendar"
+    activo: Optional[bool] = True
+
+class TipoAgendamientoOut(BaseModel):
+    id: int
+    nombre: str
+    color: Optional[str] = None
+    icono: Optional[str] = None
+    activo: bool = True
+    creado_en: Optional[datetime] = None
+
+@router.get("/agendamientos/tipos", response_model=List[TipoAgendamientoOut])
+def listar_tipos_agendamiento(
+    solo_activos: bool = Query(True)
+):
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            if solo_activos:
+                cur.execute("""
+                    SELECT id, nombre, color, icono, activo, creado_en
+                    FROM tipos_agendamiento
+                    WHERE activo = TRUE
+                    ORDER BY id ASC
+                """)
+            else:
+                cur.execute("""
+                    SELECT id, nombre, color, icono, activo, creado_en
+                    FROM tipos_agendamiento
+                    ORDER BY id ASC
+                """)
+            rows = cur.fetchall()
+
+    return [
+        TipoAgendamientoOut(
+            id=r[0], nombre=r[1], color=r[2], icono=r[3], activo=r[4], creado_en=r[5]
+        )
+        for r in rows
+    ]
+
+
+@router.post("/agendamientos/tipos", response_model=TipoAgendamientoOut)
+def crear_tipo_agendamiento(payload: TipoAgendamientoIn):
+    nombre = (payload.nombre or "").strip()
+    if not nombre:
+        raise HTTPException(status_code=400, detail="El nombre es obligatorio.")
+
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            # opcional: evitar duplicados por nombre (case-insensitive)
+            cur.execute("""
+                SELECT 1 FROM tipos_agendamiento
+                WHERE LOWER(nombre) = LOWER(%s)
+                LIMIT 1
+            """, (nombre,))
+            if cur.fetchone():
+                raise HTTPException(status_code=409, detail="Ya existe un tipo con ese nombre.")
+
+            cur.execute("""
+                INSERT INTO tipos_agendamiento (nombre, color, icono, activo)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id, nombre, color, icono, activo, creado_en
+            """, (nombre, payload.color, payload.icono, payload.activo if payload.activo is not None else True))
+
+            row = cur.fetchone()
+        conn.commit()
+
+    return TipoAgendamientoOut(
+        id=row[0], nombre=row[1], color=row[2], icono=row[3], activo=row[4], creado_en=row[5]
+    )
+
+
+class ToggleActivoIn(BaseModel):
+    activo: bool
+
+class TipoAgendamientoUpdate(BaseModel):
+    nombre: Optional[str] = Field(None, max_length=100)
+    color: Optional[str] = Field(None, max_length=20)
+    icono: Optional[str] = Field(None, max_length=50)
+    activo: Optional[bool] = None
+
+@router.put("/agendamientos/tipos/{tipo_id}", response_model=TipoAgendamientoOut)
+def actualizar_tipo_agendamiento(tipo_id: int, payload: TipoAgendamientoUpdate):
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, nombre, color, icono, activo, creado_en
+                FROM tipos_agendamiento
+                WHERE id = %s
+                LIMIT 1
+            """, (tipo_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Tipo de agendamiento no encontrado.")
+
+            nombre = row[1]
+            if payload.nombre is not None:
+                nombre = payload.nombre.strip()
+                if not nombre:
+                    raise HTTPException(status_code=400, detail="El nombre no puede quedar vacío.")
+
+            color = payload.color if payload.color is not None else row[2]
+            icono = payload.icono if payload.icono is not None else row[3]
+            activo = payload.activo if payload.activo is not None else row[4]
+
+            # opcional: validar duplicados si cambia nombre
+            if payload.nombre is not None:
+                cur.execute("""
+                    SELECT 1 FROM tipos_agendamiento
+                    WHERE LOWER(nombre) = LOWER(%s) AND id <> %s
+                    LIMIT 1
+                """, (nombre, tipo_id))
+                if cur.fetchone():
+                    raise HTTPException(status_code=409, detail="Ya existe otro tipo con ese nombre.")
+
+            cur.execute("""
+                UPDATE tipos_agendamiento
+                SET nombre = %s,
+                    color = %s,
+                    icono = %s,
+                    activo = %s
+                WHERE id = %s
+                RETURNING id, nombre, color, icono, activo, creado_en
+            """, (nombre, color, icono, activo, tipo_id))
+
+            updated = cur.fetchone()
+        conn.commit()
+
+    return TipoAgendamientoOut(
+        id=updated[0], nombre=updated[1], color=updated[2], icono=updated[3], activo=updated[4], creado_en=updated[5]
+    )
+
+@router.patch("/agendamientos/tipos/{tipo_id}/activo", response_model=TipoAgendamientoOut)
+def cambiar_activo_tipo_agendamiento(tipo_id: int, payload: ToggleActivoIn):
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE tipos_agendamiento
+                SET activo = %s
+                WHERE id = %s
+                RETURNING id, nombre, color, icono, activo, creado_en
+            """, (payload.activo, tipo_id))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Tipo de agendamiento no encontrado.")
+        conn.commit()
+
+    return TipoAgendamientoOut(
+        id=row[0], nombre=row[1], color=row[2], icono=row[3], activo=row[4], creado_en=row[5]
+    )
+
+@router.delete("/agendamientos/tipos/{tipo_id}")
+def eliminar_tipo_agendamiento(tipo_id: int):
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            # seguridad: si está en uso, mejor bloquear (opcional)
+            cur.execute("DELETE FROM tipos_agendamiento WHERE id = %s RETURNING id", (tipo_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Tipo de agendamiento no encontrado.")
+        conn.commit()
+    return {"status": "ok", "deleted_id": row[0]}
+
+
+
