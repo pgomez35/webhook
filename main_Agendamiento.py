@@ -1028,7 +1028,7 @@ def obtener_eventos(
             ) in rows:
                 if ag_id not in eventos_map:
                     eventos_map[ag_id] = {
-                        "public_id": str(ag_id),
+                        "agendamiento_id": str(ag_id), # Cambiado para mantener consistencia
                         "titulo": titulo or "Sin título",
                         "descripcion": descripcion or "",
                         "inicio": fecha_inicio,
@@ -1060,7 +1060,7 @@ def obtener_eventos(
             for ag_id, ev in eventos_map.items():
                 resultado.append(
                     EventoOut(
-                        id=ev["public_id"],
+                        agendamiento_id=ev["agendamiento_id"], # 👈 AQUÍ ESTÁ EL CAMBIO,
                         titulo=ev["titulo"],
                         descripcion=ev["descripcion"],
                         inicio=ev["inicio"],
