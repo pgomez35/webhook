@@ -22,7 +22,7 @@ from schemas import *
 from main_auth import obtener_usuario_actual
 
 # Configurar logger
-from tenant import current_tenant
+from tenant import current_tenant, current_business_name
 from utils_aspirantes import obtener_status_24hrs
 
 import requests
@@ -1962,7 +1962,7 @@ def crear_y_enviar_link_agendamiento_aspiranteTokenV1(
 
         if nuevo_estado_id:
             # Ejecutamos el update DIRECTAMENTE aquí
-            # Nota: Verifica si tu tabla es 'creadores' o 'test.perfil_creador'
+            # Nota: Verifica si tu tabla es 'creadores' o 'perfil_creador'
             cur.execute(
                 """
                 UPDATE perfil_creador
@@ -3877,9 +3877,9 @@ def actualizar_estado_agendamiento(
 #                            COALESCE(NULLIF(c.whatsapp, ''), c.telefono) as telefono_final,
 #                            COALESCE(c.nickname, c.nombre_real)          as nombre,
 #                            c.id                                         as creador_id
-#                     FROM test.agendamientos a
-#                              JOIN test.agendamientos_participantes ap ON a.id = ap.agendamiento_id
-#                              JOIN test.creadores c ON ap.creador_id = c.id
+#                     FROM agendamientos a
+#                              JOIN agendamientos_participantes ap ON a.id = ap.agendamiento_id
+#                              JOIN creadores c ON ap.creador_id = c.id
 #                     WHERE a.id = %s LIMIT 1
 #                     """, (agendamiento_id,))
 #
@@ -3901,7 +3901,7 @@ def actualizar_estado_agendamiento(
 #             # para identificar los mensajes entrantes (ej: 'inbound', 'entrada', 'in').
 #             cur.execute("""
 #                         SELECT MAX(fecha)
-#                         FROM test.mensajes_whatsapp
+#                         FROM mensajes_whatsapp
 #                         WHERE telefono = %s
 #                           AND direccion = 'recibido'
 #                         """, (telefono,))
@@ -4018,8 +4018,194 @@ def actualizar_estado_agendamiento(
 
 
 
+#
+# # Pequeño diccionario para traducir zonas horarias de base de datos a un formato amigable para el usuario
+# MAPA_ZONAS_HORARIAS = {
+#     "America/Bogota": "Hora Colombia GMT-5",
+#     "America/Mexico_City": "Hora México GMT-6",
+#     "America/Lima": "Hora Perú GMT-5",
+#     "America/Santiago": "Hora Chile GMT-4",
+#     "America/Argentina/Buenos_Aires": "Hora Arg GMT-3",
+# }
+#
+#
+# @router.post("/api/agendamientos/{agendamiento_id}/recordatorio")
+# def enviar_recordatorio_manual(
+#         agendamiento_id: int,
+#         usuario_actual: dict = Depends(obtener_usuario_actual)
+# ):
+#     """
+#     Endpoint manual para disparar un recordatorio de cita.
+#     Usa la nueva plantilla con 5 variables o un mensaje interactivo equivalente.
+#     """
+#     with get_connection_context() as conn:
+#         cur = conn.cursor()
+#
+#         # =========================================================
+#         # 1. Obtener datos de la cita, creador y TIPO DE AGENDAMIENTO
+#         # =========================================================
+#         # Agregamos el LEFT JOIN con tipos_agendamiento
+#         cur.execute("""
+#                     SELECT a.id,
+#                            a.fecha_inicio,
+#                            a.fecha_fin,
+#                            a.timezone,
+#                            ta.nombre                                    as tipo_cita_nombre,
+#                            COALESCE(NULLIF(c.whatsapp, ''), c.telefono) as telefono_final,
+#                            COALESCE(c.nickname, c.nombre_real)          as nombre,
+#                            c.id                                         as creador_id
+#                     FROM agendamientos a
+#                              JOIN agendamientos_participantes ap ON a.id = ap.agendamiento_id
+#                              JOIN creadores c ON ap.creador_id = c.id
+#                              LEFT JOIN tipos_agendamiento ta ON a.tipo_agendamiento = ta.id
+#                     WHERE a.id = %s LIMIT 1
+#                     """, (agendamiento_id,))
+#
+#         row = cur.fetchone()
+#         if not row:
+#             raise HTTPException(status_code=404, detail="Cita o participante no encontrado.")
+#
+#         cita_id, fecha_inicio, fecha_fin, timezone_db, tipo_cita_nombre, telefono, nombre, creador_id = row
+#
+#         if not telefono:
+#             raise HTTPException(status_code=400, detail="El creador no tiene teléfono registrado.")
+#
+#         # =========================================================
+#         # 2. Verificar si está en ventana de 24 horas
+#         # =========================================================
+#         en_ventana_24h = False
+#         try:
+#             cur.execute("""
+#                         SELECT MAX(fecha)
+#                         FROM mensajes_whatsapp
+#                         WHERE telefono = %s
+#                           AND direccion = 'inbound'
+#                         """, (telefono,))
+#
+#             ultimo_msg = cur.fetchone()[0]
+#
+#             if ultimo_msg:
+#                 ahora_utc = datetime.now(timezone.utc)
+#                 if (ahora_utc - ultimo_msg) <= timedelta(hours=24):
+#                     en_ventana_24h = True
+#         except Exception as e:
+#             logger.warning(f"No se pudo verificar ventana de 24h. Error: {e}")
+#
+#     # =========================================================
+#     # 3. Formatear Variables para el Mensaje
+#     # =========================================================
+#     # Fechas y Horas
+#     fecha_str = fecha_inicio.strftime("%d/%m/%Y")
+#     hora_inicio_str = fecha_inicio.strftime("%I:%M %p")
+#
+#     # {{2}} Tipo de Cita (Si es NULL, usamos un genérico)
+#     nombre_evento = tipo_cita_nombre.lower() if tipo_cita_nombre else "cita"
+#
+#     # {{5}} Zona Horaria (Buscamos en el mapa, si no existe dejamos la de la BD o un por defecto)
+#     zona_horaria_str = MAPA_ZONAS_HORARIAS.get(timezone_db, timezone_db or "Hora Colombia GMT-5")
+#
+#     # =========================================================
+#     # 4. Obtener credenciales WABA
+#     # =========================================================
+#     tenant_key = current_tenant.get() or "test"
+#     cuenta = obtener_cuenta_por_subdominio(tenant_key)
+#     if not cuenta:
+#         raise HTTPException(status_code=500, detail=f"No hay credenciales WABA para '{tenant_key}'.")
+#
+#     token = cuenta.get("access_token")
+#     phone_id = cuenta.get("phone_number_id")
+#
+#     # =========================================================
+#     # 5. Lógica de Envío Híbrido
+#     # =========================================================
+#     exito = False
+#
+#     if en_ventana_24h:
+#         # --- ENVÍO INTERACTIVO (Dentro de 24h) ---
+#         # Igualamos el texto para que se lea exactamente igual que tu plantilla
+#         texto_mensaje = (
+#             f"Hola {nombre} 😊\n\n"
+#             f"Tu {nombre_evento} está programada para el {fecha_str} a las {hora_inicio_str} ({zona_horaria_str}).\n\n"
+#             "Por favor, confírmanos tu asistencia o avísanos si necesitas reprogramarla.\n\n"
+#             "¡Te esperamos!"
+#         )
+#
+#         botones = [
+#             {
+#                 "type": "reply",
+#                 "reply": {
+#                     "id": f"BTN_CONFIRMAR_{cita_id}",
+#                     "title": "✅ Confirmar"
+#                 }
+#             },
+#             {
+#                 "type": "reply",
+#                 "reply": {
+#                     "id": f"BTN_MODIFICAR_{cita_id}",
+#                     "title": "🗓️ Modificar"
+#                 }
+#             }
+#         ]
+#
+#         try:
+#             respuesta = enviar_mensaje_interactivo(token, phone_id, telefono, texto_mensaje, botones)
+#             exito = True
+#         except Exception as e:
+#             logger.error(f"Error enviando interactivo: {e}")
+#             raise HTTPException(status_code=500, detail="Error enviando mensaje interactivo.")
+#
+#     else:
+#         # --- ENVÍO POR PLANTILLA META (Fuera de 24h) ---
+#         # Plantilla actualizada a 5 variables
+#         parametros_body = [
+#             nombre,  # {{1}}
+#             nombre_evento,  # {{2}}
+#             fecha_str,  # {{3}}
+#             hora_inicio_str,  # {{4}}
+#             zona_horaria_str  # {{5}}
+#         ]
+#
+#         try:
+#             codigo, resp = enviar_plantilla_generica_parametros(
+#                 token=token,
+#                 phone_number_id=phone_id,
+#                 numero_destino=telefono,
+#                 nombre_plantilla="recordatorio_cita",  # Ajusta este nombre si cambió
+#                 codigo_idioma="es_CO",
+#                 parametros=parametros_body,
+#                 body_vars_count=5  # <--- Importante: Ahora son 5 variables
+#             )
+#             exito = codigo < 300
+#             if not exito:
+#                 logger.error(f"Error API Meta: {resp}")
+#                 raise HTTPException(status_code=500, detail="Error de Meta al enviar plantilla.")
+#         except HTTPException:
+#             raise
+#         except Exception as e:
+#             logger.error(f"Error enviando plantilla: {e}")
+#             logger.error(traceback.format_exc())
+#             raise HTTPException(status_code=500, detail="Error interno enviando la plantilla de Meta.")
+#
+#     # =========================================================
+#     # 6. Respuesta Exitosa
+#     # =========================================================
+#     return {
+#         "status": "ok",
+#         "enviado_por": "interactive" if en_ventana_24h else "template",
+#         "telefono": telefono,
+#         "cita_id": cita_id
+#     }
 
-# Pequeño diccionario para traducir zonas horarias de base de datos a un formato amigable para el usuario
+
+# ⚠️ Asegúrate de importar current_business_name desde tu archivo de contextos
+# from context import current_business_name, current_tenant
+# from database import get_connection_context
+# from services.whatsapp_service import enviar_mensaje_interactivo, enviar_plantilla_generica_parametros
+# from auth import obtener_usuario_actual
+# from config import obtener_cuenta_por_subdominio
+
+
+
 MAPA_ZONAS_HORARIAS = {
     "America/Bogota": "Hora Colombia GMT-5",
     "America/Mexico_City": "Hora México GMT-6",
@@ -4034,17 +4220,12 @@ def enviar_recordatorio_manual(
         agendamiento_id: int,
         usuario_actual: dict = Depends(obtener_usuario_actual)
 ):
-    """
-    Endpoint manual para disparar un recordatorio de cita.
-    Usa la nueva plantilla con 5 variables o un mensaje interactivo equivalente.
-    """
     with get_connection_context() as conn:
         cur = conn.cursor()
 
         # =========================================================
         # 1. Obtener datos de la cita, creador y TIPO DE AGENDAMIENTO
         # =========================================================
-        # Agregamos el LEFT JOIN con test.tipos_agendamiento
         cur.execute("""
                     SELECT a.id,
                            a.fecha_inicio,
@@ -4054,10 +4235,10 @@ def enviar_recordatorio_manual(
                            COALESCE(NULLIF(c.whatsapp, ''), c.telefono) as telefono_final,
                            COALESCE(c.nickname, c.nombre_real)          as nombre,
                            c.id                                         as creador_id
-                    FROM test.agendamientos a
-                             JOIN test.agendamientos_participantes ap ON a.id = ap.agendamiento_id
-                             JOIN test.creadores c ON ap.creador_id = c.id
-                             LEFT JOIN test.tipos_agendamiento ta ON a.tipo_agendamiento = ta.id
+                    FROM agendamientos a
+                             JOIN agendamientos_participantes ap ON a.id = ap.agendamiento_id
+                             JOIN creadores c ON ap.creador_id = c.id
+                             LEFT JOIN tipos_agendamiento ta ON a.tipo_agendamiento = ta.id
                     WHERE a.id = %s LIMIT 1
                     """, (agendamiento_id,))
 
@@ -4071,13 +4252,13 @@ def enviar_recordatorio_manual(
             raise HTTPException(status_code=400, detail="El creador no tiene teléfono registrado.")
 
         # =========================================================
-        # 2. Verificar si está en ventana de 24 horas
+        # 2. Verificar ventana de 24 horas
         # =========================================================
         en_ventana_24h = False
         try:
             cur.execute("""
                         SELECT MAX(fecha)
-                        FROM test.mensajes_whatsapp
+                        FROM mensajes_whatsapp
                         WHERE telefono = %s
                           AND direccion = 'inbound'
                         """, (telefono,))
@@ -4092,17 +4273,28 @@ def enviar_recordatorio_manual(
             logger.warning(f"No se pudo verificar ventana de 24h. Error: {e}")
 
     # =========================================================
-    # 3. Formatear Variables para el Mensaje
+    # 3. Formatear Variables para el Mensaje (AHORA SON 7)
     # =========================================================
-    # Fechas y Horas
+    # {{1}} Nombre
+    # {{2}} Nombre de la Agencia
+    nombre_agencia = current_business_name.get() or "nuestra agencia"
+
+    # {{3}} Tipo de Cita
+    nombre_evento = tipo_cita_nombre.lower() if tipo_cita_nombre else "cita"
+
+    # {{4}} y {{5}} Fechas y Horas
     fecha_str = fecha_inicio.strftime("%d/%m/%Y")
     hora_inicio_str = fecha_inicio.strftime("%I:%M %p")
 
-    # {{2}} Tipo de Cita (Si es NULL, usamos un genérico)
-    nombre_evento = tipo_cita_nombre.lower() if tipo_cita_nombre else "cita"
-
-    # {{5}} Zona Horaria (Buscamos en el mapa, si no existe dejamos la de la BD o un por defecto)
+    # {{6}} Zona Horaria
     zona_horaria_str = MAPA_ZONAS_HORARIAS.get(timezone_db, timezone_db or "Hora Colombia GMT-5")
+
+    # {{7}} Duración en Minutos
+    # Calculamos la diferencia entre fecha_fin y fecha_inicio
+    if fecha_fin and fecha_inicio:
+        duracion_minutos = int((fecha_fin - fecha_inicio).total_seconds() / 60)
+    else:
+        duracion_minutos = 30  # Valor por defecto si por alguna razón no hay fecha_fin
 
     # =========================================================
     # 4. Obtener credenciales WABA
@@ -4121,30 +4313,17 @@ def enviar_recordatorio_manual(
     exito = False
 
     if en_ventana_24h:
-        # --- ENVÍO INTERACTIVO (Dentro de 24h) ---
-        # Igualamos el texto para que se lea exactamente igual que tu plantilla
+        # --- ENVÍO INTERACTIVO ---
+        # Réplica exacta del nuevo template
         texto_mensaje = (
-            f"Hola {nombre} 😊\n\n"
-            f"Tu {nombre_evento} está programada para el {fecha_str} a las {hora_inicio_str} ({zona_horaria_str}).\n\n"
-            "Por favor, confírmanos tu asistencia o avísanos si necesitas reprogramarla.\n\n"
-            "¡Te esperamos!"
+            f"Hola {nombre} 😊\n"
+            f"En {nombre_agencia} te recordamos tu {nombre_evento} el {fecha_str} a las {hora_inicio_str} ({zona_horaria_str}), con una duración aproximada de {duracion_minutos} minutos.\n"
+            "¿Nos confirmas tu asistencia?"
         )
 
         botones = [
-            {
-                "type": "reply",
-                "reply": {
-                    "id": f"BTN_CONFIRMAR_{cita_id}",
-                    "title": "✅ Confirmar"
-                }
-            },
-            {
-                "type": "reply",
-                "reply": {
-                    "id": f"BTN_MODIFICAR_{cita_id}",
-                    "title": "🗓️ Modificar"
-                }
-            }
+            {"type": "reply", "reply": {"id": f"BTN_CONFIRMAR_{cita_id}", "title": "✅ Confirmar"}},
+            {"type": "reply", "reply": {"id": f"BTN_MODIFICAR_{cita_id}", "title": "🗓️ Modificar"}}
         ]
 
         try:
@@ -4155,14 +4334,15 @@ def enviar_recordatorio_manual(
             raise HTTPException(status_code=500, detail="Error enviando mensaje interactivo.")
 
     else:
-        # --- ENVÍO POR PLANTILLA META (Fuera de 24h) ---
-        # Plantilla actualizada a 5 variables
+        # --- ENVÍO POR PLANTILLA META ---
         parametros_body = [
             nombre,  # {{1}}
-            nombre_evento,  # {{2}}
-            fecha_str,  # {{3}}
-            hora_inicio_str,  # {{4}}
-            zona_horaria_str  # {{5}}
+            nombre_agencia,  # {{2}}
+            nombre_evento,  # {{3}}
+            fecha_str,  # {{4}}
+            hora_inicio_str,  # {{5}}
+            zona_horaria_str,  # {{6}}
+            str(duracion_minutos)  # {{7}} Convertido a string por seguridad para la API
         ]
 
         try:
@@ -4170,10 +4350,10 @@ def enviar_recordatorio_manual(
                 token=token,
                 phone_number_id=phone_id,
                 numero_destino=telefono,
-                nombre_plantilla="recordatorio_cita",  # Ajusta este nombre si cambió
+                nombre_plantilla="recordatorio_cita_v1",  # Asegúrate de que este es el nombre en Meta
                 codigo_idioma="es_CO",
                 parametros=parametros_body,
-                body_vars_count=5  # <--- Importante: Ahora son 5 variables
+                body_vars_count=7  # 👈 Actualizado a 7
             )
             exito = codigo < 300
             if not exito:
@@ -4186,18 +4366,12 @@ def enviar_recordatorio_manual(
             logger.error(traceback.format_exc())
             raise HTTPException(status_code=500, detail="Error interno enviando la plantilla de Meta.")
 
-    # =========================================================
-    # 6. Respuesta Exitosa
-    # =========================================================
     return {
         "status": "ok",
         "enviado_por": "interactive" if en_ventana_24h else "template",
         "telefono": telefono,
         "cita_id": cita_id
     }
-
-
-
 
 
 def enviar_mensaje_interactivo(token: str, phone_number_id: str, numero_destino: str, texto: str, botones: list):
