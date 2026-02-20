@@ -3835,3 +3835,234 @@ def actualizar_estado_agendamiento(
             logger.error(f"❌ Error actualizando estado agendamiento {agendamiento_id}: {e}")
             logger.error(traceback.format_exc())
             raise HTTPException(status_code=500, detail="Error actualizando estado.")
+
+
+# -----------------------------------------------------------
+# -----------------------------------------------------------
+# -----------------------------------------------------------
+
+
+# Asegúrate de importar tus dependencias reales aquí
+# from database import get_connection_context
+# from services.whatsapp_service import enviar_mensaje_interactivo, enviar_plantilla_generica_parametros
+# from auth import obtener_usuario_actual, current_tenant
+# from config import obtener_cuenta_por_subdominio
+
+
+@router.post("/api/agendamientos/{agendamiento_id}/recordatorio")
+def enviar_recordatorio_manual(
+        agendamiento_id: int,
+        usuario_actual: dict = Depends(obtener_usuario_actual)
+):
+    """
+    Endpoint manual para disparar un recordatorio de cita.
+    Decide automáticamente si usa Quick Reply (ventana 24h) o Plantilla Meta.
+    """
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+
+        # =========================================================
+        # 1. Obtener datos de la cita y del creador
+        # =========================================================
+        cur.execute("""
+                    SELECT a.id,
+                           a.fecha_inicio,
+                           a.fecha_fin,
+                           a.titulo,
+                           COALESCE(NULLIF(c.whatsapp, ''), c.telefono) as telefono_final,
+                           COALESCE(c.nickname, c.nombre_real)          as nombre,
+                           c.id                                         as creador_id
+                    FROM test.agendamientos a
+                             JOIN test.agendamientos_participantes ap ON a.id = ap.agendamiento_id
+                             JOIN test.creadores c ON ap.creador_id = c.id
+                    WHERE a.id = %s LIMIT 1
+                    """, (agendamiento_id,))
+
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Cita o participante no encontrado.")
+
+        cita_id, fecha_inicio, fecha_fin, titulo, telefono, nombre, creador_id = row
+
+        if not telefono:
+            raise HTTPException(status_code=400, detail="El creador no tiene teléfono registrado.")
+
+        # =========================================================
+        # 2. Verificar si está en ventana de 24 horas
+        # =========================================================
+        en_ventana_24h = False
+        try:
+            # ⚠️ IMPORTANTE: Ajusta 'inbound' al valor exacto que uses en tu campo 'direccion'
+            # para identificar los mensajes entrantes (ej: 'inbound', 'entrada', 'in').
+            cur.execute("""
+                        SELECT MAX(fecha)
+                        FROM test.mensajes_whatsapp
+                        WHERE telefono = %s
+                          AND direccion = 'recibido'
+                        """, (telefono,))
+
+            ultimo_msg = cur.fetchone()[0]
+
+            if ultimo_msg:
+                # Como tu BD guarda "timestamp with time zone", ultimo_msg es un datetime aware.
+                # Lo comparamos con la hora actual UTC.
+                ahora_utc = datetime.now(timezone.utc)
+                if (ahora_utc - ultimo_msg) <= timedelta(hours=24):
+                    en_ventana_24h = True
+        except Exception as e:
+            logger.warning(f"No se pudo verificar ventana de 24h, usando plantilla por defecto. Error: {e}")
+
+    # =========================================================
+    # 3. Formatear Fechas para el mensaje
+    # =========================================================
+    fecha_str = fecha_inicio.strftime("%d/%m/%Y")
+    hora_inicio_str = fecha_inicio.strftime("%I:%M %p")
+    hora_fin_str = fecha_fin.strftime("%I:%M %p")
+
+    # =========================================================
+    # 4. Obtener credenciales WABA
+    # =========================================================
+    tenant_key = current_tenant.get() or "test"
+    cuenta = obtener_cuenta_por_subdominio(tenant_key)
+    if not cuenta:
+        raise HTTPException(status_code=500, detail=f"No hay credenciales WABA para '{tenant_key}'.")
+
+    token = cuenta.get("access_token")
+    phone_id = cuenta.get("phone_number_id")
+
+    # =========================================================
+    # 5. Lógica de Envío Híbrido
+    # =========================================================
+    exito = False
+
+    if en_ventana_24h:
+        # --- ENVÍO INTERACTIVO (Gratis / Flexible - Dentro de 24h) ---
+        texto_mensaje = (
+            f"Hola {nombre} 👋,\n\n"
+            f"Te recordamos que tienes una cita de *{titulo}*.\n"
+            f"📅 Fecha: {fecha_str}\n"
+            f"⏰ Hora: {hora_inicio_str} a {hora_fin_str}\n\n"
+            "Por favor, selecciona una opción:"
+        )
+
+        botones = [
+            {
+                "type": "reply",
+                "reply": {
+                    "id": f"BTN_CONFIRMAR_{cita_id}",
+                    "title": "✅ Confirmar"
+                }
+            },
+            {
+                "type": "reply",
+                "reply": {
+                    "id": f"BTN_MODIFICAR_{cita_id}",
+                    "title": "🗓️ Modificar"
+                }
+            }
+        ]
+
+        try:
+            respuesta = enviar_mensaje_interactivo(token, phone_id, telefono, texto_mensaje, botones)
+            exito = True
+        except Exception as e:
+            logger.error(f"Error enviando interactivo: {e}")
+            raise HTTPException(status_code=500, detail="Error enviando mensaje interactivo.")
+
+    else:
+        # --- ENVÍO POR PLANTILLA META (Pago / Estricto - Fuera de 24h) ---
+        # Requiere plantilla pre-aprobada en Meta con 2 botones de respuesta rápida
+        parametros_body = [nombre, titulo, fecha_str, hora_inicio_str]
+
+        try:
+            codigo, resp = enviar_plantilla_generica_parametros(
+                token=token,
+                phone_number_id=phone_id,
+                numero_destino=telefono,
+                nombre_plantilla="recordatorio_cita_v1",  # Ajusta este nombre al de tu plantilla en Meta
+                codigo_idioma="es_CO",
+                parametros=parametros_body,
+                body_vars_count=4
+            )
+            exito = codigo < 300
+            if not exito:
+                logger.error(f"Error API Meta: {resp}")
+                raise HTTPException(status_code=500, detail="Error de Meta al enviar plantilla.")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error enviando plantilla: {e}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(status_code=500, detail="Error interno enviando la plantilla de Meta.")
+
+    # =========================================================
+    # 6. Respuesta Exitosa
+    # =========================================================
+    return {
+        "status": "ok",
+        "enviado_por": "interactive" if en_ventana_24h else "template",
+        "telefono": telefono,
+        "cita_id": cita_id
+    }
+
+import requests
+import logging
+
+def enviar_mensaje_interactivo(token: str, phone_number_id: str, numero_destino: str, texto: str, botones: list):
+    """
+    Envía un mensaje interactivo de WhatsApp con botones (Quick Replies).
+    OJO: Meta permite un MÁXIMO de 3 botones por mensaje.
+
+    Args:
+        token: Access token de la API de Meta.
+        phone_number_id: ID del número de teléfono remitente.
+        numero_destino: Número de teléfono del destinatario con código de país.
+        texto: El cuerpo del mensaje.
+        botones: Lista de diccionarios con la estructura de botones de Meta.
+    """
+
+    # Validamos el límite estricto de Meta
+    if len(botones) > 3:
+        raise ValueError("WhatsApp Cloud API solo permite un máximo de 3 botones interactivos por mensaje.")
+
+    # Asegúrate de usar la versión de la API que manejes (v17.0, v18.0, etc.)
+    # Si no estás seguro, v18.0 es muy estable en este momento.
+    url = f"https://graph.facebook.com/v18.0/{phone_number_id}/messages"
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    # Estructura obligatoria para mensajes interactivos de tipo 'button'
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": numero_destino,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {
+                "text": texto
+            },
+            "action": {
+                "buttons": botones
+            }
+        }
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+
+        # Si la API de Meta devuelve un error (400, 401, 403, etc.)
+        if response.status_code >= 400:
+            logger.error(f"❌ Error de Meta API al enviar interactivo: {response.text}")
+            response.raise_for_status()
+
+        logger.info(f"✅ Mensaje interactivo enviado a {numero_destino}")
+        return response.json()
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"❌ Falla de conexión enviando mensaje interactivo a {numero_destino}: {e}")
+        raise e
+
