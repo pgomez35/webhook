@@ -767,7 +767,7 @@ def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario
                             evento.fin,
                             evento.tipo_agendamiento,
                             link_reunion,
-                            "programado",
+                            1,
                             usuario_actual["id"],
                             google_event_id
                         ))
@@ -3757,3 +3757,81 @@ def listar_tipos_agendamiento(
         for r in rows
     ]
 
+
+# ---------------------------------
+# ------CAMBIO ESTADO--------------
+# ---------------------------------
+
+
+ESTADOS_AGENDAMIENTO = {
+    "programado": 1,
+    "confirmado": 2,
+    "cancelado": 3,
+    "cumplido": 4,
+}
+
+
+class EstadoUpdateIn(BaseModel):
+    estado: str = Field(..., description="programado|confirmado|cancelado|cumplido")
+
+@router.patch("/api/agendamientos/{agendamiento_id}/estado")
+def actualizar_estado_agendamiento(
+    agendamiento_id: int,
+    payload: EstadoUpdateIn,
+    usuario_actual: Any = Depends(obtener_usuario_actual),
+):
+    estado_txt = (payload.estado or "").strip().lower()
+    if estado_txt not in ESTADOS_AGENDAMIENTO:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Estado inválido: '{payload.estado}'. Válidos: {list(ESTADOS_AGENDAMIENTO.keys())}"
+        )
+
+    estado_id = ESTADOS_AGENDAMIENTO[estado_txt]
+
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+        try:
+            # (Opcional) si quieres validar responsable_id:
+            cur.execute(
+                """
+                SELECT id
+                FROM agendamientos
+                WHERE id = %s
+                  AND responsable_id = %s
+                """,
+                (agendamiento_id, usuario_actual["id"])
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Agendamiento no encontrado (o no tienes permiso)."
+                )
+
+            cur.execute(
+                """
+                UPDATE agendamientos
+                SET estado = %s,
+                    actualizado_en = NOW()
+                WHERE id = %s
+                """,
+                (estado_id, agendamiento_id)
+            )
+
+            conn.commit()
+
+            return {
+                "ok": True,
+                "id": agendamiento_id,
+                "estado": estado_id
+            }
+
+        except HTTPException:
+            conn.rollback()
+            raise
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"❌ Error actualizando estado agendamiento {agendamiento_id}: {e}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(status_code=500, detail="Error actualizando estado.")
