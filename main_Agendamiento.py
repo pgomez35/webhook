@@ -952,7 +952,6 @@ def listar_agendamientos():
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Error consultando agendamientos")
 
-
 def obtener_eventos(
     time_min: Optional[datetime] = None,
     time_max: Optional[datetime] = None,
@@ -963,13 +962,9 @@ def obtener_eventos(
       - agendamientos (evento principal)
       - agendamientos_participantes (asistentes)
       - creadores (datos de personas)
-
-    Ya NO consulta Google Calendar directamente.
-    Si el agendamiento tiene google_event_id, se marca origen="google_calendar",
-    de lo contrario origen="interno".
     """
 
-    # ✅ Rango por defecto: 30 días atrás y 30 adelante (como antes)
+    # ✅ Rango por defecto: 60 días atrás y 60 adelante
     if time_min is None:
         time_min = datetime.utcnow() - timedelta(days=60)
     if time_max is None:
@@ -993,7 +988,6 @@ def obtener_eventos(
                 a.estado,
                 a.link_meet,
                 a.tipo_agendamiento,
-                a.google_event_id,
                 c.id AS creador_id,
                 COALESCE(NULLIF(c.nombre_real, ''), c.nickname) AS nombre,
                 c.nickname
@@ -1005,7 +999,7 @@ def obtener_eventos(
             WHERE a.fecha_inicio >= %s
               AND a.fecha_inicio <= %s
             ORDER BY a.fecha_inicio ASC, a.id ASC
-                LIMIT %s
+            LIMIT %s
             """
 
             cur.execute(sql, (time_min, time_max, max_results))
@@ -1028,24 +1022,13 @@ def obtener_eventos(
                 estado,
                 link_meet,
                 tipo_agendamiento,
-                google_event_id,
                 creador_id,
                 nombre,
                 nickname,
             ) in rows:
                 if ag_id not in eventos_map:
-                    # Definir ID expuesto:
-                    # - Si tiene google_event_id -> es el mismo que usabas antes
-                    # - Si no, usamos el id interno como string
-                    if google_event_id:
-                        public_id = google_event_id
-                        origen = "google_calendar"
-                    else:
-                        public_id = str(ag_id)
-                        origen = "interno"
-
                     eventos_map[ag_id] = {
-                        "public_id": public_id,
+                        "public_id": str(ag_id),
                         "titulo": titulo or "Sin título",
                         "descripcion": descripcion or "",
                         "inicio": fecha_inicio,
@@ -1053,9 +1036,8 @@ def obtener_eventos(
                         "responsable_id": responsable_id,
                         "estado": estado,
                         "link_meet": link_meet,
-                        "tipo_agendamiento":tipo_agendamiento,
-                        "google_event_id": google_event_id,
-                        "origen": origen,
+                        "tipo_agendamiento": tipo_agendamiento,
+                        "origen": "interno",
                         "participantes": [],
                         "participantes_ids": set(),  # usamos set para evitar duplicados
                     }
@@ -1099,6 +1081,153 @@ def obtener_eventos(
         logger.error(f"❌ Error al obtener eventos desde BD: {e}")
         logger.error(traceback.format_exc())
         raise
+
+# def obtener_eventos(
+#     time_min: Optional[datetime] = None,
+#     time_max: Optional[datetime] = None,
+#     max_results: int = 100
+# ) -> List[EventoOut]:
+#     """
+#     Obtiene eventos desde la base de datos usando:
+#       - agendamientos (evento principal)
+#       - agendamientos_participantes (asistentes)
+#       - creadores (datos de personas)
+#
+#     Ya NO consulta Google Calendar directamente.
+#     Si el agendamiento tiene google_event_id, se marca origen="google_calendar",
+#     de lo contrario origen="interno".
+#     """
+#
+#     # ✅ Rango por defecto: 30 días atrás y 30 adelante (como antes)
+#     if time_min is None:
+#         time_min = datetime.utcnow() - timedelta(days=60)
+#     if time_max is None:
+#         time_max = datetime.utcnow() + timedelta(days=60)
+#
+#     try:
+#         with get_connection_context() as conn:
+#             cur = conn.cursor()
+#
+#             # 🔍 Traer eventos + participantes en un solo query
+#             # - Un agendamiento puede aparecer en varias filas (una por participante)
+#             # - Luego agregamos en Python
+#             sql = """
+#             SELECT
+#                 a.id AS ag_id,
+#                 a.titulo,
+#                 a.descripcion,
+#                 a.fecha_inicio,
+#                 a.fecha_fin,
+#                 a.responsable_id,
+#                 a.estado,
+#                 a.link_meet,
+#                 a.tipo_agendamiento,
+#                 a.google_event_id,
+#                 c.id AS creador_id,
+#                 COALESCE(NULLIF(c.nombre_real, ''), c.nickname) AS nombre,
+#                 c.nickname
+#             FROM agendamientos a
+#             LEFT JOIN agendamientos_participantes ap
+#                    ON ap.agendamiento_id = a.id
+#             LEFT JOIN creadores c
+#                    ON c.id = ap.creador_id
+#             WHERE a.fecha_inicio >= %s
+#               AND a.fecha_inicio <= %s
+#             ORDER BY a.fecha_inicio ASC, a.id ASC
+#                 LIMIT %s
+#             """
+#
+#             cur.execute(sql, (time_min, time_max, max_results))
+#             rows = cur.fetchall()
+#
+#             if not rows:
+#                 logger.info("✅ No hay agendamientos en el rango solicitado")
+#                 return []
+#
+#             # 🧩 Agregar por agendamiento_id
+#             eventos_map: Dict[int, Dict] = {}
+#
+#             for (
+#                 ag_id,
+#                 titulo,
+#                 descripcion,
+#                 fecha_inicio,
+#                 fecha_fin,
+#                 responsable_id,
+#                 estado,
+#                 link_meet,
+#                 tipo_agendamiento,
+#                 google_event_id,
+#                 creador_id,
+#                 nombre,
+#                 nickname,
+#             ) in rows:
+#                 if ag_id not in eventos_map:
+#                     # Definir ID expuesto:
+#                     # - Si tiene google_event_id -> es el mismo que usabas antes
+#                     # - Si no, usamos el id interno como string
+#                     if google_event_id:
+#                         public_id = google_event_id
+#                         origen = "google_calendar"
+#                     else:
+#                         public_id = str(ag_id)
+#                         origen = "interno"
+#
+#                     eventos_map[ag_id] = {
+#                         "public_id": public_id,
+#                         "titulo": titulo or "Sin título",
+#                         "descripcion": descripcion or "",
+#                         "inicio": fecha_inicio,
+#                         "fin": fecha_fin,
+#                         "responsable_id": responsable_id,
+#                         "estado": estado,
+#                         "link_meet": link_meet,
+#                         "tipo_agendamiento":tipo_agendamiento,
+#                         "google_event_id": google_event_id,
+#                         "origen": origen,
+#                         "participantes": [],
+#                         "participantes_ids": set(),  # usamos set para evitar duplicados
+#                     }
+#
+#                 # Agregar participante si existe
+#                 if creador_id is not None:
+#                     ev = eventos_map[ag_id]
+#                     if creador_id not in ev["participantes_ids"]:
+#                         ev["participantes_ids"].add(creador_id)
+#                         ev["participantes"].append(
+#                             {
+#                                 "id": creador_id,
+#                                 "nombre": nombre,
+#                                 "nickname": nickname,
+#                             }
+#                         )
+#
+#             # 📦 Convertir a lista de EventoOut
+#             resultado: List[EventoOut] = []
+#             for ag_id, ev in eventos_map.items():
+#                 resultado.append(
+#                     EventoOut(
+#                         id=ev["public_id"],
+#                         titulo=ev["titulo"],
+#                         descripcion=ev["descripcion"],
+#                         inicio=ev["inicio"],
+#                         fin=ev["fin"],
+#                         participantes_ids=list(ev["participantes_ids"]),
+#                         participantes=ev["participantes"],
+#                         link_meet=ev["link_meet"],
+#                         tipo_agendamiento=ev["tipo_agendamiento"],
+#                         responsable_id=ev["responsable_id"],
+#                         origen=ev["origen"],
+#                     )
+#                 )
+#
+#             logger.info(f"✅ Se obtuvieron {len(resultado)} agendamientos desde BD")
+#             return resultado
+#
+#     except Exception as e:
+#         logger.error(f"❌ Error al obtener eventos desde BD: {e}")
+#         logger.error(traceback.format_exc())
+#         raise
 
 # schemas
 class TimeZoneOut(BaseModel):
