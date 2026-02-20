@@ -1,13 +1,15 @@
 import os
 import traceback
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Dict, Any, Literal
-from uuid import uuid4
-
 import pytz
 import secrets
 import string
+import requests
+import logging
+
+from datetime import datetime, timedelta, timezone
+from typing import Optional, List, Dict, Any, Literal
+from uuid import uuid4
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException, Depends
@@ -24,10 +26,6 @@ from main_auth import obtener_usuario_actual
 # Configurar logger
 from tenant import current_tenant, current_business_name
 from utils_aspirantes import obtener_status_24hrs
-
-import requests
-import logging
-
 
 
 logger = logging.getLogger(__name__)
@@ -226,10 +224,7 @@ class AgendamientoAspiranteInTokenV1(BaseModel):
 #                 detail="Error interno al crear agendamiento de aspirante."
 #             )
 
-from datetime import datetime
-import pytz
-from fastapi import APIRouter, HTTPException
-import traceback
+
 
 
 #
@@ -4205,16 +4200,6 @@ def actualizar_estado_agendamiento(
 # from config import obtener_cuenta_por_subdominio
 
 
-
-MAPA_ZONAS_HORARIAS = {
-    "America/Bogota": "Hora Colombia GMT-5",
-    "America/Mexico_City": "Hora México GMT-6",
-    "America/Lima": "Hora Perú GMT-5",
-    "America/Santiago": "Hora Chile GMT-4",
-    "America/Argentina/Buenos_Aires": "Hora Arg GMT-3",
-}
-
-
 @router.post("/api/agendamientos/{agendamiento_id}/recordatorio")
 def enviar_recordatorio_manual(
         agendamiento_id: int,
@@ -4224,13 +4209,13 @@ def enviar_recordatorio_manual(
         cur = conn.cursor()
 
         # =========================================================
-        # 1. Obtener datos de la cita, creador y TIPO DE AGENDAMIENTO
+        # 1. Obtener datos de la cita (¡Agregamos link_meet!)
         # =========================================================
         cur.execute("""
                     SELECT a.id,
                            a.fecha_inicio,
                            a.fecha_fin,
-                           a.timezone,
+                           a.link_meet,
                            ta.nombre                                    as tipo_cita_nombre,
                            COALESCE(NULLIF(c.whatsapp, ''), c.telefono) as telefono_final,
                            COALESCE(c.nickname, c.nombre_real)          as nombre,
@@ -4246,7 +4231,7 @@ def enviar_recordatorio_manual(
         if not row:
             raise HTTPException(status_code=404, detail="Cita o participante no encontrado.")
 
-        cita_id, fecha_inicio, fecha_fin, timezone_db, tipo_cita_nombre, telefono, nombre, creador_id = row
+        cita_id, fecha_inicio, fecha_fin, link_meet, tipo_cita_nombre, telefono, nombre, creador_id = row
 
         if not telefono:
             raise HTTPException(status_code=400, detail="El creador no tiene teléfono registrado.")
@@ -4273,7 +4258,7 @@ def enviar_recordatorio_manual(
             logger.warning(f"No se pudo verificar ventana de 24h. Error: {e}")
 
     # =========================================================
-    # 3. Formatear Variables para el Mensaje (AHORA SON 7)
+    # 3. Formatear Variables para el Mensaje (AHORA SON 6)
     # =========================================================
     # {{1}} Nombre
     # {{2}} Nombre de la Agencia
@@ -4283,18 +4268,16 @@ def enviar_recordatorio_manual(
     nombre_evento = tipo_cita_nombre.lower() if tipo_cita_nombre else "cita"
 
     # {{4}} y {{5}} Fechas y Horas
-    fecha_str = fecha_inicio.strftime("%d/%m/%Y")
-    hora_inicio_str = fecha_inicio.strftime("%I:%M %p")
+    fecha_str = fecha_inicio.strftime("%d de %B")  # Ej: "4 de febrero" (Si quieres el mes en texto)
+    hora_inicio_str = fecha_inicio.strftime("%I:%M %p").lower()  # Ej: "5:00 pm"
 
-    # {{6}} Zona Horaria
-    zona_horaria_str = MAPA_ZONAS_HORARIAS.get(timezone_db, timezone_db or "Hora Colombia GMT-5")
-
-    # {{7}} Duración en Minutos
-    # Calculamos la diferencia entre fecha_fin y fecha_inicio
-    if fecha_fin and fecha_inicio:
-        duracion_minutos = int((fecha_fin - fecha_inicio).total_seconds() / 60)
+    # {{6}} Lógica condicional del LINK
+    # Si existe y NO contiene 'tiktok' en el texto
+    if link_meet and "tiktok" not in link_meet.lower():
+        link_final = link_meet
     else:
-        duracion_minutos = 30  # Valor por defecto si por alguna razón no hay fecha_fin
+        # Texto de reemplazo obligado por Meta si no se envía un link
+        link_final = "Ingresa a tu perfil de TikTok LIVE"
 
     # =========================================================
     # 4. Obtener credenciales WABA
@@ -4314,11 +4297,12 @@ def enviar_recordatorio_manual(
 
     if en_ventana_24h:
         # --- ENVÍO INTERACTIVO ---
-        # Réplica exacta del nuevo template
+        # Réplica exacta del nuevo template más corto
         texto_mensaje = (
             f"Hola {nombre} 😊\n"
-            f"En {nombre_agencia} te recordamos tu {nombre_evento} el {fecha_str} a las {hora_inicio_str} ({zona_horaria_str}), con una duración aproximada de {duracion_minutos} minutos.\n"
-            "¿Nos confirmas tu asistencia?"
+            f"{nombre_agencia} te recuerda tu {nombre_evento} el día {fecha_str} a las {hora_inicio_str}.\n"
+            f"🔗Enlace: {link_final}\n"
+            "¿Confirmas tu asistencia?"
         )
 
         botones = [
@@ -4341,8 +4325,7 @@ def enviar_recordatorio_manual(
             nombre_evento,  # {{3}}
             fecha_str,  # {{4}}
             hora_inicio_str,  # {{5}}
-            zona_horaria_str,  # {{6}}
-            str(duracion_minutos)  # {{7}} Convertido a string por seguridad para la API
+            link_final  # {{6}}
         ]
 
         try:
@@ -4350,10 +4333,10 @@ def enviar_recordatorio_manual(
                 token=token,
                 phone_number_id=phone_id,
                 numero_destino=telefono,
-                nombre_plantilla="recordatorio_cita_v1",  # Asegúrate de que este es el nombre en Meta
+                nombre_plantilla="recordatorio_cita_v2",  # O el nombre nuevo de tu plantilla
                 codigo_idioma="es_CO",
                 parametros=parametros_body,
-                body_vars_count=7  # 👈 Actualizado a 7
+                body_vars_count=6  # 👈 Actualizado a 6
             )
             exito = codigo < 300
             if not exito:
@@ -4372,7 +4355,6 @@ def enviar_recordatorio_manual(
         "telefono": telefono,
         "cita_id": cita_id
     }
-
 
 def enviar_mensaje_interactivo(token: str, phone_number_id: str, numero_destino: str, texto: str, botones: list):
     """
