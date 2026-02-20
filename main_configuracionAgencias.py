@@ -555,7 +555,7 @@ def get_config(clave: str) -> Any:
             cur.execute(
                 """
                 SELECT valor
-                FROM public.configuracion_agencia
+                FROM configuracion_agencia
                 WHERE clave = %s
                 LIMIT 1;
                 """,
