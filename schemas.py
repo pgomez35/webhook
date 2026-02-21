@@ -28,12 +28,11 @@ class EventoIn(BaseModel):
 
 
 class EventoOut(EventoIn):
-    agendamiento_id: str  # 👈 Cambiado de 'id' a 'agendamiento_id'
-    link_meet: Optional[str] = None
-    origen: Optional[str] = "interno"  # 👈 Ajustado a tu nueva lógica
+    agendamiento_id: str
+    origen: Optional[str] = "interno"
     responsable_id: Optional[int] = None
     participantes: Optional[List[dict]] = None
-    tipo_agendamiento: Optional[int] = 1
+    google_event_id: Optional[str] = None
 
 # ===============================
 # ESQUEMAS PARA ADMIN_USUARIO

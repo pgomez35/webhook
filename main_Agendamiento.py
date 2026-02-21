@@ -802,7 +802,7 @@ def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario
 
             # 8) Respuesta
             return EventoOut(
-                id=str(agendamiento_id),
+                agendamiento_id=str(agendamiento_id),  # ✅ CORRECTO
                 titulo=evento.titulo,
                 descripcion=evento.descripcion,
                 inicio=evento.inicio,
@@ -4374,7 +4374,7 @@ def enviar_recordatorio_manual(
                         SELECT MAX(fecha)
                         FROM mensajes_whatsapp
                         WHERE telefono = %s
-                          AND direccion = 'inbound'
+                          AND direccion = 'recibido'
                         """, (telefono,))
 
             ultimo_msg = cur.fetchone()[0]
