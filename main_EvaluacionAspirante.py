@@ -1291,9 +1291,9 @@ def actualizar_estado_modelo(
     with get_connection_context() as conn:
         cur = conn.cursor()
 
-        # 🔍 Verificar si el modelo existe
+        # 🔍 Verificar que el modelo exista
         cur.execute("""
-            SELECT id 
+            SELECT id
             FROM modelo_evaluacion
             WHERE id = %s
         """, (modelo_id,))
@@ -1306,26 +1306,27 @@ def actualizar_estado_modelo(
                 detail="Modelo de evaluación no encontrado"
             )
 
-        # 🔵 Actualizar solo el campo activo
+        # ✅ 1. Colocar TODOS los modelos en FALSE
         cur.execute("""
             UPDATE modelo_evaluacion
-            SET activo = %s
-            WHERE id = %s
-        """, (
-            data.activo,
-            modelo_id
-        ))
+            SET activo = FALSE
+        """)
+
+        # ✅ 2. Si el usuario quiere activar → activar solo el seleccionado
+        if data.activo:
+            cur.execute("""
+                UPDATE modelo_evaluacion
+                SET activo = TRUE
+                WHERE id = %s
+            """, (modelo_id,))
 
         conn.commit()
 
     return {
         "modelo_id": modelo_id,
         "activo": data.activo,
-        "mensaje": "Estado actualizado correctamente"
+        "mensaje": "Estado actualizado correctamente. Solo un modelo puede estar activo."
     }
-
-
-
 
 def calcular_evaluacion(creador_id: int, modelo_id: int):
 
