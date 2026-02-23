@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytz
 import logging
 import traceback
+import math
 
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -24,6 +25,8 @@ from evaluaciones import evaluar_perfil_pre, diagnostico_perfil_creador_pre, obt
 from main_webhook import  enviar_mensaje
 from schemas import ResumenEvaluacionOutput
 from tenant import current_tenant
+from typing import Union
+
 
 
 logger = logging.getLogger(__name__)
@@ -225,7 +228,7 @@ def forzar_cambio_estado_por_id(creador_id: int, nuevo_id_estado: int):
 
                 # Query directa (sin buscar en tabla de estados)
                 query = """
-                        UPDATE test.perfil_creador
+                        UPDATE perfil_creador
                         SET id_chatbot_estado = %s,
                             actualizado_en    = NOW() -- Opcional: para saber cuándo cambió
                         WHERE id = %s \
@@ -1020,6 +1023,9 @@ class EvaluacionResultadoOut(BaseModel):
     class Config:
         orm_mode = True
 
+class ModeloEvaluacionUpdate(BaseModel):
+    activo: bool
+
 
 @router.get("/api/modelos-evaluacion", response_model=List[ModeloEvaluacionOut])
 def listar_modelos(activos: bool = Query(True)):
@@ -1272,6 +1278,54 @@ def listar_resultados(creador_id: int):
         for r in rows
     ]
 
+@router.put("/api/modelos-evaluacion/{modelo_id}/estado")
+def actualizar_estado_modelo(
+    modelo_id: int,
+    data: ModeloEvaluacionUpdate
+):
+    TENANT = current_tenant.get()
+
+    if not TENANT:
+        raise HTTPException(status_code=400, detail="Tenant no disponible")
+
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+
+        # 🔍 Verificar si el modelo existe
+        cur.execute("""
+            SELECT id 
+            FROM modelo_evaluacion
+            WHERE id = %s
+        """, (modelo_id,))
+
+        modelo = cur.fetchone()
+
+        if not modelo:
+            raise HTTPException(
+                status_code=404,
+                detail="Modelo de evaluación no encontrado"
+            )
+
+        # 🔵 Actualizar solo el campo activo
+        cur.execute("""
+            UPDATE modelo_evaluacion
+            SET activo = %s
+            WHERE id = %s
+        """, (
+            data.activo,
+            modelo_id
+        ))
+
+        conn.commit()
+
+    return {
+        "modelo_id": modelo_id,
+        "activo": data.activo,
+        "mensaje": "Estado actualizado correctamente"
+    }
+
+
+
 
 def calcular_evaluacion(creador_id: int, modelo_id: int):
 
@@ -1359,9 +1413,6 @@ def calcular_evaluacion(creador_id: int, modelo_id: int):
             "categoria": categoria_final,
             "recomendacion": generar_recomendacion(categoria_final)
         }
-
-import math
-from typing import Union
 
 
 # ============================================================
