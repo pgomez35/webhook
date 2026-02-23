@@ -95,7 +95,7 @@ async def api_enviar_mensaje(request: Request, data: dict):
             telefono=telefono,
             contenido=mensaje,
             direccion="enviado",
-            tipo="texto",
+            tipo="text",
             message_id_meta=message_id_meta,
             estado="sent"
         )
@@ -2141,9 +2141,9 @@ async def reenviar_ultimo_mensaje(telefono: str):
                 WHERE telefono = %s
                   AND direccion = 'enviado'
                   AND (
-                        tipo<>'template'
+                        tipo in ('text','document','audio','image','video')
                       )
-                ORDER BY fecha DESC NULLS LAST
+                ORDER BY fecha DESC
                 LIMIT 1
                     """, (telefono,))
 
