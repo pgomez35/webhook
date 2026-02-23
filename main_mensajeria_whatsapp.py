@@ -2143,7 +2143,7 @@ async def reenviar_ultimo_mensaje(telefono: str):
                   AND (
                         tipo<>'template'
                       )
-                ORDER BY fecha_envio DESC NULLS LAST
+                ORDER BY fecha DESC NULLS LAST
                 LIMIT 1
                     """, (telefono,))
 
