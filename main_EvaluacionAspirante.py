@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import Optional, List
 from pydantic import BaseModel, AnyUrl
 from datetime import datetime, timedelta
@@ -946,1657 +946,599 @@ def sugerencia_decision_final(
 
 
 
-# def sugerencia_decision_final(
-#     alerta: int = 0,
-#     puntaje_total: float | None = None,
-#     calidad_visual_cualitativo: int | None = None
-# ):
-#     """
-#     ALERTAS:
-#         0 = sin alerta
-#         1 = menor de edad → No apto automático
-#         2 = seguidores < 50 → No apto automático
-#     """
-#
-#     # ==========================================
-#     # NORMALIZAR puntaje_total
-#     # ==========================================
-#     if puntaje_total is None or puntaje_total == 0:
-#         cat_total = None
-#     else:
-#         if puntaje_total <= 2:
-#             cat_total = "bajo"
-#         elif puntaje_total == 3:
-#             cat_total = "medio"
-#         else:
-#             cat_total = "alto"
-#
-#     # ==========================================
-#     # NORMALIZAR calidad_visual → (bajo/medio/alto)
-#     # ==========================================
-#     visual_map = {
-#         1: "bajo",
-#         2: "medio",
-#         3: "alto",
-#     }
-#     cat_visual = visual_map.get(calidad_visual_cualitativo, None)
-#
-#     # ==========================================
-#     # ALERTAS AUTOMÁTICAS
-#     # ==========================================
-#     if alerta == 1:
-#         return {
-#             "puntaje_total_categoria": cat_total,
-#             "calidad_visual_categoria": cat_visual,
-#             "decision_icono": "❌",
-#             "decision": "No apto",
-#             "recomendacion": (
-#                 "El aspirante es menor de edad. No puede ser ingresado a la agencia."
-#             ),
-#             "motivo_alerta": "menor_edad"
-#         }
-#
-#     if alerta == 2:
-#         return {
-#             "puntaje_total_categoria": cat_total,
-#             "calidad_visual_categoria": cat_visual,
-#             "decision_icono": "❌",
-#             "decision": "No apto",
-#             "recomendacion": (
-#                 "El aspirante tiene menos de 50 seguidores. No cumple el requisito mínimo."
-#             ),
-#             "motivo_alerta": "seguidores_insuficientes"
-#         }
-#
-#     # ==========================================
-#     # CASO SIN DATOS
-#     # ==========================================
-#     if cat_total is None and cat_visual is None:
-#         return {
-#             "puntaje_total_categoria": None,
-#             "calidad_visual_categoria": None,
-#             "decision_icono": "❓",
-#             "decision": "Indeterminado",
-#             "recomendacion": "Faltan datos para la evaluación.",
-#         }
-#
-#     # ==========================================
-#     # SOLO PUNTAJE TOTAL
-#     # ==========================================
-#     if cat_visual is None:
-#         if cat_total == "bajo":
-#             icono, decision = "❌", "No apto"
-#         elif cat_total == "medio":
-#             icono, decision = "🟡", "Prueba"
-#         else:
-#             icono, decision = "⭐", "Apto"
-#
-#         return {
-#             "puntaje_total_categoria": cat_total,
-#             "calidad_visual_categoria": None,
-#             "decision_icono": icono,
-#             "decision": decision,
-#             "recomendacion": "Evaluación basada únicamente en el puntaje total.",
-#         }
-#
-#     # ==========================================
-#     # SOLO VISUAL
-#     # ==========================================
-#     if cat_total is None and cat_visual:
-#         if cat_visual == "bajo":
-#             icono, decision = "❌", "No apto"
-#         elif cat_visual == "medio":
-#             icono, decision = "🟡", "Prueba"
-#         else:
-#             icono, decision = "⭐", "Apto"
-#
-#         return {
-#             "puntaje_total_categoria": None,
-#             "calidad_visual_categoria": cat_visual,
-#             "decision_icono": icono,
-#             "decision": decision,
-#             "recomendacion": "Evaluación basada solo en análisis visual.",
-#         }
-#
-#     # ==========================================
-#     # MATRIZ FINAL COMBINADA (bajo/medio/alto)
-#     # ==========================================
-#     matriz = {
-#         ("bajo", "bajo"): ("❌", "No apto"),
-#         ("medio", "bajo"): ("❌", "No apto"),
-#         ("alto", "bajo"): ("🟡", "Prueba"),
-#
-#         ("bajo", "medio"): ("🟡", "Prueba"),
-#         ("medio", "medio"): ("🟡", "Prueba"),
-#         ("alto", "medio"): ("⭐", "Apto / prueba"),
-#
-#         ("medio", "alto"): ("⭐", "Apto"),
-#         ("alto", "alto"): ("⭐", "Apto"),
-#     }
-#
-#     icono, decision = matriz.get((cat_total, cat_visual), ("❓", "Indeterminado"))
-#
-#     return {
-#         "puntaje_total_categoria": cat_total,
-#         "calidad_visual_categoria": cat_visual,
-#         "decision_icono": icono,
-#         "decision": decision,
-#         "recomendacion": "Evaluación completa realizada.",
-#     }
+
+# ------------------------------
+# ------------------------------
+# ------------------------------
+# ------------------------------
+# -------NUEVO MODELO---------
+# -------NUEVO MODELO---------
+# -------NUEVO MODELO---------
+# ------------------------------
+# ------------------------------
+# ------------------------------
 
 
-# def sugerencia_decision_final(alerta: int = 0,
-#     puntaje_total: float | None = None,
-#     calidad_visual_cualitativo: int | None = None):
-#     """
-#     puntaje_total: 1-5 → se normaliza a bajo / medio / alto
-#     calidad_visual_cualitativo:
-#         0 = no evaluado
-#         1 = no tiene potencial
-#         2 = potencial en desarrollo
-#         3 = alto potencial
-#         None = valor ausente
-#     """
-#
-#     # ============================================================
-#     # CASO ESPECIAL: ambos valores nulos o cero
-#     # ============================================================
-#     if (puntaje_total is None or puntaje_total == 0) and \
-#        (calidad_visual_cualitativo is None or calidad_visual_cualitativo == 0):
-#
-#         return {
-#             "puntaje_total_categoria": None,
-#             "calidad_visual_categoria": None,
-#             "decision_icono": "❓",
-#             "decision": "Indeterminado",
-#             "recomendacion": (
-#                 "Envíe nuevamente el link de la encuesta o haga prueba/entrevista "
-#                 "para evaluar directamente."
-#             ),
-#         }
-#
-#     # ============================================================
-#     # NORMALIZAR puntaje_total (1-5 → bajo / medio / alto)
-#     # ============================================================
-#     if puntaje_total is None or puntaje_total == 0:
-#         cat_total = None
-#     else:
-#         if puntaje_total <= 2:
-#             cat_total = "bajo"
-#         elif puntaje_total == 3:
-#             cat_total = "medio"
-#         else:  # 4 o 5
-#             cat_total = "alto"
-#
-#     # ============================================================
-#     # CASO: calidad_visual_cualitativo == 0 → evaluar solo por puntaje_total
-#     # ============================================================
-#     if calidad_visual_cualitativo == 0:
-#
-#         if cat_total == "bajo":
-#             icono, decision = "❌", "No apto"
-#         elif cat_total == "medio":
-#             icono, decision = "🟡", "Prueba"
-#         else:  # alto
-#             icono, decision = "⭐", "Apto"
-#
-#         recomendaciones_simple = {
-#             "No apto": "El creador no muestra suficiente potencial según el desempeño numérico.",
-#             "Prueba": (
-#                 "El puntaje es aceptable, pero falta evaluación visual. "
-#                 "Recomendar una prueba para confirmar."
-#             ),
-#             "Apto": (
-#                 "Buen desempeño numérico. Aunque no hay evaluación visual, "
-#                 "el perfil parece suficientemente sólido."
-#             ),
-#         }
-#
-#         return {
-#             "puntaje_total_categoria": cat_total,
-#             "calidad_visual_categoria": None,
-#             "decision_icono": icono,
-#             "decision": decision,
-#             "recomendacion": recomendaciones_simple.get(decision),
-#         }
-#
-#     # ============================================================
-#     # CASO: puntaje_total vacío pero sí hay calidad_visual
-#     # (Nuevo solicitado)
-#     # ============================================================
-#     if (puntaje_total is None or puntaje_total == 0) and \
-#        calidad_visual_cualitativo in (1, 2, 3):
-#
-#         cualitativo_map = {
-#             1: "no_potencial",
-#             2: "desarrollo",
-#             3: "alto_potencial",
-#         }
-#         cat_visual = cualitativo_map[calidad_visual_cualitativo]
-#
-#         # reglas solo por visual
-#         if cat_visual == "no_potencial":
-#             icono, decision = "❌", "No apto"
-#         elif cat_visual == "desarrollo":
-#             icono, decision = "🟡", "Prueba"
-#         else:  # alto
-#             icono, decision = "⭐", "Apto"
-#
-#         recomendaciones_visual = {
-#             "No apto": "La evaluación visual indica bajo potencial.",
-#             "Prueba": "Tiene potencial en desarrollo. Recomendado realizar una prueba.",
-#             "Apto": "Visualmente muestra alto potencial. Apto para continuar.",
-#         }
-#
-#         return {
-#             "puntaje_total_categoria": None,
-#             "calidad_visual_categoria": cat_visual,
-#             "decision_icono": icono,
-#             "decision": decision,
-#             "recomendacion": recomendaciones_visual.get(decision),
-#         }
-#
-#     # ============================================================
-#     # CASO NORMAL: ambos valores existen
-#     # ============================================================
-#     cualitativo_map = {
-#         1: "no_potencial",
-#         2: "desarrollo",
-#         3: "alto_potencial",
-#     }
-#
-#     cat_visual = cualitativo_map.get(calidad_visual_cualitativo, None)
-#
-#     matriz = {
-#         ("bajo", "no_potencial"):    ("❌", "No apto"),
-#         ("medio", "no_potencial"):   ("❌", "No apto"),
-#         ("alto", "no_potencial"):    ("🟡", "Requiere prueba"),
-#
-#         ("bajo", "desarrollo"):      ("🟡", "Prueba"),
-#         ("medio", "desarrollo"):     ("🟡", "Prueba"),
-#         ("alto", "desarrollo"):      ("⭐", "Apto / prueba"),
-#
-#         ("medio", "alto_potencial"): ("⭐", "Apto"),
-#         ("alto", "alto_potencial"):  ("⭐", "Apto"),
-#     }
-#
-#     icono, decision = matriz.get((cat_total, cat_visual), ("❓", "Indeterminado"))
-#
-#     recomendaciones = {
-#         "No apto": (
-#             "El creador no cumple con los criterios visuales o de desempeño necesarios. "
-#             "Se recomienda descartar o reevaluar más adelante."
-#         ),
-#         "Requiere prueba": (
-#             "El puntaje es bueno, pero visualmente no muestra suficiente potencial. "
-#             "Recomienda una prueba corta para confirmar."
-#         ),
-#         "Prueba": (
-#             "Tiene señales positivas pero aún no es consistente. "
-#             "Realizar una prueba para validar desempeño en vivo."
-#         ),
-#         "Apto / prueba": (
-#             "El desempeño es alto y muestra buen potencial, pero aún requiere una validación rápida."
-#         ),
-#         "Apto": (
-#             "Muy buen perfil, buena energía y potencial claro. "
-#             "Apto para continuar con el proceso."
-#         ),
-#     }
-#
-#     return {
-#         "puntaje_total_categoria": cat_total,
-#         "calidad_visual_categoria": cat_visual,
-#         "decision_icono": icono,
-#         "decision": decision,
-#         "recomendacion": recomendaciones.get(decision, "Sin recomendación definida."),
-#     }
+class ModeloEvaluacionOut(BaseModel):
+    id: int
+    nombre: str
+    descripcion: Optional[str]
+    activo: bool
 
-# def sugerencia_decision_final(puntaje_total: int, calidad_visual_cualitativo: int):
-#     """
-#     puntaje_total: 1-5  -> bajo, medio, alto
-#     calidad_visual_cualitativo:
-#         0 = no evaluado (IGNORAR, usar solo puntaje_total)
-#         1 = no tiene potencial
-#         2 = potencial en desarrollo
-#         3 = alto potencial
-#     """
-#
-#     # --- Normalizar puntaje total ---
-#     if puntaje_total <= 2:
-#         cat_total = "bajo"
-#     elif puntaje_total == 3:
-#         cat_total = "medio"
-#     else:  # 4 o 5
-#         cat_total = "alto"
-#
-#     # ----------------------------------------------------------------------
-#     #  CASO ESPECIAL: calidad_visual_cualitativo = 0 → evaluar SOLO por puntaje_total
-#     # ----------------------------------------------------------------------
-#     if calidad_visual_cualitativo == 0:
-#         if cat_total == "bajo":
-#             icono = "❌"
-#             decision = "No apto"
-#         elif cat_total == "medio":
-#             icono = "🟡"
-#             decision = "Prueba"
-#         else:  # alto
-#             icono = "⭐"
-#             decision = "Apto"
-#
-#         recomendaciones_simple = {
-#             "No apto": (
-#                 "El creador no muestra suficiente potencial según el desempeño numérico."
-#             ),
-#             "Prueba": (
-#                 "El puntaje es aceptable, pero falta evaluación visual. "
-#                 "Recomendar una prueba para confirmar."
-#             ),
-#             "Apto": (
-#                 "Buen desempeño numérico. Aunque no hay evaluación visual, "
-#                 "el perfil parece suficientemente sólido."
-#             ),
-#         }
-#
-#         return {
-#             "puntaje_total_categoria": cat_total,
-#             "calidad_visual_categoria": None,
-#             "decision_icono": icono,
-#             "decision": decision,
-#             "recomendacion": recomendaciones_simple.get(decision),
-#         }
-#
-#     # ----------------------------------------------------------------------
-#     #  CASO NORMAL (sí existe evaluación visual)
-#     # ----------------------------------------------------------------------
-#
-#     # Normalizar cualitativo
-#     cualitativo_map = {
-#         1: "no_potencial",
-#         2: "desarrollo",
-#         3: "alto_potencial"
-#     }
-#
-#     cat_visual = cualitativo_map.get(calidad_visual_cualitativo, None)
-#     if cat_visual is None:
-#         raise ValueError("El valor de calidad_visual_cualitativo debe ser 0, 1, 2 o 3.")
-#
-#     # Matriz
-#     matriz = {
-#         ("bajo", "no_potencial"):    ("❌", "No apto"),
-#         ("medio", "no_potencial"):   ("❌", "No apto"),
-#         ("alto", "no_potencial"):    ("🟡", "Requiere prueba"),
-#
-#         ("bajo", "desarrollo"):      ("🟡", "Prueba"),
-#         ("medio", "desarrollo"):     ("🟡", "Prueba"),
-#         ("alto", "desarrollo"):      ("⭐", "Apto / prueba"),
-#
-#         ("medio", "alto_potencial"): ("⭐", "Apto"),
-#         ("alto", "alto_potencial"):  ("⭐", "Apto"),
-#     }
-#
-#     icono, decision = matriz.get((cat_total, cat_visual), ("❓", "Indeterminado"))
-#
-#     recomendaciones = {
-#         "No apto": (
-#             "El creador no cumple con los criterios visuales o de desempeño necesarios. "
-#             "Se recomienda descartar o reevaluar más adelante."
-#         ),
-#         "Requiere prueba": (
-#             "El puntaje es bueno, pero visualmente no muestra suficiente potencial. "
-#             "Recomienda una prueba corta para confirmar."
-#         ),
-#         "Prueba": (
-#             "Tiene señales positivas pero aún no es consistente. "
-#             "Realizar una prueba para validar desempeño en vivo."
-#         ),
-#         "Apto / prueba": (
-#             "El desempeño es alto y muestra buen potencial, pero aún requiere una validación rápida."
-#         ),
-#         "Apto": (
-#             "Muy buen perfil, buena energía y potencial claro. "
-#             "Apto para continuar con el proceso."
-#         ),
-#     }
-#
-#     recomendacion = recomendaciones.get(decision, "Sin recomendación definida.")
-#
-#     return {
-#         "puntaje_total_categoria": cat_total,
-#         "calidad_visual_categoria": cat_visual,
-#         "decision_icono": icono,
-#         "decision": decision,
-#         "recomendacion": recomendacion,
-#     }
+    class Config:
+        orm_mode = True
 
 
-
-# def sugerencia_decision_final(puntaje_total: int, calidad_visual_cualitativo: int):
-#     """
-#     puntaje_total: 1-5  -> bajo, medio, alto
-#     calidad_visual_cualitativo: 1-3
-#         1 = no tiene potencial
-#         2 = potencial en desarrollo
-#         3 = alto potencial
-#     """
-#
-#     # --- Normalizar puntaje total ---
-#     if puntaje_total <= 2:
-#         cat_total = "bajo"
-#     elif puntaje_total == 3:
-#         cat_total = "medio"
-#     else:  # 4 o 5
-#         cat_total = "alto"
-#
-#     # --- Normalizar cualitativo ---
-#     cualitativo_map = {
-#         1: "no_potencial",
-#         2: "desarrollo",
-#         3: "alto_potencial"
-#     }
-#
-#     cat_visual = cualitativo_map.get(calidad_visual_cualitativo, None)
-#     if cat_visual is None:
-#         raise ValueError("El valor de calidad_visual_cualitativo debe ser 1, 2 o 3.")
-#
-#     # --- Matriz de decisión ---
-#     # Devuelve: icono, decisión
-#     matriz = {
-#         # no tiene potencial
-#         ("bajo", "no_potencial"):    ("❌", "No apto"),
-#         ("medio", "no_potencial"):   ("❌", "No apto"),
-#         ("alto", "no_potencial"):    ("🟡", "Requiere prueba"),
-#
-#         # en desarrollo
-#         ("bajo", "desarrollo"):      ("🟡", "Prueba"),
-#         ("medio", "desarrollo"):     ("🟡", "Prueba"),
-#         ("alto", "desarrollo"):      ("⭐", "Apto / prueba"),
-#
-#         # alto potencial
-#         ("medio", "alto_potencial"): ("⭐", "Apto"),
-#         ("alto", "alto_potencial"):  ("⭐", "Apto"),
-#     }
-#
-#     icono, decision = matriz.get((cat_total, cat_visual), ("❓", "Indeterminado"))
-#
-#     # --- Recomendación en texto ---
-#     recomendaciones = {
-#         "No apto": (
-#             "El creador no cumple con los criterios visuales o de desempeño necesarios. "
-#             "Se recomienda descartar o reevaluar más adelante."
-#         ),
-#         "Requiere prueba": (
-#             "El puntaje es bueno, pero visualmente no muestra suficiente potencial. "
-#             "Recomienda una prueba corta para confirmar."
-#         ),
-#         "Prueba": (
-#             "Tiene señales positivas pero aún no es consistente. "
-#             "Realizar una prueba para validar desempeño en vivo."
-#         ),
-#         "Apto / prueba": (
-#             "El desempeño es alto y muestra buen potencial, pero aún requiere una validación rápida."
-#         ),
-#         "Apto": (
-#             "Muy buen perfil, buena energía y potencial claro. "
-#             "Apto para continuar con el proceso."
-#         ),
-#     }
-#
-#     recomendacion = recomendaciones.get(decision, "Sin recomendación definida.")
-#
-#     return {
-#         "puntaje_total_categoria": cat_total,
-#         "calidad_visual_categoria": cat_visual,
-#         "decision_icono": icono,
-#         "decision": decision,
-#         "recomendacion": recomendacion,
-#     }
+class ModeloEvaluacionCreate(BaseModel):
+    nombre: str = Field(..., max_length=100)
+    descripcion: Optional[str] = None
 
 
-# @router.post("/api/agendamientos/aspirante", response_model=EventoOut)
-# def crear_agendamiento_aspirante(
-#     data: AgendamientoAspiranteIn,
-# ):
-#     """
-#     Guarda una cita desde el link de agendamiento y además:
-#     → Obtiene entrevista_id desde link_agendamiento_tokens
-#     → Inserta entrevista_id en la tabla agendamientos
-#     """
-#
-#     with get_connection_context() as conn:
-#         cur = conn.cursor()
-#
-#         try:
-#             # 1️⃣ Validar fechas
-#             if data.fin <= data.inicio:
-#                 raise HTTPException(
-#                     status_code=400,
-#                     detail="La fecha de fin debe ser posterior a la fecha de inicio."
-#                 )
-#
-#             # 2️⃣ Validar token + obtener entrevista_id
-#             cur.execute(
-#                 """
-#                 SELECT token, creador_id, responsable_id, expiracion, usado, entrevista_id
-#                 FROM link_agendamiento_tokens
-#                 WHERE token = %s
-#                 """,
-#                 (data.token,)
-#             )
-#             row = cur.fetchone()
-#
-#             if not row:
-#                 raise HTTPException(404, "Token no válido.")
-#
-#             token, creador_id, responsable_id, expiracion, usado, entrevista_id = row
-#
-#             if usado:
-#                 raise HTTPException(400, "Este enlace ya fue utilizado.")
-#
-#             if expiracion < datetime.utcnow():
-#                 raise HTTPException(400, "Este enlace ha expirado.")
-#
-#             if entrevista_id is None:
-#                 raise HTTPException(500, "El token no tiene entrevista_id asociado.")
-#
-#             # 3️⃣ Verificar aspirante
-#             cur.execute(
-#                 """
-#                 SELECT
-#                     id,
-#                     COALESCE(NULLIF(nombre_real, ''), nickname) AS nombre,
-#                     nickname
-#                 FROM creadores
-#                 WHERE id = %s
-#                 """,
-#                 (creador_id,)
-#             )
-#             row = cur.fetchone()
-#
-#             if not row:
-#                 raise HTTPException(404, "El aspirante no existe.")
-#
-#             aspirante_id = row[0]
-#             aspirante_nombre_db = row[1]
-#             aspirante_nickname = row[2]
-#
-#             # 4️⃣ Guardar timezone opcional
-#             if data.timezone:
-#                 cur.execute(
-#                     """
-#                     UPDATE perfil_creador
-#                     SET zona_horaria = %s
-#                     WHERE creador_id = %s
-#                     """,
-#                     (data.timezone, aspirante_id)
-#                 )
-#
-#             # 5️⃣ Fechas
-#             fecha_inicio = data.inicio
-#             fecha_fin = data.fin
-#
-#             # 6️⃣ Convertir a UTC si aplica
-#             if data.timezone:
-#                 tz = ZoneInfo(data.timezone)
-#
-#                 if fecha_inicio.tzinfo is None:
-#                     fecha_inicio = fecha_inicio.replace(tzinfo=tz)
-#                 if fecha_fin.tzinfo is None:
-#                     fecha_fin = fecha_fin.replace(tzinfo=tz)
-#
-#                 fecha_inicio = fecha_inicio.astimezone(ZoneInfo("UTC"))
-#                 fecha_fin = fecha_fin.astimezone(ZoneInfo("UTC"))
-#
-#             # 7️⃣ Insertar agendamiento (AQUÍ SE AGREGA entrevista_id)
-#             cur.execute(
-#                 """
-#                 INSERT INTO agendamientos (
-#                     titulo,
-#                     descripcion,
-#                     fecha_inicio,
-#                     fecha_fin,
-#                     creador_id,
-#                     responsable_id,
-#                     estado,
-#                     link_meet,
-#                     google_event_id,
-#                     entrevista_id   -- 👈 NUEVO CAMPO
-#                 )
-#                 VALUES (%s, %s, %s, %s, %s, %s, 'programado', NULL, NULL, %s)
-#                 RETURNING id
-#                 """,
-#                 (
-#                     data.titulo,
-#                     data.descripcion,
-#                     fecha_inicio,
-#                     fecha_fin,
-#                     aspirante_id,
-#                     responsable_id,
-#                     entrevista_id,   # 👈 INSERTAR AQUÍ
-#                 )
-#             )
-#
-#             agendamiento_id = cur.fetchone()[0]
-#
-#             # 8️⃣ Insertar participante
-#             cur.execute(
-#                 """
-#                 INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
-#                 VALUES (%s, %s)
-#                 """,
-#                 (agendamiento_id, aspirante_id)
-#             )
-#
-#             # ⭐ YA NO SE ACTUALIZA ENTREVISTAS ⭐
-#             # (se elimina por completo el bloque UPDATE entrevistas)
-#
-#             # 9️⃣ Marcar token como usado
-#             cur.execute(
-#                 "UPDATE link_agendamiento_tokens SET usado = TRUE WHERE token = %s",
-#                 (token,)
-#             )
-#
-#             conn.commit()
-#
-#             # 🔟 Respuesta final
-#             participante = {
-#                 "id": aspirante_id,
-#                 "nombre": aspirante_nombre_db,
-#                 "nickname": aspirante_nickname,
-#             }
-#
-#             return EventoOut(
-#                 id=str(agendamiento_id),
-#                 titulo=data.titulo,
-#                 descripcion=data.descripcion,
-#                 inicio=fecha_inicio,
-#                 fin=fecha_fin,
-#                 creador_id=aspirante_id,
-#                 participantes_ids=[aspirante_id],
-#                 participantes=[participante],
-#                 responsable_id=responsable_id,
-#                 estado="programado",
-#                 link_meet=None,
-#                 origen="interno",
-#                 google_event_id=None,
-#             )
-#
-#         except HTTPException:
-#             raise
-#         except Exception as e:
-#             logger.error(f"❌ Error creando agendamiento de aspirante: {e}")
-#             logger.error(traceback.format_exc())
-#             raise HTTPException(
-#                 500,
-#                 "Error interno al crear agendamiento de aspirante."
-#             )
+class ModeloCategoriaOut(BaseModel):
+    id: int
+    nombre: str
+    peso_categoria: float
+
+    class Config:
+        orm_mode = True
 
 
-
-# @router.post("/api/aspirantes/no_apto/enviar")
-# def enviar_mensaje_no_apto(
-#         data: EnviarNoAptoIn,
-#         usuario_actual: dict = Depends(obtener_usuario_actual)
-# ):
-#     """
-#     Envía mensaje de NO APTO.
-#     1) Intenta mensaje simple.
-#     2) Si falla por ventana 24h → envía plantilla no_apto_proceso_v2.
-#     """
-#
-#     with get_connection_context() as conn:
-#         cur = conn.cursor()
-#
-#         # 1) Obtener datos del aspirante
-#         cur.execute("""
-#             SELECT id, nombre_real, telefono
-#             FROM creadores
-#             WHERE id = %s
-#         """, (data.creador_id,))
-#
-#         row = cur.fetchone()
-#         if not row:
-#             raise HTTPException(status_code=404, detail="Aspirante no encontrado.")
-#
-#         creador_id, nombre, telefono = row
-#
-#         if not telefono:
-#             raise HTTPException(status_code=400, detail="El aspirante no tiene número registrado.")
-#
-#         # 2) Mensaje estándar (primer intento)
-#         mensaje = (
-#             f"Hola {nombre or ''} 👋\n\n"
-#             "Después de revisar tu información inicial, "
-#             "hemos determinado que por ahora *no cumples con los requisitos* "
-#             "para continuar en el proceso de selección de creadores de TikTok LIVE.\n\n"
-#             "Esto *no refleja tu talento* ni tu potencial. "
-#             "Te invitamos a seguir creciendo y a aplicar nuevamente más adelante.\n\n"
-#             "Gracias por tu tiempo 🙌"
-#         )
-#
-#     # =============================
-#     #   3) Intento 1: mensaje simple
-#     # =============================
-#     try:
-#         resp = enviar_mensaje(telefono, mensaje)
-#         return {
-#             "status": "ok",
-#             "tipo_envio": "mensaje_texto",
-#             "mensaje": "Mensaje simple enviado correctamente",
-#             "telefono": telefono
-#         }
-#
-#     except Exception as e:
-#         # Analizar error de ventana de 24h
-#         err_str = str(e)
-#
-#         if "131047" not in err_str and "24 hours" not in err_str:
-#             # Error REAL → no continuar
-#             raise HTTPException(status_code=500, detail=f"Error enviando mensaje: {err_str}")
-#
-#         print("⚠️ Mensaje simple bloqueado por ventana de 24h. Intentando plantilla...")
-#
-#     # ===================================================
-#     # 4) Intento 2: plantilla fallback no_apto_proceso_v2
-#     # ===================================================
-#     try:
-#         subdominio = current_tenant.get()
-#         cuenta = obtener_cuenta_por_subdominio(subdominio)
-#
-#         token = cuenta["access_token"]
-#         phone_id = cuenta["phone_number_id"]
-#         business_name = (
-#             cuenta.get("business_name")
-#             or cuenta.get("nombre")
-#             or "nuestra agencia"
-#         )
-#
-#         # Parámetros plantilla: {{1}} = nombre, {{2}} = agency
-#         parametros = [
-#             nombre or "creador",
-#             business_name
-#         ]
-#
-#         codigo, respuesta_api = enviar_plantilla_generica_parametros(
-#             token=token,
-#             phone_number_id=phone_id,
-#             numero_destino=telefono,
-#             nombre_plantilla="no_apto_proceso_v2",
-#             codigo_idioma="es_CO",
-#             parametros=parametros
-#         )
-#
-#         return {
-#             "status": "ok",
-#             "tipo_envio": "plantilla",
-#             "codigo_meta": codigo,
-#             "respuesta_api": respuesta_api,
-#             "telefono": telefono
-#         }
-#
-#     except Exception as e:
-#         raise HTTPException(
-#             status_code=500,
-#             detail=f"No se pudo enviar ni mensaje simple ni plantilla: {str(e)}"
-#         )
-#
-#
+class ModeloCategoriaCreate(BaseModel):
+    nombre: str
+    peso_categoria: float
 
 
+class ModeloVariableOut(BaseModel):
+    id: int
+    nombre: str
+    campo_db: Optional[str]
+    peso_variable: float
+    tipo: str
+
+    class Config:
+        orm_mode = True
 
 
-# @router.post("/api/agendamientos/aspirante/enviar", response_model=LinkAgendamientoOut)
-# def crear_y_enviar_link_agendamiento_aspirante(
-#     data: CrearLinkAgendamientoIn,
-#     usuario_actual: dict = Depends(obtener_usuario_actual),
-# ):
-#     """
-#     Genera un link de agendamiento y lo envía por WhatsApp al aspirante.
-#     El número de teléfono se obtiene automáticamente desde `creadores`.
-#     """
-#
-#     # 1) Token corto
-#     token = generar_token_corto(10)
-#     expiracion = datetime.utcnow() + timedelta(minutes=data.minutos_validez)
-#
-#     with get_connection_context() as conn:
-#         cur = conn.cursor()
-#
-#         # 2) Obtener teléfono y nombre del aspirante
-#         cur.execute(
-#             """
-#             SELECT COALESCE(nickname, nombre_real) AS nombre, telefono
-#             FROM creadores
-#             WHERE id = %s
-#             """,
-#             (data.creador_id,)
-#         )
-#         row = cur.fetchone()
-#
-#         if not row:
-#             raise HTTPException(404, "El aspirante no existe.")
-#
-#         nombre_creador, telefono = row
-#
-#         if not telefono:
-#             raise HTTPException(400, "El aspirante no tiene teléfono registrado.")
-#
-#         # 3) Guardar token
-#         cur.execute(
-#             """
-#             INSERT INTO link_agendamiento_tokens (
-#                 token, creador_id, responsable_id, expiracion, usado
-#             )
-#             VALUES (%s, %s, %s, %s, FALSE)
-#             """,
-#             (token, data.creador_id, data.responsable_id, expiracion)
-#         )
-#
-#     # 4) Armar URL dinámica con tenant
-#     subdomain = current_tenant.get() or "test"
-#     if subdomain == "public":
-#         subdomain = "test"
-#
-#     base_front = f"https://{subdomain}.talentum-manager.com/agendar"
-#     url = f"{base_front}?token={token}"
-#
-#     # 5) Armar mensaje
-#     mensaje = (
-#         f"Hola {nombre_creador} 👋\n\n"
-#         "Queremos continuar tu proceso en la agencia.\n\n"
-#         "📅 Agenda tu entrevista aquí:\n"
-#         f"{url}\n\n"
-#         "Selecciona el horario que prefieras.\n"
-#         # "✨ Prestige Agency"
-#     )
-#
-#     # 6) Enviar WhatsApp
-#     try:
-#         enviar_mensaje(telefono, mensaje)
-#     except Exception as e:
-#         raise HTTPException(500, f"Token generado, pero fallo al enviar WhatsApp: {e}")
-#
-#     # 7) Respuesta
-#     return LinkAgendamientoOut(
-#         token=token,
-#         url=url,
-#         expiracion=expiracion,
-#     )
+class ModeloVariableCreate(BaseModel):
+    nombre: str
+    campo_db: Optional[str] = None
+    peso_variable: float
+    tipo: str  # cuantitativa / cualitativa / declarativa
 
 
-# def crear_agendamiento_aspirante_DB(
-#     data,
-#     aspirante_id: int,
-#     responsable_id: int
-# ) -> Optional[int]:
-#     """
-#     Crea un agendamiento, obtiene/crea la entrevista y registra la relación
-#     en entrevista_agendamiento. Devuelve agendamiento_id.
-#     """
-#     conn = get_connection_context()
-#     try:
-#         with conn.cursor() as cur:
-#
-#             # 1️⃣ INSERTAR AGENDAMIENTO
-#             cur.execute(
-#                 """
-#                 INSERT INTO agendamientos (
-#                     titulo,
-#                     descripcion,
-#                     fecha_inicio,
-#                     fecha_fin,
-#                     creador_id,
-#                     responsable_id,
-#                     estado,
-#                     link_meet,
-#                     google_event_id
-#                 )
-#                 VALUES (%s, %s, %s, %s, %s, %s, 'programado', NULL, NULL)
-#                 RETURNING id
-#                 """,
-#                 (
-#                     data.titulo,
-#                     data.descripcion,
-#                     data.fecha_inicio,
-#                     data.fecha_fin,
-#                     aspirante_id,
-#                     responsable_id,
-#                 )
-#             )
-#
-#             agendamiento_id = cur.fetchone()[0]
-#
-#             # 2️⃣ OBTENER O CREAR ENTREVISTA
-#             entrevista = obtener_entrevista_id(aspirante_id, responsable_id)
-#             if not entrevista:
-#                 raise Exception("No se pudo obtener o crear la entrevista.")
-#
-#             entrevista_id = entrevista["id"]
-#
-#             # 3️⃣ INSERTAR EN TABLA entrevista_agendamiento
-#             cur.execute(
-#                 """
-#                 INSERT INTO entrevista_agendamiento (
-#                     agendamiento_id,
-#                     entrevista_id,
-#                     creado_en
-#                 )
-#                 VALUES (%s, %s, NOW() AT TIME ZONE 'UTC')
-#                 """,
-#                 (agendamiento_id, entrevista_id)
-#             )
-#
-#             # 4️⃣ INSERTAR PARTICIPANTE
-#             cur.execute(
-#                 """
-#                 INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
-#                 VALUES (%s, %s)
-#                 """,
-#                 (agendamiento_id, aspirante_id)
-#             )
-#
-#             conn.commit()
-#             return agendamiento_id
-#
-#     except Exception as e:
-#         print("❌ Error al crear agendamiento y relacionar entrevista:", e)
-#         conn.rollback()
-#         return None
-#
-#     finally:
-#         conn.close()
+class TalentoScoreCreate(BaseModel):
+    variable_id: int
+    score: int = Field(..., ge=1, le=5)
 
 
+class EvaluacionResultadoOut(BaseModel):
+    modelo_id: int
+    puntaje_total: float
+    categoria_final: str
+    fecha: datetime
 
-# def obtener_entrevista_id(creador_id: int, usuario_evalua: int) -> Optional[dict]:
-#     """
-#     Obtiene una entrevista existente por creador_id.
-#     Si no existe, crea una entrevista mínima.
-#     Devuelve: { id, creado_en }
-#     """
-#     conn = get_connection_context()
-#     try:
-#         with conn.cursor() as cur:
-#
-#             # 1️⃣ Buscar entrevista existente
-#             cur.execute("""
-#                 SELECT id, creado_en
-#                 FROM entrevistas
-#                 WHERE creador_id = %s
-#                 ORDER BY creado_en ASC
-#                 LIMIT 1
-#             """, (creador_id,))
-#
-#             row = cur.fetchone()
-#
-#             # Si existe → retornarla
-#             if row:
-#                 return {"id": row[0], "creado_en": row[1]}
-#
-#             # 2️⃣ Si no existe → crear entrevista mínima
-#             cur.execute("""
-#                 INSERT INTO entrevistas (creador_id, usuario_evalua, creado_en)
-#                 VALUES (%s, %s, NOW() AT TIME ZONE 'UTC')
-#                 RETURNING id, creado_en
-#             """, (creador_id, usuario_evalua))
-#
-#             new_row = cur.fetchone()
-#             conn.commit()
-#
-#             if not new_row:
-#                 return None
-#
-#             return {"id": new_row[0], "creado_en": new_row[1]}
-#
-#     except Exception as e:
-#         print("❌ Error en obtener_o_crear_entrevista:", e)
-#         return None
-#
-#     finally:
-#         conn.close()
-
-# @router.post("/api/agendamientos/aspirante", response_model=EventoOut)
-# def crear_agendamiento_aspirante(
-#     data: AgendamientoAspiranteIn,
-# ):
-#     """
-#     Guarda una cita desde el link de agendamiento y:
-#     → Valida token
-#     → Crea agendamiento
-#     → Obtiene o crea entrevista
-#     → Inserta en entrevista_agendamiento
-#     """
-#     with get_connection_context() as conn:
-#         cur = conn.cursor()
-#
-#         try:
-#             # 1️⃣ Validar fechas
-#             if data.fin <= data.inicio:
-#                 raise HTTPException(
-#                     status_code=400,
-#                     detail="La fecha de fin debe ser posterior a la fecha de inicio."
-#                 )
-#
-#             # 2️⃣ Validar token
-#             cur.execute(
-#                 """
-#                 SELECT token, creador_id, responsable_id, expiracion, usado
-#                 FROM link_agendamiento_tokens
-#                 WHERE token = %s
-#                 """,
-#                 (data.token,)
-#             )
-#             row = cur.fetchone()
-#
-#             if not row:
-#                 raise HTTPException(404, "Token no válido.")
-#
-#             token, creador_id, responsable_id, expiracion, usado = row
-#
-#             if usado:
-#                 raise HTTPException(400, "Este enlace ya fue utilizado.")
-#
-#             if expiracion < datetime.utcnow():
-#                 raise HTTPException(400, "Este enlace ha expirado.")
-#
-#             # 3️⃣ Verificar aspirante
-#             cur.execute(
-#                 """
-#                 SELECT
-#                     id,
-#                     COALESCE(NULLIF(nombre_real, ''), nickname) AS nombre,
-#                     nickname
-#                 FROM creadores
-#                 WHERE id = %s
-#                 """,
-#                 (creador_id,)
-#             )
-#             row = cur.fetchone()
-#
-#             if not row:
-#                 raise HTTPException(404, "El aspirante no existe.")
-#
-#             aspirante_id = row[0]
-#             aspirante_nombre_db = row[1]
-#             aspirante_nickname = row[2]
-#
-#             # 4️⃣ Guardar timezone opcional
-#             if data.timezone:
-#                 cur.execute(
-#                     """
-#                     UPDATE perfil_creador
-#                     SET zona_horaria = %s
-#                     WHERE creador_id = %s
-#                     """,
-#                     (data.timezone, aspirante_id)
-#                 )
-#
-#             # 5️⃣ Fechas UTC
-#             fecha_inicio = data.inicio
-#             fecha_fin = data.fin
-#
-#             if data.timezone:
-#                 tz = ZoneInfo(data.timezone)
-#
-#                 if fecha_inicio.tzinfo is None:
-#                     fecha_inicio = fecha_inicio.replace(tzinfo=tz)
-#                 if fecha_fin.tzinfo is None:
-#                     fecha_fin = fecha_fin.replace(tzinfo=tz)
-#
-#                 fecha_inicio = fecha_inicio.astimezone(ZoneInfo("UTC"))
-#                 fecha_fin = fecha_fin.astimezone(ZoneInfo("UTC"))
-#
-#             # 6️⃣ Crear agendamiento + relación entrevista en UNA sola función
-#             agendamiento_id = crear_agendamiento_aspirante_DB(
-#                 data=SimpleNamespace(
-#                     titulo=data.titulo,
-#                     descripcion=data.descripcion,
-#                     fecha_inicio=fecha_inicio,
-#                     fecha_fin=fecha_fin
-#                 ),
-#                 aspirante_id=aspirante_id,
-#                 responsable_id=responsable_id
-#             )
-#
-#             if not agendamiento_id:
-#                 raise HTTPException(500, "No se pudo crear el agendamiento.")
-#
-#             # 7️⃣ Marcar token como usado
-#             cur.execute(
-#                 "UPDATE link_agendamiento_tokens SET usado = TRUE WHERE token = %s",
-#                 (token,)
-#             )
-#
-#             conn.commit()
-#
-#             # 8️⃣ Respuesta final
-#             participante = {
-#                 "id": aspirante_id,
-#                 "nombre": aspirante_nombre_db,
-#                 "nickname": aspirante_nickname,
-#             }
-#
-#             return EventoOut(
-#                 id=str(agendamiento_id),
-#                 titulo=data.titulo,
-#                 descripcion=data.descripcion,
-#                 inicio=fecha_inicio,
-#                 fin=fecha_fin,
-#                 creador_id=aspirante_id,
-#                 participantes_ids=[aspirante_id],
-#                 participantes=[participante],
-#                 responsable_id=responsable_id,
-#                 estado="programado",
-#                 link_meet=None,
-#                 origen="interno",
-#                 google_event_id=None,
-#             )
-#
-#         except HTTPException:
-#             raise
-#         except Exception as e:
-#             logger.error(f"❌ Error creando agendamiento de aspirante: {e}")
-#             logger.error(traceback.format_exc())
-#             raise HTTPException(
-#                 500,
-#                 "Error interno al crear agendamiento de aspirante."
-#             )
-
-# def crear_agendamiento_aspirante_DB(
-#     data,
-#     aspirante_id: int,
-#     responsable_id: int
-# ) -> Optional[int]:
-#     """
-#     Crea un agendamiento, obtiene/crea la entrevista y registra la relación
-#     en entrevista_agendamiento. Devuelve agendamiento_id o None si falla.
-#     """
-#
-#     try:
-#         # ✅ usar SIEMPRE el context manager
-#         with get_connection_context() as conn:
-#             with conn.cursor() as cur:
-#
-#                 # 1️⃣ INSERTAR AGENDAMIENTO
-#                 cur.execute(
-#                     """
-#                     INSERT INTO agendamientos (
-#                         titulo,
-#                         descripcion,
-#                         fecha_inicio,
-#                         fecha_fin,
-#                         creador_id,
-#                         responsable_id,
-#                         estado,
-#                         link_meet,
-#                         google_event_id
-#                     )
-#                     VALUES (%s, %s, %s, %s, %s, %s, 'programado', NULL, NULL)
-#                     RETURNING id
-#                     """,
-#                     (
-#                         data.titulo,
-#                         data.descripcion,
-#                         data.fecha_inicio,
-#                         data.fecha_fin,
-#                         aspirante_id,
-#                         responsable_id,
-#                     )
-#                 )
-#
-#                 agendamiento_id = cur.fetchone()[0]
-#
-#                 # 2️⃣ OBTENER O CREAR ENTREVISTA
-#                 entrevista = obtener_entrevista_id(aspirante_id, responsable_id)
-#                 if not entrevista:
-#                     raise Exception("No se pudo obtener o crear la entrevista.")
-#
-#                 entrevista_id = entrevista["id"]
-#
-#                 # 3️⃣ INSERTAR EN TABLA entrevista_agendamiento
-#                 cur.execute(
-#                     """
-#                     INSERT INTO entrevista_agendamiento (
-#                         agendamiento_id,
-#                         entrevista_id,
-#                         creado_en
-#                     )
-#                     VALUES (%s, %s, NOW() AT TIME ZONE 'UTC')
-#                     """,
-#                     (agendamiento_id, entrevista_id)
-#                 )
-#
-#                 # 4️⃣ INSERTAR PARTICIPANTE
-#                 cur.execute(
-#                     """
-#                     INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
-#                     VALUES (%s, %s)
-#                     """,
-#                     (agendamiento_id, aspirante_id)
-#                 )
-#
-#                 # ❌ Nada de conn.commit() aquí: lo hace get_connection_context()
-#                 return agendamiento_id
-#
-#     except Exception as e:
-#         # Aquí solo logueamos; rollback y close los maneja el context manager
-#         print("❌ Error al crear agendamiento y relacionar entrevista:", e)
-#         return None
-
-# @router.post("/api/agendamientos/aspirante", response_model=EventoOut)
-# def crear_agendamiento_aspirante(
-#     data: AgendamientoAspiranteIn,
-# ):
-#     """
-#     Guarda una cita desde el link de agendamiento y:
-#     → Valida token
-#     → Crea agendamiento (usando duración y tipo del token si existen)
-#     → Obtiene o crea entrevista
-#     → Inserta en entrevista_agendamiento
-#     """
-#
-#     with get_connection_context() as conn:
-#         cur = conn.cursor()
-#
-#         try:
-#             # 1️⃣ Validar token y obtener parámetros asociados
-#             cur.execute(
-#                 """
-#                 SELECT
-#                     token,
-#                     creador_id,
-#                     responsable_id,
-#                     expiracion,
-#                     usado,
-#                     duracion_minutos,
-#                     tipo_agendamiento
-#                 FROM link_agendamiento_tokens
-#                 WHERE token = %s
-#                 """,
-#                 (data.token,)
-#             )
-#             row = cur.fetchone()
-#
-#             if not row:
-#                 raise HTTPException(404, "Token no válido.")
-#
-#             (
-#                 token,
-#                 creador_id,
-#                 responsable_id,
-#                 expiracion,
-#                 usado,
-#                 duracion_minutos_token,
-#                 tipo_agendamiento_token,
-#             ) = row
-#
-#             if usado:
-#                 raise HTTPException(400, "Este enlace ya fue utilizado.")
-#
-#             if expiracion < datetime.utcnow():
-#                 raise HTTPException(400, "Este enlace ha expirado.")
-#
-#             # 2️⃣ Verificar aspirante
-#             cur.execute(
-#                 """
-#                 SELECT
-#                     id,
-#                     COALESCE(NULLIF(nombre_real, ''), nickname) AS nombre,
-#                     nickname
-#                 FROM creadores
-#                 WHERE id = %s
-#                 """,
-#                 (creador_id,)
-#             )
-#             row = cur.fetchone()
-#
-#             if not row:
-#                 raise HTTPException(404, "El aspirante no existe.")
-#
-#             aspirante_id = row[0]
-#             aspirante_nombre_db = row[1]
-#             aspirante_nickname = row[2]
-#
-#             # 3️⃣ Guardar timezone opcional
-#             if data.timezone:
-#                 cur.execute(
-#                     """
-#                     UPDATE perfil_creador
-#                     SET zona_horaria = %s
-#                     WHERE creador_id = %s
-#                     """,
-#                     (data.timezone, aspirante_id)
-#                 )
-#
-#             # 4️⃣ Calcular fecha_inicio y fecha_fin en UTC
-#             fecha_inicio = data.inicio
-#             tz = None
-#
-#             if data.timezone:
-#                 tz = ZoneInfo(data.timezone)
-#                 if fecha_inicio.tzinfo is None:
-#                     fecha_inicio = fecha_inicio.replace(tzinfo=tz)
-#                 fecha_inicio = fecha_inicio.astimezone(ZoneInfo("UTC"))
-#             else:
-#                 # Si no hay timezone, asumimos que viene ya en UTC o naive → lo tomamos tal cual
-#                 if fecha_inicio.tzinfo is not None:
-#                     fecha_inicio = fecha_inicio.astimezone(ZoneInfo("UTC"))
-#
-#             # ➕ Si el token trae duración, usamos esa para calcular fecha_fin
-#             if duracion_minutos_token is not None:
-#                 fecha_fin = fecha_inicio + timedelta(minutes=duracion_minutos_token)
-#             else:
-#                 # Fallback: usamos data.fin como antes
-#                 fecha_fin = data.fin
-#
-#                 # Validar que fin > inicio solo en este caso
-#                 if fecha_fin <= data.inicio:
-#                     raise HTTPException(
-#                         status_code=400,
-#                         detail="La fecha de fin debe ser posterior a la fecha de inicio."
-#                     )
-#
-#                 if data.timezone:
-#                     if fecha_fin.tzinfo is None:
-#                         fecha_fin = fecha_fin.replace(tzinfo=tz)
-#                     fecha_fin = fecha_fin.astimezone(ZoneInfo("UTC"))
-#                 else:
-#                     if fecha_fin.tzinfo is not None:
-#                         fecha_fin = fecha_fin.astimezone(ZoneInfo("UTC"))
-#
-#             # Normalizar tipo_agendamiento
-#             tipo_agendamiento = (tipo_agendamiento_token or "ENTREVISTA").upper()
-#
-#             # 5️⃣ Crear agendamiento + relación entrevista en UNA sola función
-#             agendamiento_id = crear_agendamiento_aspirante_DB(
-#                 data=SimpleNamespace(
-#                     titulo=data.titulo,
-#                     descripcion=data.descripcion,
-#                     fecha_inicio=fecha_inicio,
-#                     fecha_fin=fecha_fin,
-#                     tipo_agendamiento=tipo_agendamiento,
-#                 ),
-#                 aspirante_id=aspirante_id,
-#                 responsable_id=responsable_id,
-#             )
-#
-#             if not agendamiento_id:
-#                 raise HTTPException(500, "No se pudo crear el agendamiento.")
-#
-#             # 6️⃣ Marcar token como usado
-#             cur.execute(
-#                 "UPDATE link_agendamiento_tokens SET usado = TRUE WHERE token = %s",
-#                 (token,)
-#             )
-#
-#             conn.commit()
-#
-#             # 7️⃣ Respuesta final
-#             participante = {
-#                 "id": aspirante_id,
-#                 "nombre": aspirante_nombre_db,
-#                 "nickname": aspirante_nickname,
-#             }
-#
-#             return EventoOut(
-#                 id=str(agendamiento_id),
-#                 titulo=data.titulo,
-#                 descripcion=data.descripcion,
-#                 inicio=fecha_inicio,
-#                 fin=fecha_fin,
-#                 creador_id=aspirante_id,
-#                 participantes_ids=[aspirante_id],
-#                 participantes=[participante],
-#                 responsable_id=responsable_id,
-#                 estado="programado",
-#                 link_meet=None,
-#                 origen="interno",
-#                 google_event_id=None,
-#             )
-#
-#         except HTTPException:
-#             raise
-#         except Exception as e:
-#             logger.error(f"❌ Error creando agendamiento de aspirante: {e}")
-#             logger.error(traceback.format_exc())
-#             raise HTTPException(
-#                 500,
-#                 "Error interno al crear agendamiento de aspirante."
-#             )
+    class Config:
+        orm_mode = True
 
 
+@router.get("/api/modelos-evaluacion", response_model=List[ModeloEvaluacionOut])
+def listar_modelos(activos: bool = Query(True)):
+    TENANT = current_tenant.get()
+    if not TENANT:
+        raise HTTPException(status_code=400, detail="Tenant no disponible")
 
-# def crear_agendamiento_aspirante_DB(
-#     data,
-#     aspirante_id: int,
-#     responsable_id: int
-# ) -> Optional[int]:
-#     """
-#     Crea un agendamiento, obtiene/crea la entrevista y registra la relación
-#     en entrevista_agendamiento. Devuelve agendamiento_id o None si falla.
-#
-#     Se espera que `data` tenga:
-#       - titulo
-#       - descripcion
-#       - fecha_inicio (UTC)
-#       - fecha_fin (UTC)
-#       - tipo_agendamiento (LIVE / ENTREVISTA)
-#     """
-#
-#     try:
-#         tipo_agendamiento = getattr(data, "tipo_agendamiento", None) or "ENTREVISTA"
-#
-#         with get_connection_context() as conn:
-#             with conn.cursor() as cur:
-#
-#                 # 1️⃣ INSERTAR AGENDAMIENTO
-#                 cur.execute(
-#                     """
-#                     INSERT INTO agendamientos (
-#                         titulo,
-#                         descripcion,
-#                         fecha_inicio,
-#                         fecha_fin,
-#                         creador_id,
-#                         responsable_id,
-#                         estado,
-#                         tipo_agendamiento,
-#                         link_meet,
-#                         google_event_id
-#                     )
-#                     VALUES (%s, %s, %s, %s, %s, %s, 'programado', %s, NULL, NULL)
-#                     RETURNING id
-#                     """,
-#                     (
-#                         data.titulo,
-#                         data.descripcion,
-#                         data.fecha_inicio,
-#                         data.fecha_fin,
-#                         aspirante_id,
-#                         responsable_id,
-#                         tipo_agendamiento,
-#                     )
-#                 )
-#
-#                 agendamiento_id = cur.fetchone()[0]
-#
-#                 # 2️⃣ OBTENER O CREAR ENTREVISTA
-#                 entrevista = obtener_entrevista_id(aspirante_id, responsable_id)
-#                 if not entrevista:
-#                     raise Exception("No se pudo obtener o crear la entrevista.")
-#
-#                 entrevista_id = entrevista["id"]
-#
-#                 # 3️⃣ INSERTAR EN TABLA entrevista_agendamiento
-#                 cur.execute(
-#                     """
-#                     INSERT INTO entrevista_agendamiento (
-#                         agendamiento_id,
-#                         entrevista_id,
-#                         creado_en
-#                     )
-#                     VALUES (%s, %s, NOW() AT TIME ZONE 'UTC')
-#                     """,
-#                     (agendamiento_id, entrevista_id)
-#                 )
-#
-#                 # 4️⃣ INSERTAR PARTICIPANTE
-#                 cur.execute(
-#                     """
-#                     INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
-#                     VALUES (%s, %s)
-#                     """,
-#                     (agendamiento_id, aspirante_id)
-#                 )
-#
-#                 return agendamiento_id
-#
-#     except Exception as e:
-#         print("❌ Error al crear agendamiento y relacionar entrevista:", e)
-#         return None
-# import os
-# import json
-# from googleapiclient.discovery import build
-# load_dotenv()
-# SERVICE_ACCOUNT_INFO = os.getenv("GOOGLE_CREDENTIALS_JSON")
-# CALENDAR_ID = os.getenv("CALENDAR_ID")
-#
-# from google.oauth2 import service_account
-# def get_calendar_service():
-#     try:
-#         SCOPES = ["https://www.googleapis.com/auth/calendar"]
-#         creds_dict = json.loads(SERVICE_ACCOUNT_INFO)  # string JSON desde env
-#         creds = service_account.Credentials.from_service_account_info(
-#             creds_dict, scopes=SCOPES
-#         )
-#
-#         # 👉 Impersonar al usuario de Workspace
-#         delegated_creds = creds.with_subject(os.getenv("CALENDAR_ID"))
-#
-#         service = build("calendar", "v3", credentials=delegated_creds)
-#         logger.info(f"✅ Servicio de Google Calendar inicializado con impersonación como {os.getenv('CALENDAR_ID')}")
-#         return service
-#
-#     except Exception as e:
-#         logger.error("❌ Error al inicializar el servicio de Google Calendar:")
-#         logger.error(traceback.format_exc())
-#         raise
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+
+        if activos:
+            cur.execute("""
+                SELECT id, nombre, descripcion, activo
+                FROM modelo_evaluacion
+                WHERE activo = TRUE
+                ORDER BY id ASC
+            """)
+        else:
+            cur.execute("""
+                SELECT id, nombre, descripcion, activo
+                FROM modelo_evaluacion
+                ORDER BY id ASC
+            """)
+
+        rows = cur.fetchall()
+
+    return [
+        ModeloEvaluacionOut(
+            id=r[0],
+            nombre=r[1],
+            descripcion=r[2],
+            activo=r[3]
+        )
+        for r in rows
+    ]
 
 
+@router.post("/api/modelos-evaluacion")
+def crear_modelo(data: ModeloEvaluacionCreate):
+    TENANT = current_tenant.get()
+    if not TENANT:
+        raise HTTPException(status_code=400, detail="Tenant no disponible")
 
-# def crear_evento_google_(resumen, descripcion, fecha_inicio, fecha_fin):
-#     service = get_calendar_service()
-#
-#     evento = {
-#         'summary': resumen,
-#         'description': descripcion,
-#         'start': {
-#             'dateTime': fecha_inicio.isoformat(),
-#             'timeZone': 'America/Bogota',
-#         },
-#         'end': {
-#             'dateTime': fecha_fin.isoformat(),
-#             'timeZone': 'America/Bogota',
-#         },
-#         'conferenceData': {
-#             'createRequest': {
-#                 'requestId': str(uuid4()),
-#                 'conferenceSolutionKey': {'type': 'hangoutsMeet'},
-#             },
-#         },
-#     }
-#
-#     evento_creado = service.events().insert(
-#         calendarId=CALENDAR_ID,
-#         body=evento,
-#         conferenceDataVersion=1
-#     ).execute()
-#
-#     return evento_creado
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO modelo_evaluacion (nombre, descripcion)
+            VALUES (%s, %s)
+            RETURNING id
+        """, (data.nombre, data.descripcion))
+
+        modelo_id = cur.fetchone()[0]
+        conn.commit()
+
+    return {"id": modelo_id}
 
 
+@router.get("/api/modelos-evaluacion/{modelo_id}/categorias",
+            response_model=List[ModeloCategoriaOut])
+def listar_categorias(modelo_id: int):
+    TENANT = current_tenant.get()
+    if not TENANT:
+        raise HTTPException(status_code=400, detail="Tenant no disponible")
 
-# @router.get("/api/agendamientos/aspirante/token-info", response_model=TokenInfoOut)
-# def obtener_info_token_agendamiento(token: str):
-#     """
-#     Devuelve info básica asociada al token.
-#     Incluye mensajes claros para problemas comunes:
-#     - Token inválido
-#     - Token ya usado
-#     - Token expirado
-#     """
-#     with get_connection_context() as conn:
-#         cur = conn.cursor()
-#
-#         # 1) Buscar token
-#         cur.execute(
-#             """
-#             SELECT token, creador_id, responsable_id, expiracion, usado, duracion_minutos
-#             FROM link_agendamiento_tokens
-#             WHERE token = %s
-#             """,
-#             (token,)
-#         )
-#         row = cur.fetchone()
-#         if not row:
-#             raise HTTPException(
-#                 status_code=404,
-#                 detail=(
-#                     "🔗 El enlace no es válido.\n"
-#                     "Por favor solicita un nuevo enlace de agendamiento."
-#                 )
-#             )
-#
-#         _, creador_id, responsable_id, expiracion, usado = row
-#
-#         # 2) Token usado
-#         if usado:
-#             raise HTTPException(
-#                 status_code=400,
-#                 detail=(
-#                     "⚠️ Este enlace ya fue utilizado.\n"
-#                     "Si necesitas agendar otra cita, solicita un nuevo enlace."
-#                 )
-#             )
-#
-#         # 3) Token expirado
-#         if expiracion < datetime.utcnow():
-#             raise HTTPException(
-#                 status_code=400,
-#                 detail=(
-#                     "⏰ Este enlace ha expirado.\n"
-#                     "Solicita un nuevo enlace para continuar con tu agendamiento."
-#                 )
-#             )
-#
-#         # 4) Zona horaria desde perfil_creador
-#         cur.execute(
-#             """
-#             SELECT zona_horaria
-#             FROM perfil_creador
-#             WHERE creador_id = %s
-#             """,
-#             (creador_id,)
-#         )
-#         row_pc = cur.fetchone()
-#         zona_horaria = row_pc[0] if row_pc else None
-#
-#         # 5) Nombre mostrable
-#         cur.execute(
-#             """
-#             SELECT COALESCE(NULLIF(nombre_real, ''), nickname)
-#             FROM creadores
-#             WHERE id = %s
-#             """,
-#             (creador_id,)
-#         )
-#         row_cr = cur.fetchone()
-#         nombre_mostrable = row_cr[0] if row_cr else None
-#
-#     return TokenInfoOut(
-#         creador_id=creador_id,
-#         responsable_id=responsable_id,
-#         zona_horaria=zona_horaria,
-#         nombre_mostrable=nombre_mostrable,
-#         duracion_minutos=duracion_minutos,
-#     )
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, nombre, peso_categoria
+            FROM modelo_categoria
+            WHERE modelo_id = %s
+            ORDER BY id ASC
+        """, (modelo_id,))
+
+        rows = cur.fetchall()
+
+    return [
+        ModeloCategoriaOut(
+            id=r[0],
+            nombre=r[1],
+            peso_categoria=r[2]
+        )
+        for r in rows
+    ]
+
+
+@router.post("/api/modelos-evaluacion/{modelo_id}/categorias")
+def crear_categoria(modelo_id: int, data: ModeloCategoriaCreate):
+    TENANT = current_tenant.get()
+    if not TENANT:
+        raise HTTPException(status_code=400, detail="Tenant no disponible")
+
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO modelo_categoria (modelo_id, nombre, peso_categoria)
+            VALUES (%s, %s, %s)
+            RETURNING id
+        """, (modelo_id, data.nombre, data.peso_categoria))
+
+        categoria_id = cur.fetchone()[0]
+        conn.commit()
+
+    return {"id": categoria_id}
+
+
+@router.get("/api/categorias/{categoria_id}/variables",
+            response_model=List[ModeloVariableOut])
+def listar_variables(categoria_id: int):
+    TENANT = current_tenant.get()
+    if not TENANT:
+        raise HTTPException(status_code=400, detail="Tenant no disponible")
+
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, nombre, campo_db, peso_variable, tipo
+            FROM modelo_variable
+            WHERE categoria_id = %s
+            ORDER BY id ASC
+        """, (categoria_id,))
+
+        rows = cur.fetchall()
+
+    return [
+        ModeloVariableOut(
+            id=r[0],
+            nombre=r[1],
+            campo_db=r[2],
+            peso_variable=r[3],
+            tipo=r[4]
+        )
+        for r in rows
+    ]
+
+
+@router.post("/api/categorias/{categoria_id}/variables")
+def crear_variable(categoria_id: int, data: ModeloVariableCreate):
+    TENANT = current_tenant.get()
+    if not TENANT:
+        raise HTTPException(status_code=400, detail="Tenant no disponible")
+
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO modelo_variable 
+            (categoria_id, nombre, campo_db, peso_variable, tipo)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id
+        """, (
+            categoria_id,
+            data.nombre,
+            data.campo_db,
+            data.peso_variable,
+            data.tipo
+        ))
+
+        variable_id = cur.fetchone()[0]
+        conn.commit()
+
+    return {"id": variable_id}
+
+@router.post("/api/creadores/{creador_id}/talento-score")
+def guardar_talento_score(creador_id: int, data: TalentoScoreCreate):
+    TENANT = current_tenant.get()
+    if not TENANT:
+        raise HTTPException(status_code=400, detail="Tenant no disponible")
+
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+
+        cur.execute("""
+            INSERT INTO talento_variable_score 
+            (creador_id, variable_id, score)
+            VALUES (%s, %s, %s)
+            ON CONFLICT DO NOTHING
+        """, (creador_id, data.variable_id, data.score))
+
+        conn.commit()
+
+    return {"ok": True}
+
+
+@router.post("/api/creadores/{creador_id}/evaluar/{modelo_id}")
+def evaluar_creador(creador_id: int, modelo_id: int):
+
+    TENANT = current_tenant.get()
+    if not TENANT:
+        raise HTTPException(status_code=400, detail="Tenant no disponible")
+
+    resultado = calcular_evaluacion(creador_id, modelo_id)
+
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+
+        cur.execute("""
+            INSERT INTO evaluacion_resultado
+            (creador_id, modelo_id, 
+             puntaje_total, puntaje_talento,
+             puntaje_mercado, puntaje_operativa,
+             puntaje_intencion, categoria_final,
+             recomendacion)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """, (
+            creador_id,
+            modelo_id,
+            resultado["total"],
+            resultado["talento"],
+            resultado["mercado"],
+            resultado["operativa"],
+            resultado["intencion"],
+            resultado["categoria"],
+            resultado["recomendacion"]
+        ))
+
+        conn.commit()
+
+    return resultado
+
+
+@router.get("/api/creadores/{creador_id}/resultados",
+            response_model=List[EvaluacionResultadoOut])
+def listar_resultados(creador_id: int):
+
+    TENANT = current_tenant.get()
+    if not TENANT:
+        raise HTTPException(status_code=400, detail="Tenant no disponible")
+
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT modelo_id,
+                   puntaje_total,
+                   categoria_final,
+                   created_at
+            FROM evaluacion_resultado
+            WHERE creador_id = %s
+            ORDER BY created_at DESC
+        """, (creador_id,))
+
+        rows = cur.fetchall()
+
+    return [
+        EvaluacionResultadoOut(
+            modelo_id=r[0],
+            puntaje_total=r[1],
+            categoria_final=r[2],
+            fecha=r[3]
+        )
+        for r in rows
+    ]
+
+
+def calcular_evaluacion(creador_id: int, modelo_id: int):
+
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+
+        # 1️⃣ Obtener categorías
+        cur.execute("""
+            SELECT id, nombre, peso_categoria
+            FROM modelo_categoria
+            WHERE modelo_id = %s
+        """, (modelo_id,))
+        categorias = cur.fetchall()
+
+        total_score = 0
+        detalle = {}
+
+        for cat_id, cat_nombre, cat_peso in categorias:
+
+            # 2️⃣ Obtener variables de la categoría
+            cur.execute("""
+                SELECT id, campo_db, peso_variable, tipo
+                FROM modelo_variable
+                WHERE categoria_id = %s
+            """, (cat_id,))
+            variables = cur.fetchall()
+
+            subtotal_categoria = 0
+
+            for var_id, campo_db, peso_variable, tipo in variables:
+
+                valor_normalizado = 0
+
+                # 🔹 CUALITATIVA (ej: talento 1–5)
+                if tipo == "cualitativa":
+                    cur.execute("""
+                        SELECT score
+                        FROM talento_variable_score
+                        WHERE creador_id = %s
+                        AND variable_id = %s
+                    """, (creador_id, var_id))
+                    row = cur.fetchone()
+
+                    if row:
+                        valor_normalizado = row[0] / 5  # normaliza a 0–1
+
+                # 🔹 CUANTITATIVA (desde perfil_creador)
+                elif tipo == "cuantitativa" and campo_db:
+                    cur.execute(f"""
+                        SELECT {campo_db}
+                        FROM perfil_creador
+                        WHERE id = %s
+                    """, (creador_id,))
+                    row = cur.fetchone()
+
+                    if row and row[0] is not None:
+                        valor_normalizado = normalizar_cuantitativa(row[0])
+
+                # 🔹 DECLARATIVA (horas, dias, objetivo, etc.)
+                elif tipo == "declarativa" and campo_db:
+                    cur.execute(f"""
+                        SELECT {campo_db}
+                        FROM perfil_creador
+                        WHERE id = %s
+                    """, (creador_id,))
+                    row = cur.fetchone()
+
+                    if row:
+                        valor_normalizado = normalizar_declarativa(row[0])
+
+                subtotal_categoria += valor_normalizado * (peso_variable / 100)
+
+            puntaje_categoria = subtotal_categoria * (cat_peso / 100)
+            total_score += puntaje_categoria
+            detalle[cat_nombre.lower()] = round(puntaje_categoria, 4)
+
+        categoria_final = clasificar_score(total_score)
+
+        return {
+            "total": round(total_score, 4),
+            "talento": detalle.get("talento", 0),
+            "mercado": detalle.get("mercado", 0),
+            "operativa": detalle.get("operativa", 0),
+            "intencion": detalle.get("intencion", 0),
+            "categoria": categoria_final,
+            "recomendacion": generar_recomendacion(categoria_final)
+        }
+
+import math
+from typing import Union
+
+
+# ============================================================
+# 🔵 NORMALIZACIÓN CUANTITATIVA
+# ============================================================
+
+def normalizar_cuantitativa(
+    valor: Union[int, float],
+    minimo: float = 0,
+    maximo: float = 1_000_000,
+    usar_log: bool = False
+) -> float:
+    """
+    Normaliza variables cuantitativas al rango 0–1.
+
+    - Si usar_log=True → usa escala logarítmica (ideal para seguidores/likes)
+    - Si usar_log=False → usa min-max scaling tradicional
+    """
+
+    if valor is None:
+        return 0.0
+
+    try:
+        valor = float(valor)
+    except Exception:
+        return 0.0
+
+    if valor <= minimo:
+        return 0.0
+
+    if usar_log:
+        # Escala logarítmica
+        if valor <= 0:
+            return 0.0
+
+        valor_log = math.log10(valor + 1)
+        max_log = math.log10(maximo + 1)
+
+        if max_log == 0:
+            return 0.0
+
+        resultado = valor_log / max_log
+        return round(min(resultado, 1.0), 4)
+
+    # 🔵 Escala lineal tradicional
+    if valor >= maximo:
+        return 1.0
+
+    resultado = (valor - minimo) / (maximo - minimo)
+    return round(max(resultado, 0.0), 4)
+
+
+# ============================================================
+# 🔵 NORMALIZACIÓN DECLARATIVA
+# ============================================================
+
+def normalizar_declarativa(valor) -> float:
+    """
+    Normaliza variables declarativas.
+
+    - Si es número (1–5) → lo escala a 0–1
+    - Si es texto → usa mapeo categórico
+    """
+
+    if valor is None:
+        return 0.0
+
+    # ✅ Caso numérico
+    if isinstance(valor, (int, float)):
+        valor = float(valor)
+        valor = max(1, min(valor, 5))  # limitar entre 1 y 5
+        return round(valor / 5, 4)
+
+    # ✅ Caso texto
+    texto = str(valor).strip().lower()
+
+    mapping = {
+        "muy bajo": 0.1,
+        "bajo": 0.2,
+        "media": 0.5,
+        "medio": 0.5,
+        "alta": 0.8,
+        "alto": 0.8,
+        "muy alto": 1.0,
+        "alto compromiso": 1.0,
+        "baja": 0.2
+    }
+
+    return mapping.get(texto, 0.0)
+
+
+# ============================================================
+# 🔵 CLASIFICACIÓN DEL SCORE FINAL
+# ============================================================
+
+def clasificar_score(score: float) -> str:
+    """
+    Clasifica el score total en niveles estratégicos.
+    """
+
+    if score is None:
+        return "Muy Bajo"
+
+    if score < 0.2:
+        return "Muy Bajo"
+    elif score < 0.4:
+        return "Bajo"
+    elif score < 0.6:
+        return "Medio"
+    elif score < 0.8:
+        return "Alto"
+    else:
+        return "Muy Alto"
+
+
+# ============================================================
+# 🔵 GENERACIÓN DE RECOMENDACIONES AUTOMÁTICAS
+# ============================================================
+
+def generar_recomendacion(categoria: str) -> str:
+    """
+    Genera recomendaciones automáticas según el nivel obtenido.
+    """
+
+    recomendaciones = {
+        "Muy Bajo": """
+🔴 Perfil con bajo potencial detectado.
+
+Recomendaciones:
+- Mejorar calidad de contenido
+- Trabajar consistencia
+- Aumentar interacción con audiencia
+- Optimizar perfil y bio
+        """,
+
+        "Bajo": """
+🟡 Potencial limitado.
+
+Recomendaciones:
+- Mejorar engagement
+- Aumentar frecuencia de publicación
+- Trabajar identidad de marca
+- Mejorar estrategia de contenido
+        """,
+
+        "Medio": """
+🟢 Buen perfil con oportunidad de crecimiento.
+
+Recomendaciones:
+- Optimizar estrategia
+- Mejorar retención
+- Aumentar conversión
+- Fortalecer comunidad
+        """,
+
+        "Alto": """
+🔵 Perfil fuerte.
+
+Recomendaciones:
+- Escalar audiencia
+- Buscar alianzas estratégicas
+- Activar monetización avanzada
+- Diversificar contenido
+        """,
+
+        "Muy Alto": """
+🏆 Perfil excelente.
+
+Recomendaciones:
+- Expansión de marca personal
+- Contratos y colaboraciones premium
+- Automatizar ingresos
+- Construir autoridad en la industria
+        """
+    }
+
+    return recomendaciones.get(
+        categoria,
+        "Sin recomendaciones disponibles."
+    )
