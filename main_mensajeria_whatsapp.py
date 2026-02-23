@@ -3,11 +3,14 @@ import os
 import subprocess
 from typing import Optional
 
+import httpx
+import tempfile
+
 from fastapi import APIRouter, Form, UploadFile, requests, HTTPException,Request
 from starlette.staticfiles import StaticFiles
 
 from DataBase import obtener_usuario_id_por_telefono, paso_limite_24h, guardar_mensaje, guardar_mensaje_nuevo, \
-    obtener_mensajes, obtener_contactos_db, obtener_contactos_db_nueva
+    obtener_mensajes, obtener_contactos_db, obtener_contactos_db_nueva, get_connection_context
 from enviar_msg_wp import enviar_plantilla_generica, enviar_mensaje_texto_simple, enviar_audio_base64
 from tenant import current_token, current_phone_id, current_business_name, current_tenant
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -46,7 +49,6 @@ def listar_contactos(estado: Optional[int] = None, request: Request = None):
 def listar_mensajes(telefono: str):
     return obtener_mensajes(telefono)
 
-
 @router.post("/mensajes")
 async def api_enviar_mensaje(request: Request, data: dict):
 
@@ -68,19 +70,8 @@ async def api_enviar_mensaje(request: Request, data: dict):
             status_code=500
         )
 
-    # ✅ 1) Intentar plantilla si fuera de 24h
-    enviada, payload = intentar_plantilla_reconexion_24h(
-        telefono=telefono,
-        nombre=nombre,
-        token=TOKEN,
-        phone_number_id=PHONE_NUMBER_ID,
-        agencia_nombre=AGENCIA_NOMBRE
-    )
-    if enviada:
-        return payload
-
     # ======================================================
-    # DENTRO DE VENTANA → MENSAJE NORMAL
+    # 1️⃣ Enviar SIEMPRE mensaje normal
     # ======================================================
 
     codigo, respuesta_api = enviar_mensaje_texto_simple(
@@ -90,31 +81,177 @@ async def api_enviar_mensaje(request: Request, data: dict):
         texto=mensaje
     )
 
-    # ✅ EXTRAER message_id_meta
-    message_id_meta = None
-    if respuesta_api and "messages" in respuesta_api:
-        message_id_meta = respuesta_api["messages"][0].get("id")
+    # ======================================================
+    # 2️⃣ Guardar SOLO si fue exitoso
+    # ======================================================
 
-    guardar_mensaje_nuevo(
-        telefono=telefono,
-        contenido=mensaje,
-        direccion="enviado",
-        tipo="texto",
-        message_id_meta=message_id_meta,
-        estado="sent"
-    )
+    if codigo == 200:
+
+        message_id_meta = None
+        if respuesta_api and "messages" in respuesta_api:
+            message_id_meta = respuesta_api["messages"][0].get("id")
+
+        guardar_mensaje_nuevo(
+            telefono=telefono,
+            contenido=mensaje,
+            direccion="enviado",
+            tipo="texto",
+            message_id_meta=message_id_meta,
+            estado="sent"
+        )
+
+        # ======================================================
+        # 3️⃣ Intentar plantilla SOLO si fue exitoso
+        # ======================================================
+
+        intentar_plantilla_reconexion_24h(
+            telefono=telefono,
+            nombre=nombre,
+            token=TOKEN,
+            phone_number_id=PHONE_NUMBER_ID,
+            agencia_nombre=AGENCIA_NOMBRE
+        )
+
+    # ======================================================
+    # 4️⃣ Respuesta final
+    # ======================================================
 
     return {
-        "status": "ok",
-        "mensaje": "Mensaje enviado correctamente",
+        "status": "ok" if codigo == 200 else "error",
+        "mensaje": "Mensaje procesado",
         "codigo_api": codigo,
-        "respuesta_api": respuesta_api
+        "respuesta_api": respuesta_api if codigo != 200 else None
     }
-
-from datetime import datetime
 
 @router.post("/mensajes/audio")
 async def api_enviar_audio(
+    telefono: str = Form(...),
+    nombre: str = Form(""),
+    audio: UploadFile = Form(...)
+):
+    import os, subprocess
+    from datetime import datetime
+
+    TOKEN = current_token.get()
+    PHONE_NUMBER_ID = current_phone_id.get()
+    TENANT = current_tenant.get()
+    AGENCIA_NOMBRE = current_business_name.get() or ""
+
+    if not TOKEN or not PHONE_NUMBER_ID:
+        return {"status": "error", "mensaje": "Credenciales no disponibles"}
+
+    if not TENANT:
+        return {"status": "error", "mensaje": "Tenant no disponible"}
+
+    timestamp = int(datetime.now().timestamp())
+    filename_webm = f"{telefono}_{timestamp}.webm"
+    filename_ogg = f"{telefono}_{timestamp}.ogg"
+
+    tenant_dir = os.path.join(AUDIO_DIR, TENANT)
+    os.makedirs(tenant_dir, exist_ok=True)
+
+    ruta_webm = os.path.join(tenant_dir, filename_webm)
+    ruta_ogg = os.path.join(tenant_dir, filename_ogg)
+
+    # --------------------------------------------------
+    # 1️⃣ Guardar archivo original
+    # --------------------------------------------------
+    audio_bytes = await audio.read()
+    with open(ruta_webm, "wb") as f:
+        f.write(audio_bytes)
+
+    # --------------------------------------------------
+    # 2️⃣ Convertir a opus
+    # --------------------------------------------------
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", ruta_webm, "-acodec", "libopus", ruta_ogg],
+            check=True
+        )
+    except subprocess.CalledProcessError:
+        try: os.remove(ruta_webm)
+        except: pass
+        return {"status": "error", "mensaje": "Error convirtiendo audio"}
+
+    # --------------------------------------------------
+    # 3️⃣ Subir a Cloudinary
+    # --------------------------------------------------
+    url_cloudinary = subir_audio_cloudinary(
+        ruta_ogg,
+        public_id=filename_ogg.replace(".ogg", ""),
+        carpeta=f"whatsapp/{TENANT}/audios"
+    )
+
+    if not url_cloudinary:
+        try: os.remove(ruta_webm)
+        except: pass
+        try: os.remove(ruta_ogg)
+        except: pass
+        return {"status": "error", "mensaje": "Error subiendo a Cloudinary"}
+
+    # --------------------------------------------------
+    # 4️⃣ Enviar SIEMPRE a WhatsApp
+    # --------------------------------------------------
+    try:
+        codigo, respuesta_api = enviar_audio_base64(
+            token=TOKEN,
+            numero_id=PHONE_NUMBER_ID,
+            telefono_destino=telefono,
+            ruta_audio=ruta_ogg,
+            mimetype="audio/ogg; codecs=opus"
+        )
+    except Exception as e:
+        codigo = 500
+        respuesta_api = {"error": str(e)}
+
+    # --------------------------------------------------
+    # 5️⃣ Guardar SOLO si fue exitoso
+    # --------------------------------------------------
+    if codigo == 200:
+
+        message_id_meta = None
+        if respuesta_api and "messages" in respuesta_api:
+            message_id_meta = respuesta_api["messages"][0].get("id")
+
+        guardar_mensaje_nuevo(
+            telefono=telefono,
+            contenido=url_cloudinary,
+            direccion="enviado",
+            tipo="audio",
+            media_url=url_cloudinary,
+            message_id_meta=message_id_meta,
+            estado="sent"
+        )
+
+        # --------------------------------------------------
+        # 6️⃣ Intentar plantilla SOLO si fue exitoso
+        # --------------------------------------------------
+        intentar_plantilla_reconexion_24h(
+            telefono=telefono,
+            nombre=nombre,
+            token=TOKEN,
+            phone_number_id=PHONE_NUMBER_ID,
+            agencia_nombre=AGENCIA_NOMBRE
+        )
+
+    # --------------------------------------------------
+    # 7️⃣ Limpiar temporales
+    # --------------------------------------------------
+    try: os.remove(ruta_webm)
+    except: pass
+    try: os.remove(ruta_ogg)
+    except: pass
+
+    return {
+        "status": "ok" if codigo == 200 else "error",
+        "url_cloudinary": url_cloudinary,
+        "codigo_api": codigo,
+        "respuesta_api": respuesta_api if codigo != 200 else None
+    }
+
+
+@router.post("/mensajes/audio0")
+async def api_enviar_audio0(
     telefono: str = Form(...),
     nombre: str = Form(""),   # ✅ NUEVO PARAMETRO
     audio: UploadFile = Form(...)
@@ -226,6 +363,125 @@ async def api_enviar_audio(
 
 @router.post("/mensajes/audio-adjunto")
 async def api_enviar_audio_adjunto(
+    telefono: str = Form(...),
+    nombre: str = Form(""),
+    audio: UploadFile = Form(...)
+):
+    import os
+    from datetime import datetime
+    from fastapi import HTTPException
+
+    TOKEN = current_token.get()
+    PHONE_NUMBER_ID = current_phone_id.get()
+    TENANT = current_tenant.get()
+    AGENCIA_NOMBRE = current_business_name.get() or ""
+
+    if not TOKEN or not PHONE_NUMBER_ID:
+        return {"status": "error", "mensaje": "Credenciales no disponibles"}
+
+    # --------------------------------------------------
+    # 1️⃣ Validar tipo
+    # --------------------------------------------------
+    if not audio.content_type.startswith("audio/"):
+        raise HTTPException(status_code=400, detail="Tipo de audio no permitido")
+
+    # --------------------------------------------------
+    # 2️⃣ Guardar temporalmente
+    # --------------------------------------------------
+    timestamp = int(datetime.now().timestamp())
+    filename = f"{telefono}_{timestamp}_{audio.filename}"
+
+    AUDIO_DIR = "temp_audios"
+    os.makedirs(AUDIO_DIR, exist_ok=True)
+
+    ruta_audio = os.path.join(AUDIO_DIR, filename)
+
+    with open(ruta_audio, "wb") as f:
+        f.write(await audio.read())
+
+    # --------------------------------------------------
+    # 3️⃣ Subir a Cloudinary
+    # --------------------------------------------------
+    try:
+        url_cloudinary = subir_audio_cloudinary(
+            ruta_audio,
+            public_id=filename.replace(".ogg", "").replace(".mp3", ""),
+            carpeta=f"whatsapp/{TENANT}/audios"
+        )
+    except Exception as e:
+        try:
+            os.remove(ruta_audio)
+        except:
+            pass
+
+        return {
+            "status": "error",
+            "mensaje": "Error subiendo audio a Cloudinary",
+            "error": str(e)
+        }
+
+    # --------------------------------------------------
+    # 4️⃣ Enviar SIEMPRE a WhatsApp
+    # --------------------------------------------------
+    try:
+        codigo, respuesta_api = enviar_audio_link(
+            token=TOKEN,
+            numero_id=PHONE_NUMBER_ID,
+            telefono_destino=telefono,
+            url_audio=url_cloudinary
+        )
+    except Exception as e:
+        codigo = 500
+        respuesta_api = {"error": str(e)}
+
+    # --------------------------------------------------
+    # 5️⃣ Guardar SOLO si fue exitoso
+    # --------------------------------------------------
+    if codigo == 200:
+
+        message_id_meta = None
+        if respuesta_api and "messages" in respuesta_api:
+            message_id_meta = respuesta_api["messages"][0].get("id")
+
+        guardar_mensaje_nuevo(
+            telefono=telefono,
+            contenido=url_cloudinary,
+            direccion="enviado",
+            tipo="audio",
+            media_url=url_cloudinary,
+            message_id_meta=message_id_meta,
+            estado="sent"
+        )
+
+        # --------------------------------------------------
+        # 6️⃣ Intentar plantilla SOLO si fue exitoso
+        # --------------------------------------------------
+        intentar_plantilla_reconexion_24h(
+            telefono=telefono,
+            nombre=nombre,
+            token=TOKEN,
+            phone_number_id=PHONE_NUMBER_ID,
+            agencia_nombre=AGENCIA_NOMBRE
+        )
+
+    # --------------------------------------------------
+    # 7️⃣ Borrar temporal
+    # --------------------------------------------------
+    try:
+        os.remove(ruta_audio)
+    except:
+        pass
+
+    return {
+        "status": "ok" if codigo == 200 else "error",
+        "url_cloudinary": url_cloudinary,
+        "codigo_api": codigo,
+        "respuesta_api": respuesta_api if codigo != 200 else None
+    }
+
+
+@router.post("/mensajes/audio-adjunto0")
+async def api_enviar_audio_adjunto0(
     telefono: str = Form(...),
     nombre: str = Form(""),   # ✅ NUEVO PARAMETRO
     audio: UploadFile = Form(...)
@@ -442,6 +698,127 @@ def enviar_audio_link(token, numero_id, telefono_destino, url_audio):
 @router.post("/mensajes/imagen")
 async def api_enviar_imagen(
     telefono: str = Form(...),
+    nombre: str = Form(""),
+    imagen: UploadFile = Form(...)
+):
+    import os
+    from datetime import datetime
+    from fastapi import HTTPException
+
+    TOKEN = current_token.get()
+    PHONE_NUMBER_ID = current_phone_id.get()
+    TENANT = current_tenant.get()
+    AGENCIA_NOMBRE = current_business_name.get() or ""
+
+    if not TOKEN or not PHONE_NUMBER_ID:
+        return {"status": "error", "mensaje": "Credenciales no disponibles"}
+
+    # --------------------------------------------------
+    # 1️⃣ Validar tipo
+    # --------------------------------------------------
+    if imagen.content_type not in ["image/jpeg", "image/png", "image/jpg"]:
+        raise HTTPException(status_code=400, detail="Tipo de imagen no permitido")
+
+    # --------------------------------------------------
+    # 2️⃣ Guardar temporalmente
+    # --------------------------------------------------
+    timestamp = int(datetime.now().timestamp())
+    filename = f"{telefono}_{timestamp}_{imagen.filename}"
+
+    MEDIA_DIR = "temp_images"
+    os.makedirs(MEDIA_DIR, exist_ok=True)
+
+    ruta_imagen = os.path.join(MEDIA_DIR, filename)
+
+    with open(ruta_imagen, "wb") as f:
+        f.write(await imagen.read())
+
+    # --------------------------------------------------
+    # 3️⃣ Subir a Cloudinary
+    # --------------------------------------------------
+    try:
+        result = cloudinary.uploader.upload(
+            ruta_imagen,
+            folder=f"whatsapp/{TENANT}/images",
+            resource_type="image"
+        )
+        url_cloudinary = result.get("secure_url")
+
+    except Exception as e:
+        try:
+            os.remove(ruta_imagen)
+        except:
+            pass
+
+        return {
+            "status": "error",
+            "mensaje": "Error subiendo imagen a Cloudinary",
+            "error": str(e)
+        }
+
+    # --------------------------------------------------
+    # 4️⃣ Enviar SIEMPRE a WhatsApp
+    # --------------------------------------------------
+    try:
+        codigo, respuesta_api = enviar_imagen_link(
+            token=TOKEN,
+            numero_id=PHONE_NUMBER_ID,
+            telefono_destino=telefono,
+            url_imagen=url_cloudinary
+        )
+    except Exception as e:
+        codigo = 500
+        respuesta_api = {"error": str(e)}
+
+    # --------------------------------------------------
+    # 5️⃣ Guardar SOLO si fue exitoso
+    # --------------------------------------------------
+    if codigo == 200:
+
+        message_id_meta = None
+        if respuesta_api and "messages" in respuesta_api:
+            message_id_meta = respuesta_api["messages"][0].get("id")
+
+        guardar_mensaje_nuevo(
+            telefono=telefono,
+            contenido=url_cloudinary,
+            direccion="enviado",
+            tipo="image",
+            media_url=url_cloudinary,
+            message_id_meta=message_id_meta,
+            estado="sent"
+        )
+
+        # --------------------------------------------------
+        # 6️⃣ Intentar plantilla SOLO si fue exitoso
+        # --------------------------------------------------
+        intentar_plantilla_reconexion_24h(
+            telefono=telefono,
+            nombre=nombre,
+            token=TOKEN,
+            phone_number_id=PHONE_NUMBER_ID,
+            agencia_nombre=AGENCIA_NOMBRE
+        )
+
+    # --------------------------------------------------
+    # 7️⃣ Borrar temporal
+    # --------------------------------------------------
+    try:
+        os.remove(ruta_imagen)
+    except:
+        pass
+
+    return {
+        "status": "ok" if codigo == 200 else "error",
+        "url_cloudinary": url_cloudinary,
+        "codigo_api": codigo,
+        "respuesta_api": respuesta_api if codigo != 200 else None
+    }
+
+
+@router.post("/mensajes/imagen0")
+async def api_enviar_imagen0(
+    telefono: str = Form(...),
     nombre: str = Form(""),   # ✅ NUEVO PARAMETRO
     imagen: UploadFile = Form(...)
 ):
@@ -635,9 +1012,172 @@ def enviar_documento_id(token, numero_id, telefono_destino, media_id, filename, 
 # 🔹 ENDPOINT PRINCIPAL
 # --------------------------------------------------
 
-
 @router.post("/mensajes/documento")
 async def api_enviar_documento(
+    telefono: str = Form(...),
+    nombre: str = Form(""),
+    documento: UploadFile = Form(...),
+    caption: str = Form(None)
+):
+    import os
+    from datetime import datetime
+    from fastapi import HTTPException
+
+    TOKEN = current_token.get()
+    PHONE_NUMBER_ID = current_phone_id.get()
+    TENANT = current_tenant.get()
+    AGENCIA_NOMBRE = current_business_name.get() or ""
+
+    if not TOKEN or not PHONE_NUMBER_ID:
+        return {"status": "error", "mensaje": "Credenciales no disponibles"}
+    if not TENANT:
+        return {"status": "error", "mensaje": "Tenant no disponible"}
+
+    # --------------------------------------------------
+    # 1️⃣ Validar tipo permitido
+    # --------------------------------------------------
+    allowed_types = [
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/zip",
+        "text/plain"
+    ]
+    if documento.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Tipo de documento no permitido")
+
+    # --------------------------------------------------
+    # 2️⃣ Guardar temporalmente
+    # --------------------------------------------------
+    timestamp = int(datetime.now().timestamp())
+    filename_tmp = f"{telefono}_{timestamp}_{documento.filename}"
+
+    MEDIA_DIR = "temp_documents"
+    os.makedirs(MEDIA_DIR, exist_ok=True)
+    ruta_documento = os.path.join(MEDIA_DIR, filename_tmp)
+
+    with open(ruta_documento, "wb") as f:
+        f.write(await documento.read())
+
+    # --------------------------------------------------
+    # 3️⃣ Subir a Cloudinary
+    # --------------------------------------------------
+    url_cloudinary = None
+    try:
+        result = cloudinary.uploader.upload(
+            ruta_documento,
+            folder=f"whatsapp/{TENANT}/documents",
+            resource_type="raw"
+        )
+        url_cloudinary = result.get("secure_url")
+    except Exception as e:
+        print("⚠️ Cloudinary falló:", str(e))
+
+    # --------------------------------------------------
+    # 4️⃣ Enviar SIEMPRE a WhatsApp
+    # --------------------------------------------------
+    metodo_envio = None
+    media_id = None
+
+    if documento.content_type == "application/pdf":
+
+        codigo_up, resp_up = subir_media_whatsapp(
+            token=TOKEN,
+            phone_number_id=PHONE_NUMBER_ID,
+            ruta_archivo=ruta_documento,
+            mime="application/pdf"
+        )
+
+        if codigo_up == 200 and "id" in resp_up:
+
+            media_id = resp_up["id"]
+            codigo, respuesta_api = enviar_documento_id(
+                token=TOKEN,
+                numero_id=PHONE_NUMBER_ID,
+                telefono_destino=telefono,
+                media_id=media_id,
+                filename=documento.filename,
+                caption=caption
+            )
+            metodo_envio = "id"
+
+        else:
+            codigo = codigo_up
+            respuesta_api = resp_up
+
+    else:
+
+        if url_cloudinary:
+            codigo, respuesta_api = enviar_documento_link(
+                token=TOKEN,
+                numero_id=PHONE_NUMBER_ID,
+                telefono_destino=telefono,
+                url_documento=url_cloudinary,
+                filename=documento.filename
+            )
+            metodo_envio = "link"
+        else:
+            codigo = 500
+            respuesta_api = {"error": "No hay URL para enviar"}
+
+    # --------------------------------------------------
+    # 5️⃣ Guardar SOLO si fue exitoso
+    # --------------------------------------------------
+    if codigo == 200:
+
+        message_id_meta = None
+        if respuesta_api and "messages" in respuesta_api:
+            message_id_meta = respuesta_api["messages"][0].get("id")
+
+        if metodo_envio == "id":
+            media_url_guardar = f"whatsapp_media_id:{media_id}"
+        else:
+            media_url_guardar = url_cloudinary
+
+        contenido_guardar = f"{documento.filename}|{media_url_guardar}"
+
+        guardar_mensaje_nuevo(
+            telefono=telefono,
+            contenido=contenido_guardar,
+            direccion="enviado",
+            tipo="document",
+            media_url=media_url_guardar,
+            message_id_meta=message_id_meta,
+            estado="sent"
+        )
+
+        # --------------------------------------------------
+        # 6️⃣ Intentar plantilla SOLO si fue exitoso
+        # --------------------------------------------------
+        intentar_plantilla_reconexion_24h(
+            telefono=telefono,
+            nombre=nombre,
+            token=TOKEN,
+            phone_number_id=PHONE_NUMBER_ID,
+            agencia_nombre=AGENCIA_NOMBRE
+        )
+
+    # --------------------------------------------------
+    # 7️⃣ Borrar temporal
+    # --------------------------------------------------
+    try:
+        os.remove(ruta_documento)
+    except:
+        pass
+
+    return {
+        "status": "ok" if codigo == 200 else "error",
+        "metodo_envio": metodo_envio,
+        "url_cloudinary": url_cloudinary,
+        "media_id": media_id,
+        "codigo_api": codigo,
+        "respuesta_api": respuesta_api if codigo != 200 else None
+    }
+
+@router.post("/mensajes/documento0")
+async def api_enviar_documento0(
     telefono: str = Form(...),
     nombre: str = Form(""),   # ✅ NUEVO PARAMETRO
     documento: UploadFile = Form(...),
@@ -1166,8 +1706,145 @@ async def api_enviar_audioV6022026(
         "respuesta_api": respuesta_api
     }
 
+
 @router.post("/mensajes/video")
 async def api_enviar_video(
+    telefono: str = Form(...),
+    nombre: str = Form(""),
+    video: UploadFile = Form(...)
+):
+    import os
+    from datetime import datetime
+    from fastapi import HTTPException
+
+    TOKEN = current_token.get()
+    PHONE_NUMBER_ID = current_phone_id.get()
+    TENANT = current_tenant.get()
+    AGENCIA_NOMBRE = current_business_name.get() or ""
+
+    if not TOKEN or not PHONE_NUMBER_ID:
+        return {"status": "error", "mensaje": "Credenciales no disponibles"}
+
+    # --------------------------------------------------
+    # 1️⃣ Validar tipo permitido
+    # --------------------------------------------------
+    allowed_types = [
+        "video/mp4",
+        "video/quicktime",
+        "video/webm"
+    ]
+
+    if video.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Tipo de video no permitido")
+
+    # --------------------------------------------------
+    # 2️⃣ Validar tamaño
+    # --------------------------------------------------
+    MAX_SIZE = 16 * 1024 * 1024  # 16MB
+    contents = await video.read()
+
+    if len(contents) > MAX_SIZE:
+        raise HTTPException(status_code=400, detail="Video demasiado pesado (máx 16MB)")
+
+    # --------------------------------------------------
+    # 3️⃣ Guardar temporalmente
+    # --------------------------------------------------
+    timestamp = int(datetime.now().timestamp())
+    filename = f"{telefono}_{timestamp}_{video.filename}"
+
+    MEDIA_DIR = "temp_videos"
+    os.makedirs(MEDIA_DIR, exist_ok=True)
+
+    ruta_video = os.path.join(MEDIA_DIR, filename)
+
+    with open(ruta_video, "wb") as f:
+        f.write(contents)
+
+    # --------------------------------------------------
+    # 4️⃣ Subir a Cloudinary
+    # --------------------------------------------------
+    try:
+        result = cloudinary.uploader.upload(
+            ruta_video,
+            folder=f"whatsapp/{TENANT}/videos",
+            resource_type="video"
+        )
+        url_cloudinary = result.get("secure_url")
+
+    except Exception as e:
+        try:
+            os.remove(ruta_video)
+        except:
+            pass
+
+        return {
+            "status": "error",
+            "mensaje": "Error subiendo video a Cloudinary",
+            "error": str(e)
+        }
+
+    # --------------------------------------------------
+    # 5️⃣ Enviar SIEMPRE a WhatsApp
+    # --------------------------------------------------
+    try:
+        codigo, respuesta_api = enviar_video_link(
+            token=TOKEN,
+            numero_id=PHONE_NUMBER_ID,
+            telefono_destino=telefono,
+            url_video=url_cloudinary
+        )
+    except Exception as e:
+        codigo = 500
+        respuesta_api = {"error": str(e)}
+
+    # --------------------------------------------------
+    # 6️⃣ Guardar SOLO si fue exitoso
+    # --------------------------------------------------
+    if codigo == 200:
+
+        message_id_meta = None
+        if respuesta_api and "messages" in respuesta_api:
+            message_id_meta = respuesta_api["messages"][0].get("id")
+
+        guardar_mensaje_nuevo(
+            telefono=telefono,
+            contenido=url_cloudinary,
+            direccion="enviado",
+            tipo="video",
+            media_url=url_cloudinary,
+            message_id_meta=message_id_meta,
+            estado="sent"
+        )
+
+        # --------------------------------------------------
+        # 7️⃣ Intentar plantilla SOLO si fue exitoso
+        # --------------------------------------------------
+        intentar_plantilla_reconexion_24h(
+            telefono=telefono,
+            nombre=nombre,
+            token=TOKEN,
+            phone_number_id=PHONE_NUMBER_ID,
+            agencia_nombre=AGENCIA_NOMBRE
+        )
+
+    # --------------------------------------------------
+    # 8️⃣ Borrar temporal
+    # --------------------------------------------------
+    try:
+        os.remove(ruta_video)
+    except:
+        pass
+
+    return {
+        "status": "ok" if codigo == 200 else "error",
+        "url_cloudinary": url_cloudinary,
+        "codigo_api": codigo,
+        "respuesta_api": respuesta_api if codigo != 200 else None
+    }
+
+
+@router.post("/mensajes/video0")
+async def api_enviar_video0(
     telefono: str = Form(...),
     nombre: str = Form(""),   # ✅ NUEVO PARAMETRO
     video: UploadFile = Form(...)
@@ -1441,7 +2118,7 @@ def intentar_plantilla_reconexion_24h(
         telefono=telefono,
         contenido=f"Plantilla auto 24h: {plantilla}",
         direccion="enviado",
-        tipo="texto",
+        tipo="template",
         message_id_meta=message_id_meta,
         estado="sent" if codigo == 200 else "failed"
     )
@@ -1453,3 +2130,108 @@ def intentar_plantilla_reconexion_24h(
         "codigo_api": codigo,
         "respuesta_api": respuesta_api
     }
+
+async def reenviar_ultimo_mensaje(telefono: str):
+    # 1️⃣ Buscar último mensaje
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+                SELECT contenido, media_url, tipo
+                FROM mensajes_whatsapp
+                WHERE telefono = %s
+                  AND direccion = 'enviado'
+                  AND (
+                        tipo<>'template'
+                      )
+                ORDER BY fecha_envio DESC NULLS LAST
+                LIMIT 1
+                    """, (telefono,))
+
+        row = cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="No hay mensajes para este teléfono")
+
+    contenido, media_url, tipo_mensaje = row
+
+    # =====================================================
+    # 🔹 CASO TEXTO
+    # =====================================================
+    if tipo_mensaje == "text":
+        return await api_enviar_mensaje(
+            request=None,
+            data={
+                "telefono": telefono,
+                "mensaje": contenido
+            }
+        )
+
+    # =====================================================
+    # 🔹 CASO MULTIMEDIA
+    # =====================================================
+    if not media_url:
+        raise HTTPException(status_code=400, detail="Mensaje multimedia sin media_url")
+
+    # Descargar archivo desde Cloudinary
+    async with httpx.AsyncClient() as client:
+        response = await client.get(media_url)
+        response.raise_for_status()
+
+    # Crear archivo temporal
+    tmp = tempfile.NamedTemporaryFile(delete=False)
+    tmp.write(response.content)
+    tmp.seek(0)
+
+    filename = media_url.split("/")[-1]
+
+    upload_file = UploadFile(
+        filename=filename,
+        file=tmp
+    )
+
+    # =====================================================
+    # 🔹 AUDIO
+    # =====================================================
+    if tipo_mensaje == "audio":
+        return await api_enviar_audio(
+            telefono=telefono,
+            nombre="",
+            audio=upload_file
+        )
+
+    # =====================================================
+    # 🔹 IMAGEN
+    # =====================================================
+    elif tipo_mensaje == "image":
+        return await api_enviar_imagen(
+            telefono=telefono,
+            nombre="",
+            imagen=upload_file
+        )
+
+    # =====================================================
+    # 🔹 VIDEO
+    # =====================================================
+    elif tipo_mensaje == "video":
+        return await api_enviar_video(
+            telefono=telefono,
+            nombre="",
+            video=upload_file
+        )
+
+    # =====================================================
+    # 🔹 DOCUMENTO
+    # =====================================================
+    elif tipo_mensaje == "document":
+        return await api_enviar_documento(
+            telefono=telefono,
+            nombre="",
+            documento=upload_file,
+            caption=None
+        )
+
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Tipo de mensaje no soportado: {tipo_mensaje}"
+        )

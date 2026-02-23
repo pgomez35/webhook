@@ -33,6 +33,7 @@ from enviar_msg_wp import (
 from evaluaciones import evaluar_y_actualizar_perfil_pre_encuesta, diagnostico_perfil_creador_pre
 
 from main import guardar_mensaje
+from main_mensajeria_whatsapp import reenviar_ultimo_mensaje
 from tenant import (
     current_business_name,
     current_phone_id,
@@ -4300,9 +4301,10 @@ def procesar_evento_webhook_anticuado(body, phone_id_cliente, token_cliente):
     except Exception as e:
         print(f"❌ Error webhook: {e}")
 
+# from main_mensajeria_whatsapp import reenviar_ultimo_mensaje
 
 # services/aspirant_flow.py
-def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, payload_id):
+async def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, payload_id):
     """
     Orquesta la prioridad: 1. Redis (Texto esperado) -> 2. BD (Botones/Menús).
     """
@@ -4341,6 +4343,20 @@ def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, payloa
 
     # --- A. CLIC EN BOTONES (Payloads) ---
     if payload_id:
+        # 👇 NUEVO: 1. Aquí atrapas el botón de tu plantilla de reconexión
+        # 👇 2. Capturamos "Continuar"
+        if payload_id == "Continuar":
+            print(f"✅ ¡Reconexión exitosa! El usuario {wa_id} presionó el botón 'Continuar'.")
+
+            try:
+                # 👇 3. Usamos 'await' y quitamos el ': str'
+                await reenviar_ultimo_mensaje(wa_id)
+                print(f"✅ Último mensaje reenviado a {wa_id}")
+            except Exception as e:
+                print(f"❌ Error reenviando el último mensaje: {e}")
+
+            return True  # Retornamos True para detener el flujo aquí
+
         # A.1 Acciones del Menú (MENU_*)
         # Aquí caerá MENU_INGRESAR_LINK_TIKTOK y llamará a accion_menu...
         if payload_id.startswith("MENU_"):
@@ -4867,7 +4883,7 @@ async def _procesar_mensaje_unico(mensaje, tenant_name, phone_number_id, token):
     # D. FLUJO ASPIRANTE
     # ---------------------------------------------------------
     try:
-        procesado_aspirante = procesar_flujo_aspirante(
+        procesado_aspirante =await procesar_flujo_aspirante(
             tenant=tenant_name,
             phone_number_id=phone_number_id,
             wa_id=wa_id,
