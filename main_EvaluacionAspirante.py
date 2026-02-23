@@ -1026,7 +1026,13 @@ class EvaluacionResultadoOut(BaseModel):
 class ModeloEvaluacionUpdate(BaseModel):
     activo: bool
 
+class CategoriaPesoUpdate(BaseModel):
+    id: int
+    peso_categoria: float
 
+class ModeloCategoriasUpdate(BaseModel):
+    categorias: List[CategoriaPesoUpdate]
+    
 @router.get("/api/modelos-evaluacion", response_model=List[ModeloEvaluacionOut])
 def listar_modelos(activos: bool = Query(True)):
     TENANT = current_tenant.get()
@@ -1327,6 +1333,25 @@ def actualizar_estado_modelo(
         "activo": data.activo,
         "mensaje": "Estado actualizado correctamente. Solo un modelo puede estar activo."
     }
+
+
+@router.put("/api/modelos-evaluacion/{modelo_id}/categorias")
+def actualizar_pesos_categorias(modelo_id: int, data: ModeloCategoriasUpdate):
+    TENANT = current_tenant.get()
+    if not TENANT:
+        raise HTTPException(status_code=400, detail="Tenant no disponible")
+
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+        for c in data.categorias:
+            cur.execute("""
+                UPDATE modelo_categoria
+                SET peso_categoria = %s
+                WHERE id = %s AND modelo_id = %s
+            """, (c.peso_categoria, c.id, modelo_id))
+        conn.commit()
+    return {"ok": True}
+
 
 def calcular_evaluacion(creador_id: int, modelo_id: int):
 
