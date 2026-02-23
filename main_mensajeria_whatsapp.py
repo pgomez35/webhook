@@ -2131,7 +2131,146 @@ def intentar_plantilla_reconexion_24h(
         "respuesta_api": respuesta_api
     }
 
+
+import logging
+logger = logging.getLogger("whatsapp")
+
 async def reenviar_ultimo_mensaje(telefono: str):
+
+    logger.info(f"🔄 Reenviando último mensaje para teléfono: {telefono}")
+
+    # 1️⃣ Buscar último mensaje
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+                SELECT contenido, media_url, tipo, fecha
+                FROM mensajes_whatsapp
+                WHERE telefono = %s
+                  AND direccion = 'enviado'
+                  AND tipo in ('text','document','audio','image','video')
+                ORDER BY fecha DESC
+                LIMIT 1
+        """, (telefono,))
+
+        row = cur.fetchone()
+
+    if not row:
+        logger.warning(f"⚠ No hay mensajes para el teléfono {telefono}")
+        raise HTTPException(status_code=404, detail="No hay mensajes para este teléfono")
+
+    contenido, media_url, tipo_mensaje, fecha = row
+
+    logger.info(
+        f"📦 Último mensaje encontrado | "
+        f"tipo={tipo_mensaje} | "
+        f"fecha={fecha} | "
+        f"media_url={media_url}"
+    )
+
+    # =====================================================
+    # 🔹 CASO TEXTO
+    # =====================================================
+    if tipo_mensaje == "text":
+        logger.info("✉ Reenviando mensaje de texto")
+        return await api_enviar_mensaje(
+            request=None,
+            data={
+                "telefono": telefono,
+                "mensaje": contenido
+            }
+        )
+
+    # =====================================================
+    # 🔹 MULTIMEDIA
+    # =====================================================
+    if not media_url:
+        logger.error("❌ Mensaje multimedia sin media_url")
+        raise HTTPException(status_code=400, detail="Mensaje multimedia sin media_url")
+
+    logger.info(f"⬇ Descargando archivo desde: {media_url}")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(media_url)
+            response.raise_for_status()
+    except Exception as e:
+        logger.exception(f"❌ Error descargando archivo: {e}")
+        raise
+
+    logger.info(
+        f"✅ Archivo descargado | "
+        f"status={response.status_code} | "
+        f"content_type={response.headers.get('content-type')} | "
+        f"size={len(response.content)} bytes"
+    )
+
+    # Crear archivo temporal
+    tmp = tempfile.NamedTemporaryFile(delete=False)
+    tmp.write(response.content)
+    tmp.seek(0)
+
+    filename = media_url.split("/")[-1]
+
+    logger.info(f"📄 Archivo temporal creado: {filename}")
+
+    upload_file = UploadFile(
+        filename=filename,
+        file=tmp
+    )
+
+    # =====================================================
+    # 🔹 AUDIO
+    # =====================================================
+    if tipo_mensaje == "audio":
+        logger.info("🎧 Reenviando audio")
+        return await api_enviar_audio(
+            telefono=telefono,
+            nombre="",
+            audio=upload_file
+        )
+
+    # =====================================================
+    # 🔹 IMAGEN
+    # =====================================================
+    elif tipo_mensaje == "image":
+        logger.info("🖼 Reenviando imagen")
+        return await api_enviar_imagen(
+            telefono=telefono,
+            nombre="",
+            imagen=upload_file
+        )
+
+    # =====================================================
+    # 🔹 VIDEO
+    # =====================================================
+    elif tipo_mensaje == "video":
+        logger.info("🎥 Reenviando video")
+        return await api_enviar_video(
+            telefono=telefono,
+            nombre="",
+            video=upload_file
+        )
+
+    # =====================================================
+    # 🔹 DOCUMENTO
+    # =====================================================
+    elif tipo_mensaje == "document":
+        logger.info("📎 Reenviando documento")
+        return await api_enviar_documento(
+            telefono=telefono,
+            nombre="",
+            documento=upload_file,
+            caption=None
+        )
+
+    else:
+        logger.error(f"❌ Tipo no soportado: {tipo_mensaje}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Tipo de mensaje no soportado: {tipo_mensaje}"
+        )
+    
+async def reenviar_ultimo_mensaje0(telefono: str):
     # 1️⃣ Buscar último mensaje
     with get_connection_context() as conn:
         cur = conn.cursor()
