@@ -2217,10 +2217,13 @@ def actualizar_eval_cualitativa(
             metadata_videos=data_dict.get("metadata_videos", 0)
         )
 
-        data_dict["puntaje_manual"] = resultado["puntaje_manual"]
-        data_dict["puntaje_manual_categoria"] = resultado["puntaje_manual_categoria"]
+        data_dict["puntaje_manual"] = resultado["puntaje_cualitativo"]
+        data_dict["puntaje_manual_categoria"] = resultado["puntaje_cualitativo_categoria"]
 
-        potencial_creador=evaluar_potencial_creador(creador_id, resultado["puntaje_manual"])
+        potencial_creador = evaluar_potencial_creador(
+            creador_id,
+            resultado["puntaje_cualitativo"]
+        )
         nivel_estimado = potencial_creador.get("nivel")
 
         actualizar_datos_perfil_creador(creador_id, data_dict)
@@ -2229,8 +2232,8 @@ def actualizar_eval_cualitativa(
         return EvaluacionCualitativaOutput(
             status="ok",
             mensaje="Evaluación cualitativa actualizada",
-            puntaje_manual=resultado["puntaje_manual"],
-            puntaje_manual_categoria=resultado["puntaje_manual_categoria"],
+            puntaje_manual=resultado["puntaje_cualitativo"],
+            puntaje_manual_categoria=resultado["puntaje_cualitativo_categoria"],
             potencial_estimado=nivel_estimado
         )
 
