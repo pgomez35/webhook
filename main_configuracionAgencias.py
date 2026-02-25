@@ -9,7 +9,7 @@ import re
 
 import cloudinary
 
-from tenant import current_tenant
+from tenant import current_tenant, current_business_name
 
 cloudinary.config(
     cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
@@ -696,4 +696,25 @@ async def actualizar_logo_agencia(
     return {
         "status": "ok",
         "logo_url": logo_url
+    }
+
+
+@router.get("/api/form-config")
+def obtener_config_formulario():
+
+    nombre = current_business_name.get()
+
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT valor
+                FROM configuracion_agencia
+                WHERE clave = 'logo_url'
+                LIMIT 1
+            """)
+            row = cur.fetchone()
+
+    return {
+        "nombre_agencia": nombre,
+        "logo_url": row[0] if row else None
     }
