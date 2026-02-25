@@ -2419,50 +2419,60 @@ def obtener_encuesta(encuesta_id: int):
         with get_connection_context() as conn:
             with conn.cursor() as cur:
 
-                # Obtener preguntas
                 cur.execute("""
-                    SELECT id, texto, tipo, campo, orden
-                    FROM form_preguntas
-                    WHERE encuesta_id = %s
-                    AND activa = true
-                    ORDER BY orden
+                    SELECT 
+                        p.id AS pregunta_id,
+                        p.texto,
+                        p.tipo,
+                        p.campo,
+                        p.orden AS pregunta_orden,
+                        o.id AS opcion_id,
+                        o.label,
+                        o.orden AS opcion_orden
+                    FROM form_preguntas p
+                    LEFT JOIN form_opciones o 
+                        ON o.pregunta_id = p.id
+                    WHERE p.encuesta_id = %s
+                      AND p.activa = true
+                    ORDER BY p.orden, o.orden
                 """, (encuesta_id,))
 
-                preguntas = cur.fetchall()
+                rows = cur.fetchall()
 
-                resultado = []
+                preguntas_dict = {}
 
-                for pregunta in preguntas:
-                    pregunta_id, texto, tipo, campo, orden = pregunta
+                for row in rows:
+                    (
+                        pregunta_id,
+                        texto,
+                        tipo,
+                        campo,
+                        pregunta_orden,
+                        opcion_id,
+                        label,
+                        opcion_orden
+                    ) = row
 
-                    # Obtener opciones
-                    cur.execute("""
-                        SELECT id, label, orden
-                        FROM form_opciones
-                        WHERE pregunta_id = %s
-                        ORDER BY orden
-                    """, (pregunta_id,))
+                    if pregunta_id not in preguntas_dict:
+                        preguntas_dict[pregunta_id] = {
+                            "id": pregunta_id,
+                            "texto": texto,
+                            "tipo": tipo,
+                            "campo": campo,
+                            "opciones": []
+                        }
 
-                    opciones = cur.fetchall()
-
-                    resultado.append({
-                        "id": pregunta_id,
-                        "texto": texto,
-                        "tipo": tipo,
-                        "campo": campo,
-                        "opciones": [
-                            {
-                                "id": op[0],
-                                "label": op[1],
-                                "orden": op[2]
-                            } for op in opciones
-                        ] if opciones else []
-                    })
+                    if opcion_id:
+                        preguntas_dict[pregunta_id]["opciones"].append({
+                            "id": opcion_id,
+                            "label": label,
+                            "orden": opcion_orden
+                        })
 
                 return {
                     "success": True,
                     "encuesta_id": encuesta_id,
-                    "preguntas": resultado
+                    "preguntas": list(preguntas_dict.values())
                 }
 
     except (OperationalError, DatabaseError) as e:
