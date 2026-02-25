@@ -2797,6 +2797,7 @@ def consolidar_perfil_web(data: ConsolidarInput,
         # Actualizar Puntajes + Diagnóstico (guardar en DB)
         # -------------------------------
         try:
+            print(f"DEBUG creador_id = {creador_id}")
             if creador_id:
 
                 # 1) llena tabla de scores
