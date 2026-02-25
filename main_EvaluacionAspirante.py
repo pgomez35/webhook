@@ -6,6 +6,7 @@ import pytz
 import logging
 import traceback
 import math
+from psycopg2 import OperationalError, DatabaseError
 
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -1032,30 +1033,32 @@ class CategoriaPesoUpdate(BaseModel):
 
 class ModeloCategoriasUpdate(BaseModel):
     categorias: List[CategoriaPesoUpdate]
-    
+
 @router.get("/api/modelos-evaluacion", response_model=List[ModeloEvaluacionOut])
 def listar_modelos(activos: bool = Query(True)):
     TENANT = current_tenant.get()
+
     if not TENANT:
         raise HTTPException(status_code=400, detail="Tenant no disponible")
 
     with get_connection_context() as conn:
         cur = conn.cursor()
 
-        if activos:
-            cur.execute("""
-                SELECT id, nombre, descripcion, activo
-                FROM modelo_evaluacion
-                WHERE activo = TRUE
-                ORDER BY id ASC
-            """)
-        else:
-            cur.execute("""
-                SELECT id, nombre, descripcion, activo
-                FROM modelo_evaluacion
-                ORDER BY id ASC
-            """)
+        # 🔥 Base de la consulta
+        query = """
+            SELECT id, nombre, descripcion, activo
+            FROM modelo_evaluacion
+        """
 
+        params = []
+
+        # ✅ Agregar condición dinámicamente
+        if activos:
+            query += " WHERE activo = TRUE"
+
+        query += " ORDER BY id ASC"
+
+        cur.execute(query, params)
         rows = cur.fetchall()
 
     return [
@@ -1619,3 +1622,861 @@ Recomendaciones:
         categoria,
         "Sin recomendaciones disponibles."
     )
+
+
+# ------------------------------------------------------
+# ------------------------------------------------------
+# -------FUNCIONES ---------
+# ------------------------------------------------------
+# ------------------------------------------------------
+# ------------------------------------------------------
+
+
+
+# from database import get_connection_context
+
+def evaluar_potencial_talento(
+        apariencia: int = None,
+        engagement: int = None,
+        calidad_contenido: int = None,
+        eval_biografia: int = None,
+        metadata_videos: int = None
+):
+    """
+    Calcula el 'Potencial de Talento' (1-5) para el SaaS.
+    Lee los pesos (20% c/u) desde modelo_variable usando los 5 campos activos.
+    """
+
+    # 1. Emparejar las 5 variables exactas con sus nombres en la BD
+    valores = {
+        "apariencia": apariencia,
+        "engagement": engagement,
+        "calidad_contenido": calidad_contenido,
+        "eval_biografia": eval_biografia,
+        "metadata_videos": metadata_videos
+    }
+
+    # 2. Consultar pesos dinámicos desde la BD
+    pesos_db = {}
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                            SELECT campo_db, peso_variable
+                            FROM modelo_variable
+                            WHERE categoria_id = 1
+                            """)
+                for campo, peso in cur.fetchall():
+                    pesos_db[campo] = float(peso)
+    except Exception as e:
+        print(f"❌ Error al consultar pesos de talento en BD: {e}")
+        # Fallback de seguridad: 20% exacto para cada una si la BD falla
+        pesos_db = {k: 20.0 for k in valores.keys()}
+
+    suma = 0.0
+    suma_pesos = 0.0
+
+    # 3. Ponderación dinámica (solo con los valores que NO son nulos)
+    for clave, valor in valores.items():
+        if valor is not None:
+            # Obtenemos el peso de la BD (ej. 20.0)
+            peso_actual = pesos_db.get(clave, 0.0)
+
+            val_float = float(valor)
+            suma += val_float * peso_actual
+            suma_pesos += peso_actual
+
+    # 4. Prevención de división por cero (si el evaluador no ha calificado nada aún)
+    if suma_pesos == 0:
+        return {
+            "score_talento": 0.0,
+            "etiqueta_talento": "Sin Evaluar"
+        }
+
+    # 5. Cálculo final (Garantizado entre 1.0 y 5.0)
+    score_talento = round(suma / suma_pesos, 2)
+
+    # 6. Etiquetas Comerciales (Dashboard SaaS)
+    if score_talento < 2.0:
+        etiqueta = "Descartable"
+    elif score_talento < 3.0:
+        etiqueta = "En Desarrollo"
+    elif score_talento < 4.0:
+        etiqueta = "Promedio"
+    elif score_talento < 4.6:
+        etiqueta = "Alto Potencial"
+    else:
+        etiqueta = "Top Talent 🔥"
+
+    return {
+        "score_talento": score_talento,
+        "etiqueta_talento": etiqueta
+    }
+
+
+def evaluar_potencial_mercado(
+        seguidores: int = None,
+        likes: int = None,
+        engagement: float = None,
+        videos: int = None
+):
+    """
+    Calcula el 'Potencial de Mercado' (1-5) para el SaaS usando
+    la lógica base original, escalada a 5 y con pesos dinámicos.
+    """
+
+    # ==========================================
+    # 1. LIMPIEZA DE ENTRADAS
+    # ==========================================
+    seg_val = int(seguidores or 0)
+    lik_val = int(likes or 0)
+    vid_val = int(videos or 0)
+    eng_val = float(engagement or 0.0)
+
+    # Corte duro original: Si tiene menos de 50 seguidores, se descarta.
+    if seg_val < 50:
+        return {
+            "score_mercado": 0.0,
+            "etiqueta_mercado": "Audiencia Nula"
+        }
+
+    # ==========================================
+    # 2. ESCALAS DE EVALUACIÓN (Lógica base 0-4)
+    # ==========================================
+    # Seguidores
+    if seg_val <= 500:
+        seg_score = 2
+    elif seg_val <= 1000:
+        seg_score = 3
+    else:
+        seg_score = 4
+
+    # Videos
+    if vid_val <= 0:
+        vid_score = 0
+    elif vid_val < 10:
+        vid_score = 1
+    elif vid_val <= 20:
+        vid_score = 2
+    elif vid_val <= 40:
+        vid_score = 3
+    else:
+        vid_score = 4
+
+    # Engagement (Usando tus cortes de likes_normalizado)
+    if eng_val <= 0:
+        eng_score = 0
+    elif eng_val < 0.02:
+        eng_score = 1
+    elif eng_val <= 0.05:
+        eng_score = 2
+    elif eng_val <= 0.10:
+        eng_score = 3
+    else:
+        eng_score = 4
+
+    # Likes crudos (Nueva métrica adaptada a la escala 0-4)
+    if lik_val <= 500:
+        lik_score = 1
+    elif lik_val <= 5000:
+        lik_score = 2
+    elif lik_val <= 15000:
+        lik_score = 3
+    else:
+        lik_score = 4
+
+    # ==========================================
+    # 3. CONVERSIÓN A ESCALA 1-5 (Multiplicador 1.25)
+    # ==========================================
+    valores_escala_5 = {
+        "seguidores": seg_score * 1.25,
+        "videos": vid_score * 1.25,
+        "engagement": eng_score * 1.25,
+        "likes": lik_score * 1.25
+    }
+
+    # ==========================================
+    # 4. CONSULTA DE PESOS EN BD (modelo_variable)
+    # ==========================================
+    pesos_db = {}
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                            SELECT campo_db, peso_variable
+                            FROM modelo_variable
+                            WHERE categoria_id = 2
+                            """)
+                for campo, peso in cur.fetchall():
+                    pesos_db[campo] = float(peso)
+    except Exception as e:
+        print(f"❌ Error al consultar pesos de mercado en BD: {e}")
+        # Fallback de seguridad usando tu script de INSERT
+        pesos_db = {
+            "seguidores": 29.41,
+            "likes": 23.53,
+            "engagement": 23.53,
+            "videos": 23.53
+        }
+
+    # ==========================================
+    # 5. PONDERACIÓN DINÁMICA
+    # ==========================================
+    suma = 0.0
+    suma_pesos = 0.0
+
+    for clave, valor_escala in valores_escala_5.items():
+        peso_actual = pesos_db.get(clave, 0.0)
+        suma += valor_escala * peso_actual
+        suma_pesos += peso_actual
+
+    if suma_pesos == 0:
+        return {
+            "score_mercado": 0.0,
+            "etiqueta_mercado": "Sin Tracción"
+        }
+
+    # Cálculo final
+    score_mercado = round(suma / suma_pesos, 2)
+
+    # ==========================================
+    # 6. ETIQUETAS COMERCIALES (Dashboard SaaS)
+    # ==========================================
+    if score_mercado < 2.0:
+        etiqueta = "Audiencia Nula"
+    elif score_mercado < 3.0:
+        etiqueta = "Audiencia Base"
+    elif score_mercado < 4.0:
+        etiqueta = "Micro-Influencer"
+    elif score_mercado < 4.6:
+        etiqueta = "Creador Estable"
+    else:
+        etiqueta = "Influencer / Alto Alcance 🚀"
+
+    return {
+        "score_mercado": score_mercado,
+        "etiqueta_mercado": etiqueta
+    }
+
+
+# from database import get_connection_context
+
+def evaluar_capacidad_operativa(
+        duracion_emisiones=None,
+        dias_emisiones=None,
+        frecuencia_lives=None,
+        tiempo_disponible=None
+):
+    """
+    Calcula la 'Capacidad Operativa' (1-5) para el SaaS.
+    Convierte las variables de tiempo y hábitos en una escala de 1-5
+    y aplica los pesos dinámicos de la BD (modelo_variable, Categoría 3).
+    """
+
+    # ==========================================
+    # 1. NORMALIZACIÓN (De datos crudos a escala 1-5)
+    # ==========================================
+
+    def normalizar_duracion(dur):
+        # Asumiendo que viene en minutos (basado en tus cortes anteriores)
+        if dur is None: return None
+        try:
+            d = float(dur)
+            if d < 20: return 1.0  # Muy corta
+            if d < 60: return 2.0  # Menos de 1 hora
+            if d < 120: return 3.0  # 1 a 2 horas
+            if d < 180: return 4.0  # 2 a 3 horas
+            return 5.0  # Más de 3 horas (Excelente para TikTok LIVE)
+        except:
+            return None
+
+    def normalizar_dias(dias):
+        # Días de transmisión a la semana
+        if dias is None: return None
+        try:
+            d = int(dias)
+            if d <= 1: return 1.0  # 0-1 día
+            if d == 2: return 2.0  # 2 días
+            if d <= 4: return 3.0  # 3-4 días
+            if d <= 6: return 4.0  # 5-6 días
+            return 5.0  # Todos los días
+        except:
+            return None
+
+    def normalizar_frecuencia(freq):
+        # Basado en tu freq_map: {1: 1, 2: 2, 3: 3, 4: 0}
+        # Lo escalamos a 1.0 - 5.0
+        if freq is None: return None
+        try:
+            f = int(freq)
+            if f == 4: return 1.0  # Rara vez / Nula
+            if f == 1: return 2.0  # Ocasional
+            if f == 2: return 3.5  # Regular
+            if f == 3: return 5.0  # Frecuente / Muy constante
+            return None
+        except:
+            return None
+
+    def normalizar_tiempo(tiempo):
+        # Basado en tu tiempo_map: {1: 1, 2: 2, 3: 3}
+        # Lo escalamos a 1.0 - 5.0
+        if tiempo is None: return None
+        try:
+            t = int(tiempo)
+            if t == 1: return 1.5  # Poco tiempo (ej. < 1 hr)
+            if t == 2: return 3.5  # Tiempo medio (ej. 1-3 hrs)
+            if t == 3: return 5.0  # Mucho tiempo libre (ej. 3+ hrs)
+            return None
+        except:
+            return None
+
+    # Emparejamos los valores ya normalizados (1 a 5)
+    valores_normalizados = {
+        "duracion_emisiones": normalizar_duracion(duracion_emisiones),
+        "dias_emisiones": normalizar_dias(dias_emisiones),
+        "frecuencia_lives": normalizar_frecuencia(frecuencia_lives),
+        "tiempo_disponible": normalizar_tiempo(tiempo_disponible)
+    }
+
+    # ==========================================
+    # 2. CONSULTA DE PESOS EN BD
+    # ==========================================
+    pesos_db = {}
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                            SELECT campo_db, peso_variable
+                            FROM modelo_variable
+                            WHERE categoria_id = 3
+                            """)
+                for campo, peso in cur.fetchall():
+                    pesos_db[campo] = float(peso)
+    except Exception as e:
+        print(f"❌ Error al consultar pesos operativos en BD: {e}")
+        # Fallback de seguridad (25% a cada una si falla la BD)
+        pesos_db = {
+            "duracion_emisiones": 25.0,
+            "dias_emisiones": 25.0,
+            "frecuencia_lives": 25.0,
+            "tiempo_disponible": 25.0
+        }
+
+    # ==========================================
+    # 3. PONDERACIÓN DINÁMICA
+    # ==========================================
+    suma = 0.0
+    suma_pesos = 0.0
+
+    for clave, valor in valores_normalizados.items():
+        if valor is not None:
+            peso_actual = pesos_db.get(clave, 0.0)
+            suma += float(valor) * peso_actual
+            suma_pesos += peso_actual
+
+    # Prevención de división por cero
+    if suma_pesos == 0:
+        return {
+            "score_operativo": 0.0,
+            "etiqueta_operativa": "Sin Disponibilidad"
+        }
+
+    # Cálculo final (Garantizado entre 1.0 y 5.0)
+    score_operativo = round(suma / suma_pesos, 2)
+
+    # ==========================================
+    # 4. ETIQUETAS COMERCIALES (Dashboard SaaS)
+    # ==========================================
+    if score_operativo < 2.0:
+        etiqueta = "No Apto (Falta de tiempo)"
+    elif score_operativo < 3.0:
+        etiqueta = "Part-Time Limitado"
+    elif score_operativo < 4.0:
+        etiqueta = "Operación Regular"
+    elif score_operativo < 4.6:
+        etiqueta = "Creador Constante"
+    else:
+        etiqueta = "Máquina de Lives 🔥"
+
+    return {
+        "score_operativo": score_operativo,
+        "etiqueta_operativa": etiqueta
+    }
+
+
+# from database import get_connection_context
+
+def evaluar_intencion(
+        intencion_trabajo: int = None
+):
+    """
+    Calcula la 'Intención y Alineación' (1-5) para el SaaS.
+    Lee los pesos desde modelo_variable (Categoría 4).
+    El valor 'intencion_trabajo' ya viene en escala 1-5 desde la BD.
+    """
+
+    # ==========================================
+    # 1. EMPAREJAR VARIABLES DIRECTAS
+    # ==========================================
+    valores = {
+        "intencion_trabajo": intencion_trabajo
+    }
+
+    # ==========================================
+    # 2. CONSULTA DE PESOS EN BD
+    # ==========================================
+    pesos_db = {}
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                            SELECT campo_db, peso_variable
+                            FROM modelo_variable
+                            WHERE categoria_id = 4
+                            """)
+                for campo, peso in cur.fetchall():
+                    pesos_db[campo] = float(peso)
+    except Exception as e:
+        print(f"❌ Error al consultar pesos de intención en BD: {e}")
+        # Fallback de seguridad: 100% a la única variable
+        pesos_db = {"intencion_trabajo": 100.0}
+
+    # ==========================================
+    # 3. PONDERACIÓN DINÁMICA
+    # ==========================================
+    suma = 0.0
+    suma_pesos = 0.0
+
+    for clave, valor in valores.items():
+        if valor is not None:
+            peso_actual = pesos_db.get(clave, 0.0)
+            suma += float(valor) * peso_actual
+            suma_pesos += peso_actual
+
+    # Prevención de división por cero
+    if suma_pesos == 0:
+        return {
+            "score_intencion": 0.0,
+            "etiqueta_intencion": "Sin Evaluar"
+        }
+
+    # Cálculo final (Garantizado entre 1.0 y 5.0)
+    score_intencion = round(suma / suma_pesos, 2)
+
+    # ==========================================
+    # 4. ETIQUETAS COMERCIALES (SaaS Dashboard)
+    # ==========================================
+    if score_intencion < 2.0:
+        etiqueta = "Solo Diversión"
+    elif score_intencion < 3.5:
+        etiqueta = "Hobby / Amateur"
+    elif score_intencion < 4.5:
+        etiqueta = "Ingreso Extra / Part-Time"
+    else:
+        etiqueta = "Profesional / Full-Time 🎯"
+
+    return {
+        "score_intencion": score_intencion,
+        "etiqueta_intencion": etiqueta
+    }
+
+
+# from database import get_connection_context
+
+def poblar_scores_creador(creador_id: int):
+    """
+    Lee los datos crudos de perfil_creador,
+    normaliza variables según modelo y guarda en talento_variable_score.
+    """
+
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+
+                # 1. Variables del modelo
+                cur.execute("""
+                    SELECT id, categoria_id, campo_db
+                    FROM modelo_variable
+                    WHERE campo_db IS NOT NULL
+                """)
+                variables_modelo = cur.fetchall()
+
+                # 2. Perfil del creador
+                cur.execute("""
+                    SELECT apariencia,
+                           engagement,
+                           calidad_contenido,
+                           eval_biografia,
+                           metadata_videos,
+                           seguidores,
+                           likes,
+                           videos,
+                           duracion_emisiones,
+                           dias_emisiones,
+                           frecuencia_lives,
+                           tiempo_disponible,
+                           intencion_trabajo
+                    FROM perfil_creador
+                    WHERE creador_id = %s
+                    LIMIT 1
+                """, (creador_id,))
+
+                row = cur.fetchone()
+                if not row:
+                    print(f"⚠️ No se encontró el creador {creador_id}")
+                    return False
+
+                nombres_columnas = [desc[0] for desc in cur.description]
+                datos_perfil = dict(zip(nombres_columnas, row))
+
+                registros_a_insertar = []
+
+                # 3. Procesar variables
+                for var_id, cat_id, campo_db in variables_modelo:
+
+                    if campo_db not in datos_perfil:
+                        continue
+
+                    val_crudo = datos_perfil[campo_db]
+                    if val_crudo is None:
+                        continue
+
+                    score_final = None
+
+                    # ==============================
+                    # CATEGORÍAS YA NORMALIZADAS
+                    # ==============================
+                    if cat_id in (1, 3, 4):
+                        try:
+                            score_final = int(round(float(val_crudo)))
+                        except Exception:
+                            continue
+
+                    # ==============================
+                    # CATEGORÍA MERCADO
+                    # ==============================
+                    elif cat_id == 2:
+
+                        try:
+                            val = float(val_crudo)
+                        except ValueError:
+                            continue
+
+                        s = 0
+
+                        if campo_db == "seguidores":
+                            if val < 50:
+                                s = 0
+                            elif val < 300:
+                                s = 1
+                            elif val < 500:
+                                s = 2
+                            elif val < 1000:
+                                s = 3
+                            elif val <= 5000:
+                                s = 4
+                            else:
+                                s = 5
+
+                        elif campo_db == "videos":
+                            if val <= 0:
+                                s = 1
+                            elif val < 10:
+                                s = 2
+                            elif val <= 20:
+                                s = 3
+                            elif val <= 40:
+                                s = 4
+                            else:
+                                s = 5
+
+                        elif campo_db == "likes":
+                            if val <= 500:
+                                s = 1
+                            elif val <= 5000:
+                                s = 2
+                            elif val <= 15000:
+                                s = 3
+                            elif val <= 50000:
+                                s = 4
+                            else:
+                                s = 5
+
+                        score_final = s  # ✅ 🔥 CORRECCIÓN IMPORTANTE
+
+                    # ==============================
+
+                    if score_final is not None:
+                        score_final = max(1, min(5, score_final))
+
+                        registros_a_insertar.append(
+                            (creador_id, var_id, score_final)
+                        )
+
+                # 4. Guardar en BD
+                if registros_a_insertar:
+
+                    cur.execute(
+                        "DELETE FROM talento_variable_score WHERE creador_id = %s",
+                        (creador_id,)
+                    )
+
+                    query_insert = """
+                        INSERT INTO talento_variable_score
+                        (creador_id, variable_id, score)
+                        VALUES (%s, %s, %s)
+                    """
+
+                    cur.executemany(query_insert, registros_a_insertar)
+                    conn.commit()
+
+                    print(f"✅ Insertadas {len(registros_a_insertar)} variables.")
+                    return True
+
+                else:
+                    print("⚠️ No hubo variables válidas.")
+                    return False
+
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        return False
+
+def poblar_categoria_1(creador_id: int):
+    """
+    Población exclusiva de variables con categoria_id = 1
+    (Variables que ya vienen normalizadas 1-5).
+    """
+
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+
+                # 1. Obtener variables categoría 1
+                cur.execute("""
+                    SELECT id, campo_db
+                    FROM test.modelo_variable
+                    WHERE categoria_id = 1
+                      AND campo_db IS NOT NULL
+                """)
+                variables = cur.fetchall()
+
+                if not variables:
+                    print("⚠️ No hay variables categoría 1 configuradas.")
+                    return False
+
+                # 2. Obtener perfil del creador
+                cur.execute("""
+                    SELECT *
+                    FROM test.perfil_creador
+                    WHERE creador_id = %s
+                    LIMIT 1
+                """, (creador_id,))
+
+                row = cur.fetchone()
+                if not row:
+                    print(f"⚠️ No existe creador {creador_id}")
+                    return False
+
+                columnas = [desc[0] for desc in cur.description]
+                datos = dict(zip(columnas, row))
+
+                registros = []
+
+                # 3. Procesar cada variable categoría 1
+                for var_id, campo_db in variables:
+
+                    if campo_db not in datos:
+                        continue
+
+                    val = datos[campo_db]
+
+                    if val is None:
+                        continue
+
+                    try:
+                        score = int(round(float(val)))
+                    except Exception:
+                        continue
+
+                    # 🔒 Asegurar rango 1 - 5
+                    score = max(1, min(5, score))
+
+                    registros.append((creador_id, var_id, score))
+
+                # 4. Guardar
+                if registros:
+
+                    # Borrar solo categoría 1 previamente almacenada
+                    cur.execute("""
+                        DELETE FROM test.talento_variable_score
+                        WHERE creador_id = %s
+                          AND variable_id IN (
+                              SELECT id FROM test.modelo_variable
+                              WHERE categoria_id = 1
+                          )
+                    """, (creador_id,))
+
+                    insert_query = """
+                        INSERT INTO test.talento_variable_score
+                        (creador_id, variable_id, score)
+                        VALUES (%s, %s, %s)
+                    """
+
+                    cur.executemany(insert_query, registros)
+                    conn.commit()
+
+                    print(f"✅ Categoría 1 actualizada ({len(registros)} variables)")
+                    return True
+
+                else:
+                    print("⚠️ No hubo datos válidos categoría 1.")
+                    return False
+
+    except Exception as e:
+        print(f"❌ Error poblando categoría 1: {e}")
+        return False
+
+
+# -------------------------------------------
+# -------------------------------------------
+# ----ENCUESTAS-------
+# -------------------------------------------
+# -------------------------------------------
+# -------------------------------------------
+
+def obtener_encuestas_activas():
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id, nombre, descripcion
+                    FROM form_encuestas
+                    WHERE activa = true
+                    ORDER BY id
+                """)
+
+                return cur.fetchall()
+
+    except (OperationalError, DatabaseError) as e:
+        print(f"❌ Error de base de datos al obtener encuestas: {e}")
+        traceback.print_exc()
+        return []
+    except Exception as e:
+        print(f"❌ Error inesperado al obtener encuestas: {e}")
+        traceback.print_exc()
+        return []
+
+def obtener_preguntas_por_encuesta(encuesta_id: int):
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id, texto, tipo, campo, orden
+                    FROM form_preguntas
+                    WHERE encuesta_id = %s
+                    AND activa = true
+                    ORDER BY orden
+                """, (encuesta_id,))
+
+                return cur.fetchall()
+
+    except (OperationalError, DatabaseError) as e:
+        print(f"❌ Error de base de datos al obtener preguntas: {e}")
+        traceback.print_exc()
+        return []
+    except Exception as e:
+        print(f"❌ Error inesperado al obtener preguntas: {e}")
+        traceback.print_exc()
+        return []
+
+
+def obtener_opciones_por_pregunta(pregunta_id: int):
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                            SELECT id, label, orden
+                            FROM form_opciones
+                            WHERE pregunta_id = %s
+                            ORDER BY orden
+                            """, (pregunta_id,))
+
+                return cur.fetchall()
+
+    except (OperationalError, DatabaseError) as e:
+        print(f"❌ Error de base de datos al obtener opciones: {e}")
+        traceback.print_exc()
+        return []
+    except Exception as e:
+        print(f"❌ Error inesperado al obtener opciones: {e}")
+        traceback.print_exc()
+        return []
+
+
+@router.get("/api/encuestas/{encuesta_id}")
+def obtener_encuesta(encuesta_id: int):
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+
+                # Obtener preguntas
+                cur.execute("""
+                    SELECT id, texto, tipo, campo, orden
+                    FROM form_preguntas
+                    WHERE encuesta_id = %s
+                    AND activa = true
+                    ORDER BY orden
+                """, (encuesta_id,))
+
+                preguntas = cur.fetchall()
+
+                resultado = []
+
+                for pregunta in preguntas:
+                    pregunta_id, texto, tipo, campo, orden = pregunta
+
+                    # Obtener opciones
+                    cur.execute("""
+                        SELECT id, label, orden
+                        FROM form_opciones
+                        WHERE pregunta_id = %s
+                        ORDER BY orden
+                    """, (pregunta_id,))
+
+                    opciones = cur.fetchall()
+
+                    resultado.append({
+                        "id": pregunta_id,
+                        "texto": texto,
+                        "tipo": tipo,
+                        "campo": campo,
+                        "opciones": [
+                            {
+                                "id": op[0],
+                                "label": op[1],
+                                "orden": op[2]
+                            } for op in opciones
+                        ] if opciones else []
+                    })
+
+                return {
+                    "success": True,
+                    "encuesta_id": encuesta_id,
+                    "preguntas": resultado
+                }
+
+    except (OperationalError, DatabaseError) as e:
+        print(f"❌ Error de base de datos al obtener encuesta: {e}")
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": "Error de base de datos"
+        }
+
+    except Exception as e:
+        print(f"❌ Error inesperado al obtener encuesta: {e}")
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": "Error inesperado"
+        }

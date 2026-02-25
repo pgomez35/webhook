@@ -932,7 +932,54 @@ def infer_zona_horaria(pais: str | None) -> str | None:
 def redondear_a_un_decimal(valor):
     return float(Decimal(valor).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
 
+
 def procesar_respuestas(respuestas):
+    datos = {}
+
+    # Nombre
+    datos["nombre"] = respuestas.get(1)
+
+    # Edad (ID numérico)
+    datos["edad"] = int(respuestas.get(2)) if respuestas.get(2) else None
+
+    # Género (ID)
+    datos["genero"] = int(respuestas.get(3)) if respuestas.get(3) else None
+
+    # País (ID)
+    datos["pais"] = int(respuestas.get(4)) if respuestas.get(4) else None
+
+    # Ciudad (texto libre validado)
+    ciudad_usuario = respuestas.get(5)
+    if ciudad_usuario:
+        resultado = validar_aceptar_ciudad(ciudad_usuario)
+        datos["ciudad"] = resultado["ciudad"]
+    else:
+        datos["ciudad"] = None
+
+    # Actividad (ID)
+    datos["actividad_actual"] = int(respuestas.get(6)) if respuestas.get(6) else None
+
+    # Intención (ID)
+    datos["intencion_trabajo"] = int(respuestas.get(7)) if respuestas.get(7) else None
+
+    # ✅ NUEVO CAMPO DIRECTO EN BD
+    datos["experiencia_tiktok_live"] = int(respuestas.get(8)) if respuestas.get(8) else None
+
+    # Horas disponibles (ID opción)
+    datos["tiempo_disponible"] = int(respuestas.get(9)) if respuestas.get(9) else None
+
+    # Días disponibles (ID opción)
+    datos["frecuencia_lives"] = int(respuestas.get(10)) if respuestas.get(10) else None
+
+    # Zona horaria según país
+    if datos.get("pais"):
+        tz = infer_zona_horaria(datos["pais"])
+        if tz:
+            datos["zona_horaria"] = tz
+
+    return datos
+
+def procesar_respuestasV0(respuestas):
     datos = {}
 
     datos["nombre"] = respuestas.get(1)
