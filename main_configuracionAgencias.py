@@ -1,9 +1,23 @@
-from fastapi import APIRouter, HTTPException, Body,Query
+import os
+
+from fastapi import APIRouter, HTTPException, Body, Query, UploadFile, Form
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 
 import re
+
+import cloudinary
+
+from tenant import current_tenant
+
+cloudinary.config(
+    cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+    api_key=os.environ["CLOUDINARY_API_KEY"],
+    api_secret=os.environ["CLOUDINARY_API_SECRET"],
+    secure=True
+)
+
 
 from DataBase import get_connection_context, get_connection_public
 
@@ -579,3 +593,107 @@ def get_config(clave: str) -> Any:
 
     # fallback
     return valor
+
+
+@router.post("/branding/logo")
+async def subir_logo_agencia(
+    logo: UploadFile = Form(...)
+):
+    import os
+    from datetime import datetime
+    from fastapi import HTTPException
+
+    TENANT = current_tenant.get()
+
+    if not TENANT:
+        raise HTTPException(status_code=400, detail="Tenant no disponible")
+
+    # --------------------------------------------------
+    # 1️⃣ Validar tipo
+    # --------------------------------------------------
+    if logo.content_type not in [
+        "image/jpeg",
+        "image/png",
+        "image/jpg",
+        "image/webp"
+    ]:
+        raise HTTPException(status_code=400, detail="Tipo de imagen no permitido")
+
+    # --------------------------------------------------
+    # 2️⃣ Guardar temporal
+    # --------------------------------------------------
+    timestamp = int(datetime.now().timestamp())
+    filename = f"{TENANT}_logo_{timestamp}_{logo.filename}"
+
+    MEDIA_DIR = "temp_logos"
+    os.makedirs(MEDIA_DIR, exist_ok=True)
+
+    ruta_logo = os.path.join(MEDIA_DIR, filename)
+
+    with open(ruta_logo, "wb") as f:
+        f.write(await logo.read())
+
+    # --------------------------------------------------
+    # 3️⃣ Subir a Cloudinary (optimizado)
+    # --------------------------------------------------
+    try:
+        result = cloudinary.uploader.upload(
+            ruta_logo,
+            folder=f"branding/{TENANT}",
+            public_id=f"{TENANT}_logo",
+            overwrite=True,
+            resource_type="image",
+            transformation=[
+                {"width": 400, "crop": "limit"},
+                {"quality": "auto"},
+                {"fetch_format": "auto"}
+            ]
+        )
+
+        logo_url = result.get("secure_url")
+
+    except Exception as e:
+        try:
+            os.remove(ruta_logo)
+        except:
+            pass
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error subiendo logo: {str(e)}"
+        )
+
+    # --------------------------------------------------
+    # 4️⃣ Guardar en configuracion_agencia (UPSERT)
+    # --------------------------------------------------
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO configuracion_agencia (clave, valor)
+                    VALUES ('logo_url', %s)
+                    ON CONFLICT (clave)
+                    DO UPDATE SET
+                        valor = EXCLUDED.valor,
+                        actualizado_en = now()
+                """, (logo_url,))
+                conn.commit()
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error guardando logo en BD: {str(e)}"
+        )
+
+    # --------------------------------------------------
+    # 5️⃣ Borrar temporal
+    # --------------------------------------------------
+    try:
+        os.remove(ruta_logo)
+    except:
+        pass
+
+    return {
+        "status": "ok",
+        "logo_url": logo_url
+    }

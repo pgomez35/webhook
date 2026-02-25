@@ -952,9 +952,11 @@ async def _procesar_error_envio(status_obj, tenant, phone_id, token):
                 if estado_actual:
                     # 3. Enviar la PLANTILLA correspondiente
                     # Esta función ya la definimos en "Tarea 3" y sabe qué template usar
+                    codigo_estado = estado_actual.get("codigo_estado")
+
                     enviar_plantilla_estado_evaluacion(
                         creador_id=creador_id,
-                        estado_evaluacion=estado_actual,
+                        estado_evaluacion=codigo_estado,  # 👈 SOLO el string,
                         phone_id=phone_id,
                         token=token,
                         telefono=recipient_id
