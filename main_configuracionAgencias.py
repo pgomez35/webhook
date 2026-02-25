@@ -595,8 +595,8 @@ def get_config(clave: str) -> Any:
     return valor
 
 
-@router.post("/branding/logo")
-async def subir_logo_agencia(
+@router.post("/api/configuracion-agencia/logo")
+async def actualizar_logo_agencia(
     logo: UploadFile = Form(...)
 ):
     import os
