@@ -33,7 +33,8 @@ from enviar_msg_wp import (
 from evaluaciones import evaluar_y_actualizar_perfil_pre_encuesta, diagnostico_perfil_creador_pre
 
 from main import guardar_mensaje
-from main_mensajeria_whatsapp import reenviar_ultimo_mensaje
+from main_EvaluacionAspirante import poblar_scores_creador
+from main_mensajeria_whatsapp import reenviar_ultimo_mensaje, enviar_mensaje_con_credenciales
 from tenant import (
     current_business_name,
     current_phone_id,
@@ -96,8 +97,13 @@ usuarios_temp = {}  # ⚠️ Fallback a memoria si Redis falla (solo para datos 
 import traceback
 from typing import Optional
 
+
+
+
+
+
 # ✅ NUEVA: no depende de ContextVar (segura para BackgroundTasks)
-def enviar_mensaje_con_credenciales(
+def enviar_mensaje_con_credencialesV0(
     numero: str,
     texto: str,
     token: str,
@@ -132,15 +138,15 @@ def enviar_mensaje_con_credenciales(
         raise
 
 
-# ✅ Wrapper opcional: mantiene compatibilidad con tu código actual (sin tocar todo)
-def enviar_mensaje(numero: str, texto: str):
-    try:
-        token = current_token.get()
-        phone_id = current_phone_id.get()
-        return enviar_mensaje_con_credenciales(numero, texto, token, phone_id)
-    except LookupError as e:
-        print(f"❌ Contexto de tenant no disponible al enviar mensaje a {numero}: {e}")
-        raise
+# # ✅ Wrapper opcional: mantiene compatibilidad con tu código actual (sin tocar todo)
+# def enviar_mensaje(numero: str, texto: str):
+#     try:
+#         token = current_token.get()
+#         phone_id = current_phone_id.get()
+#         return enviar_mensaje_con_credenciales(numero, texto, token, phone_id)
+#     except LookupError as e:
+#         print(f"❌ Contexto de tenant no disponible al enviar mensaje a {numero}: {e}")
+#         raise
 
 
 
@@ -2792,19 +2798,24 @@ def consolidar_perfil_web(data: ConsolidarInput,
         # -------------------------------
         try:
             if creador_id:
-                # 1) calcula y guarda puntajes (tu función)
+
+                # 1) llena tabla de scores
+                poblar_scores_creador(creador_id)
+
+
+                # 2) calcula y guarda puntajes (tu función)
                 evaluar_y_actualizar_perfil_pre_encuesta(creador_id)
 
                 lap("evaluar_y_actualizar")
 
 
-                # 2) genera diagnóstico (usa DB y/o puntajes calculados)
+                # 3) genera diagnóstico (usa DB y/o puntajes calculados)
                 diag = diagnostico_perfil_creador_pre(creador_id)
 
                 lap("diagnostico")
 
 
-                # 3) guardar diagnóstico en perfil_creador
+                # 4) guardar diagnóstico en perfil_creador
                 guardar_diagnostico_perfil_creador(creador_id, diag)
 
                 lap("guardar_diagnostico")
@@ -2840,7 +2851,9 @@ def consolidar_perfil_web(data: ConsolidarInput,
             data.numero,
             mensaje_final,
             token_cliente,
-            phone_id_cliente
+            phone_id_cliente,
+            business_name,
+            nombre_usuario
         )
 
         lap("enqueue_whatsapp")

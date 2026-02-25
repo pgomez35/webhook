@@ -82,35 +82,33 @@ async def api_enviar_mensaje(request: Request, data: dict):
     )
 
     # ======================================================
-    # 2️⃣ Guardar SOLO si fue exitoso
+    # 2️⃣ Guardar SIEMPRE
     # ======================================================
 
-    if codigo == 200:
+    message_id_meta = None
+    if respuesta_api and "messages" in respuesta_api:
+        message_id_meta = respuesta_api["messages"][0].get("id")
 
-        message_id_meta = None
-        if respuesta_api and "messages" in respuesta_api:
-            message_id_meta = respuesta_api["messages"][0].get("id")
+    guardar_mensaje_nuevo(
+        telefono=telefono,
+        contenido=mensaje,
+        direccion="enviado",
+        tipo="text",
+        message_id_meta=message_id_meta,
+        estado="sent"
+    )
 
-        guardar_mensaje_nuevo(
-            telefono=telefono,
-            contenido=mensaje,
-            direccion="enviado",
-            tipo="text",
-            message_id_meta=message_id_meta,
-            estado="sent"
-        )
+    # ======================================================
+    # 3️⃣ Intentar plantilla SOLO si fue exitoso
+    # ======================================================
 
-        # ======================================================
-        # 3️⃣ Intentar plantilla SOLO si fue exitoso
-        # ======================================================
-
-        intentar_plantilla_reconexion_24h(
-            telefono=telefono,
-            nombre=nombre,
-            token=TOKEN,
-            phone_number_id=PHONE_NUMBER_ID,
-            agencia_nombre=AGENCIA_NOMBRE
-        )
+    intentar_plantilla_reconexion_24h(
+        telefono=telefono,
+        nombre=nombre,
+        token=TOKEN,
+        phone_number_id=PHONE_NUMBER_ID,
+        agencia_nombre=AGENCIA_NOMBRE
+    )
 
     # ======================================================
     # 4️⃣ Respuesta final
@@ -2539,3 +2537,58 @@ async def reenviar_ultimo_mensaje0(telefono: str):
             status_code=400,
             detail=f"Tipo de mensaje no soportado: {tipo_mensaje}"
         )
+
+
+async def enviar_mensaje_con_credenciales(
+    telefono: str,
+    mensaje: str,
+    token_cliente: str,
+    phone_id_cliente: str,
+    Agencia_nombre: str,
+    nombre: str
+):
+    """
+    Envía mensaje normal.
+    La detección de ventana 24h se maneja en el webhook.
+    """
+
+    if not telefono or not mensaje:
+        return {"error": "Faltan datos"}
+
+    if not token_cliente or not phone_id_cliente:
+        return {"error": "Credenciales inválidas"}
+
+    codigo, respuesta_api = enviar_mensaje_texto_simple(
+        token=token_cliente,
+        numero_id=phone_id_cliente,
+        telefono_destino=telefono,
+        texto=mensaje
+    )
+
+    message_id_meta = None
+
+    if respuesta_api and "messages" in respuesta_api:
+        message_id_meta = respuesta_api["messages"][0].get("id")
+
+    # Guardamos como enviado (pendiente de status real)
+    guardar_mensaje_nuevo(
+        telefono=telefono,
+        contenido=mensaje,
+        direccion="enviado",
+        tipo="text",
+        message_id_meta=message_id_meta,
+        estado="sent" if codigo == 200 else "error"
+    )
+
+    intentar_plantilla_reconexion_24h(
+        telefono=telefono,
+        nombre=nombre,
+        token=token_cliente,
+        phone_number_id=phone_id_cliente,
+        agencia_nombre=Agencia_nombre
+    )
+
+    return {
+        "status": "ok" if codigo == 200 else "error",
+        "codigo_api": codigo
+    }
