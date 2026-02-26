@@ -325,7 +325,7 @@ def sync_cualitativo_perfil_y_variables(
                 # 2) Traer variables categoria_id=1 con campo_db para mapear
                 cur.execute("""
                     SELECT id, campo_db, nombre
-                    FROM test.modelo_variable
+                    FROM modelo_variable
                     WHERE categoria_id = 1
                     ORDER BY id
                 """)
@@ -335,7 +335,7 @@ def sync_cualitativo_perfil_y_variables(
                     conn.commit()
                     return {
                         "status": "ok",
-                        "mensaje": "perfil_creador actualizado. No hay variables en test.modelo_variable con categoria_id=1",
+                        "mensaje": "perfil_creador actualizado. No hay variables en modelo_variable con categoria_id=1",
                         "creador_id": creador_id,
                         "perfil_creador_filas_afectadas": perfil_rows,
                         "talento_variable_score_actualizadas": 0,
@@ -371,7 +371,7 @@ def sync_cualitativo_perfil_y_variables(
                     # 4) Update existentes (por variable_id)
                     #    Usamos un UPDATE con FROM (VALUES ...) para setear score distinto por variable
                     cur.execute("""
-                        UPDATE test.talento_variable_score tvs
+                        UPDATE talento_variable_score tvs
                         SET score = v.score
                         FROM (VALUES %s) AS v(variable_id, score)
                         WHERE tvs.creador_id = %s
@@ -382,12 +382,12 @@ def sync_cualitativo_perfil_y_variables(
 
                     # 5) Insert faltantes
                     cur.execute("""
-                        INSERT INTO test.talento_variable_score (creador_id, variable_id, score)
+                        INSERT INTO talento_variable_score (creador_id, variable_id, score)
                         SELECT %s, v.variable_id, v.score
                         FROM (VALUES %s) AS v(variable_id, score)
                         WHERE NOT EXISTS (
                             SELECT 1
-                            FROM test.talento_variable_score tvs
+                            FROM talento_variable_score tvs
                             WHERE tvs.creador_id = %s
                               AND tvs.variable_id = v.variable_id
                         )
@@ -2659,7 +2659,7 @@ def diagnostico_creador(creador_id: int):
         cur.execute("""
             SELECT nombre, edad, genero, pais, ciudad
             FROM perfil_creador
-            WHERE id = %s
+            WHERE creador_id = %s
         """, (creador_id,))
         perfil = cur.fetchone()
 
@@ -2773,7 +2773,7 @@ def diagnostico_creador(creador_id: int):
         cur.execute("""
             UPDATE perfil_creador
             SET diagnostico = %s
-            WHERE id = %s
+            WHERE creador_id = %s
         """, (texto_diagnostico, creador_id))
 
         conn.commit()
