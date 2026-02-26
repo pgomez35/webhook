@@ -418,6 +418,82 @@ def sync_cualitativo_perfil_y_variables(
             detail=f"Error en sync_cualitativo_perfil_y_variables_v1: {str(e)}"
         )
 
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+
+router = APIRouter()
+
+
+class PerfilCualitativoPayloadOut(BaseModel):
+    potencial_estimado: int = Field(..., ge=0, le=5)
+    apariencia: int = Field(..., ge=0, le=5)
+    engagement: int = Field(..., ge=0, le=5)
+    calidad_contenido: int = Field(..., ge=0, le=5)
+    eval_biografia: int = Field(..., ge=0, le=5)
+    metadata_videos: int = Field(..., ge=0, le=5)
+    eval_foto: int = Field(..., ge=0, le=5)
+
+
+@router.get(
+    "/api/perfil_creador/{creador_id}/talento/cargar",
+    tags=["Perfil Cualitativo"],
+    response_model=PerfilCualitativoPayloadOut
+)
+def obtener_cualitativo_perfil_creador(
+    creador_id: int,
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT
+                        potencial_estimado,
+                        apariencia,
+                        engagement,
+                        calidad_contenido,
+                        eval_biografia,
+                        metadata_videos,
+                        eval_foto
+                    FROM perfil_creador
+                    WHERE creador_id = %s
+                    LIMIT 1
+                """, (creador_id,))
+                row = cur.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="perfil_creador no encontrado para ese creador_id")
+
+        # row = (potencial_estimado, apariencia, engagement, calidad_contenido, eval_biografia, metadata_videos, eval_foto)
+        data = {
+            "potencial_estimado": row[0],
+            "apariencia": row[1],
+            "engagement": row[2],
+            "calidad_contenido": row[3],
+            "eval_biografia": row[4],
+            "metadata_videos": row[5],
+            "eval_foto": row[6],
+        }
+
+        # Si tu DB puede traer NULL, aquí puedes decidir:
+        # - devolver 0 por defecto, o
+        # - lanzar error si alguno es None.
+        # Yo lo dejo estricto (si hay None, Pydantic se queja). Si quieres defaults, te lo ajusto.
+        return data
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al obtener cualitativo de perfil_creador: {str(e)}"
+        )
+
+
+
 @router.post("/api/perfil_creador/{creador_id}/pre_resumen/calcularV1",
     tags=["Resumen Pre-Evaluación"]
 )
