@@ -1565,6 +1565,7 @@ def obtener_perfil_creador(creador_id):
                             pc.experiencia_otras_plataformas,
                             pc.intereses,
                             pc.tipo_contenido,
+                            pc.potencial_estimado,
                             pc.puntaje_estadistica,
                             pc.puntaje_estadistica_categoria,
                             pc.puntaje_cualitativo,
