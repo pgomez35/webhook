@@ -271,8 +271,8 @@ def sync_cualitativo_perfil_y_variables(
 ):
     """
     - Actualiza en perfil_creador: apariencia, engagement, calidad_contenido, eval_biografia, metadata_videos, eval_foto
-    - Actualiza/crea en test.talento_variable_score (score) SOLO para variables que vienen de:
-        SELECT id FROM test.modelo_variable WHERE categoria_id = 1
+    - Actualiza/crea en talento_score_variable (score) SOLO para variables que vienen de:
+        SELECT id FROM modelo_variable WHERE categoria_id = 1
       Mapeo: usa el campo_db (si existe) o el nombre (fallback) para decidir qué valor poner.
     """
     try:
@@ -293,7 +293,7 @@ def sync_cualitativo_perfil_y_variables(
 
         # Campos que sí existen en payload para mapping
         payload_keys = set(data.keys())  # incluye eval_foto
-        # Pero talento_variable_score solo usa estos (sin eval_foto)
+        # Pero talento_score_variable solo usa estos (sin eval_foto)
         payload_keys_tvs = payload_keys - {"eval_foto"}
 
         with get_connection_context() as conn:
@@ -338,8 +338,8 @@ def sync_cualitativo_perfil_y_variables(
                         "mensaje": "perfil_creador actualizado. No hay variables en modelo_variable con categoria_id=1",
                         "creador_id": creador_id,
                         "perfil_creador_filas_afectadas": perfil_rows,
-                        "talento_variable_score_actualizadas": 0,
-                        "talento_variable_score_insertadas": 0,
+                        "talento_score_variable_actualizadas": 0,
+                        "talento_score_variable_insertadas": 0,
                         "variables_procesadas": []
                     }
 
@@ -371,7 +371,7 @@ def sync_cualitativo_perfil_y_variables(
                     # 4) Update existentes (por variable_id)
                     #    Usamos un UPDATE con FROM (VALUES ...) para setear score distinto por variable
                     cur.execute("""
-                        UPDATE talento_variable_score tvs
+                        UPDATE talento_score_variable tvs
                         SET score = v.score
                         FROM (VALUES %s) AS v(variable_id, score)
                         WHERE tvs.creador_id = %s
@@ -382,12 +382,12 @@ def sync_cualitativo_perfil_y_variables(
 
                     # 5) Insert faltantes
                     cur.execute("""
-                        INSERT INTO talento_variable_score (creador_id, variable_id, score)
+                        INSERT INTO talento_score_variable (creador_id, variable_id, score)
                         SELECT %s, v.variable_id, v.score
                         FROM (VALUES %s) AS v(variable_id, score)
                         WHERE NOT EXISTS (
                             SELECT 1
-                            FROM talento_variable_score tvs
+                            FROM talento_score_variable tvs
                             WHERE tvs.creador_id = %s
                               AND tvs.variable_id = v.variable_id
                         )
@@ -399,11 +399,11 @@ def sync_cualitativo_perfil_y_variables(
 
         return {
             "status": "ok",
-            "mensaje": "perfil_creador actualizado + talento_variable_score actualizado/insertado para variables categoria_id=1 (mapeadas por campo_db/nombre)",
+            "mensaje": "perfil_creador actualizado + talento_score_variable actualizado/insertado para variables categoria_id=1 (mapeadas por campo_db/nombre)",
             "creador_id": creador_id,
             "perfil_creador_filas_afectadas": perfil_rows,
-            "talento_variable_score_actualizadas": upsert_actualizadas,
-            "talento_variable_score_insertadas": upsert_insertadas,
+            "talento_score_variable_actualizadas": upsert_actualizadas,
+            "talento_score_variable_insertadas": upsert_insertadas,
             "variables_procesadas": variables_procesadas,
             "payload": data
         }
@@ -419,10 +419,10 @@ def sync_cualitativo_perfil_y_variables(
         )
 
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
-
-router = APIRouter()
+# from fastapi import APIRouter, Depends, HTTPException
+# from pydantic import BaseModel, Field
+#
+# router = APIRouter()
 
 
 class PerfilCualitativoPayloadOut(BaseModel):
@@ -1450,7 +1450,7 @@ def guardar_talento_score(creador_id: int, data: TalentoScoreCreate):
         cur = conn.cursor()
 
         cur.execute("""
-            INSERT INTO talento_variable_score 
+            INSERT INTO talento_score_variable 
             (creador_id, variable_id, score)
             VALUES (%s, %s, %s)
             ON CONFLICT DO NOTHING
@@ -1636,7 +1636,7 @@ def calcular_evaluacion(creador_id: int, modelo_id: int):
                 if tipo == "cualitativa":
                     cur.execute("""
                         SELECT score
-                        FROM talento_variable_score
+                        FROM talento_score_variable
                         WHERE creador_id = %s
                         AND variable_id = %s
                     """, (creador_id, var_id))
@@ -2541,256 +2541,3 @@ def obtener_encuestaV0(encuesta_id: int):
             "error": "Error inesperado"
         }
 
-# ------------------------------------------------
-# ------------------------------------------------
-# --------NUEVO DIAGNOSTICO--------
-# ------------------------------------------------
-# ------------------------------------------------
-# ------------------------------------------------
-
-
-# =====================================================
-# 🔥 FUNCIÓN GENERADORA DE TEXTO
-# =====================================================
-def generar_texto_diagnostico(
-    nombre: str,
-    categorias: list,
-    score_total: float,
-    clasificacion: str,
-    accion: str,
-    modelo_nombre: str,
-    nombre_agencia: str
-) -> str:
-
-    def interpretar_score(score):
-        if score >= 4.5:
-            return "nivel destacado con alto potencial de crecimiento."
-        elif score >= 4.0:
-            return "nivel alto y competitivo dentro del mercado."
-        elif score >= 3.5:
-            return "buen nivel con oportunidades claras de mejora."
-        elif score >= 3.0:
-            return "nivel en desarrollo que requiere fortalecimiento."
-        else:
-            return "nivel inicial que necesita mayor estructuración."
-
-    mensaje = []
-    mensaje.append(f"{nombre_agencia}\n")
-    mensaje.append(f"Modelo aplicado: {modelo_nombre}\n")
-    mensaje.append("--------------------------------------------------\n")
-    mensaje.append(f"Hola {nombre},\n")
-    mensaje.append("Hemos realizado un análisis integral de tu perfil.\n")
-
-    for cat in categorias:
-        mensaje.append(
-            f"🔹 {cat['categoria']}: Presenta un {interpretar_score(cat['score'])}"
-        )
-
-    mensaje.append("\n📊 Resultado General\n")
-
-    if clasificacion == "Alto Potencial":
-        mensaje.append(
-            "Tu perfil demuestra una estructura sólida y un alto potencial profesional dentro de nuestra red."
-        )
-    elif clasificacion == "Potencial Medio":
-        mensaje.append(
-            "Tu perfil muestra buenas bases y oportunidades claras para escalar a un siguiente nivel."
-        )
-    else:
-        mensaje.append(
-            "Actualmente tu perfil requiere mayor desarrollo antes de avanzar a una fase profesional."
-        )
-
-    mensaje.append(f"\nCalificación Global: {round(score_total,2)} / 5\n")
-
-    mensaje.append("\n🎯 Próximo Paso\n")
-
-    if accion == "onboarding_directo":
-        mensaje.append(
-            "Te invitamos a iniciar el proceso de onboarding y revisión previa de tu cuenta de TikTok."
-        )
-    elif accion == "entrevista":
-        mensaje.append(
-            "El siguiente paso es agendar una entrevista o prueba práctica."
-        )
-    elif accion == "seguimiento":
-        mensaje.append(
-            "Recomendamos continuar fortaleciendo tu perfil antes de una nueva evaluación."
-        )
-
-    mensaje.append("\nGracias por confiar en nuestro proceso.")
-
-    return "\n".join(mensaje)
-
-
-# =====================================================
-# 🔥 ENDPOINT COMPLETO
-# =====================================================
-@router.get("/api/creadores/{creador_id}/diagnostico")
-def diagnostico_creador(creador_id: int):
-
-    TENANT = current_tenant.get()
-    if not TENANT:
-        raise HTTPException(status_code=400, detail="Tenant no disponible")
-
-    with get_connection_context() as conn:
-        cur = conn.cursor()
-
-        # ==========================================
-        # 1️⃣ MODELO ACTIVO
-        # ==========================================
-        cur.execute("""
-            SELECT id, nombre
-            FROM modelo_evaluacion
-            WHERE activo = true
-            LIMIT 1
-        """)
-        modelo = cur.fetchone()
-
-        if not modelo:
-            raise HTTPException(status_code=400, detail="No hay modelo activo")
-
-        modelo_id = modelo[0]
-        modelo_nombre = modelo[1]
-
-        # ==========================================
-        # 2️⃣ PERFIL DEMOGRÁFICO
-        # ==========================================
-        cur.execute("""
-            SELECT nombre, edad, genero, pais, ciudad
-            FROM perfil_creador
-            WHERE creador_id = %s
-        """, (creador_id,))
-        perfil = cur.fetchone()
-
-        if not perfil:
-            raise HTTPException(status_code=404, detail="Creador no encontrado")
-
-        perfil_data = {
-            "nombre": perfil[0],
-            "edad": perfil[1],
-            "genero": perfil[2],
-            "pais": perfil[3],
-            "ciudad": perfil[4],
-        }
-
-        # ==========================================
-        # 3️⃣ CATEGORÍAS DEL MODELO
-        # ==========================================
-        cur.execute("""
-            SELECT id, nombre, peso_categoria
-            FROM modelo_categoria
-            WHERE modelo_id = %s
-        """, (modelo_id,))
-        categorias = cur.fetchall()
-
-        resultado_categorias = []
-        score_total = 0
-
-        # ==========================================
-        # 4️⃣ CÁLCULO DE SCORES
-        # ==========================================
-        for cat_id, nombre_cat, peso_cat in categorias:
-
-            cur.execute("""
-                SELECT mv.id, mv.peso_variable
-                FROM modelo_variable mv
-                WHERE mv.categoria_id = %s
-            """, (cat_id,))
-            variables = cur.fetchall()
-
-            score_categoria = 0
-
-            for var_id, peso_variable in variables:
-                cur.execute("""
-                    SELECT score
-                    FROM talento_variable_score
-                    WHERE creador_id = %s
-                    AND variable_id = %s
-                """, (creador_id, var_id))
-
-                r = cur.fetchone()
-                score_var = r[0] if r else 0
-
-                score_categoria += (score_var * float(peso_variable)) / 100
-
-            score_categoria = round(score_categoria, 2)
-
-            resultado_categorias.append({
-                "categoria": nombre_cat,
-                "peso_categoria": float(peso_cat),
-                "score": score_categoria,
-                "porcentaje": round((score_categoria / 5) * 100, 2)
-            })
-
-            score_total += (score_categoria * float(peso_cat)) / 100
-
-        score_total = round(score_total, 2)
-
-        # ==========================================
-        # 5️⃣ CLASIFICACIÓN Y ACCIÓN
-        # ==========================================
-        if score_total >= 4.2:
-            clasificacion = "Alto Potencial"
-            accion = "onboarding_directo"
-        elif score_total >= 3.5:
-            clasificacion = "Potencial Medio"
-            accion = "entrevista"
-        else:
-            clasificacion = "Bajo Potencial"
-            accion = "seguimiento"
-
-        # ==========================================
-        # 6️⃣ DATOS AGENCIA
-        # ==========================================
-        nombre_agencia = current_business_name.get()
-
-        cur.execute("""
-            SELECT valor
-            FROM configuracion_agencia
-            WHERE clave = 'logo_url'
-            LIMIT 1
-        """)
-        row = cur.fetchone()
-        logo_url = row[0] if row else None
-
-        # ==========================================
-        # 7️⃣ GENERAR TEXTO
-        # ==========================================
-        texto_diagnostico = generar_texto_diagnostico(
-            nombre=perfil_data["nombre"],
-            categorias=resultado_categorias,
-            score_total=score_total,
-            clasificacion=clasificacion,
-            accion=accion,
-            modelo_nombre=modelo_nombre,
-            nombre_agencia=nombre_agencia
-        )
-
-        # ==========================================
-        # 8️⃣ GUARDAR EN BD
-        # ==========================================
-        cur.execute("""
-            UPDATE perfil_creador
-            SET diagnostico = %s
-            WHERE creador_id = %s
-        """, (texto_diagnostico, creador_id))
-
-        conn.commit()
-
-        # ==========================================
-        # 9️⃣ RESPUESTA FINAL
-        # ==========================================
-        return {
-            "agencia": {
-                "nombre": nombre_agencia,
-                "logo_url": logo_url
-            },
-            "modelo_utilizado": modelo_nombre,
-            "perfil": perfil_data,
-            "categorias": resultado_categorias,
-            "score_total": score_total,
-            "clasificacion": clasificacion,
-            "accion": accion,
-            "diagnostico_texto": texto_diagnostico
-        }
