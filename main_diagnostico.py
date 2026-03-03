@@ -191,8 +191,7 @@ def obtener_script(cur, categoria_id: int, escala: int, nivel: int) -> str:
     cur.execute("""
         SELECT script
         FROM talento_script_categoria
-        WHERE modelo_id = %s
-          AND categoria_id = %s
+        WHERE categoria_id = %s
           AND escala = %s
           AND nivel = %s
         LIMIT 1
