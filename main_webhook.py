@@ -7042,7 +7042,7 @@ def poblar_scores_creador(creador_id: int):
                 # 1. Variables del modelo
                 cur.execute("""
                     SELECT id, categoria_id, campo_db
-                    FROM modelo_variable
+                    FROM diagnostico_variable
                     WHERE campo_db IS NOT NULL
                 """)
                 variables_modelo = cur.fetchall()
@@ -7163,12 +7163,12 @@ def poblar_scores_creador(creador_id: int):
                 if registros_a_insertar:
 
                     cur.execute(
-                        "DELETE FROM talento_score_variable WHERE creador_id = %s",
+                        "DELETE FROM diagnostico_score_variable WHERE creador_id = %s",
                         (creador_id,)
                     )
 
                     query_insert = """
-                        INSERT INTO talento_score_variable
+                        INSERT INTO diagnostico_score_variable
                         (creador_id, variable_id, score)
                         VALUES (%s, %s, %s)
                     """
@@ -7200,7 +7200,7 @@ def poblar_categoria_1(creador_id: int):
                 # 1. Obtener variables categoría 1
                 cur.execute("""
                     SELECT id, campo_db
-                    FROM modelo_variable
+                    FROM diagnostico_variable
                     WHERE categoria_id = 1
                       AND campo_db IS NOT NULL
                 """)
@@ -7254,16 +7254,16 @@ def poblar_categoria_1(creador_id: int):
 
                     # Borrar solo categoría 1 previamente almacenada
                     cur.execute("""
-                        DELETE FROM talento_score_variable
+                        DELETE FROM diagnostico_score_variable
                         WHERE creador_id = %s
                           AND variable_id IN (
-                              SELECT id FROM modelo_variable
+                              SELECT id FROM diagnostico_variable
                               WHERE categoria_id = 1
                           )
                     """, (creador_id,))
 
                     insert_query = """
-                        INSERT INTO talento_score_variable
+                        INSERT INTO diagnostico_score_variable
                         (creador_id, variable_id, score)
                         VALUES (%s, %s, %s)
                     """

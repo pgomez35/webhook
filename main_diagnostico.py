@@ -1,6 +1,6 @@
 import logging
 import json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException
 
 from tenant import current_tenant, current_business_name
@@ -57,6 +57,21 @@ def icono_semaforo(nivel_3: int) -> str:
     return "🔴"
 
 
+def icono_badge_5(n: int) -> Dict[str, str]:
+    """
+    Para desglose de variables (1..5):
+    Devuelve icono + texto (puedes ajustar nombres).
+    """
+    mapa = {
+        1: {"icono": "🔴", "nivel_texto": "Muy bajo"},
+        2: {"icono": "🟠", "nivel_texto": "Bajo"},
+        3: {"icono": "🟡", "nivel_texto": "Bueno"},
+        4: {"icono": "🟢", "nivel_texto": "Alto"},
+        5: {"icono": "🟣", "nivel_texto": "Excelente"},
+    }
+    return mapa.get(int(n or 3), {"icono": "🟡", "nivel_texto": "Bueno"})
+
+
 # =====================================================
 # Resumen ejecutivo por filas (sin motor)
 # =====================================================
@@ -76,7 +91,6 @@ def generar_resumen_ejecutivo_filas(categorias: List[Dict[str, Any]]) -> str:
     def linea(nivel_3: int, texto: str) -> str:
         return f"{icono_semaforo(nivel_3)} {texto}"
 
-    # Mapeo flexible por nombre (por si en DB "Mercado" y tú lo llamas "Monetización")
     mapa = {
         "POTENCIAL DE TALENTO": None,
         "CAPACIDAD OPERATIVA": None,
@@ -87,20 +101,14 @@ def generar_resumen_ejecutivo_filas(categorias: List[Dict[str, Any]]) -> str:
     for c in categorias:
         nombre = (c.get("categoria_nombre") or "").strip()
         n3 = int(c.get("nivel_3") or 1)
-        s3 = (c.get("script_3") or "").strip()
-
-        if not s3:
-            s3 = "Sin definición estratégica."
+        s3 = (c.get("script_3") or "").strip() or "Sin definición estratégica."
 
         if nombre == "Potencial de Talento":
             mapa["POTENCIAL DE TALENTO"] = linea(n3, s3)
-
         elif nombre == "Capacidad Operativa":
             mapa["CAPACIDAD OPERATIVA"] = linea(n3, s3)
-
         elif nombre in ("Potencial de Mercado", "Potencial de Monetización"):
             mapa["POTENCIAL DE MONETIZACIÓN"] = linea(n3, s3)
-
         elif nombre == "Intención y Alineación":
             mapa["INTENCIÓN Y ALINEACIÓN"] = linea(n3, s3)
 
@@ -123,7 +131,7 @@ def generar_resumen_ejecutivo_filas(categorias: List[Dict[str, Any]]) -> str:
 def obtener_modelo_activo(cur) -> Dict[str, Any]:
     cur.execute("""
         SELECT id, nombre
-        FROM modelo_evaluacion
+        FROM diagnostico_modelo
         WHERE activo = true
         LIMIT 1
     """)
@@ -155,7 +163,7 @@ def obtener_perfil_creador(cur, creador_id: int) -> Dict[str, Any]:
 def obtener_categorias_modelo(cur, modelo_id: int) -> List[Dict[str, Any]]:
     cur.execute("""
         SELECT id, nombre, peso_categoria
-        FROM modelo_categoria
+        FROM diagnostico_categoria
         WHERE modelo_id = %s
         ORDER BY id ASC
     """, (modelo_id,))
@@ -166,31 +174,48 @@ def obtener_categorias_modelo(cur, modelo_id: int) -> List[Dict[str, Any]]:
 
 
 def obtener_variables_de_categoria(cur, categoria_id: int) -> List[Dict[str, Any]]:
+    """
+    Devuelve variables configuradas en el modelo (solo por categoría_id):
+      id, nombre, campo_db, peso_variable
+    """
     cur.execute("""
-        SELECT id, peso_variable
-        FROM modelo_variable
+        SELECT id, COALESCE(nombre,''), COALESCE(campo_db,''), COALESCE(peso_variable,0)
+        FROM diagnostico_variable
         WHERE categoria_id = %s
+        ORDER BY id ASC
     """, (categoria_id,))
     rows = cur.fetchall()
-    return [{"variable_id": r[0], "peso_variable": float(r[1])} for r in rows]
+    return [{
+        "variable_id": r[0],
+        "variable_nombre": r[1],
+        "campo_db": r[2],
+        "peso_variable": float(r[3]),
+    } for r in rows]
 
 
-def obtener_score_variable(cur, creador_id: int, variable_id: int) -> int:
+def obtener_score_variable_y_raw(cur, creador_id: int, variable_id: int) -> Dict[str, Any]:
+    """
+    Lee de diagnostico_score_variable:
+      score (1..5) y valor raw (text/num)
+    """
     cur.execute("""
-        SELECT score
-        FROM talento_score_variable
+        SELECT score, valor_raw_text, valor_raw_num
+        FROM diagnostico_score_variable
         WHERE creador_id = %s
           AND variable_id = %s
+        ORDER BY created_at DESC
         LIMIT 1
     """, (creador_id, variable_id))
     row = cur.fetchone()
-    return int(row[0]) if row else 0
+    if not row:
+        return {"score": 0, "valor_raw_text": None, "valor_raw_num": None}
+    return {"score": int(row[0]), "valor_raw_text": row[1], "valor_raw_num": row[2]}
 
 
 def obtener_script(cur, categoria_id: int, escala: int, nivel: int) -> str:
     cur.execute("""
         SELECT script
-        FROM talento_script_categoria
+        FROM diagnostico_interpretacion_categoria
         WHERE categoria_id = %s
           AND escala = %s
           AND nivel = %s
@@ -202,13 +227,13 @@ def obtener_script(cur, categoria_id: int, escala: int, nivel: int) -> str:
 
 def sobrescribir_score_categoria(cur, creador_id: int, modelo_id: int, filas: List[Dict[str, Any]]) -> None:
     cur.execute("""
-        DELETE FROM talento_score_categoria
+        DELETE FROM diagnostico_score_categoria
         WHERE creador_id = %s AND modelo_id = %s
     """, (creador_id, modelo_id))
 
     for f in filas:
         cur.execute("""
-            INSERT INTO talento_score_categoria (modelo_id, creador_id, categoria_id, score_categoria, nivel)
+            INSERT INTO diagnostico_score_categoria (modelo_id, creador_id, categoria_id, score_categoria, nivel)
             VALUES (%s, %s, %s, %s, %s)
         """, (modelo_id, creador_id, f["categoria_id"], f["score_categoria"], f["nivel_5"]))
 
@@ -223,12 +248,12 @@ def sobrescribir_score_general(
     diagnostico_resumen: str
 ) -> None:
     cur.execute("""
-        DELETE FROM talento_score_general
+        DELETE FROM diagnostico_score_general
         WHERE creador_id = %s AND modelo_id = %s
     """, (creador_id, modelo_id))
 
     cur.execute("""
-        INSERT INTO talento_score_general (creador_id, modelo_id, puntaje_total, nivel, diagnostico_json, diagnostico_resumen)
+        INSERT INTO diagnostico_score_general (creador_id, modelo_id, puntaje_total, nivel, diagnostico_json, diagnostico_resumen)
         VALUES (%s, %s, %s, %s, %s::jsonb, %s)
     """, (
         creador_id,
@@ -249,7 +274,65 @@ def actualizar_diagnostico_perfil(cur, creador_id: int, texto: str) -> None:
 
 
 # =====================================================
-# Cálculo principal (sin MotorEnsamblajeV4)
+# Desglose por variables (SIN reglas diagnostico_variable_regla)
+# =====================================================
+def construir_detalle_variables_categoria(cur, creador_id: int, categoria_id: int) -> List[Dict[str, Any]]:
+    """
+    Construye detalle de variables para que el usuario entienda cálculo:
+      - valor raw (texto/num)
+      - score (1..5)
+      - icono + nivel_texto (1..5)
+      - peso_variable
+      - contribucion (score*peso/100)
+    """
+    vars_conf = obtener_variables_de_categoria(cur, categoria_id)
+    detalle: List[Dict[str, Any]] = []
+
+    for v in vars_conf:
+        var_id = v["variable_id"]
+        peso = float(v["peso_variable"] or 0)
+        nombre = (v.get("variable_nombre") or "").strip() or f"Variable {var_id}"
+        campo_db = (v.get("campo_db") or "").strip()
+
+        data = obtener_score_variable_y_raw(cur, creador_id, var_id)
+        score_5 = int(data.get("score") or 0)
+
+        raw_text = data.get("valor_raw_text")
+        raw_num = data.get("valor_raw_num")
+
+        # valor_display: preferimos texto si existe; sino num; sino score
+        if raw_text is not None and str(raw_text).strip() != "":
+            valor_display = str(raw_text).strip()
+        elif raw_num is not None:
+            try:
+                valor_display = float(raw_num)
+            except Exception:
+                valor_display = str(raw_num)
+        else:
+            valor_display = None
+
+        badge = icono_badge_5(score_5 if score_5 else 1)
+        contribucion = round((score_5 or 0) * (peso / 100.0), 4)
+
+        detalle.append({
+            "variable_id": var_id,
+            "label": nombre,
+            "campo_db": campo_db,
+            "peso_variable": peso,
+            "valor_raw_text": raw_text,
+            "valor_raw_num": float(raw_num) if raw_num is not None else None,
+            "valor_display": valor_display,          # lo que muestra el front
+            "score_5": score_5,                      # 1..5
+            "icono": badge["icono"],
+            "nivel_texto": badge["nivel_texto"],     # Muy bajo/Bajo/Bueno/Alto/Excelente
+            "contribucion": contribucion
+        })
+
+    return detalle
+
+
+# =====================================================
+# Cálculo principal (con desglose de variables)
 # =====================================================
 def calcular_diagnostico(conn, creador_id: int) -> Dict[str, Any]:
     cur = conn.cursor()
@@ -274,13 +357,21 @@ def calcular_diagnostico(conn, creador_id: int) -> Dict[str, Any]:
         cat_nombre = c["categoria_nombre"]
         peso_cat = c["peso_categoria"]
 
-        variables = obtener_variables_de_categoria(cur, cat_id)
+        # Variables de esta categoría (con nombre/campo/peso)
+        variables_conf = obtener_variables_de_categoria(cur, cat_id)
 
+        # Detalle para desglose en UI
+        variables_detalle = construir_detalle_variables_categoria(cur, creador_id, cat_id)
+
+        # score_categoria: suma(score_var * peso_var/100)
         score_categoria = 0.0
-        for v in variables:
+        for v in variables_conf:
             var_id = v["variable_id"]
-            peso_var = v["peso_variable"]
-            score_var = obtener_score_variable(cur, creador_id, var_id)
+            peso_var = float(v["peso_variable"] or 0)
+
+            data = obtener_score_variable_y_raw(cur, creador_id, var_id)
+            score_var = int(data.get("score") or 0)
+
             score_categoria += (score_var * (peso_var / 100.0))
 
         score_categoria = round(score_categoria, 2)
@@ -305,6 +396,9 @@ def calcular_diagnostico(conn, creador_id: int) -> Dict[str, Any]:
             "script_5": script_5,
             "script_3": script_3,
             "porcentaje": round((score_categoria / 5.0) * 100.0, 2),
+
+            # ✅ NUEVO: desglose de variables para explicar cálculo
+            "variables": variables_detalle
         })
 
         score_total += (score_categoria * (peso_cat / 100.0))
@@ -313,7 +407,7 @@ def calcular_diagnostico(conn, creador_id: int) -> Dict[str, Any]:
     nivel_total_5 = convertir_score_a_nivel_5(score_total)
     nivel_total_3 = nivel_5_a_3(nivel_total_5)
 
-    # 5) Nuevo texto ejecutivo por filas + semáforo
+    # 5) Texto ejecutivo por filas + semáforo
     texto_ejecutivo = generar_resumen_ejecutivo_filas(resultado_categorias)
     resumen_corto = texto_ejecutivo[:200]
 
@@ -342,10 +436,11 @@ def calcular_diagnostico(conn, creador_id: int) -> Dict[str, Any]:
                 "grupo_nombre": c["grupo_nombre"],
                 "script_5": c["script_5"],
                 "script_3": c["script_3"],
+                "variables": c["variables"],  # desglose completo
             }
             for c in resultado_categorias
         ],
-        "version_motor": "filas_v1"
+        "version_motor": "filas_v2_con_variables"
     }
 
     sobrescribir_score_general(
@@ -382,8 +477,12 @@ def diagnostico_creador(creador_id: int):
         raise HTTPException(status_code=400, detail="Tenant no disponible")
 
     with get_connection_context() as conn:
-        data = calcular_diagnostico(conn, creador_id)
-        conn.commit()
+        try:
+            data = calcular_diagnostico(conn, creador_id)
+            conn.commit()
+        except Exception as e:
+            logger.exception(f"Error generando diagnóstico creador_id={creador_id}: {e}")
+            raise
 
     nombre_agencia = current_business_name.get() if "current_business_name" in globals() else None
 
@@ -391,6 +490,399 @@ def diagnostico_creador(creador_id: int):
         "agencia": {"nombre": nombre_agencia},
         **data
     }
+# import logging
+# import json
+# from typing import List, Dict, Any
+# from fastapi import APIRouter, HTTPException
+#
+# from tenant import current_tenant, current_business_name
+# from DataBase import get_connection_context
+#
+# logger = logging.getLogger(__name__)
+# router = APIRouter()
+#
+#
+# # =====================================================
+# # Utilidades de scoring / niveles
+# # =====================================================
+# def convertir_score_a_nivel_5(score: float) -> int:
+#     """Convierte score (0..5) a nivel 1..5."""
+#     if score >= 4.2:
+#         return 5
+#     elif score >= 3.8:
+#         return 4
+#     elif score >= 3.2:
+#         return 3
+#     elif score >= 2.5:
+#         return 2
+#     return 1
+#
+#
+# def nivel_5_a_3(nivel_5: int) -> int:
+#     """Reduce 1..5 a 1..3 para scripts cortos."""
+#     if nivel_5 <= 2:
+#         return 1
+#     if nivel_5 == 3:
+#         return 2
+#     return 3
+#
+#
+# def grupo_tarjeta(nivel_5: int) -> Dict[str, Any]:
+#     """
+#     Para front:
+#       Fortalezas = 1
+#       Desarrollo = 2
+#       Riesgos     = 3
+#     """
+#     if nivel_5 >= 4:
+#         return {"grupo_id": 1, "grupo_nombre": "Fortalezas"}
+#     if nivel_5 == 3:
+#         return {"grupo_id": 2, "grupo_nombre": "Desarrollo"}
+#     return {"grupo_id": 3, "grupo_nombre": "Riesgos"}
+#
+#
+# def icono_semaforo(nivel_3: int) -> str:
+#     if nivel_3 == 3:
+#         return "🟢"
+#     if nivel_3 == 2:
+#         return "🟡"
+#     return "🔴"
+#
+#
+# # =====================================================
+# # Resumen ejecutivo por filas (sin motor)
+# # =====================================================
+# def generar_resumen_ejecutivo_filas(categorias: List[Dict[str, Any]]) -> str:
+#     """
+#     Espera categorias con:
+#       - categoria_nombre
+#       - nivel_3
+#       - script_3
+#     Devuelve 4 filas ordenadas:
+#       POTENCIAL DE TALENTO
+#       CAPACIDAD OPERATIVA
+#       POTENCIAL DE MONETIZACIÓN
+#       INTENCIÓN Y ALINEACIÓN
+#     """
+#
+#     def linea(nivel_3: int, texto: str) -> str:
+#         return f"{icono_semaforo(nivel_3)} {texto}"
+#
+#     # Mapeo flexible por nombre (por si en DB "Mercado" y tú lo llamas "Monetización")
+#     mapa = {
+#         "POTENCIAL DE TALENTO": None,
+#         "CAPACIDAD OPERATIVA": None,
+#         "POTENCIAL DE MONETIZACIÓN": None,
+#         "INTENCIÓN Y ALINEACIÓN": None,
+#     }
+#
+#     for c in categorias:
+#         nombre = (c.get("categoria_nombre") or "").strip()
+#         n3 = int(c.get("nivel_3") or 1)
+#         s3 = (c.get("script_3") or "").strip()
+#
+#         if not s3:
+#             s3 = "Sin definición estratégica."
+#
+#         if nombre == "Potencial de Talento":
+#             mapa["POTENCIAL DE TALENTO"] = linea(n3, s3)
+#
+#         elif nombre == "Capacidad Operativa":
+#             mapa["CAPACIDAD OPERATIVA"] = linea(n3, s3)
+#
+#         elif nombre in ("Potencial de Mercado", "Potencial de Monetización"):
+#             mapa["POTENCIAL DE MONETIZACIÓN"] = linea(n3, s3)
+#
+#         elif nombre == "Intención y Alineación":
+#             mapa["INTENCIÓN Y ALINEACIÓN"] = linea(n3, s3)
+#
+#     filas = []
+#     if mapa["POTENCIAL DE TALENTO"]:
+#         filas.append(f"POTENCIAL DE TALENTO: {mapa['POTENCIAL DE TALENTO']}")
+#     if mapa["CAPACIDAD OPERATIVA"]:
+#         filas.append(f"CAPACIDAD OPERATIVA: {mapa['CAPACIDAD OPERATIVA']}")
+#     if mapa["POTENCIAL DE MONETIZACIÓN"]:
+#         filas.append(f"POTENCIAL DE MONETIZACIÓN: {mapa['POTENCIAL DE MONETIZACIÓN']}")
+#     if mapa["INTENCIÓN Y ALINEACIÓN"]:
+#         filas.append(f"INTENCIÓN Y ALINEACIÓN: {mapa['INTENCIÓN Y ALINEACIÓN']}")
+#
+#     return "\n\n".join(filas)
+#
+#
+# # =====================================================
+# # DB helpers
+# # =====================================================
+# def obtener_modelo_activo(cur) -> Dict[str, Any]:
+#     cur.execute("""
+#         SELECT id, nombre
+#         FROM diagnostico_modelo
+#         WHERE activo = true
+#         LIMIT 1
+#     """)
+#     row = cur.fetchone()
+#     if not row:
+#         raise HTTPException(status_code=400, detail="No hay modelo activo")
+#     return {"modelo_id": row[0], "modelo_nombre": row[1]}
+#
+#
+# def obtener_perfil_creador(cur, creador_id: int) -> Dict[str, Any]:
+#     cur.execute("""
+#         SELECT nombre, edad, genero, pais, ciudad
+#         FROM perfil_creador
+#         WHERE creador_id = %s
+#         LIMIT 1
+#     """, (creador_id,))
+#     row = cur.fetchone()
+#     if not row:
+#         raise HTTPException(status_code=404, detail="Creador no encontrado en perfil_creador")
+#     return {
+#         "nombre": row[0],
+#         "edad": row[1],
+#         "genero": row[2],
+#         "pais": row[3],
+#         "ciudad": row[4],
+#     }
+#
+#
+# def obtener_categorias_modelo(cur, modelo_id: int) -> List[Dict[str, Any]]:
+#     cur.execute("""
+#         SELECT id, nombre, peso_categoria
+#         FROM diagnostico_categoria
+#         WHERE modelo_id = %s
+#         ORDER BY id ASC
+#     """, (modelo_id,))
+#     rows = cur.fetchall()
+#     if not rows:
+#         raise HTTPException(status_code=400, detail="El modelo activo no tiene categorías configuradas")
+#     return [{"categoria_id": r[0], "categoria_nombre": r[1], "peso_categoria": float(r[2])} for r in rows]
+#
+#
+# def obtener_variables_de_categoria(cur, categoria_id: int) -> List[Dict[str, Any]]:
+#     cur.execute("""
+#         SELECT id, peso_variable
+#         FROM diagnostico_variable
+#         WHERE categoria_id = %s
+#     """, (categoria_id,))
+#     rows = cur.fetchall()
+#     return [{"variable_id": r[0], "peso_variable": float(r[1])} for r in rows]
+#
+#
+# def obtener_score_variable(cur, creador_id: int, variable_id: int) -> int:
+#     cur.execute("""
+#         SELECT score
+#         FROM diagnostico_score_variable
+#         WHERE creador_id = %s
+#           AND variable_id = %s
+#         LIMIT 1
+#     """, (creador_id, variable_id))
+#     row = cur.fetchone()
+#     return int(row[0]) if row else 0
+#
+#
+# def obtener_script(cur, categoria_id: int, escala: int, nivel: int) -> str:
+#     cur.execute("""
+#         SELECT script
+#         FROM diagnostico_interpretacion_categoria
+#         WHERE categoria_id = %s
+#           AND escala = %s
+#           AND nivel = %s
+#         LIMIT 1
+#     """, (categoria_id, escala, nivel))
+#     row = cur.fetchone()
+#     return row[0] if row else "Sin definición estratégica."
+#
+#
+# def sobrescribir_score_categoria(cur, creador_id: int, modelo_id: int, filas: List[Dict[str, Any]]) -> None:
+#     cur.execute("""
+#         DELETE FROM diagnostico_score_categoria
+#         WHERE creador_id = %s AND modelo_id = %s
+#     """, (creador_id, modelo_id))
+#
+#     for f in filas:
+#         cur.execute("""
+#             INSERT INTO diagnostico_score_categoria (modelo_id, creador_id, categoria_id, score_categoria, nivel)
+#             VALUES (%s, %s, %s, %s, %s)
+#         """, (modelo_id, creador_id, f["categoria_id"], f["score_categoria"], f["nivel_5"]))
+#
+#
+# def sobrescribir_score_general(
+#     cur,
+#     creador_id: int,
+#     modelo_id: int,
+#     puntaje_total: float,
+#     nivel_5: int,
+#     diagnostico_json: dict,
+#     diagnostico_resumen: str
+# ) -> None:
+#     cur.execute("""
+#         DELETE FROM talento_score_general
+#         WHERE creador_id = %s AND modelo_id = %s
+#     """, (creador_id, modelo_id))
+#
+#     cur.execute("""
+#         INSERT INTO talento_score_general (creador_id, modelo_id, puntaje_total, nivel, diagnostico_json, diagnostico_resumen)
+#         VALUES (%s, %s, %s, %s, %s::jsonb, %s)
+#     """, (
+#         creador_id,
+#         modelo_id,
+#         puntaje_total,
+#         nivel_5,
+#         json.dumps(diagnostico_json, ensure_ascii=False),
+#         (diagnostico_resumen or "")[:200]
+#     ))
+#
+#
+# def actualizar_diagnostico_perfil(cur, creador_id: int, texto: str) -> None:
+#     cur.execute("""
+#         UPDATE perfil_creador
+#         SET diagnostico = %s
+#         WHERE creador_id = %s
+#     """, (texto, creador_id))
+#
+#
+# # =====================================================
+# # Cálculo principal (sin MotorEnsamblajeV4)
+# # =====================================================
+# def calcular_diagnostico(conn, creador_id: int) -> Dict[str, Any]:
+#     cur = conn.cursor()
+#
+#     # 1) Modelo activo
+#     modelo = obtener_modelo_activo(cur)
+#     modelo_id = modelo["modelo_id"]
+#     modelo_nombre = modelo["modelo_nombre"]
+#
+#     # 2) Perfil demográfico
+#     perfil = obtener_perfil_creador(cur, creador_id)
+#
+#     # 3) Categorías + pesos
+#     categorias = obtener_categorias_modelo(cur, modelo_id)
+#
+#     resultado_categorias: List[Dict[str, Any]] = []
+#     score_total = 0.0
+#
+#     # 4) Calcular score por categoría (ponderado por variable) y score total (ponderado por categoría)
+#     for c in categorias:
+#         cat_id = c["categoria_id"]
+#         cat_nombre = c["categoria_nombre"]
+#         peso_cat = c["peso_categoria"]
+#
+#         variables = obtener_variables_de_categoria(cur, cat_id)
+#
+#         score_categoria = 0.0
+#         for v in variables:
+#             var_id = v["variable_id"]
+#             peso_var = v["peso_variable"]
+#             score_var = obtener_score_variable(cur, creador_id, var_id)
+#             score_categoria += (score_var * (peso_var / 100.0))
+#
+#         score_categoria = round(score_categoria, 2)
+#         nivel_5 = convertir_score_a_nivel_5(score_categoria)
+#         nivel_3 = nivel_5_a_3(nivel_5)
+#
+#         # Scripts:
+#         script_5 = obtener_script(cur, cat_id, escala=5, nivel=nivel_5)   # requerido
+#         script_3 = obtener_script(cur, cat_id, escala=3, nivel=nivel_3)   # corto (para resumen)
+#
+#         grupo = grupo_tarjeta(nivel_5)
+#
+#         resultado_categorias.append({
+#             "categoria_id": cat_id,
+#             "categoria_nombre": cat_nombre,
+#             "peso_categoria": peso_cat,
+#             "score_5": score_categoria,
+#             "nivel_5": nivel_5,
+#             "nivel_3": nivel_3,
+#             "grupo_id": grupo["grupo_id"],
+#             "grupo_nombre": grupo["grupo_nombre"],
+#             "script_5": script_5,
+#             "script_3": script_3,
+#             "porcentaje": round((score_categoria / 5.0) * 100.0, 2),
+#         })
+#
+#         score_total += (score_categoria * (peso_cat / 100.0))
+#
+#     score_total = round(score_total, 2)
+#     nivel_total_5 = convertir_score_a_nivel_5(score_total)
+#     nivel_total_3 = nivel_5_a_3(nivel_total_5)
+#
+#     # 5) Nuevo texto ejecutivo por filas + semáforo
+#     texto_ejecutivo = generar_resumen_ejecutivo_filas(resultado_categorias)
+#     resumen_corto = texto_ejecutivo[:200]
+#
+#     # 6) Guardado (sobrescribir)
+#     sobrescribir_score_categoria(cur, creador_id, modelo_id, [
+#         {"categoria_id": c["categoria_id"], "score_categoria": c["score_5"], "nivel_5": c["nivel_5"]}
+#         for c in resultado_categorias
+#     ])
+#
+#     diagnostico_json = {
+#         "creador_id": creador_id,
+#         "modelo": {"id": modelo_id, "nombre": modelo_nombre},
+#         "score_total": score_total,
+#         "nivel_total_5": nivel_total_5,
+#         "nivel_total_3": nivel_total_3,
+#         "texto_ejecutivo": texto_ejecutivo,
+#         "categorias": [
+#             {
+#                 "categoria_id": c["categoria_id"],
+#                 "nombre": c["categoria_nombre"],
+#                 "peso_categoria": c["peso_categoria"],
+#                 "score_5": c["score_5"],
+#                 "nivel_5": c["nivel_5"],
+#                 "nivel_3": c["nivel_3"],
+#                 "grupo_id": c["grupo_id"],
+#                 "grupo_nombre": c["grupo_nombre"],
+#                 "script_5": c["script_5"],
+#                 "script_3": c["script_3"],
+#             }
+#             for c in resultado_categorias
+#         ],
+#         "version_motor": "filas_v1"
+#     }
+#
+#     sobrescribir_score_general(
+#         cur,
+#         creador_id=creador_id,
+#         modelo_id=modelo_id,
+#         puntaje_total=score_total,
+#         nivel_5=nivel_total_5,
+#         diagnostico_json=diagnostico_json,
+#         diagnostico_resumen=resumen_corto
+#     )
+#
+#     # Actualiza perfil_creador.diagnostico con el texto ejecutivo (filas)
+#     actualizar_diagnostico_perfil(cur, creador_id, texto_ejecutivo)
+#
+#     return {
+#         "modelo": {"id": modelo_id, "nombre": modelo_nombre},
+#         "perfil": perfil,
+#         "score_total": score_total,
+#         "nivel_total_5": nivel_total_5,
+#         "nivel_total_3": nivel_total_3,
+#         "texto_ejecutivo": texto_ejecutivo,
+#         "categorias": resultado_categorias,
+#     }
+#
+#
+# # =====================================================
+# # ENDPOINT
+# # =====================================================
+# @router.get("/api/creadores/{creador_id}/diagnostico")
+# def diagnostico_creador(creador_id: int):
+#     TENANT = current_tenant.get() if "current_tenant" in globals() else None
+#     if TENANT is None:
+#         raise HTTPException(status_code=400, detail="Tenant no disponible")
+#
+#     with get_connection_context() as conn:
+#         data = calcular_diagnostico(conn, creador_id)
+#         conn.commit()
+#
+#     nombre_agencia = current_business_name.get() if "current_business_name" in globals() else None
+#
+#     return {
+#         "agencia": {"nombre": nombre_agencia},
+#         **data
+#     }
 # import traceback
 # import logging
 # import pytz
@@ -565,7 +1057,7 @@ def diagnostico_creador(creador_id: int):
 # def obtener_modelo_activo(cur) -> Dict[str, Any]:
 #     cur.execute("""
 #         SELECT id, nombre
-#         FROM modelo_evaluacion
+#         FROM diagnostico_modelo
 #         WHERE activo = true
 #         LIMIT 1
 #     """)
@@ -599,7 +1091,7 @@ def diagnostico_creador(creador_id: int):
 # def obtener_categorias_modelo(cur, modelo_id: int) -> List[Dict[str, Any]]:
 #     cur.execute("""
 #         SELECT id, nombre, peso_categoria
-#         FROM modelo_categoria
+#         FROM diagnostico_categoria
 #         WHERE modelo_id = %s
 #         ORDER BY id ASC
 #     """, (modelo_id,))
@@ -613,7 +1105,7 @@ def diagnostico_creador(creador_id: int):
 # def obtener_variables_de_categoria(cur, categoria_id: int) -> List[Dict[str, Any]]:
 #     cur.execute("""
 #         SELECT id, peso_variable
-#         FROM modelo_variable
+#         FROM diagnostico_variable
 #         WHERE categoria_id = %s
 #     """, (categoria_id,))
 #     rows = cur.fetchall()
@@ -623,7 +1115,7 @@ def diagnostico_creador(creador_id: int):
 # def obtener_score_variable(cur, creador_id: int, variable_id: int) -> int:
 #     cur.execute("""
 #         SELECT score
-#         FROM talento_score_variable
+#         FROM diagnostico_score_variable
 #         WHERE creador_id = %s
 #           AND variable_id = %s
 #         LIMIT 1
@@ -635,7 +1127,7 @@ def diagnostico_creador(creador_id: int):
 # def obtener_script(cur, modelo_id: int, categoria_id: int, escala: int, nivel: int) -> str:
 #     cur.execute("""
 #         SELECT script
-#         FROM talento_script_categoria
+#         FROM diagnostico_interpretacion_categoria
 #         WHERE modelo_id = %s
 #           AND categoria_id = %s
 #           AND escala = %s
@@ -649,13 +1141,13 @@ def diagnostico_creador(creador_id: int):
 # def sobrescribir_score_categoria(cur, creador_id: int, modelo_id: int, filas: List[Dict[str, Any]]) -> None:
 #     # sobrescribir = borrar y reinsertar
 #     cur.execute("""
-#         DELETE FROM talento_score_categoria
+#         DELETE FROM diagnostico_score_categoria
 #         WHERE creador_id = %s AND modelo_id = %s
 #     """, (creador_id, modelo_id))
 #
 #     for f in filas:
 #         cur.execute("""
-#             INSERT INTO talento_score_categoria (modelo_id, creador_id, categoria_id, score_categoria, nivel)
+#             INSERT INTO diagnostico_score_categoria (modelo_id, creador_id, categoria_id, score_categoria, nivel)
 #             VALUES (%s, %s, %s, %s, %s)
 #         """, (modelo_id, creador_id, f["categoria_id"], f["score_categoria"], f["nivel_5"]))
 #

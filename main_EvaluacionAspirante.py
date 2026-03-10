@@ -271,8 +271,8 @@ def sync_cualitativo_perfil_y_variables(
 ):
     """
     - Actualiza en perfil_creador: apariencia, engagement, calidad_contenido, eval_biografia, metadata_videos, eval_foto
-    - Actualiza/crea en talento_score_variable (score) SOLO para variables que vienen de:
-        SELECT id FROM modelo_variable WHERE categoria_id = 1
+    - Actualiza/crea en diagnostico_score_variable (score) SOLO para variables que vienen de:
+        SELECT id FROM diagnostico_variable WHERE categoria_id = 1
       Mapeo: usa el campo_db (si existe) o el nombre (fallback) para decidir qué valor poner.
     """
     try:
@@ -293,7 +293,7 @@ def sync_cualitativo_perfil_y_variables(
 
         # Campos que sí existen en payload para mapping
         payload_keys = set(data.keys())  # incluye eval_foto
-        # Pero talento_score_variable solo usa estos (sin eval_foto)
+        # Pero diagnostico_score_variable solo usa estos (sin eval_foto)
         payload_keys_tvs = payload_keys - {"eval_foto"}
 
         with get_connection_context() as conn:
@@ -325,7 +325,7 @@ def sync_cualitativo_perfil_y_variables(
                 # 2) Traer variables categoria_id=1 con campo_db para mapear
                 cur.execute("""
                     SELECT id, campo_db, nombre
-                    FROM modelo_variable
+                    FROM diagnostico_variable
                     WHERE categoria_id = 1
                     ORDER BY id
                 """)
@@ -335,11 +335,11 @@ def sync_cualitativo_perfil_y_variables(
                     conn.commit()
                     return {
                         "status": "ok",
-                        "mensaje": "perfil_creador actualizado. No hay variables en modelo_variable con categoria_id=1",
+                        "mensaje": "perfil_creador actualizado. No hay variables en diagnostico_variable con categoria_id=1",
                         "creador_id": creador_id,
                         "perfil_creador_filas_afectadas": perfil_rows,
-                        "talento_score_variable_actualizadas": 0,
-                        "talento_score_variable_insertadas": 0,
+                        "diagnostico_score_variable_actualizadas": 0,
+                        "diagnostico_score_variable_insertadas": 0,
                         "variables_procesadas": []
                     }
 
@@ -371,7 +371,7 @@ def sync_cualitativo_perfil_y_variables(
                     # 4) Update existentes (por variable_id)
                     #    Usamos un UPDATE con FROM (VALUES ...) para setear score distinto por variable
                     cur.execute("""
-                        UPDATE talento_score_variable tvs
+                        UPDATE diagnostico_score_variable tvs
                         SET score = v.score
                         FROM (VALUES %s) AS v(variable_id, score)
                         WHERE tvs.creador_id = %s
@@ -382,12 +382,12 @@ def sync_cualitativo_perfil_y_variables(
 
                     # 5) Insert faltantes
                     cur.execute("""
-                        INSERT INTO talento_score_variable (creador_id, variable_id, score)
+                        INSERT INTO diagnostico_score_variable (creador_id, variable_id, score)
                         SELECT %s, v.variable_id, v.score
                         FROM (VALUES %s) AS v(variable_id, score)
                         WHERE NOT EXISTS (
                             SELECT 1
-                            FROM talento_score_variable tvs
+                            FROM diagnostico_score_variable tvs
                             WHERE tvs.creador_id = %s
                               AND tvs.variable_id = v.variable_id
                         )
@@ -399,11 +399,11 @@ def sync_cualitativo_perfil_y_variables(
 
         return {
             "status": "ok",
-            "mensaje": "perfil_creador actualizado + talento_score_variable actualizado/insertado para variables categoria_id=1 (mapeadas por campo_db/nombre)",
+            "mensaje": "perfil_creador actualizado + diagnostico_score_variable actualizado/insertado para variables categoria_id=1 (mapeadas por campo_db/nombre)",
             "creador_id": creador_id,
             "perfil_creador_filas_afectadas": perfil_rows,
-            "talento_score_variable_actualizadas": upsert_actualizadas,
-            "talento_score_variable_insertadas": upsert_insertadas,
+            "diagnostico_score_variable_actualizadas": upsert_actualizadas,
+            "diagnostico_score_variable_insertadas": upsert_insertadas,
             "variables_procesadas": variables_procesadas,
             "payload": data
         }
@@ -1291,7 +1291,7 @@ def listar_modelos(activos: bool = Query(True)):
         # 🔥 Base de la consulta
         query = """
             SELECT id, nombre, descripcion, activo
-            FROM modelo_evaluacion
+            FROM diagnostico_modelo
         """
 
         params = []
@@ -1325,7 +1325,7 @@ def crear_modelo(data: ModeloEvaluacionCreate):
     with get_connection_context() as conn:
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO modelo_evaluacion (nombre, descripcion)
+            INSERT INTO diagnostico_modelo (nombre, descripcion)
             VALUES (%s, %s)
             RETURNING id
         """, (data.nombre, data.descripcion))
@@ -1347,7 +1347,7 @@ def listar_categorias(modelo_id: int):
         cur = conn.cursor()
         cur.execute("""
             SELECT id, nombre, peso_categoria
-            FROM modelo_categoria
+            FROM diagnostico_categoria
             WHERE modelo_id = %s
             ORDER BY id ASC
         """, (modelo_id,))
@@ -1373,7 +1373,7 @@ def crear_categoria(modelo_id: int, data: ModeloCategoriaCreate):
     with get_connection_context() as conn:
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO modelo_categoria (modelo_id, nombre, peso_categoria)
+            INSERT INTO diagnostico_categoria (modelo_id, nombre, peso_categoria)
             VALUES (%s, %s, %s)
             RETURNING id
         """, (modelo_id, data.nombre, data.peso_categoria))
@@ -1395,7 +1395,7 @@ def listar_variables(categoria_id: int):
         cur = conn.cursor()
         cur.execute("""
             SELECT id, nombre, campo_db, peso_variable, tipo
-            FROM modelo_variable
+            FROM diagnostico_variable
             WHERE categoria_id = %s
             ORDER BY id ASC
         """, (categoria_id,))
@@ -1423,7 +1423,7 @@ def crear_variable(categoria_id: int, data: ModeloVariableCreate):
     with get_connection_context() as conn:
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO modelo_variable 
+            INSERT INTO diagnostico_variable 
             (categoria_id, nombre, campo_db, peso_variable, tipo)
             VALUES (%s, %s, %s, %s, %s)
             RETURNING id
@@ -1450,7 +1450,7 @@ def guardar_talento_score(creador_id: int, data: TalentoScoreCreate):
         cur = conn.cursor()
 
         cur.execute("""
-            INSERT INTO talento_score_variable 
+            INSERT INTO diagnostico_score_variable 
             (creador_id, variable_id, score)
             VALUES (%s, %s, %s)
             ON CONFLICT DO NOTHING
@@ -1547,7 +1547,7 @@ def actualizar_estado_modelo(
         # 🔍 Verificar que el modelo exista
         cur.execute("""
             SELECT id
-            FROM modelo_evaluacion
+            FROM diagnostico_modelo
             WHERE id = %s
         """, (modelo_id,))
 
@@ -1561,14 +1561,14 @@ def actualizar_estado_modelo(
 
         # ✅ 1. Colocar TODOS los modelos en FALSE
         cur.execute("""
-            UPDATE modelo_evaluacion
+            UPDATE diagnostico_modelo
             SET activo = FALSE
         """)
 
         # ✅ 2. Si el usuario quiere activar → activar solo el seleccionado
         if data.activo:
             cur.execute("""
-                UPDATE modelo_evaluacion
+                UPDATE diagnostico_modelo
                 SET activo = TRUE
                 WHERE id = %s
             """, (modelo_id,))
@@ -1592,7 +1592,7 @@ def actualizar_pesos_categorias(modelo_id: int, data: ModeloCategoriasUpdate):
         cur = conn.cursor()
         for c in data.categorias:
             cur.execute("""
-                UPDATE modelo_categoria
+                UPDATE diagnostico_categoria
                 SET peso_categoria = %s
                 WHERE id = %s AND modelo_id = %s
             """, (c.peso_categoria, c.id, modelo_id))
@@ -1608,7 +1608,7 @@ def calcular_evaluacion(creador_id: int, modelo_id: int):
         # 1️⃣ Obtener categorías
         cur.execute("""
             SELECT id, nombre, peso_categoria
-            FROM modelo_categoria
+            FROM diagnostico_categoria
             WHERE modelo_id = %s
         """, (modelo_id,))
         categorias = cur.fetchall()
@@ -1621,7 +1621,7 @@ def calcular_evaluacion(creador_id: int, modelo_id: int):
             # 2️⃣ Obtener variables de la categoría
             cur.execute("""
                 SELECT id, campo_db, peso_variable, tipo
-                FROM modelo_variable
+                FROM diagnostico_variable
                 WHERE categoria_id = %s
             """, (cat_id,))
             variables = cur.fetchall()
@@ -1636,7 +1636,7 @@ def calcular_evaluacion(creador_id: int, modelo_id: int):
                 if tipo == "cualitativa":
                     cur.execute("""
                         SELECT score
-                        FROM talento_score_variable
+                        FROM diagnostico_score_variable
                         WHERE creador_id = %s
                         AND variable_id = %s
                     """, (creador_id, var_id))
@@ -1888,7 +1888,7 @@ def evaluar_potencial_talento(
 ):
     """
     Calcula el 'Potencial de Talento' (1-5) para el SaaS.
-    Lee los pesos (20% c/u) desde modelo_variable usando los 5 campos activos.
+    Lee los pesos (20% c/u) desde diagnostico_variable usando los 5 campos activos.
     """
 
     # 1. Emparejar las 5 variables exactas con sus nombres en la BD
@@ -1907,7 +1907,7 @@ def evaluar_potencial_talento(
             with conn.cursor() as cur:
                 cur.execute("""
                             SELECT campo_db, peso_variable
-                            FROM modelo_variable
+                            FROM diagnostico_variable
                             WHERE categoria_id = 1
                             """)
                 for campo, peso in cur.fetchall():
@@ -2040,7 +2040,7 @@ def evaluar_potencial_mercado(
     }
 
     # ==========================================
-    # 4. CONSULTA DE PESOS EN BD (modelo_variable)
+    # 4. CONSULTA DE PESOS EN BD (diagnostico_variable)
     # ==========================================
     pesos_db = {}
     try:
@@ -2048,7 +2048,7 @@ def evaluar_potencial_mercado(
             with conn.cursor() as cur:
                 cur.execute("""
                             SELECT campo_db, peso_variable
-                            FROM modelo_variable
+                            FROM diagnostico_variable
                             WHERE categoria_id = 2
                             """)
                 for campo, peso in cur.fetchall():
@@ -2114,7 +2114,7 @@ def evaluar_capacidad_operativa(
     """
     Calcula la 'Capacidad Operativa' (1-5) para el SaaS.
     Convierte las variables de tiempo y hábitos en una escala de 1-5
-    y aplica los pesos dinámicos de la BD (modelo_variable, Categoría 3).
+    y aplica los pesos dinámicos de la BD (diagnostico_variable, Categoría 3).
     """
 
     # ==========================================
@@ -2191,7 +2191,7 @@ def evaluar_capacidad_operativa(
             with conn.cursor() as cur:
                 cur.execute("""
                             SELECT campo_db, peso_variable
-                            FROM modelo_variable
+                            FROM diagnostico_variable
                             WHERE categoria_id = 3
                             """)
                 for campo, peso in cur.fetchall():
@@ -2255,7 +2255,7 @@ def evaluar_intencion(
 ):
     """
     Calcula la 'Intención y Alineación' (1-5) para el SaaS.
-    Lee los pesos desde modelo_variable (Categoría 4).
+    Lee los pesos desde diagnostico_variable (Categoría 4).
     El valor 'intencion_trabajo' ya viene en escala 1-5 desde la BD.
     """
 
@@ -2275,7 +2275,7 @@ def evaluar_intencion(
             with conn.cursor() as cur:
                 cur.execute("""
                             SELECT campo_db, peso_variable
-                            FROM modelo_variable
+                            FROM diagnostico_variable
                             WHERE categoria_id = 4
                             """)
                 for campo, peso in cur.fetchall():
@@ -2342,7 +2342,7 @@ def obtener_encuestas_activas():
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT id, nombre, descripcion
-                    FROM form_encuestas
+                    FROM encuestas
                     WHERE activa = true
                     ORDER BY id
                 """)
@@ -2364,7 +2364,7 @@ def obtener_preguntas_por_encuesta(encuesta_id: int):
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT id, texto, tipo, campo, orden
-                    FROM form_preguntas
+                    FROM diagnostico_variable
                     WHERE encuesta_id = %s
                     AND activa = true
                     ORDER BY orden
@@ -2388,8 +2388,8 @@ def obtener_opciones_por_pregunta(pregunta_id: int):
             with conn.cursor() as cur:
                 cur.execute("""
                             SELECT id, label, orden
-                            FROM form_opciones
-                            WHERE pregunta_id = %s
+                            FROM diagnostico_variable_valor
+                            WHERE variable_id = %s
                             ORDER BY orden
                             """, (pregunta_id,))
 
@@ -2414,20 +2414,20 @@ def obtener_encuesta(encuesta_id: int):
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
 
                 cur.execute("""
-                    SELECT 
-                        p.id AS pregunta_id,
-                        p.texto,
-                        p.tipo,
-                        p.campo,
-                        o.id AS opcion_id,
-                        o.label,
-                        o.orden AS opcion_orden
-                    FROM form_preguntas p
-                    LEFT JOIN form_opciones o 
-                        ON o.pregunta_id = p.id
-                    WHERE p.encuesta_id = %s
-                      AND p.activa = true
-                    ORDER BY p.orden, o.orden
+                        SELECT 
+                            v.id AS pregunta_id,
+                            v.texto,
+                            v.tipo_form as tipo,
+                            v.campo_db AS campo,
+                            o.id AS opcion_id,
+                            o.label,
+                            o.orden AS opcion_orden
+                        FROM diagnostico_variable v
+                        LEFT JOIN diagnostico_variable_valor o
+                            ON o.variable_id = v.id
+                        WHERE v.encuesta_id = %s
+                          AND v.activa = true
+                        ORDER BY v.orden, o.orden;
                 """, (encuesta_id,))
 
                 rows = cur.fetchall()
