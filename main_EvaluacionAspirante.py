@@ -2419,7 +2419,7 @@ def obtener_encuesta(encuesta_id: int):
                             v.texto,
                             v.tipo_form as tipo,
                             v.campo_db AS campo,
-                            o.id AS opcion_id,
+                            o.orden AS opcion_id,
                             o.label,
                             o.orden AS opcion_orden
                         FROM diagnostico_variable v
