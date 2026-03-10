@@ -2708,168 +2708,168 @@ def lap(tag: str):
 
 from fastapi import BackgroundTasks
 
-@router.post("/consolidar")
-def consolidar_perfil_web(data: ConsolidarInput,
-    background_tasks: BackgroundTasks   # 👈 ESTE ES EL QUE FALTA
- ):
-    try:
-
-        lap("inicio")
-
-        subdominio = current_tenant.get()
-        cuenta = obtener_cuenta_por_subdominio(subdominio)
-        if not cuenta:
-            return JSONResponse(
-                {"error": f"No se encontraron credenciales para {subdominio}"},
-                status_code=404
-            )
-
-        token_cliente = cuenta["access_token"]
-        phone_id_cliente = cuenta["phone_number_id"]
-        business_name = cuenta.get("business_name", "la agencia")
-
-        # ✅ Contexto WABA
-        current_token.set(token_cliente)
-        current_phone_id.set(phone_id_cliente)
-        current_business_name.set(business_name)
-
-        # -------------------------------
-        # Procesar respuestas
-        # -------------------------------
-        respuestas_dict = None
-        if data.respuestas:
-            respuestas_dict = {}
-            for key, valor in data.respuestas.items():
-                key_int = int(key) if isinstance(key, str) and key.isdigit() else key
-                if key_int == 8:
-                    valor_str = str(valor).strip().lower()
-                    if valor_str in {"no", "n", "0"}:
-                        respuestas_dict[key_int] = "0"
-                    elif valor_str in {"si", "sí", "s", "yes", "y", "1"}:
-                        respuestas_dict[key_int] = "1"
-                    else:
-                        respuestas_dict[key_int] = str(valor)
-                else:
-                    respuestas_dict[key_int] = str(valor) if valor else ""
-            print(f"📋 Respuestas recibidas en request: {respuestas_dict}")
-        else:
-            print("📋 No se recibieron respuestas en request")
-
-        # -------------------------------
-        # Consolidación
-        # -------------------------------
-        consolidar_perfil(
-            data.numero,
-            respuestas_dict=respuestas_dict,
-            tenant_schema=subdominio
-        )
-
-        lap("consolidar_perfil")
-
-        eliminar_flujo(data.numero, tenant_schema=subdominio)
-
-        lap("eliminar_flujo")
-
-        # -------------------------------
-        # Datos del usuario
-        # -------------------------------
-        try:
-            usuario_bd = buscar_usuario_por_telefono(data.numero)
-            nombre_usuario = usuario_bd.get("nombre") if usuario_bd else None
-            creador_id = usuario_bd.get("id") if usuario_bd else None
-        except Exception as e:
-            print(f"⚠️ Error obteniendo usuario {data.numero}: {e}")
-            nombre_usuario = None
-            creador_id = None
-
-        # -------------------------------
-        # Marcar encuesta completada
-        # -------------------------------
-        marcar_encuesta_completada(data.numero)
-
-        lap("marcar_encuesta_completada")
-
-        # -------------------------------
-        # Actualizar Puntajes para el diagnostico
-        # -------------------------------
-
-        # -------------------------------
-        # Actualizar Puntajes + Diagnóstico (guardar en DB)
-        # -------------------------------
-        try:
-            print(f"DEBUG creador_id = {creador_id}")
-            if creador_id:
-
-                # 1) llena tabla de scores
-                poblar_scores_creador(creador_id)
-
-
-                # 2) calcula y guarda puntajes (tu función)
-                evaluar_y_actualizar_perfil_pre_encuesta(creador_id)
-
-                lap("evaluar_y_actualizar")
-
-
-                # 3) genera diagnóstico (usa DB y/o puntajes calculados)
-                diag = diagnostico_perfil_creador_pre(creador_id)
-
-                lap("diagnostico")
-
-
-                # 4) guardar diagnóstico en perfil_creador
-                guardar_diagnostico_perfil_creador(creador_id, diag)
-
-                lap("guardar_diagnostico")
-
-            else:
-                print(f"⚠️ No se pudo evaluar/diagnosticar: creador_id no encontrado para {data.numero}")
-
-        except Exception as e:
-            print(f"⚠️ Error evaluando/guardando diagnóstico creador_id={creador_id}: {e}")
-
-        # -------------------------------
-        # Construir URL informativa
-        # -------------------------------
-        tenant_key = subdominio if subdominio != "public" else "test"
-        url_info = None
-        if creador_id:
-            url_info = (
-                f"https://{tenant_key}.talentum-manager.com/"
-                f"info-incorporacion?cid={creador_id}"
-            )
-
-        # -------------------------------
-        # Mensaje final + envío
-        # -------------------------------
-        mensaje_final = mensaje_encuesta_final(
-            nombre=nombre_usuario,
-            url_info=url_info
-        )
-        # enviar_mensaje(data.numero, mensaje_final)
-
-        background_tasks.add_task(
-            enviar_mensaje_con_credenciales,
-            data.numero,
-            mensaje_final,
-            token_cliente,
-            phone_id_cliente,
-            business_name,
-            nombre_usuario
-        )
-
-        lap("enqueue_whatsapp")
-
-
-        print(f"✅ Perfil consolidado y mensaje enviado a {data.numero}")
-
-        return {"ok": True, "msg": "Perfil consolidado correctamente"}
-
-    except Exception as e:
-        print(f"❌ Error en consolidar_perfil_web: {e}")
-        return JSONResponse(
-            {"error": "Error al consolidar el perfil"},
-            status_code=500
-        )
+# @router.post("/consolidar")
+# def consolidar_perfil_web(data: ConsolidarInput,
+#     background_tasks: BackgroundTasks   # 👈 ESTE ES EL QUE FALTA
+#  ):
+#     try:
+#
+#         lap("inicio")
+#
+#         subdominio = current_tenant.get()
+#         cuenta = obtener_cuenta_por_subdominio(subdominio)
+#         if not cuenta:
+#             return JSONResponse(
+#                 {"error": f"No se encontraron credenciales para {subdominio}"},
+#                 status_code=404
+#             )
+#
+#         token_cliente = cuenta["access_token"]
+#         phone_id_cliente = cuenta["phone_number_id"]
+#         business_name = cuenta.get("business_name", "la agencia")
+#
+#         # ✅ Contexto WABA
+#         current_token.set(token_cliente)
+#         current_phone_id.set(phone_id_cliente)
+#         current_business_name.set(business_name)
+#
+#         # -------------------------------
+#         # Procesar respuestas
+#         # -------------------------------
+#         respuestas_dict = None
+#         if data.respuestas:
+#             respuestas_dict = {}
+#             for key, valor in data.respuestas.items():
+#                 key_int = int(key) if isinstance(key, str) and key.isdigit() else key
+#                 if key_int == 8:
+#                     valor_str = str(valor).strip().lower()
+#                     if valor_str in {"no", "n", "0"}:
+#                         respuestas_dict[key_int] = "0"
+#                     elif valor_str in {"si", "sí", "s", "yes", "y", "1"}:
+#                         respuestas_dict[key_int] = "1"
+#                     else:
+#                         respuestas_dict[key_int] = str(valor)
+#                 else:
+#                     respuestas_dict[key_int] = str(valor) if valor else ""
+#             print(f"📋 Respuestas recibidas en request: {respuestas_dict}")
+#         else:
+#             print("📋 No se recibieron respuestas en request")
+#
+#         # -------------------------------
+#         # Consolidación
+#         # -------------------------------
+#         consolidar_perfil(
+#             data.numero,
+#             respuestas_dict=respuestas_dict,
+#             tenant_schema=subdominio
+#         )
+#
+#         lap("consolidar_perfil")
+#
+#         eliminar_flujo(data.numero, tenant_schema=subdominio)
+#
+#         lap("eliminar_flujo")
+#
+#         # -------------------------------
+#         # Datos del usuario
+#         # -------------------------------
+#         try:
+#             usuario_bd = buscar_usuario_por_telefono(data.numero)
+#             nombre_usuario = usuario_bd.get("nombre") if usuario_bd else None
+#             creador_id = usuario_bd.get("id") if usuario_bd else None
+#         except Exception as e:
+#             print(f"⚠️ Error obteniendo usuario {data.numero}: {e}")
+#             nombre_usuario = None
+#             creador_id = None
+#
+#         # -------------------------------
+#         # Marcar encuesta completada
+#         # -------------------------------
+#         marcar_encuesta_completada(data.numero)
+#
+#         lap("marcar_encuesta_completada")
+#
+#         # -------------------------------
+#         # Actualizar Puntajes para el diagnostico
+#         # -------------------------------
+#
+#         # -------------------------------
+#         # Actualizar Puntajes + Diagnóstico (guardar en DB)
+#         # -------------------------------
+#         try:
+#             print(f"DEBUG creador_id = {creador_id}")
+#             if creador_id:
+#
+#                 # 1) llena tabla de scores
+#                 poblar_scores_creador(creador_id,data.numero)
+#
+#
+#                 # 2) calcula y guarda puntajes (tu función)
+#                 # evaluar_y_actualizar_perfil_pre_encuesta(creador_id) ##Luego lo hará
+#
+#                 lap("evaluar_y_actualizar")
+#
+#
+#                 # 3) genera diagnóstico (usa DB y/o puntajes calculados)
+#                 # diag = diagnostico_perfil_creador_pre(creador_id)##Luego lo hará
+#
+#                 lap("diagnostico")
+#
+#
+#                 # 4) guardar diagnóstico en perfil_creador
+#                 # guardar_diagnostico_perfil_creador(creador_id, diag)##Luego lo hará
+#
+#                 lap("guardar_diagnostico")
+#
+#             else:
+#                 print(f"⚠️ No se pudo evaluar/diagnosticar: creador_id no encontrado para {data.numero}")
+#
+#         except Exception as e:
+#             print(f"⚠️ Error evaluando/guardando diagnóstico creador_id={creador_id}: {e}")
+#
+#         # -------------------------------
+#         # Construir URL informativa
+#         # -------------------------------
+#         tenant_key = subdominio if subdominio != "public" else "test"
+#         url_info = None
+#         if creador_id:
+#             url_info = (
+#                 f"https://{tenant_key}.talentum-manager.com/"
+#                 f"info-incorporacion?cid={creador_id}"
+#             )
+#
+#         # -------------------------------
+#         # Mensaje final + envío
+#         # -------------------------------
+#         mensaje_final = mensaje_encuesta_final(
+#             nombre=nombre_usuario,
+#             url_info=url_info
+#         )
+#         # enviar_mensaje(data.numero, mensaje_final)
+#
+#         background_tasks.add_task(
+#             enviar_mensaje_con_credenciales,
+#             data.numero,
+#             mensaje_final,
+#             token_cliente,
+#             phone_id_cliente,
+#             business_name,
+#             nombre_usuario
+#         )
+#
+#         lap("enqueue_whatsapp")
+#
+#
+#         print(f"✅ Perfil consolidado y mensaje enviado a {data.numero}")
+#
+#         return {"ok": True, "msg": "Perfil consolidado correctamente"}
+#
+#     except Exception as e:
+#         print(f"❌ Error en consolidar_perfil_web: {e}")
+#         return JSONResponse(
+#             {"error": "Error al consolidar el perfil"},
+#             status_code=500
+#         )
 
 def guardar_diagnostico_perfil_creador(creador_id: int, diagnostico: str):
     if not creador_id:
@@ -7029,7 +7029,7 @@ def Enviar_menu_quickreply_v4(creador_id, estado_real, phone_id, token, telefono
 
 
 
-def poblar_scores_creador(creador_id: int):
+def poblar_scores_creador(creador_id: int,telefono_webhook: str):
     """
     Lee los datos crudos de perfil_creador,
     normaliza variables según modelo y guarda en talento_variable_score.
@@ -7283,69 +7283,349 @@ def poblar_categoria_1(creador_id: int):
         return False
 
 
-# @router.post("/enviar-mensaje-estado")
-# def enviar_mensaje_estado(data: EnvioPruebaRequest):
-#     try:
-#         print(f"🔐 Resolviendo credenciales para tenant: {data.tenant_name}")
-#
-#         cuenta = obtener_cuenta_por_subdominio(data.tenant_name)
-#         if not cuenta:
-#             return JSONResponse(
-#                 {"error": f"No se encontraron credenciales para el tenant '{data.tenant_name}'"},
-#                 status_code=404
-#             )
-#
-#         token_cliente = cuenta.get("access_token")
-#         phone_id_cliente = cuenta.get("phone_number_id")
-#         business_name = cuenta.get("business_name", "Agencia")
-#
-#         if not token_cliente or not phone_id_cliente:
-#             return JSONResponse(
-#                 {"error": "El tenant existe pero le faltan credenciales (token/phone_id)"},
-#                 status_code=500
-#             )
-#
-#         # Contextvars (ideal: reset en finally, pero lo dejo mínimo aquí)
-#         current_token.set(token_cliente)
-#         current_phone_id.set(phone_id_cliente)
-#         current_business_name.set(business_name)
-#
-#         datos_creador = obtener_datos_envio_aspirante(data.creador_id)
-#         if not datos_creador:
-#             raise HTTPException(status_code=404, detail=f"Creador ID {data.creador_id} no existe")
-#
-#         telefono_destino = datos_creador["telefono"]
-#         estado_real = datos_creador["codigo_estado"]
-#
-#         # Texto a enviar: prioridad mensaje_chatbot_simple, luego descripcion, luego default
-#         texto_final = (
-#             datos_creador.get("mensaje_chatbot_simple")
-#         )
-#
-#         # Enviar_boton_opciones_unico(
-#         #     creador_id=data.creador_id,
-#         #     estado_evaluacion=estado_real,
-#         #     phone_id=phone_id_cliente,
-#         #     token=token_cliente,
-#         #     telefono_destino=telefono_destino,
-#         #     texto_final=texto_final,
-#         # )
-#
-#         Enviar_menu_quickreply(
-#             creador_id=data.creador_id,
-#             estado_real=estado_real,
-#             msg_chat_bot=texto_final,
-#             phone_id=phone_id_cliente,
-#             token=token_cliente,
-#             telefono_destino=telefono_destino
-#         )
-#
-#
-#         return {
-#             "status": "success",
-#             "mensaje": f"Menú '{estado_real}' enviado a {telefono_destino} vía {business_name}"
-#         }
-#
-#     except Exception as e:
-#         print(f"❌ Error en envío seguro: {e}")
-#         raise HTTPException(status_code=500, detail=str(e))
+
+# ---------------------------------------------------------
+# ---------------------------------------------------------
+# CONVERTIR INDICATIVO EN PAIS
+# CONVERTIR INDICATIVO EN PAIS
+# ---------------------------------------------------------
+# ---------------------------------------------------------
+
+import phonenumbers
+from phonenumbers import geocoder, region_code_for_number
+
+# Tu diccionario exacto mapeado a los IDs que necesitas
+PAISES_SISTEMA = {
+    'AR': {'id': 1, 'nombre': 'Argentina'},
+    'BO': {'id': 2, 'nombre': 'Bolivia'},
+    'CL': {'id': 3, 'nombre': 'Chile'},
+    'CO': {'id': 4, 'nombre': 'Colombia'},
+    'CR': {'id': 5, 'nombre': 'Costa Rica'},
+    'CU': {'id': 6, 'nombre': 'Cuba'},
+    'EC': {'id': 7, 'nombre': 'Ecuador'},
+    'SV': {'id': 8, 'nombre': 'El Salvador'},
+    'GT': {'id': 9, 'nombre': 'Guatemala'},
+    'HN': {'id': 10, 'nombre': 'Honduras'},
+    'MX': {'id': 11, 'nombre': 'México'},
+    'NI': {'id': 12, 'nombre': 'Nicaragua'},
+    'PA': {'id': 13, 'nombre': 'Panamá'},
+    'PY': {'id': 14, 'nombre': 'Paraguay'},
+    'PE': {'id': 15, 'nombre': 'Perú'},
+    'PR': {'id': 16, 'nombre': 'Puerto Rico'},
+    'DO': {'id': 17, 'nombre': 'República Dominicana'},
+    'UY': {'id': 18, 'nombre': 'Uruguay'},
+    'VE': {'id': 19, 'nombre': 'Venezuela'}
+}
+
+
+def obtener_datos_pais(telefono_webhook: str) -> dict:
+    try:
+        # Asegurar el formato con '+'
+        numero_limpio = telefono_webhook if telefono_webhook.startswith('+') else f"+{telefono_webhook}"
+        parsed_number = phonenumbers.parse(numero_limpio)
+
+        if not phonenumbers.is_valid_number(parsed_number):
+            return {"error": True, "mensaje": "Número inválido"}
+
+        codigo_iso = region_code_for_number(parsed_number)
+        indicativo = f"+{parsed_number.country_code}"
+
+        # 1. Si el país está en tu lista (IDs del 1 al 19)
+        if codigo_iso in PAISES_SISTEMA:
+            pais = PAISES_SISTEMA[codigo_iso]
+            return {
+                "id_pais": pais['id'],
+                "nombre_pais": pais['nombre'],
+                "indicativo": indicativo,
+                "iso": codigo_iso
+            }
+
+        # 2. Si es de cualquier otro país del mundo (ID 20)
+        else:
+            # Extraemos el nombre real en español (Ej: "España", "Estados Unidos", "Brasil")
+            nombre_real = geocoder.country_name_for_number(parsed_number, "es")
+
+            return {
+                "id_pais": 20,
+                "nombre_pais": "Otro",
+                "pais_real_detectado": nombre_real,  # Dato extra útil para tu dashboard
+                "indicativo": indicativo,
+                "iso": codigo_iso
+            }
+
+    except Exception as e:
+        return {"error": True, "mensaje": str(e)}
+
+
+def actualizar_respuestas_formulario(conn, creador_id: int, respuestas: dict):
+
+    if not respuestas:
+        return
+
+    try:
+
+        cur = conn.cursor()
+
+        # -----------------------------
+        # convertir keys a int
+        # -----------------------------
+        respuestas_int = {}
+
+        for k, v in respuestas.items():
+            try:
+                respuestas_int[int(k)] = v
+            except:
+                continue
+
+        if not respuestas_int:
+            return
+
+        variable_ids = list(respuestas_int.keys())
+
+        # -----------------------------
+        # obtener variables
+        # -----------------------------
+        cur.execute("""
+            SELECT id, campo_db
+            FROM diagnostico_variable
+            WHERE id = ANY(%s)
+        """, (variable_ids,))
+
+        rows = cur.fetchall()
+
+        variables = {r[0]: r[1] for r in rows}
+
+        # -----------------------------
+        # preparar insert masivo
+        # -----------------------------
+        score_values = []
+
+        for var_id, valor in respuestas_int.items():
+
+            if valor is not None and str(valor).isdigit():
+
+                score_values.append(
+                    (creador_id, var_id, int(valor))
+                )
+
+        if score_values:
+
+            args_str = ",".join(
+                cur.mogrify("(%s,%s,%s)", x).decode()
+                for x in score_values
+            )
+
+            cur.execute(f"""
+                INSERT INTO diagnostico_score_variable
+                (creador_id, variable_id, valor)
+                VALUES {args_str}
+                ON CONFLICT (creador_id, variable_id)
+                DO UPDATE SET
+                    valor = EXCLUDED.valor,
+                    created_at = CURRENT_TIMESTAMP
+            """)
+
+        # -----------------------------
+        # update perfil_creador
+        # -----------------------------
+        updates = []
+        params = []
+
+        for var_id, valor in respuestas_int.items():
+
+            campo_db = variables.get(var_id)
+
+            if not campo_db:
+                continue
+
+            if not campo_db.replace("_", "").isalnum():
+                continue
+
+            updates.append(f"{campo_db} = %s")
+            params.append(valor)
+
+        if updates:
+
+            params.append(creador_id)
+
+            query = f"""
+                UPDATE perfil_creador
+                SET {", ".join(updates)}
+                WHERE creador_id = %s
+            """
+
+            cur.execute(query, params)
+
+        conn.commit()
+
+    except Exception as e:
+        print(f"❌ Error en actualizar_respuestas_formulario: {e}")
+
+
+@router.post("/consolidar")
+def consolidar_perfil_web(
+    data: ConsolidarInput,
+    background_tasks: BackgroundTasks
+):
+    try:
+
+        subdominio = current_tenant.get()
+
+        cuenta = obtener_cuenta_por_subdominio(subdominio)
+        if not cuenta:
+            return JSONResponse(
+                {"error": f"No se encontraron credenciales para {subdominio}"},
+                status_code=404
+            )
+
+        token_cliente = cuenta["access_token"]
+        phone_id_cliente = cuenta["phone_number_id"]
+        business_name = cuenta.get("business_name", "la agencia")
+
+        # Contexto WABA
+        current_token.set(token_cliente)
+        current_phone_id.set(phone_id_cliente)
+        current_business_name.set(business_name)
+
+        # -------------------------------
+        # Procesar respuestas
+        # -------------------------------
+        respuestas_dict = {}
+
+        if data.respuestas:
+            for key, valor in data.respuestas.items():
+
+                key_int = int(key) if isinstance(key, str) and key.isdigit() else key
+                respuestas_dict[key_int] = str(valor) if valor else ""
+
+        # -------------------------------
+        # Obtener usuario
+        # -------------------------------
+        try:
+            usuario_bd = buscar_usuario_por_telefono(data.numero)
+
+            nombre_usuario = usuario_bd.get("nombre") if usuario_bd else None
+            creador_id = usuario_bd.get("id") if usuario_bd else None
+
+        except Exception as e:
+            print(f"⚠️ Error obteniendo usuario {data.numero}: {e}")
+            nombre_usuario = None
+            creador_id = None
+
+        # -------------------------------
+        # Marcar encuesta completada
+        # -------------------------------
+        marcar_encuesta_completada(data.numero)
+
+        # -------------------------------
+        # Guardar variables diagnóstico
+        # -------------------------------
+        if creador_id and respuestas_dict:
+
+            with get_connection_context() as conn:
+                cur = conn.cursor()
+
+                for pregunta_id, valor in respuestas_dict.items():
+
+                    cur.execute("""
+                        SELECT campo_db
+                        FROM diagnostico_variable 
+                        WHERE encuesta_id = 1
+                        AND id = %s
+                        LIMIT 1
+                    """, (pregunta_id,))
+
+                    row = cur.fetchone()
+                    campo_db = row[0] if row else None
+
+                    # 1️⃣ Guardar score numérico
+                    if valor and str(valor).isdigit():
+
+                        cur.execute("""
+                            INSERT INTO diagnostico_score_variable
+                            (creador_id, variable_id, score)
+                            VALUES (%s,%s,%s)
+                            ON CONFLICT (creador_id,variable_id)
+                            DO UPDATE SET
+                                score = EXCLUDED.score,
+                                created_at = CURRENT_TIMESTAMP
+                        """, (
+                            creador_id,
+                            pregunta_id,
+                            int(valor)
+                        ))
+
+                    # 2️⃣ Actualizar perfil_creador
+                    if campo_db:
+
+                        # seguridad básica
+                        if not campo_db.replace("_", "").isalnum():
+                            continue
+
+                        query = f"""
+                            UPDATE perfil_creador
+                            SET {campo_db} = %s
+                            WHERE creador_id = %s
+                        """
+
+                        cur.execute(query, (valor, creador_id))
+
+                # -------------------------------
+                # Detectar país por teléfono
+                # -------------------------------
+                datos_pais = obtener_datos_pais(data.numero)
+
+                if not datos_pais.get("error"):
+
+                    cur.execute("""
+                        UPDATE perfil_creador
+                        SET pais = %s
+                        WHERE creador_id = %s
+                    """, (
+                        datos_pais.get("nombre_pais"),
+                        creador_id
+                    ))
+
+                conn.commit()
+
+        # -------------------------------
+        # Construir URL informativa
+        # -------------------------------
+        tenant_key = subdominio if subdominio != "public" else "test"
+
+        url_info = None
+        if creador_id:
+            url_info = (
+                f"https://{tenant_key}.talentum-manager.com/"
+                f"info-incorporacion?cid={creador_id}"
+            )
+
+        # -------------------------------
+        # Mensaje final
+        # -------------------------------
+        mensaje_final = mensaje_encuesta_final(
+            nombre=nombre_usuario,
+            url_info=url_info
+        )
+
+        background_tasks.add_task(
+            enviar_mensaje_con_credenciales,
+            data.numero,
+            mensaje_final,
+            token_cliente,
+            phone_id_cliente,
+            business_name,
+            nombre_usuario
+        )
+
+        print(f"✅ Perfil consolidado y mensaje enviado a {data.numero}")
+
+        return {"ok": True, "msg": "Perfil consolidado correctamente"}
+
+    except Exception as e:
+        print(f"❌ Error en consolidar_perfil_web: {e}")
+
+        return JSONResponse(
+            {"error": "Error al consolidar el perfil"},
+            status_code=500
+        )
