@@ -2474,7 +2474,7 @@ def obtener_encuesta(encuesta_id: int):
                         v.texto,
                         v.tipo_form AS tipo,
                         v.campo_db AS campo,
-                        o.orden AS opcion_id,
+                        COALESCE(o.orden, 1) AS opcion_id,
                         o.label
                     FROM diagnostico_variable v
                     LEFT JOIN diagnostico_variable_valor o

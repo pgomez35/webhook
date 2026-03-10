@@ -7540,8 +7540,6 @@ def consolidar_perfil_webV1(
         )
 
 
-
-
 VARIABLE_PAIS_ID = 20   # id de la variable pais en diagnostico_variable
 
 @router.post("/consolidar")
