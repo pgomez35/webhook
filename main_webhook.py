@@ -7169,7 +7169,7 @@ def poblar_scores_creador(creador_id: int,telefono_webhook: str):
 
                     query_insert = """
                         INSERT INTO diagnostico_score_variable
-                        (creador_id, variable_id, score)
+                        (creador_id, variable_id, valor)
                         VALUES (%s, %s, %s)
                     """
 
@@ -7264,7 +7264,7 @@ def poblar_categoria_1(creador_id: int):
 
                     insert_query = """
                         INSERT INTO diagnostico_score_variable
-                        (creador_id, variable_id, score)
+                        (creador_id, variable_id, valor)
                         VALUES (%s, %s, %s)
                     """
 
@@ -7543,7 +7543,7 @@ def consolidar_perfil_web(
 
                         cur.execute("""
                             INSERT INTO diagnostico_score_variable
-                            (creador_id, variable_id, score)
+                            (creador_id, variable_id, valor)
                             VALUES (%s,%s,%s)
                             ON CONFLICT (creador_id,variable_id)
                             DO UPDATE SET
