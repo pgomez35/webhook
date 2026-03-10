@@ -7357,111 +7357,6 @@ def obtener_datos_pais(telefono_webhook: str) -> dict:
         return {"error": True, "mensaje": str(e)}
 
 
-def actualizar_respuestas_formulario(conn, creador_id: int, respuestas: dict):
-
-    if not respuestas:
-        return
-
-    try:
-
-        cur = conn.cursor()
-
-        # -----------------------------
-        # convertir keys a int
-        # -----------------------------
-        respuestas_int = {}
-
-        for k, v in respuestas.items():
-            try:
-                respuestas_int[int(k)] = v
-            except:
-                continue
-
-        if not respuestas_int:
-            return
-
-        variable_ids = list(respuestas_int.keys())
-
-        # -----------------------------
-        # obtener variables
-        # -----------------------------
-        cur.execute("""
-            SELECT id, campo_db
-            FROM diagnostico_variable
-            WHERE id = ANY(%s)
-        """, (variable_ids,))
-
-        rows = cur.fetchall()
-
-        variables = {r[0]: r[1] for r in rows}
-
-        # -----------------------------
-        # preparar insert masivo
-        # -----------------------------
-        score_values = []
-
-        for var_id, valor in respuestas_int.items():
-
-            if valor is not None and str(valor).isdigit():
-
-                score_values.append(
-                    (creador_id, var_id, int(valor))
-                )
-
-        if score_values:
-
-            args_str = ",".join(
-                cur.mogrify("(%s,%s,%s)", x).decode()
-                for x in score_values
-            )
-
-            cur.execute(f"""
-                INSERT INTO diagnostico_score_variable
-                (creador_id, variable_id, valor)
-                VALUES {args_str}
-                ON CONFLICT (creador_id, variable_id)
-                DO UPDATE SET
-                    valor = EXCLUDED.valor,
-                    created_at = CURRENT_TIMESTAMP
-            """)
-
-        # -----------------------------
-        # update perfil_creador
-        # -----------------------------
-        updates = []
-        params = []
-
-        for var_id, valor in respuestas_int.items():
-
-            campo_db = variables.get(var_id)
-
-            if not campo_db:
-                continue
-
-            if not campo_db.replace("_", "").isalnum():
-                continue
-
-            updates.append(f"{campo_db} = %s")
-            params.append(valor)
-
-        if updates:
-
-            params.append(creador_id)
-
-            query = f"""
-                UPDATE perfil_creador
-                SET {", ".join(updates)}
-                WHERE creador_id = %s
-            """
-
-            cur.execute(query, params)
-
-        conn.commit()
-
-    except Exception as e:
-        print(f"❌ Error en actualizar_respuestas_formulario: {e}")
-
-
 @router.post("/consolidar")
 def consolidar_perfil_web(
     data: ConsolidarInput,
@@ -7482,7 +7377,6 @@ def consolidar_perfil_web(
         phone_id_cliente = cuenta["phone_number_id"]
         business_name = cuenta.get("business_name", "la agencia")
 
-        # Contexto WABA
         current_token.set(token_cliente)
         current_phone_id.set(phone_id_cliente)
         current_business_name.set(business_name)
@@ -7495,8 +7389,10 @@ def consolidar_perfil_web(
         if data.respuestas:
             for key, valor in data.respuestas.items():
 
-                key_int = int(key) if isinstance(key, str) and key.isdigit() else key
-                respuestas_dict[key_int] = str(valor) if valor else ""
+                if isinstance(key, str) and key.isdigit():
+                    key = int(key)
+
+                respuestas_dict[key] = str(valor) if valor else ""
 
         # -------------------------------
         # Obtener usuario
@@ -7518,47 +7414,49 @@ def consolidar_perfil_web(
         marcar_encuesta_completada(data.numero)
 
         # -------------------------------
-        # Guardar variables diagnóstico
+        # Guardar diagnóstico
         # -------------------------------
         if creador_id and respuestas_dict:
 
             with get_connection_context() as conn:
+
                 cur = conn.cursor()
 
+                # 1️⃣ Obtener todas las variables de una vez
+                cur.execute("""
+                    SELECT id, campo_db
+                    FROM diagnostico_variable
+                    WHERE encuesta_id = 1
+                """)
+
+                variables = {row[0]: row[1] for row in cur.fetchall()}
+
+                # 2️⃣ Borrar scores anteriores del creador
+                cur.execute("""
+                    DELETE FROM diagnostico_score_variable
+                    WHERE creador_id = %s
+                """, (creador_id,))
+
+                inserts = []
+
+                # 3️⃣ Procesar respuestas
                 for pregunta_id, valor in respuestas_dict.items():
 
-                    cur.execute("""
-                        SELECT campo_db
-                        FROM diagnostico_variable 
-                        WHERE encuesta_id = 1
-                        AND id = %s
-                        LIMIT 1
-                    """, (pregunta_id,))
+                    campo_db = variables.get(pregunta_id)
 
-                    row = cur.fetchone()
-                    campo_db = row[0] if row else None
-
-                    # 1️⃣ Guardar score numérico
+                    # Guardar score si es número
                     if valor and str(valor).isdigit():
 
-                        cur.execute("""
-                            INSERT INTO diagnostico_score_variable
-                            (creador_id, variable_id, valor)
-                            VALUES (%s,%s,%s)
-                            ON CONFLICT (creador_id,variable_id)
-                            DO UPDATE SET
-                                score = EXCLUDED.score,
-                                created_at = CURRENT_TIMESTAMP
-                        """, (
+                        inserts.append((
                             creador_id,
                             pregunta_id,
                             int(valor)
                         ))
 
-                    # 2️⃣ Actualizar perfil_creador
+                    # Actualizar perfil_creador
                     if campo_db:
 
-                        # seguridad básica
+                        # Seguridad básica
                         if not campo_db.replace("_", "").isalnum():
                             continue
 
@@ -7570,8 +7468,17 @@ def consolidar_perfil_web(
 
                         cur.execute(query, (valor, creador_id))
 
+                # 4️⃣ Insert masivo
+                if inserts:
+
+                    cur.executemany("""
+                        INSERT INTO diagnostico_score_variable
+                        (creador_id, variable_id, valor)
+                        VALUES (%s,%s,%s)
+                    """, inserts)
+
                 # -------------------------------
-                # Detectar país por teléfono
+                # Detectar país
                 # -------------------------------
                 datos_pais = obtener_datos_pais(data.numero)
 
@@ -7595,6 +7502,7 @@ def consolidar_perfil_web(
 
         url_info = None
         if creador_id:
+
             url_info = (
                 f"https://{tenant_key}.talentum-manager.com/"
                 f"info-incorporacion?cid={creador_id}"
@@ -7623,9 +7531,468 @@ def consolidar_perfil_web(
         return {"ok": True, "msg": "Perfil consolidado correctamente"}
 
     except Exception as e:
+
         print(f"❌ Error en consolidar_perfil_web: {e}")
 
         return JSONResponse(
             {"error": "Error al consolidar el perfil"},
             status_code=500
         )
+
+
+
+
+VARIABLE_PAIS_ID = 20   # id de la variable pais en diagnostico_variable
+
+
+@router.post("/consolidarV1")
+def consolidar_perfil_webV1(
+    data: ConsolidarInput,
+    background_tasks: BackgroundTasks
+):
+    try:
+
+        subdominio = current_tenant.get()
+
+        cuenta = obtener_cuenta_por_subdominio(subdominio)
+        if not cuenta:
+            return JSONResponse(
+                {"error": f"No se encontraron credenciales para {subdominio}"},
+                status_code=404
+            )
+
+        token_cliente = cuenta["access_token"]
+        phone_id_cliente = cuenta["phone_number_id"]
+        business_name = cuenta.get("business_name", "la agencia")
+
+        current_token.set(token_cliente)
+        current_phone_id.set(phone_id_cliente)
+        current_business_name.set(business_name)
+
+        # -------------------------------
+        # Procesar respuestas
+        # -------------------------------
+        respuestas_dict = {}
+
+        if data.respuestas:
+            for key, valor in data.respuestas.items():
+
+                if isinstance(key, str) and key.isdigit():
+                    key = int(key)
+
+                respuestas_dict[key] = str(valor) if valor else ""
+
+        # -------------------------------
+        # Detectar país y agregarlo como respuesta
+        # -------------------------------
+        datos_pais = obtener_datos_pais(data.numero)
+
+        if not datos_pais.get("error"):
+
+            pais_id = datos_pais.get("id_pais")
+
+            if pais_id:
+                respuestas_dict[VARIABLE_PAIS_ID] = str(pais_id)
+
+        # -------------------------------
+        # Obtener usuario
+        # -------------------------------
+        try:
+            usuario_bd = buscar_usuario_por_telefono(data.numero)
+
+            nombre_usuario = usuario_bd.get("nombre") if usuario_bd else None
+            creador_id = usuario_bd.get("id") if usuario_bd else None
+
+        except Exception as e:
+            print(f"⚠️ Error obteniendo usuario {data.numero}: {e}")
+            nombre_usuario = None
+            creador_id = None
+
+        # -------------------------------
+        # Marcar encuesta completada
+        # -------------------------------
+        marcar_encuesta_completada(data.numero)
+
+        # -------------------------------
+        # Guardar diagnóstico
+        # -------------------------------
+        if creador_id and respuestas_dict:
+
+            with get_connection_context() as conn:
+
+                cur = conn.cursor()
+
+                # Obtener variables
+                cur.execute("""
+                    SELECT id, campo_db
+                    FROM diagnostico_variable
+                    WHERE encuesta_id = 1
+                """)
+
+                variables = {row[0]: row[1] for row in cur.fetchall()}
+
+                # Borrar respuestas anteriores
+                cur.execute("""
+                    DELETE FROM diagnostico_score_variable
+                    WHERE creador_id = %s
+                """, (creador_id,))
+
+                inserts = []
+
+                # Procesar respuestas
+                for pregunta_id, valor in respuestas_dict.items():
+
+                    campo_db = variables.get(pregunta_id)
+
+                    # Guardar score numérico
+                    if valor and str(valor).isdigit():
+
+                        inserts.append((
+                            creador_id,
+                            pregunta_id,
+                            int(valor)
+                        ))
+
+                    # Actualizar perfil_creador si corresponde
+                    if campo_db:
+
+                        if not campo_db.replace("_", "").isalnum():
+                            continue
+
+                        query = f"""
+                            UPDATE perfil_creador
+                            SET {campo_db} = %s
+                            WHERE creador_id = %s
+                        """
+
+                        cur.execute(query, (valor, creador_id))
+
+                # Insert masivo
+                if inserts:
+
+                    cur.executemany("""
+                        INSERT INTO diagnostico_score_variable
+                        (creador_id, variable_id, valor)
+                        VALUES (%s,%s,%s)
+                    """, inserts)
+
+                conn.commit()
+
+        # -------------------------------
+        # Construir URL informativa
+        # -------------------------------
+        tenant_key = subdominio if subdominio != "public" else "test"
+
+        url_info = None
+        if creador_id:
+
+            url_info = (
+                f"https://{tenant_key}.talentum-manager.com/"
+                f"info-incorporacion?cid={creador_id}"
+            )
+
+        # -------------------------------
+        # Mensaje final
+        # -------------------------------
+        mensaje_final = mensaje_encuesta_final(
+            nombre=nombre_usuario,
+            url_info=url_info
+        )
+
+        background_tasks.add_task(
+            enviar_mensaje_con_credenciales,
+            data.numero,
+            mensaje_final,
+            token_cliente,
+            phone_id_cliente,
+            business_name,
+            nombre_usuario
+        )
+
+        print(f"✅ Perfil consolidado y mensaje enviado a {data.numero}")
+
+        return {"ok": True, "msg": "Perfil consolidado correctamente"}
+
+    except Exception as e:
+
+        print(f"❌ Error en consolidar_perfil_web: {e}")
+
+        return JSONResponse(
+            {"error": "Error al consolidar el perfil"},
+            status_code=500
+        )
+
+
+
+# def actualizar_respuestas_formulario(conn, creador_id: int, respuestas: dict):
+# 
+#     if not respuestas:
+#         return
+# 
+#     try:
+# 
+#         cur = conn.cursor()
+# 
+#         # -----------------------------
+#         # convertir keys a int
+#         # -----------------------------
+#         respuestas_int = {}
+# 
+#         for k, v in respuestas.items():
+#             try:
+#                 respuestas_int[int(k)] = v
+#             except:
+#                 continue
+# 
+#         if not respuestas_int:
+#             return
+# 
+#         variable_ids = list(respuestas_int.keys())
+# 
+#         # -----------------------------
+#         # obtener variables
+#         # -----------------------------
+#         cur.execute("""
+#             SELECT id, campo_db
+#             FROM diagnostico_variable
+#             WHERE id = ANY(%s)
+#         """, (variable_ids,))
+# 
+#         rows = cur.fetchall()
+# 
+#         variables = {r[0]: r[1] for r in rows}
+# 
+#         # -----------------------------
+#         # preparar insert masivo
+#         # -----------------------------
+#         score_values = []
+# 
+#         for var_id, valor in respuestas_int.items():
+# 
+#             if valor is not None and str(valor).isdigit():
+# 
+#                 score_values.append(
+#                     (creador_id, var_id, int(valor))
+#                 )
+# 
+#         if score_values:
+# 
+#             args_str = ",".join(
+#                 cur.mogrify("(%s,%s,%s)", x).decode()
+#                 for x in score_values
+#             )
+# 
+#             cur.execute(f"""
+#                 INSERT INTO diagnostico_score_variable
+#                 (creador_id, variable_id, valor)
+#                 VALUES {args_str}
+#                 ON CONFLICT (creador_id, variable_id)
+#                 DO UPDATE SET
+#                     valor = EXCLUDED.valor,
+#                     created_at = CURRENT_TIMESTAMP
+#             """)
+# 
+#         # -----------------------------
+#         # update perfil_creador
+#         # -----------------------------
+#         updates = []
+#         params = []
+# 
+#         for var_id, valor in respuestas_int.items():
+# 
+#             campo_db = variables.get(var_id)
+# 
+#             if not campo_db:
+#                 continue
+# 
+#             if not campo_db.replace("_", "").isalnum():
+#                 continue
+# 
+#             updates.append(f"{campo_db} = %s")
+#             params.append(valor)
+# 
+#         if updates:
+# 
+#             params.append(creador_id)
+# 
+#             query = f"""
+#                 UPDATE perfil_creador
+#                 SET {", ".join(updates)}
+#                 WHERE creador_id = %s
+#             """
+# 
+#             cur.execute(query, params)
+# 
+#         conn.commit()
+# 
+#     except Exception as e:
+#         print(f"❌ Error en actualizar_respuestas_formulario: {e}")
+
+
+# @router.post("/consolidar")
+# def consolidar_perfil_web(
+#     data: ConsolidarInput,
+#     background_tasks: BackgroundTasks
+# ):
+#     try:
+# 
+#         subdominio = current_tenant.get()
+# 
+#         cuenta = obtener_cuenta_por_subdominio(subdominio)
+#         if not cuenta:
+#             return JSONResponse(
+#                 {"error": f"No se encontraron credenciales para {subdominio}"},
+#                 status_code=404
+#             )
+# 
+#         token_cliente = cuenta["access_token"]
+#         phone_id_cliente = cuenta["phone_number_id"]
+#         business_name = cuenta.get("business_name", "la agencia")
+# 
+#         # Contexto WABA
+#         current_token.set(token_cliente)
+#         current_phone_id.set(phone_id_cliente)
+#         current_business_name.set(business_name)
+# 
+#         # -------------------------------
+#         # Procesar respuestas
+#         # -------------------------------
+#         respuestas_dict = {}
+# 
+#         if data.respuestas:
+#             for key, valor in data.respuestas.items():
+# 
+#                 key_int = int(key) if isinstance(key, str) and key.isdigit() else key
+#                 respuestas_dict[key_int] = str(valor) if valor else ""
+# 
+#         # -------------------------------
+#         # Obtener usuario
+#         # -------------------------------
+#         try:
+#             usuario_bd = buscar_usuario_por_telefono(data.numero)
+# 
+#             nombre_usuario = usuario_bd.get("nombre") if usuario_bd else None
+#             creador_id = usuario_bd.get("id") if usuario_bd else None
+# 
+#         except Exception as e:
+#             print(f"⚠️ Error obteniendo usuario {data.numero}: {e}")
+#             nombre_usuario = None
+#             creador_id = None
+# 
+#         # -------------------------------
+#         # Marcar encuesta completada
+#         # -------------------------------
+#         marcar_encuesta_completada(data.numero)
+# 
+#         # -------------------------------
+#         # Guardar variables diagnóstico
+#         # -------------------------------
+#         if creador_id and respuestas_dict:
+# 
+#             with get_connection_context() as conn:
+#                 cur = conn.cursor()
+# 
+#                 for pregunta_id, valor in respuestas_dict.items():
+# 
+#                     cur.execute("""
+#                         SELECT campo_db
+#                         FROM diagnostico_variable 
+#                         WHERE encuesta_id = 1
+#                         AND id = %s
+#                         LIMIT 1
+#                     """, (pregunta_id,))
+# 
+#                     row = cur.fetchone()
+#                     campo_db = row[0] if row else None
+# 
+#                     # 1️⃣ Guardar score numérico
+#                     if valor and str(valor).isdigit():
+# 
+#                         cur.execute("""
+#                             INSERT INTO diagnostico_score_variable
+#                             (creador_id, variable_id, valor)
+#                             VALUES (%s,%s,%s)
+#                             ON CONFLICT (creador_id,variable_id)
+#                             DO UPDATE SET
+#                                 score = EXCLUDED.score,
+#                                 created_at = CURRENT_TIMESTAMP
+#                         """, (
+#                             creador_id,
+#                             pregunta_id,
+#                             int(valor)
+#                         ))
+# 
+#                     # 2️⃣ Actualizar perfil_creador
+#                     if campo_db:
+# 
+#                         # seguridad básica
+#                         if not campo_db.replace("_", "").isalnum():
+#                             continue
+# 
+#                         query = f"""
+#                             UPDATE perfil_creador
+#                             SET {campo_db} = %s
+#                             WHERE creador_id = %s
+#                         """
+# 
+#                         cur.execute(query, (valor, creador_id))
+# 
+#                 # -------------------------------
+#                 # Detectar país por teléfono
+#                 # -------------------------------
+#                 datos_pais = obtener_datos_pais(data.numero)
+# 
+#                 if not datos_pais.get("error"):
+# 
+#                     cur.execute("""
+#                         UPDATE perfil_creador
+#                         SET pais = %s
+#                         WHERE creador_id = %s
+#                     """, (
+#                         datos_pais.get("nombre_pais"),
+#                         creador_id
+#                     ))
+# 
+#                 conn.commit()
+# 
+#         # -------------------------------
+#         # Construir URL informativa
+#         # -------------------------------
+#         tenant_key = subdominio if subdominio != "public" else "test"
+# 
+#         url_info = None
+#         if creador_id:
+#             url_info = (
+#                 f"https://{tenant_key}.talentum-manager.com/"
+#                 f"info-incorporacion?cid={creador_id}"
+#             )
+# 
+#         # -------------------------------
+#         # Mensaje final
+#         # -------------------------------
+#         mensaje_final = mensaje_encuesta_final(
+#             nombre=nombre_usuario,
+#             url_info=url_info
+#         )
+# 
+#         background_tasks.add_task(
+#             enviar_mensaje_con_credenciales,
+#             data.numero,
+#             mensaje_final,
+#             token_cliente,
+#             phone_id_cliente,
+#             business_name,
+#             nombre_usuario
+#         )
+# 
+#         print(f"✅ Perfil consolidado y mensaje enviado a {data.numero}")
+# 
+#         return {"ok": True, "msg": "Perfil consolidado correctamente"}
+# 
+#     except Exception as e:
+#         print(f"❌ Error en consolidar_perfil_web: {e}")
+# 
+#         return JSONResponse(
+#             {"error": "Error al consolidar el perfil"},
+#             status_code=500
+#         )
