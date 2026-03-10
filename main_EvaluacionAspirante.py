@@ -2407,6 +2407,61 @@ def obtener_opciones_por_pregunta(pregunta_id: int):
 
 from psycopg2.extras import RealDictCursor
 
+# @router.get("/api/encuestas/{encuesta_id}")
+# def obtener_encuesta(encuesta_id: int):
+#     try:
+#         with get_connection_context() as conn:
+#             with conn.cursor(cursor_factory=RealDictCursor) as cur:
+#
+#                 cur.execute("""
+#                         SELECT
+#                             v.id AS pregunta_id,
+#                             v.texto,
+#                             v.tipo_form as tipo,
+#                             v.campo_db AS campo,
+#                             o.orden AS opcion_id,
+#                             o.label,
+#                             o.orden AS opcion_orden
+#                         FROM diagnostico_variable v
+#                         LEFT JOIN diagnostico_variable_valor o
+#                             ON o.variable_id = v.id
+#                         WHERE v.encuesta_id = %s
+#                           AND v.activa = true
+#                         ORDER BY v.orden, o.orden;
+#                 """, (encuesta_id,))
+#
+#                 rows = cur.fetchall()
+#
+#                 preguntas = {}
+#                 for row in rows:
+#                     pid = row["pregunta_id"]
+#
+#                     if pid not in preguntas:
+#                         preguntas[pid] = {
+#                             "id": pid,
+#                             "texto": row["texto"],
+#                             "tipo": row["tipo"],
+#                             "campo": row["campo"],
+#                             "opciones": []
+#                         }
+#
+#                     if row["opcion_id"]:
+#                         preguntas[pid]["opciones"].append({
+#                             "id": row["opcion_id"],
+#                             "label": row["label"],
+#                             "orden": row["opcion_orden"]
+#                         })
+#
+#                 return {
+#                     "success": True,
+#                     "encuesta_id": encuesta_id,
+#                     "preguntas": list(preguntas.values())
+#                 }
+#
+#     except Exception:
+#         return {"success": False}
+
+
 @router.get("/api/encuestas/{encuesta_id}")
 def obtener_encuesta(encuesta_id: int):
     try:
@@ -2414,26 +2469,27 @@ def obtener_encuesta(encuesta_id: int):
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
 
                 cur.execute("""
-                        SELECT 
-                            v.id AS pregunta_id,
-                            v.texto,
-                            v.tipo_form as tipo,
-                            v.campo_db AS campo,
-                            o.orden AS opcion_id,
-                            o.label,
-                            o.orden AS opcion_orden
-                        FROM diagnostico_variable v
-                        LEFT JOIN diagnostico_variable_valor o
-                            ON o.variable_id = v.id
-                        WHERE v.encuesta_id = %s
-                          AND v.activa = true
-                        ORDER BY v.orden, o.orden;
+                    SELECT 
+                        v.id AS pregunta_id,
+                        v.texto,
+                        v.tipo_form AS tipo,
+                        v.campo_db AS campo,
+                        o.orden AS opcion_id,
+                        o.label
+                    FROM diagnostico_variable v
+                    LEFT JOIN diagnostico_variable_valor o
+                        ON o.variable_id = v.id
+                    WHERE v.encuesta_id = %s
+                      AND v.activa = true
+                    ORDER BY v.orden, o.orden
                 """, (encuesta_id,))
 
                 rows = cur.fetchall()
 
                 preguntas = {}
+
                 for row in rows:
+
                     pid = row["pregunta_id"]
 
                     if pid not in preguntas:
@@ -2445,11 +2501,10 @@ def obtener_encuesta(encuesta_id: int):
                             "opciones": []
                         }
 
-                    if row["opcion_id"]:
+                    if row["opcion_id"] is not None:
                         preguntas[pid]["opciones"].append({
                             "id": row["opcion_id"],
-                            "label": row["label"],
-                            "orden": row["opcion_orden"]
+                            "label": row["label"]
                         })
 
                 return {
@@ -2458,10 +2513,13 @@ def obtener_encuesta(encuesta_id: int):
                     "preguntas": list(preguntas.values())
                 }
 
-    except Exception:
-        return {"success": False}
+    except Exception as e:
 
+        print(f"❌ Error obteniendo encuesta: {e}")
 
+        return {
+            "success": False
+        }
 
 @router.get("/api/encuestas/{encuesta_idV0}")
 def obtener_encuestaV0(encuesta_id: int):

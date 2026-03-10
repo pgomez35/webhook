@@ -7357,8 +7357,8 @@ def obtener_datos_pais(telefono_webhook: str) -> dict:
         return {"error": True, "mensaje": str(e)}
 
 
-@router.post("/consolidar")
-def consolidar_perfil_web(
+@router.post("/consolidarV0")
+def consolidar_perfil_webV1(
     data: ConsolidarInput,
     background_tasks: BackgroundTasks
 ):
@@ -7544,9 +7544,192 @@ def consolidar_perfil_web(
 
 VARIABLE_PAIS_ID = 20   # id de la variable pais en diagnostico_variable
 
+@router.post("/consolidar")
+def consolidar_perfil_web(
+    data: ConsolidarInput,
+    background_tasks: BackgroundTasks
+):
+    try:
 
-@router.post("/consolidarV1")
-def consolidar_perfil_webV1(
+        subdominio = current_tenant.get()
+
+        cuenta = obtener_cuenta_por_subdominio(subdominio)
+        if not cuenta:
+            return JSONResponse(
+                {"error": f"No se encontraron credenciales para {subdominio}"},
+                status_code=404
+            )
+
+        token_cliente = cuenta["access_token"]
+        phone_id_cliente = cuenta["phone_number_id"]
+        business_name = cuenta.get("business_name", "la agencia")
+
+        current_token.set(token_cliente)
+        current_phone_id.set(phone_id_cliente)
+        current_business_name.set(business_name)
+
+        # -------------------------------
+        # Procesar respuestas
+        # -------------------------------
+        respuestas_dict = {}
+
+        if data.respuestas:
+            for key, valor in data.respuestas.items():
+
+                if isinstance(key, str) and key.isdigit():
+                    key = int(key)
+
+                respuestas_dict[key] = str(valor).strip() if valor else ""
+
+        # -------------------------------
+        # Detectar país y agregarlo como respuesta
+        # -------------------------------
+        datos_pais = obtener_datos_pais(data.numero)
+
+        if not datos_pais.get("error"):
+
+            pais_id = datos_pais.get("id_pais")
+
+            if pais_id:
+                respuestas_dict[VARIABLE_PAIS_ID] = str(pais_id)
+
+        # -------------------------------
+        # Obtener usuario
+        # -------------------------------
+        try:
+            usuario_bd = buscar_usuario_por_telefono(data.numero)
+
+            nombre_usuario = usuario_bd.get("nombre") if usuario_bd else None
+            creador_id = usuario_bd.get("id") if usuario_bd else None
+
+        except Exception as e:
+            print(f"⚠️ Error obteniendo usuario {data.numero}: {e}")
+            nombre_usuario = None
+            creador_id = None
+
+        # -------------------------------
+        # Marcar encuesta completada
+        # -------------------------------
+        marcar_encuesta_completada(data.numero)
+
+        # -------------------------------
+        # Guardar diagnóstico
+        # -------------------------------
+        if creador_id and respuestas_dict:
+
+            with get_connection_context() as conn:
+
+                cur = conn.cursor()
+
+                # Obtener variables de la encuesta
+                cur.execute("""
+                    SELECT id, campo_db
+                    FROM diagnostico_variable
+                    WHERE encuesta_id = 1
+                """)
+
+                variables = {row[0]: row[1] for row in cur.fetchall()}
+
+                # Borrar respuestas anteriores
+                cur.execute("""
+                    DELETE FROM diagnostico_score_variable
+                    WHERE creador_id = %s
+                """, (creador_id,))
+
+                inserts = []
+
+                # -------------------------------
+                # Procesar respuestas
+                # -------------------------------
+                for pregunta_id, valor in respuestas_dict.items():
+
+                    campo_db = variables.get(pregunta_id)
+
+                    # Insertar score SOLO si es número
+                    if valor.isdigit():
+
+                        inserts.append((
+                            creador_id,
+                            pregunta_id,
+                            int(valor)
+                        ))
+
+                    # Actualizar perfil_creador (incluye nombre)
+                    if campo_db:
+
+                        if not campo_db.replace("_", "").isalnum():
+                            continue
+
+                        query = f"""
+                            UPDATE perfil_creador
+                            SET {campo_db} = %s
+                            WHERE creador_id = %s
+                        """
+
+                        cur.execute(query, (valor, creador_id))
+
+                        # Si el campo es nombre lo usamos para el mensaje
+                        if campo_db == "nombre":
+                            nombre_usuario = valor
+
+                # Insert masivo de scores
+                if inserts:
+
+                    cur.executemany("""
+                        INSERT INTO diagnostico_score_variable
+                        (creador_id, variable_id, valor)
+                        VALUES (%s,%s,%s)
+                    """, inserts)
+
+                conn.commit()
+
+        # -------------------------------
+        # Construir URL informativa
+        # -------------------------------
+        tenant_key = subdominio if subdominio != "public" else "test"
+
+        url_info = None
+        if creador_id:
+
+            url_info = (
+                f"https://{tenant_key}.talentum-manager.com/"
+                f"info-incorporacion?cid={creador_id}"
+            )
+
+        # -------------------------------
+        # Mensaje final
+        # -------------------------------
+        mensaje_final = mensaje_encuesta_final(
+            nombre=nombre_usuario,
+            url_info=url_info
+        )
+
+        background_tasks.add_task(
+            enviar_mensaje_con_credenciales,
+            data.numero,
+            mensaje_final,
+            token_cliente,
+            phone_id_cliente,
+            business_name,
+            nombre_usuario
+        )
+
+        print(f"✅ Perfil consolidado y mensaje enviado a {data.numero}")
+
+        return {"ok": True, "msg": "Perfil consolidado correctamente"}
+
+    except Exception as e:
+
+        print(f"❌ Error en consolidar_perfil_web: {e}")
+
+        return JSONResponse(
+            {"error": "Error al consolidar el perfil"},
+            status_code=500
+        )
+
+
+@router.post("/consolidarV0")
+def consolidar_perfil_webV0(
     data: ConsolidarInput,
     background_tasks: BackgroundTasks
 ):
