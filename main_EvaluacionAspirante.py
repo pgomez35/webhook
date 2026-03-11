@@ -250,173 +250,173 @@ def forzar_cambio_estado_por_id(creador_id: int, nuevo_id_estado: int):
         return False
 
 
-class PerfilCualitativoPayload(BaseModel):
-    puntaje_cualitativo: int = Field(..., ge=0, le=5)
-    apariencia: int = Field(..., ge=0, le=5)
-    engagement: int = Field(..., ge=0, le=5)
-    calidad_contenido: int = Field(..., ge=0, le=5)
-    eval_biografia: int = Field(..., ge=0, le=5)
-    metadata_videos: int = Field(..., ge=0, le=5)
-    eval_foto: int = Field(..., ge=0, le=5)  # solo perfil_creador
+# class PerfilCualitativoPayload(BaseModel):
+#     puntaje_cualitativo: int = Field(..., ge=0, le=5)
+#     apariencia: int = Field(..., ge=0, le=5)
+#     engagement: int = Field(..., ge=0, le=5)
+#     calidad_contenido: int = Field(..., ge=0, le=5)
+#     eval_biografia: int = Field(..., ge=0, le=5)
+#     metadata_videos: int = Field(..., ge=0, le=5)
+#     eval_foto: int = Field(..., ge=0, le=5)  # solo perfil_creador
 
 
-@router.post(
-    "/api/perfil_creador/{creador_id}/talento/actualizar",
-    tags=["Categoria talento"]
-)
-def sync_cualitativo_perfil_y_variables(
-    creador_id: int,
-    payload: PerfilCualitativoPayload,
-    usuario_actual: dict = Depends(obtener_usuario_actual),
-):
-    """
-    - Actualiza en perfil_creador: apariencia, engagement, calidad_contenido, eval_biografia, metadata_videos, eval_foto
-    - Actualiza/crea en diagnostico_score_variable (score) SOLO para variables que vienen de:
-        SELECT id FROM diagnostico_variable WHERE categoria_id = 1
-      Mapeo: usa el campo_db (si existe) o el nombre (fallback) para decidir qué valor poner.
-    """
-    try:
-        # Normaliza valores a int por seguridad (aunque Pydantic ya valida)
-        data = payload.model_dump()
-        for k, v in data.items():
-            try:
-                data[k] = int(v)
-            except (ValueError, TypeError):
-                raise HTTPException(status_code=400, detail=f"{k} debe ser entero")
-            if not (0 <= data[k] <= 5):
-                raise HTTPException(status_code=400, detail=f"{k} debe estar entre 0 y 5")
-
-        perfil_rows = 0
-        upsert_actualizadas = 0
-        upsert_insertadas = 0
-        variables_procesadas = []
-
-        # Campos que sí existen en payload para mapping
-        payload_keys = set(data.keys())  # incluye eval_foto
-        # Pero diagnostico_score_variable solo usa estos (sin eval_foto)
-        payload_keys_tvs = payload_keys - {"eval_foto"}
-
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-
-                # 1) Update perfil_creador
-                cur.execute("""
-                    UPDATE perfil_creador
-                    SET apariencia = %s,
-                        engagement = %s,
-                        calidad_contenido = %s,
-                        eval_biografia = %s,
-                        metadata_videos = %s,
-                        eval_foto = %s,
-                        potencial_estimado = %s
-                    WHERE creador_id = %s
-                """, (
-                    data["apariencia"],
-                    data["engagement"],
-                    data["calidad_contenido"],
-                    data["eval_biografia"],
-                    data["metadata_videos"],
-                    data["eval_foto"],
-                    data["puntaje_cualitativo"],
-                    creador_id
-                ))
-                perfil_rows = cur.rowcount
-
-                # 2) Traer variables categoria_id=1 con campo_db para mapear
-                cur.execute("""
-                    SELECT id, campo_db, nombre
-                    FROM diagnostico_variable
-                    WHERE categoria_id = 1
-                    ORDER BY id
-                """)
-                vars_rows = cur.fetchall()
-
-                if not vars_rows:
-                    conn.commit()
-                    return {
-                        "status": "ok",
-                        "mensaje": "perfil_creador actualizado. No hay variables en diagnostico_variable con categoria_id=1",
-                        "creador_id": creador_id,
-                        "perfil_creador_filas_afectadas": perfil_rows,
-                        "diagnostico_score_variable_actualizadas": 0,
-                        "diagnostico_score_variable_insertadas": 0,
-                        "variables_procesadas": []
-                    }
-
-                # 3) Para cada variable, decidir qué score asignar según campo_db / nombre
-                #    - campo_db preferido (ej: 'apariencia')
-                #    - si campo_db es null, fallback a nombre normalizado
-                def normalize_key(s: str) -> str:
-                    return (
-                        (s or "")
-                        .strip()
-                        .lower()
-                        .replace(" ", "_")
-                    )
-
-                # Construye lista de (variable_id, score) solo para las que podamos mapear
-                pairs = []
-                for var_id, campo_db, nombre in vars_rows:
-                    key = normalize_key(campo_db) if campo_db else normalize_key(nombre)
-                    if key in payload_keys_tvs:
-                        pairs.append((var_id, data[key], key))
-                        variables_procesadas.append({"variable_id": var_id, "campo": key, "score": data[key]})
-                    else:
-                        # No la tocamos: no existe en payload o es eval_foto u otro nombre
-                        variables_procesadas.append({"variable_id": var_id, "campo": key, "omitida": True})
-
-                if pairs:
-                    var_ids = [p[0] for p in pairs]
-
-                    # 4) Update existentes (por variable_id)
-                    #    Usamos un UPDATE con FROM (VALUES ...) para setear score distinto por variable
-                    cur.execute("""
-                        UPDATE diagnostico_score_variable tvs
-                        SET score = v.score
-                        FROM (VALUES %s) AS v(variable_id, score)
-                        WHERE tvs.creador_id = %s
-                          AND tvs.variable_id = v.variable_id
-                    """ % ",".join(["(%s,%s)"] * len(pairs)),
-                    tuple([x for p in pairs for x in (p[0], p[1])] + [creador_id]))
-                    upsert_actualizadas = cur.rowcount
-
-                    # 5) Insert faltantes
-                    cur.execute("""
-                        INSERT INTO diagnostico_score_variable (creador_id, variable_id, score)
-                        SELECT %s, v.variable_id, v.score
-                        FROM (VALUES %s) AS v(variable_id, score)
-                        WHERE NOT EXISTS (
-                            SELECT 1
-                            FROM diagnostico_score_variable tvs
-                            WHERE tvs.creador_id = %s
-                              AND tvs.variable_id = v.variable_id
-                        )
-                    """ % ( "%s", ",".join(["(%s,%s)"] * len(pairs)), "%s" ),
-                    tuple([creador_id] + [x for p in pairs for x in (p[0], p[1])] + [creador_id]))
-                    upsert_insertadas = cur.rowcount
-
-            conn.commit()
-
-        return {
-            "status": "ok",
-            "mensaje": "perfil_creador actualizado + diagnostico_score_variable actualizado/insertado para variables categoria_id=1 (mapeadas por campo_db/nombre)",
-            "creador_id": creador_id,
-            "perfil_creador_filas_afectadas": perfil_rows,
-            "diagnostico_score_variable_actualizadas": upsert_actualizadas,
-            "diagnostico_score_variable_insertadas": upsert_insertadas,
-            "variables_procesadas": variables_procesadas,
-            "payload": data
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error en sync_cualitativo_perfil_y_variables_v1: {str(e)}"
-        )
+# @router.post(
+#     "/api/perfil_creador/{creador_id}/talento/actualizar",
+#     tags=["Categoria talento"]
+# )
+# def sync_cualitativo_perfil_y_variables(
+#     creador_id: int,
+#     payload: PerfilCualitativoPayload,
+#     usuario_actual: dict = Depends(obtener_usuario_actual),
+# ):
+#     """
+#     - Actualiza en perfil_creador: apariencia, engagement, calidad_contenido, eval_biografia, metadata_videos, eval_foto
+#     - Actualiza/crea en diagnostico_score_variable (score) SOLO para variables que vienen de:
+#         SELECT id FROM diagnostico_variable WHERE categoria_id = 1
+#       Mapeo: usa el campo_db (si existe) o el nombre (fallback) para decidir qué valor poner.
+#     """
+#     try:
+#         # Normaliza valores a int por seguridad (aunque Pydantic ya valida)
+#         data = payload.model_dump()
+#         for k, v in data.items():
+#             try:
+#                 data[k] = int(v)
+#             except (ValueError, TypeError):
+#                 raise HTTPException(status_code=400, detail=f"{k} debe ser entero")
+#             if not (0 <= data[k] <= 5):
+#                 raise HTTPException(status_code=400, detail=f"{k} debe estar entre 0 y 5")
+#
+#         perfil_rows = 0
+#         upsert_actualizadas = 0
+#         upsert_insertadas = 0
+#         variables_procesadas = []
+#
+#         # Campos que sí existen en payload para mapping
+#         payload_keys = set(data.keys())  # incluye eval_foto
+#         # Pero diagnostico_score_variable solo usa estos (sin eval_foto)
+#         payload_keys_tvs = payload_keys - {"eval_foto"}
+#
+#         with get_connection_context() as conn:
+#             with conn.cursor() as cur:
+#
+#                 # 1) Update perfil_creador
+#                 cur.execute("""
+#                     UPDATE perfil_creador
+#                     SET apariencia = %s,
+#                         engagement = %s,
+#                         calidad_contenido = %s,
+#                         eval_biografia = %s,
+#                         metadata_videos = %s,
+#                         eval_foto = %s,
+#                         potencial_estimado = %s
+#                     WHERE creador_id = %s
+#                 """, (
+#                     data["apariencia"],
+#                     data["engagement"],
+#                     data["calidad_contenido"],
+#                     data["eval_biografia"],
+#                     data["metadata_videos"],
+#                     data["eval_foto"],
+#                     data["puntaje_cualitativo"],
+#                     creador_id
+#                 ))
+#                 perfil_rows = cur.rowcount
+#
+#                 # 2) Traer variables categoria_id=1 con campo_db para mapear
+#                 cur.execute("""
+#                     SELECT id, campo_db, nombre
+#                     FROM diagnostico_variable
+#                     WHERE categoria_id = 1
+#                     ORDER BY id
+#                 """)
+#                 vars_rows = cur.fetchall()
+#
+#                 if not vars_rows:
+#                     conn.commit()
+#                     return {
+#                         "status": "ok",
+#                         "mensaje": "perfil_creador actualizado. No hay variables en diagnostico_variable con categoria_id=1",
+#                         "creador_id": creador_id,
+#                         "perfil_creador_filas_afectadas": perfil_rows,
+#                         "diagnostico_score_variable_actualizadas": 0,
+#                         "diagnostico_score_variable_insertadas": 0,
+#                         "variables_procesadas": []
+#                     }
+#
+#                 # 3) Para cada variable, decidir qué score asignar según campo_db / nombre
+#                 #    - campo_db preferido (ej: 'apariencia')
+#                 #    - si campo_db es null, fallback a nombre normalizado
+#                 def normalize_key(s: str) -> str:
+#                     return (
+#                         (s or "")
+#                         .strip()
+#                         .lower()
+#                         .replace(" ", "_")
+#                     )
+#
+#                 # Construye lista de (variable_id, score) solo para las que podamos mapear
+#                 pairs = []
+#                 for var_id, campo_db, nombre in vars_rows:
+#                     key = normalize_key(campo_db) if campo_db else normalize_key(nombre)
+#                     if key in payload_keys_tvs:
+#                         pairs.append((var_id, data[key], key))
+#                         variables_procesadas.append({"variable_id": var_id, "campo": key, "score": data[key]})
+#                     else:
+#                         # No la tocamos: no existe en payload o es eval_foto u otro nombre
+#                         variables_procesadas.append({"variable_id": var_id, "campo": key, "omitida": True})
+#
+#                 if pairs:
+#                     var_ids = [p[0] for p in pairs]
+#
+#                     # 4) Update existentes (por variable_id)
+#                     #    Usamos un UPDATE con FROM (VALUES ...) para setear score distinto por variable
+#                     cur.execute("""
+#                         UPDATE diagnostico_score_variable tvs
+#                         SET score = v.score
+#                         FROM (VALUES %s) AS v(variable_id, score)
+#                         WHERE tvs.creador_id = %s
+#                           AND tvs.variable_id = v.variable_id
+#                     """ % ",".join(["(%s,%s)"] * len(pairs)),
+#                     tuple([x for p in pairs for x in (p[0], p[1])] + [creador_id]))
+#                     upsert_actualizadas = cur.rowcount
+#
+#                     # 5) Insert faltantes
+#                     cur.execute("""
+#                         INSERT INTO diagnostico_score_variable (creador_id, variable_id, score)
+#                         SELECT %s, v.variable_id, v.score
+#                         FROM (VALUES %s) AS v(variable_id, score)
+#                         WHERE NOT EXISTS (
+#                             SELECT 1
+#                             FROM diagnostico_score_variable tvs
+#                             WHERE tvs.creador_id = %s
+#                               AND tvs.variable_id = v.variable_id
+#                         )
+#                     """ % ( "%s", ",".join(["(%s,%s)"] * len(pairs)), "%s" ),
+#                     tuple([creador_id] + [x for p in pairs for x in (p[0], p[1])] + [creador_id]))
+#                     upsert_insertadas = cur.rowcount
+#
+#             conn.commit()
+#
+#         return {
+#             "status": "ok",
+#             "mensaje": "perfil_creador actualizado + diagnostico_score_variable actualizado/insertado para variables categoria_id=1 (mapeadas por campo_db/nombre)",
+#             "creador_id": creador_id,
+#             "perfil_creador_filas_afectadas": perfil_rows,
+#             "diagnostico_score_variable_actualizadas": upsert_actualizadas,
+#             "diagnostico_score_variable_insertadas": upsert_insertadas,
+#             "variables_procesadas": variables_procesadas,
+#             "payload": data
+#         }
+#
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         import traceback
+#         traceback.print_exc()
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error en sync_cualitativo_perfil_y_variables_v1: {str(e)}"
+#         )
 
 
 # from fastapi import APIRouter, Depends, HTTPException
@@ -425,14 +425,14 @@ def sync_cualitativo_perfil_y_variables(
 # router = APIRouter()
 
 
-class PerfilCualitativoPayloadOut(BaseModel):
-    potencial_estimado: int = Field(..., ge=0, le=5)
-    apariencia: int = Field(..., ge=0, le=5)
-    engagement: int = Field(..., ge=0, le=5)
-    calidad_contenido: int = Field(..., ge=0, le=5)
-    eval_biografia: int = Field(..., ge=0, le=5)
-    metadata_videos: int = Field(..., ge=0, le=5)
-    eval_foto: int = Field(..., ge=0, le=5)
+# class PerfilCualitativoPayloadOut(BaseModel):
+#     potencial_estimado: int = Field(..., ge=0, le=5)
+#     apariencia: int = Field(..., ge=0, le=5)
+#     engagement: int = Field(..., ge=0, le=5)
+#     calidad_contenido: int = Field(..., ge=0, le=5)
+#     eval_biografia: int = Field(..., ge=0, le=5)
+#     metadata_videos: int = Field(..., ge=0, le=5)
+#     eval_foto: int = Field(..., ge=0, le=5)
 
 
 # @router.get(
