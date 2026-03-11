@@ -104,7 +104,7 @@ def obtener_diagnostico_creador(creador_id: int):
 
 
 class PerfilCualitativoPayload(BaseModel):
-    puntaje_cualitativo: int = Field(..., ge=0, le=5)
+    potencial_estimado: int = Field(..., ge=0, le=5)
     apariencia: int = Field(..., ge=0, le=5)
     engagement: int = Field(..., ge=0, le=5)
     calidad_contenido: int = Field(..., ge=0, le=5)
