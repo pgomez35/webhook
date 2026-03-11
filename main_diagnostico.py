@@ -157,7 +157,7 @@ def sync_cualitativo_perfil_y_variables(
                     data["eval_biografia"],
                     data["metadata_videos"],
                     data["eval_foto"],
-                    data["puntaje_cualitativo"],
+                    data["potencial_estimado"],
                     creador_id
                 ))
 
