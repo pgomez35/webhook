@@ -385,7 +385,7 @@ def guardar_scores_desde_perfil(cur, creador_id: int):
     )
 
     INSERT INTO diagnostico_score_variable
-    (creador_id, variable_id, valor_id)
+    (creador_id, variable_id, valor)
 
     SELECT
         creador_id,
