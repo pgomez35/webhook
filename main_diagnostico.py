@@ -325,12 +325,12 @@ def obtener_diagnostico(cur, creador_id: int, modelo_id: int):
 
 def guardar_scores_desde_perfil(cur, creador_id: int):
 
-    # 1️⃣ obtener variables que vienen del perfil
+    # 1️⃣ obtener variables del sistema
     cur.execute("""
         SELECT id, campo_db
         FROM diagnostico_variable
-        WHERE encuesta_id = 0 
-        AND tipo<>'texto' 
+        WHERE encuesta_id = 0
+        AND tipo <> 'texto'
         AND campo_db IS NOT NULL
     """)
 
@@ -339,36 +339,114 @@ def guardar_scores_desde_perfil(cur, creador_id: int):
     if not variables:
         return
 
-    # 2️⃣ obtener columnas del perfil
-    campos = [v[1] for v in variables]
+    # construir VALUES dinámico (UNPIVOT)
+    values_sql = ",".join(
+        f"({v[0]}, p.{v[1]})"
+        for v in variables
+    )
 
     sql = f"""
-        SELECT {",".join(campos)}
-        FROM perfil_creador
-        WHERE creador_id = %s
+    WITH perfil_vars AS (
+
+        SELECT
+            p.creador_id,
+            v.variable_id,
+            v.valor
+        FROM perfil_creador p
+
+        CROSS JOIN LATERAL (
+            VALUES
+            {values_sql}
+        ) AS v(variable_id, valor)
+
+        WHERE p.creador_id = %s
+        AND v.valor IS NOT NULL
+    ),
+
+    valores_resueltos AS (
+
+        SELECT
+            pv.creador_id,
+            pv.variable_id,
+            dvv.id AS valor_id
+
+        FROM perfil_vars pv
+
+        JOIN diagnostico_variable dv
+            ON dv.id = pv.variable_id
+
+        JOIN diagnostico_variable_valor dvv
+            ON dvv.variable_id = pv.variable_id
+            AND (
+                (dv.categoria_id = 1 AND dvv.score = pv.valor)
+                OR
+                (dv.categoria_id = 2 AND pv.valor BETWEEN dvv.min_val AND dvv.max_val)
+            )
+    )
+
+    INSERT INTO diagnostico_score_variable
+    (creador_id, variable_id, valor_id)
+
+    SELECT
+        creador_id,
+        variable_id,
+        valor_id
+    FROM valores_resueltos
+
+    ON CONFLICT (creador_id, variable_id)
+    DO UPDATE
+    SET valor_id = EXCLUDED.valor_id
     """
 
     cur.execute(sql, (creador_id,))
-    perfil = cur.fetchone()
 
-    if not perfil:
-        return
 
-    # 3️⃣ insertar scores
-    for i, (variable_id, campo_db) in enumerate(variables):
-
-        valor = perfil[i]
-
-        if valor is None:
-            continue
-
-        cur.execute("""
-            INSERT INTO diagnostico_score_variable
-            (creador_id, variable_id, valor)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (creador_id, variable_id)
-            DO UPDATE SET valor = EXCLUDED.valor
-        """, (creador_id, variable_id, valor))
+# def guardar_scores_desde_perfil(cur, creador_id: int):
+#
+#     # 1️⃣ obtener variables que vienen del perfil
+#     cur.execute("""
+#         SELECT id, campo_db
+#         FROM diagnostico_variable
+#         WHERE encuesta_id = 0
+#         AND tipo<>'texto'
+#         AND campo_db IS NOT NULL
+#     """)
+#
+#     variables = cur.fetchall()
+#
+#     if not variables:
+#         return
+#
+#     # 2️⃣ obtener columnas del perfil
+#     campos = [v[1] for v in variables]
+#
+#     sql = f"""
+#         SELECT {",".join(campos)}
+#         FROM perfil_creador
+#         WHERE creador_id = %s
+#     """
+#
+#     cur.execute(sql, (creador_id,))
+#     perfil = cur.fetchone()
+#
+#     if not perfil:
+#         return
+#
+#     # 3️⃣ insertar scores
+#     for i, (variable_id, campo_db) in enumerate(variables):
+#
+#         valor = perfil[i]
+#
+#         if valor is None:
+#             continue
+#
+#         cur.execute("""
+#             INSERT INTO diagnostico_score_variable
+#             (creador_id, variable_id, valor)
+#             VALUES (%s, %s, %s)
+#             ON CONFLICT (creador_id, variable_id)
+#             DO UPDATE SET valor = EXCLUDED.valor
+#         """, (creador_id, variable_id, valor))
 
 
 # def obtener_diagnostico_v4(cur, creador_id:int, modelo_id:int):
