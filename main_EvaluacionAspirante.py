@@ -2469,19 +2469,15 @@ def obtener_encuesta(encuesta_id: int):
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
 
                 cur.execute("""
-                    SELECT 
-                        v.id AS pregunta_id,
-                        v.texto,
-                        v.tipo_form AS tipo,
-                        v.campo_db AS campo,
-                        COALESCE(o.orden, 1) AS opcion_id,
-                        o.label
-                    FROM diagnostico_variable v
-                    LEFT JOIN diagnostico_variable_valor o
-                        ON o.variable_id = v.id
-                    WHERE v.encuesta_id = %s
-                      AND v.activa = true
-                    ORDER BY v.orden, o.orden
+                    SELECT v.id AS pregunta_id, v.texto, 
+                    v.tipo_form as tipo, v.campo_db AS campo, 
+                    o.orden AS opcion_id, o.label, 
+                    o.orden AS opcion_orden 
+                    FROM diagnostico_variable v 
+                    LEFT JOIN diagnostico_variable_valor o ON o.variable_id = v.id 
+                    WHERE v.encuesta_id = %s 
+                    AND v.activa = true 
+                    ORDER BY v.orden, o.orden;
                 """, (encuesta_id,))
 
                 rows = cur.fetchall()
@@ -2501,11 +2497,13 @@ def obtener_encuesta(encuesta_id: int):
                             "opciones": []
                         }
 
-                    if row["opcion_id"] is not None:
-                        preguntas[pid]["opciones"].append({
+                    if row["opcion_id"]:
+                        preguntas[pid]["opciones"].append(
+                        {
                             "id": row["opcion_id"],
-                            "label": row["label"]
-                        })
+                            "label": row["label"],
+                            "orden": row["opcion_orden"]
+                         })
 
                 return {
                     "success": True,
