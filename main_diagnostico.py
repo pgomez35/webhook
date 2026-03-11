@@ -368,7 +368,7 @@ def guardar_scores_desde_perfil(cur, creador_id: int):
         SELECT
             pv.creador_id,
             pv.variable_id,
-            dvv.id AS valor_id
+            pv.valor
 
         FROM perfil_vars pv
 
@@ -390,12 +390,12 @@ def guardar_scores_desde_perfil(cur, creador_id: int):
     SELECT
         creador_id,
         variable_id,
-        valor_id
+        valor
     FROM valores_resueltos
 
     ON CONFLICT (creador_id, variable_id)
     DO UPDATE
-    SET valor_id = EXCLUDED.valor_id
+    SET valor = EXCLUDED.valor
     """
 
     cur.execute(sql, (creador_id,))
