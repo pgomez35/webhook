@@ -329,7 +329,8 @@ def guardar_scores_desde_perfil(cur, creador_id: int):
     cur.execute("""
         SELECT id, campo_db
         FROM diagnostico_variable
-        WHERE encuesta_id = 0
+        WHERE encuesta_id = 0 
+        AND tipo<>'texto' 
         AND campo_db IS NOT NULL
     """)
 
