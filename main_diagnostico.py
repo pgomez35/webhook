@@ -258,10 +258,8 @@ def obtener_diagnostico(cur, creador_id: int, modelo_id: int):
             *,
 
             CASE
-                WHEN score_categoria >= 4.2 THEN 5
-                WHEN score_categoria >= 3.8 THEN 4
-                WHEN score_categoria >= 3.2 THEN 3
-                WHEN score_categoria >= 2.5 THEN 2
+                WHEN score_categoria >= 3.8 THEN 3
+                WHEN score_categoria >= 2.8 THEN 2
                 ELSE 1
             END AS nivel
 
