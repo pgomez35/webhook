@@ -2497,7 +2497,7 @@ def obtener_encuesta(encuesta_id: int):
                             "opciones": []
                         }
 
-                    if row["opcion_id"]:
+                    if row["opcion_id"] is not None:
                         preguntas[pid]["opciones"].append(
                         {
                             "id": row["opcion_id"],
