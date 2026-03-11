@@ -339,7 +339,7 @@ def guardar_scores_desde_perfil(cur, creador_id: int):
     if not variables:
         return
 
-    # construir VALUES dinámico (UNPIVOT)
+    # construir VALUES dinámico
     values_sql = ",".join(
         f"({v[0]}, p.{v[1]})"
         for v in variables
@@ -368,7 +368,7 @@ def guardar_scores_desde_perfil(cur, creador_id: int):
         SELECT
             pv.creador_id,
             pv.variable_id,
-            pv.valor
+            dvv.id AS valor_id
 
         FROM perfil_vars pv
 
@@ -390,7 +390,7 @@ def guardar_scores_desde_perfil(cur, creador_id: int):
     SELECT
         creador_id,
         variable_id,
-        valor
+        valor_id
     FROM valores_resueltos
 
     ON CONFLICT (creador_id, variable_id)
