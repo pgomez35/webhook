@@ -285,7 +285,7 @@ def calcular_diagnostico_y_json(cur, creador_id: int, modelo_id: int):
         LEFT JOIN diagnostico_interpretacion_categoria s
             ON s.categoria_id = cn.categoria_id
             AND s.nivel = cn.nivel
-            AND s.escala = 5
+            AND s.escala = 3
     ),
 
     total_calc AS (
