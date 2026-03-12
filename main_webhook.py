@@ -7641,22 +7641,20 @@ def consolidar_perfil_web(
 
                     # Guardar score solo si es número
                     if valor.isdigit():
-
                         valor_int = int(valor)
 
                         cur.execute("""
-                            INSERT INTO diagnostico_score_variable
-                            (creador_id, variable_id, valor)
-                            VALUES (%s,%s,%s)
-
-                            ON CONFLICT (creador_id, variable_id)
-                            DO UPDATE SET
-                                valor = EXCLUDED.valor
-                        """, (
-                            creador_id,
-                            pregunta_id,
-                            valor_int
-                        ))
+                                    INSERT INTO diagnostico_score_variable
+                                        (creador_id, variable_id, valor_id)
+                                    VALUES (%s, %s, %s) ON CONFLICT (creador_id, variable_id)
+                            DO
+                                    UPDATE SET
+                                        valor_id = EXCLUDED.valor_id
+                                    """, (
+                                        creador_id,
+                                        pregunta_id,
+                                        valor_int
+                                    ))
 
                     # -------------------------------
                     # Actualizar perfil_creador
