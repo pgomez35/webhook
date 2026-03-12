@@ -12,6 +12,17 @@ router = APIRouter()
 from fastapi import APIRouter, HTTPException
 
 
+
+class PerfilCualitativoPayload(BaseModel):
+    potencial_estimado: int = Field(..., ge=0, le=5)
+    apariencia: int = Field(..., ge=0, le=5)
+    engagement: int = Field(..., ge=0, le=5)
+    calidad_contenido: int = Field(..., ge=0, le=5)
+    eval_biografia: int = Field(..., ge=0, le=5)
+    metadata_videos: int = Field(..., ge=0, le=5)
+    eval_foto: int = Field(..., ge=0, le=5)  # solo perfil_creador
+
+
 @router.post(
     "/api/perfil_creador/{creador_id}/talento/actualizar",
     tags=["Categoria talento"]
@@ -124,17 +135,6 @@ def obtener_diagnostico(creador_id: int):
 
 
 
-class PerfilCualitativoPayload(BaseModel):
-    potencial_estimado: int = Field(..., ge=0, le=5)
-    apariencia: int = Field(..., ge=0, le=5)
-    engagement: int = Field(..., ge=0, le=5)
-    calidad_contenido: int = Field(..., ge=0, le=5)
-    eval_biografia: int = Field(..., ge=0, le=5)
-    metadata_videos: int = Field(..., ge=0, le=5)
-    eval_foto: int = Field(..., ge=0, le=5)  # solo perfil_creador
-
-
-#
 
 
 def calcular_diagnostico_y_json(cur, creador_id: int, modelo_id: int):
@@ -2730,7 +2730,7 @@ def guardar_scores_desde_perfil(cur, creador_id: int):
 #     }
 
 
-@router.post("/api/perfil_creador/{creador_id}/talento/actualizar",
+# @router.post("/api/perfil_creador/{creador_id}/talento/actualizar",
 #     tags=["Categoria talento"]
 # )
 # def sync_cualitativo_perfil_y_variables(
