@@ -23,8 +23,7 @@ class PerfilCualitativoPayload(BaseModel):
     eval_foto: int = Field(..., ge=0, le=5)  # solo perfil_creador
 
 
-@router.post(
-    "/api/perfil_creador/{creador_id}/talento/actualizar",
+@router.post("/api/perfil_creador/{creador_id}/talento/actualizar",
     tags=["Categoria talento"]
 )
 def sync_cualitativo_perfil_y_variables(
@@ -77,8 +76,25 @@ def sync_cualitativo_perfil_y_variables(
                 # 2️⃣ pasar valores del perfil al score_variable
                 guardar_scores_desde_perfil(cur, creador_id)
 
-                # 3️⃣ recalcular diagnóstico completo
-                modelo_id = 1
+                # 3️⃣ obtener modelo activo
+                cur.execute("""
+                    SELECT id
+                    FROM diagnostico_modelo
+                    WHERE activo = true
+                    LIMIT 1
+                """)
+
+                r_modelo = cur.fetchone()
+
+                if not r_modelo:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="No existe modelo de diagnóstico activo"
+                    )
+
+                modelo_id = r_modelo[0]
+
+                # 4️⃣ recalcular diagnóstico
                 calcular_diagnostico_y_json(cur, creador_id, modelo_id)
 
             conn.commit()
@@ -104,21 +120,38 @@ def sync_cualitativo_perfil_y_variables(
         )
 
 
-@router.get("/diagnostico/{creador_id}")
-def obtener_diagnostico(creador_id: int):
 
-    modelo_id = 1
+@router.get("/api/creadores/{creador_id}/diagnostico")
+def diagnostico_creador(creador_id: int):
 
     with get_connection_context() as conn:
-
         cur = conn.cursor()
 
+        # 1️⃣ obtener modelo activo
+        cur.execute("""
+            SELECT id
+            FROM diagnostico_modelo
+            WHERE activo = true
+            LIMIT 1
+        """)
+
+        r_modelo = cur.fetchone()
+
+        if not r_modelo:
+            return {
+                "success": False,
+                "message": "No hay modelo de diagnóstico activo"
+            }
+
+        modelo_id = r_modelo[0]
+
+        # 2️⃣ buscar diagnóstico ya calculado
         cur.execute("""
             SELECT diagnostico_json
             FROM diagnostico_score_general
             WHERE creador_id = %s
             AND modelo_id = %s
-        """,(creador_id,modelo_id))
+        """, (creador_id, modelo_id))
 
         r = cur.fetchone()
 
@@ -132,6 +165,7 @@ def obtener_diagnostico(creador_id: int):
             "success": True,
             **r[0]
         }
+
 
 def calcular_diagnostico_y_json(cur, creador_id: int, modelo_id: int):
 
@@ -3198,3 +3232,115 @@ def guardar_scores_desde_perfil(cur, creador_id: int):
 #         "creador_id": creador_id,
 #         "modelo_id": modelo_id
 #     })
+
+
+
+# @router.get("/api/creadores/{creador_id}/diagnostico")
+# def diagnostico_creador(creador_id: int):
+#
+#     modelo_id = 1
+#
+#     with get_connection_context() as conn:
+#
+#         cur = conn.cursor()
+#
+#         cur.execute("""
+#             SELECT diagnostico_json
+#             FROM diagnostico_score_general
+#             WHERE creador_id = %s
+#             AND modelo_id = %s
+#         """,(creador_id,modelo_id))
+#
+#         r = cur.fetchone()
+#
+#         if not r:
+#             return {
+#                 "success": False,
+#                 "message": "Diagnóstico no calculado"
+#             }
+#
+#         return {
+#             "success": True,
+#             **r[0]
+#         }
+
+
+# @router.post(
+#     "/api/perfil_creador/{creador_id}/talento/actualizar",
+#     tags=["Categoria talento"]
+# )
+# def sync_cualitativo_perfil_y_variables(
+#     creador_id: int,
+#     payload: PerfilCualitativoPayload,
+#     usuario_actual: dict = Depends(obtener_usuario_actual),
+# ):
+#
+#     try:
+#
+#         data = payload.model_dump()
+#
+#         # seguridad extra
+#         for k, v in data.items():
+#             try:
+#                 data[k] = int(v)
+#             except:
+#                 raise HTTPException(status_code=400, detail=f"{k} debe ser entero")
+#
+#             if not (0 <= data[k] <= 5):
+#                 raise HTTPException(status_code=400, detail=f"{k} debe estar entre 0 y 5")
+#
+#         with get_connection_context() as conn:
+#             with conn.cursor() as cur:
+#
+#                 # 1️⃣ actualizar perfil_creador
+#                 cur.execute("""
+#                     UPDATE perfil_creador
+#                     SET apariencia = %s,
+#                         engagement = %s,
+#                         calidad_contenido = %s,
+#                         eval_biografia = %s,
+#                         metadata_videos = %s,
+#                         eval_foto = %s,
+#                         potencial_estimado = %s
+#                     WHERE creador_id = %s
+#                 """, (
+#                     data["apariencia"],
+#                     data["engagement"],
+#                     data["calidad_contenido"],
+#                     data["eval_biografia"],
+#                     data["metadata_videos"],
+#                     data["eval_foto"],
+#                     data["potencial_estimado"],
+#                     creador_id
+#                 ))
+#
+#                 perfil_rows = cur.rowcount
+#
+#                 # 2️⃣ pasar valores del perfil al score_variable
+#                 guardar_scores_desde_perfil(cur, creador_id)
+#
+#                 # 3️⃣ recalcular diagnóstico completo
+#                 modelo_id = 1
+#                 calcular_diagnostico_y_json(cur, creador_id, modelo_id)
+#
+#             conn.commit()
+#
+#         return {
+#             "status": "ok",
+#             "mensaje": "perfil_creador actualizado, scores sincronizados y diagnóstico recalculado",
+#             "creador_id": creador_id,
+#             "perfil_creador_filas_afectadas": perfil_rows,
+#             "payload": data
+#         }
+#
+#     except HTTPException:
+#         raise
+#
+#     except Exception as e:
+#         import traceback
+#         traceback.print_exc()
+#
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error en sync_cualitativo_perfil_y_variables: {str(e)}"
+#         )
