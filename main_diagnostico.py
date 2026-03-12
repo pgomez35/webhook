@@ -188,97 +188,125 @@ def sync_cualitativo_perfil_y_variables(
 
 
 def obtener_diagnostico(cur, creador_id: int, modelo_id: int):
+
     sql = """
-          WITH base AS (SELECT c.id          AS categoria_id, \
-                               c.nombre      AS categoria_nombre, \
-                               c.descripcion AS categoria_descripcion, \
-                               c.peso_categoria, \
+    WITH base AS (
 
-                               v.id          AS variable_id, \
-                               v.nombre      AS variable_nombre, \
-                               v.tipo, \
-                               v.peso_variable, \
-                               v.orden, \
+        SELECT
+            mc.categoria_id,
+            mc.peso_categoria,
+            mc.orden AS categoria_orden,
 
-                               sv.valor      AS valor_rango, \
-                               vv.score      AS score_num, \
-                               vv.label      AS label \
+            c.nombre AS categoria_nombre,
+            c.descripcion AS categoria_descripcion,
 
-                        FROM diagnostico_modelo_categoria mc \
-                                 JOIN diagnostico_categoria c \
-                                      ON c.id = mc.categoria_id \
-                                 JOIN diagnostico_variable v \
-                                      ON v.categoria_id = c.id \
-                                          AND v.activa = true \
+            v.id AS variable_id,
+            v.nombre AS variable_nombre,
+            v.tipo,
+            v.peso_variable,
+            v.orden AS variable_orden,
 
-                                 LEFT JOIN diagnostico_score_variable sv \
-                                           ON sv.variable_id = v.id \
-                                               AND sv.creador_id = %(creador_id)s \
+            sv.valor,
+            vv.score,
+            vv.label,
+            vv.nivel
 
-                                 LEFT JOIN diagnostico_variable_valor vv \
-                                           ON vv.id = sv.valor_id),
+        FROM diagnostico_modelo_categoria mc
 
-               calc AS (SELECT categoria_id, \
-                               categoria_nombre, \
-                               categoria_descripcion, \
-                               peso_categoria, \
+        JOIN diagnostico_categoria c
+            ON c.id = mc.categoria_id
 
-                               jsonb_agg( \
-                                       jsonb_build_object( \
-                                               'variable_id', variable_id, \
-                                               'variable', variable_nombre, \
-                                               'tipo', tipo, \
-                                               'score', CASE \
-                                                            WHEN tipo = 'numérica' THEN COALESCE(score_num, 0) \
-                                                            ELSE COALESCE(valor_rango, 0) \
-                                                   END, \
-                                               'nivel', CASE \
-                                                            WHEN tipo = 'numérica' THEN COALESCE(nivel, NULL) \
-                                                            ELSE NULL \
-                                                   END, \
-                                               'label', label \
-                                       ) ORDER BY orden \
-                               ) AS variables, \
+        JOIN diagnostico_variable v
+            ON v.categoria_id = c.id
+            AND v.activa = true
 
-                               SUM( \
-                                       CASE \
-                                           WHEN tipo = 'numérica' THEN COALESCE(score_num, 0) * (peso_variable / 100.0) \
-                                           ELSE COALESCE(valor_rango, 0) * (peso_variable / 100.0) \
-                                           END \
-                               ) AS score_categoria \
+        LEFT JOIN diagnostico_score_variable sv
+            ON sv.variable_id = v.id
+            AND sv.creador_id = %(creador_id)s
 
-                        FROM base \
-                        GROUP BY categoria_id, \
-                                 categoria_nombre, \
-                                 categoria_descripcion, \
-                                 peso_categoria),
+        LEFT JOIN diagnostico_variable_valor vv
+            ON vv.id = sv.valor_id
 
-               niveles AS (SELECT *, \
-                                  CASE \
-                                      WHEN score_categoria >= 3.75 THEN 3 \
-                                      WHEN score_categoria >= 2.75 THEN 2 \
-                                      ELSE 1 \
-                                      END AS nivel \
-                           FROM calc)
+        WHERE mc.modelo_id = %(modelo_id)s
+    ),
 
-          SELECT jsonb_agg( \
-                         jsonb_build_object( \
-                                 'categoria_id', n.categoria_id, \
-                                 'categoria_nombre', n.categoria_nombre, \
-                                 'descripcion', n.categoria_descripcion, \
-                                 'score', ROUND(n.score_categoria, 2), \
-                                 'nivel', n.nivel, \
-                                 'script', s.script, \
-                                 'variables', n.variables \
-                         ) ORDER BY n.categoria_id \
-                 )                                                   AS categorias, \
-                 SUM(n.score_categoria * (n.peso_categoria / 100.0)) AS score_total
-          FROM niveles n
-                   LEFT JOIN diagnostico_interpretacion_categoria s
-                             ON s.categoria_id = n.categoria_id
-                                 AND s.nivel = n.nivel
-                                 AND s.escala = 5 \
-          """
+    variables_calc AS (
+
+        SELECT
+            *,
+            CASE
+                WHEN tipo = 'numérica' THEN COALESCE(score,0)
+                ELSE COALESCE(valor,0)
+            END AS score_variable
+        FROM base
+    ),
+
+    categorias_calc AS (
+
+        SELECT
+            categoria_id,
+            categoria_nombre,
+            categoria_descripcion,
+            peso_categoria,
+            categoria_orden,
+
+            jsonb_agg(
+                jsonb_build_object(
+                    'variable_id', variable_id,
+                    'variable', variable_nombre,
+                    'tipo', tipo,
+                    'score', score_variable,
+                    'nivel', nivel,
+                    'label', label
+                )
+                ORDER BY variable_orden
+            ) AS variables,
+
+            SUM(score_variable * (peso_variable / 100.0)) AS score_categoria
+
+        FROM variables_calc
+        GROUP BY
+            categoria_id,
+            categoria_nombre,
+            categoria_descripcion,
+            peso_categoria,
+            categoria_orden
+    ),
+
+    niveles AS (
+
+        SELECT *,
+        CASE
+            WHEN score_categoria >= 3.75 THEN 3
+            WHEN score_categoria >= 2.75 THEN 2
+            ELSE 1
+        END AS nivel
+        FROM categorias_calc
+    )
+
+    SELECT
+        jsonb_agg(
+            jsonb_build_object(
+                'categoria_id', n.categoria_id,
+                'categoria_nombre', n.categoria_nombre,
+                'descripcion', n.categoria_descripcion,
+                'score', ROUND(n.score_categoria,2),
+                'nivel', n.nivel,
+                'script', s.script,
+                'variables', n.variables
+            )
+            ORDER BY n.categoria_orden
+        ) AS categorias,
+
+        SUM(n.score_categoria * (n.peso_categoria / 100.0)) AS score_total
+
+    FROM niveles n
+
+    LEFT JOIN diagnostico_interpretacion_categoria s
+        ON s.categoria_id = n.categoria_id
+        AND s.nivel = n.nivel
+        AND s.escala = 5
+    """
 
     cur.execute(sql, {
         "creador_id": creador_id,
@@ -294,7 +322,6 @@ def obtener_diagnostico(cur, creador_id: int, modelo_id: int):
         "categorias": categorias,
         "score_total": score_total
     }
-
 
 
 
@@ -2238,3 +2265,114 @@ def guardar_scores_desde_perfil(cur, creador_id: int):
 #             "success": False,
 #             "error": "Error generando diagnóstico"
 #         }
+
+
+
+# def obtener_diagnostico(cur, creador_id: int, modelo_id: int):
+#     sql = """
+#           WITH base AS (SELECT c.id          AS categoria_id, \
+#                                c.nombre      AS categoria_nombre, \
+#                                c.descripcion AS categoria_descripcion, \
+#                                c.peso_categoria, \
+#
+#                                v.id          AS variable_id, \
+#                                v.nombre      AS variable_nombre, \
+#                                v.tipo, \
+#                                v.peso_variable, \
+#                                v.orden, \
+#
+#                                sv.valor      AS valor_rango, \
+#                                vv.score      AS score_num, \
+#                                vv.label      AS label \
+#
+#                         FROM diagnostico_modelo_categoria mc \
+#                                  JOIN diagnostico_categoria c \
+#                                       ON c.id = mc.categoria_id \
+#                                  JOIN diagnostico_variable v \
+#                                       ON v.categoria_id = c.id \
+#                                           AND v.activa = true \
+#
+#                                  LEFT JOIN diagnostico_score_variable sv \
+#                                            ON sv.variable_id = v.id \
+#                                                AND sv.creador_id = %(creador_id)s \
+#
+#                                  LEFT JOIN diagnostico_variable_valor vv \
+#                                            ON vv.id = sv.valor_id),
+#
+#                calc AS (SELECT categoria_id, \
+#                                categoria_nombre, \
+#                                categoria_descripcion, \
+#                                peso_categoria, \
+#
+#                                jsonb_agg( \
+#                                        jsonb_build_object( \
+#                                                'variable_id', variable_id, \
+#                                                'variable', variable_nombre, \
+#                                                'tipo', tipo, \
+#                                                'score', CASE \
+#                                                             WHEN tipo = 'numérica' THEN COALESCE(score_num, 0) \
+#                                                             ELSE COALESCE(valor_rango, 0) \
+#                                                    END, \
+#                                                'nivel', CASE \
+#                                                             WHEN tipo = 'numérica' THEN COALESCE(nivel, NULL) \
+#                                                             ELSE NULL \
+#                                                    END, \
+#                                                'label', label \
+#                                        ) ORDER BY orden \
+#                                ) AS variables, \
+#
+#                                SUM( \
+#                                        CASE \
+#                                            WHEN tipo = 'numérica' THEN COALESCE(score_num, 0) * (peso_variable / 100.0) \
+#                                            ELSE COALESCE(valor_rango, 0) * (peso_variable / 100.0) \
+#                                            END \
+#                                ) AS score_categoria \
+#
+#                         FROM base \
+#                         GROUP BY categoria_id, \
+#                                  categoria_nombre, \
+#                                  categoria_descripcion, \
+#                                  peso_categoria),
+#
+#                niveles AS (SELECT *, \
+#                                   CASE \
+#                                       WHEN score_categoria >= 3.75 THEN 3 \
+#                                       WHEN score_categoria >= 2.75 THEN 2 \
+#                                       ELSE 1 \
+#                                       END AS nivel \
+#                            FROM calc)
+#
+#           SELECT jsonb_agg( \
+#                          jsonb_build_object( \
+#                                  'categoria_id', n.categoria_id, \
+#                                  'categoria_nombre', n.categoria_nombre, \
+#                                  'descripcion', n.categoria_descripcion, \
+#                                  'score', ROUND(n.score_categoria, 2), \
+#                                  'nivel', n.nivel, \
+#                                  'script', s.script, \
+#                                  'variables', n.variables \
+#                          ) ORDER BY n.categoria_id \
+#                  )                                                   AS categorias, \
+#                  SUM(n.score_categoria * (n.peso_categoria / 100.0)) AS score_total
+#           FROM niveles n
+#                    LEFT JOIN diagnostico_interpretacion_categoria s
+#                              ON s.categoria_id = n.categoria_id
+#                                  AND s.nivel = n.nivel
+#                                  AND s.escala = 5 \
+#           """
+#
+#     cur.execute(sql, {
+#         "creador_id": creador_id,
+#         "modelo_id": modelo_id
+#     })
+#
+#     r = cur.fetchone()
+#
+#     categorias = r[0] if r[0] else []
+#     score_total = float(r[1] or 0)
+#
+#     return {
+#         "categorias": categorias,
+#         "score_total": score_total
+#     }
+
