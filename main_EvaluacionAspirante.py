@@ -2471,7 +2471,8 @@ def obtener_encuesta(encuesta_id: int):
                 cur.execute("""
                     SELECT v.id AS pregunta_id, v.texto, 
                     v.tipo_form as tipo, v.campo_db AS campo, 
-                    o.orden AS opcion_id, o.label, 
+                    o.id AS opcion_id, 
+                    o.label, 
                     o.orden AS opcion_orden 
                     FROM diagnostico_variable v 
                     LEFT JOIN diagnostico_variable_valor o ON o.variable_id = v.id 
