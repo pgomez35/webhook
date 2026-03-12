@@ -9,109 +9,11 @@ from DataBase import get_connection_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-
 from fastapi import APIRouter, HTTPException
 
-@router.get("/api/creadores/{creador_id}/diagnostico")
-def obtener_diagnostico_creador(creador_id: int):
 
-    try:
-        TENANT = current_tenant.get()
-        if TENANT is None:
-            raise HTTPException(status_code=400, detail="Tenant no disponible")
-
-        with get_connection_context() as conn:
-            cur = conn.cursor()
-
-            # -----------------------------
-            # Modelo activo
-            # -----------------------------
-            cur.execute("""
-                SELECT id, nombre, descripcion
-                FROM diagnostico_modelo
-                WHERE activo = true
-                LIMIT 1
-            """)
-            modelo = cur.fetchone()
-
-            if not modelo:
-                raise HTTPException(status_code=404, detail="No hay modelo activo")
-
-            modelo_id = modelo[0]
-            modelo_nombre = modelo[1]
-            modelo_descripcion = modelo[2]
-
-            # -----------------------------
-            # Perfil del creador
-            # -----------------------------
-            cur.execute("""
-                SELECT nombre, edad, genero, pais, ciudad
-                FROM perfil_creador
-                WHERE creador_id = %s
-            """, (creador_id,))
-            p = cur.fetchone()
-
-            perfil = None
-            if p:
-                perfil = {
-                    "nombre": p[0],
-                    "edad": p[1],
-                    "genero": p[2],
-                    "pais": p[3],
-                    "ciudad": p[4]
-                }
-
-            # -----------------------------
-            # Diagnóstico
-            # -----------------------------
-            diagnostico = obtener_diagnostico(
-                cur,
-                creador_id,
-                modelo_id
-            )
-
-        # -----------------------------
-        # Agencia
-        # -----------------------------
-        nombre_agencia = current_business_name.get()
-
-        return {
-            "success": True,
-            "agencia": {
-                "nombre": nombre_agencia
-            },
-            "modelo": {
-                "id": modelo_id,
-                "nombre": modelo_nombre,
-                "descripcion": modelo_descripcion   # <-- nueva descripción del modelo
-            },
-            "perfil": perfil,
-            "score_total": round(diagnostico["score_total"], 2),
-            "categorias": diagnostico["categorias"]
-        }
-
-    except Exception as e:
-        print(f"❌ Error generando diagnóstico: {e}")
-        return {
-            "success": False,
-            "error": "Error generando diagnóstico"
-        }
-
-
-
-
-class PerfilCualitativoPayload(BaseModel):
-    potencial_estimado: int = Field(..., ge=0, le=5)
-    apariencia: int = Field(..., ge=0, le=5)
-    engagement: int = Field(..., ge=0, le=5)
-    calidad_contenido: int = Field(..., ge=0, le=5)
-    eval_biografia: int = Field(..., ge=0, le=5)
-    metadata_videos: int = Field(..., ge=0, le=5)
-    eval_foto: int = Field(..., ge=0, le=5)  # solo perfil_creador
-
-
-@router.post("/api/perfil_creador/{creador_id}/talento/actualizar",
+@router.post(
+    "/api/perfil_creador/{creador_id}/talento/actualizar",
     tags=["Categoria talento"]
 )
 def sync_cualitativo_perfil_y_variables(
@@ -164,11 +66,15 @@ def sync_cualitativo_perfil_y_variables(
                 # 2️⃣ pasar valores del perfil al score_variable
                 guardar_scores_desde_perfil(cur, creador_id)
 
+                # 3️⃣ recalcular diagnóstico completo
+                modelo_id = 1
+                calcular_diagnostico_y_json(cur, creador_id, modelo_id)
+
             conn.commit()
 
         return {
             "status": "ok",
-            "mensaje": "perfil_creador actualizado y scores sincronizados",
+            "mensaje": "perfil_creador actualizado, scores sincronizados y diagnóstico recalculado",
             "creador_id": creador_id,
             "perfil_creador_filas_afectadas": perfil_rows,
             "payload": data
@@ -187,18 +93,60 @@ def sync_cualitativo_perfil_y_variables(
         )
 
 
-def obtener_diagnostico(cur, creador_id: int, modelo_id: int):
+@router.get("/diagnostico/{creador_id}")
+def obtener_diagnostico(creador_id: int):
+
+    modelo_id = 1
+
+    with get_connection_context() as conn:
+
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT diagnostico_json
+            FROM diagnostico_score_general
+            WHERE creador_id = %s
+            AND modelo_id = %s
+        """,(creador_id,modelo_id))
+
+        r = cur.fetchone()
+
+        if not r:
+            return {
+                "success": False,
+                "message": "Diagnóstico no calculado"
+            }
+
+        return {
+            "success": True,
+            **r[0]
+        }
+
+
+
+class PerfilCualitativoPayload(BaseModel):
+    potencial_estimado: int = Field(..., ge=0, le=5)
+    apariencia: int = Field(..., ge=0, le=5)
+    engagement: int = Field(..., ge=0, le=5)
+    calidad_contenido: int = Field(..., ge=0, le=5)
+    eval_biografia: int = Field(..., ge=0, le=5)
+    metadata_videos: int = Field(..., ge=0, le=5)
+    eval_foto: int = Field(..., ge=0, le=5)  # solo perfil_creador
+
+
+#
+
+
+def calcular_diagnostico_y_json(cur, creador_id: int, modelo_id: int):
 
     sql = """
-    WITH base AS (
+    WITH variables_calc AS (
 
         SELECT
+            mc.modelo_id,
             mc.categoria_id,
             mc.peso_categoria,
             mc.orden AS categoria_orden,
-
-            c.nombre AS categoria_nombre,
-            c.descripcion AS categoria_descripcion,
 
             v.id AS variable_id,
             v.nombre AS variable_nombre,
@@ -209,15 +157,18 @@ def obtener_diagnostico(cur, creador_id: int, modelo_id: int):
             sv.valor,
             vv.score,
             vv.label,
-            vv.nivel
+            vv.nivel,
+
+            CASE
+                WHEN v.tipo = 'numérica'
+                THEN COALESCE(vv.score,0)
+                ELSE COALESCE(sv.valor,0)
+            END AS score_variable
 
         FROM diagnostico_modelo_categoria mc
 
-        JOIN diagnostico_categoria c
-            ON c.id = mc.categoria_id
-
         JOIN diagnostico_variable v
-            ON v.categoria_id = c.id
+            ON v.categoria_id = mc.categoria_id
             AND v.activa = true
 
         LEFT JOIN diagnostico_score_variable sv
@@ -230,23 +181,11 @@ def obtener_diagnostico(cur, creador_id: int, modelo_id: int):
         WHERE mc.modelo_id = %(modelo_id)s
     ),
 
-    variables_calc AS (
-
-        SELECT
-            *,
-            CASE
-                WHEN tipo = 'numérica' THEN COALESCE(score,0)
-                ELSE COALESCE(valor,0)
-            END AS score_variable
-        FROM base
-    ),
-
     categorias_calc AS (
 
         SELECT
+            modelo_id,
             categoria_id,
-            categoria_nombre,
-            categoria_descripcion,
             peso_categoria,
             categoria_orden,
 
@@ -265,64 +204,130 @@ def obtener_diagnostico(cur, creador_id: int, modelo_id: int):
             SUM(score_variable * (peso_variable / 100.0)) AS score_categoria
 
         FROM variables_calc
+
         GROUP BY
+            modelo_id,
             categoria_id,
-            categoria_nombre,
-            categoria_descripcion,
             peso_categoria,
             categoria_orden
     ),
 
-    niveles AS (
+    categorias_nivel AS (
 
-        SELECT *,
-        CASE
-            WHEN score_categoria >= 3.75 THEN 3
-            WHEN score_categoria >= 2.75 THEN 2
-            ELSE 1
-        END AS nivel
+        SELECT
+            *,
+            CASE
+                WHEN score_categoria >= 3.75 THEN 3
+                WHEN score_categoria >= 2.75 THEN 2
+                ELSE 1
+            END AS nivel
         FROM categorias_calc
+    ),
+
+    guardar_categoria AS (
+
+        INSERT INTO diagnostico_score_categoria
+        (modelo_id, creador_id, categoria_id, score_categoria, nivel)
+
+        SELECT
+            modelo_id,
+            %(creador_id)s,
+            categoria_id,
+            ROUND(score_categoria,2),
+            nivel
+
+        FROM categorias_nivel
+
+        ON CONFLICT (modelo_id, creador_id, categoria_id)
+        DO UPDATE
+        SET
+            score_categoria = EXCLUDED.score_categoria,
+            nivel = EXCLUDED.nivel
+
+        RETURNING categoria_id
+    ),
+
+    categorias_json AS (
+
+        SELECT
+            cn.categoria_id,
+            cn.categoria_orden,
+            cn.variables,
+            cn.score_categoria,
+            cn.nivel,
+            c.nombre,
+            c.descripcion,
+            s.script
+
+        FROM categorias_nivel cn
+
+        JOIN diagnostico_categoria c
+            ON c.id = cn.categoria_id
+
+        LEFT JOIN diagnostico_interpretacion_categoria s
+            ON s.categoria_id = cn.categoria_id
+            AND s.nivel = cn.nivel
+            AND s.escala = 5
+    ),
+
+    json_final AS (
+
+        SELECT
+            jsonb_build_object(
+
+                'score_total', ROUND(SUM(score_categoria * (peso_categoria / 100.0)),2),
+
+                'categorias',
+
+                jsonb_agg(
+                    jsonb_build_object(
+                        'categoria_id', categoria_id,
+                        'categoria_nombre', nombre,
+                        'descripcion', descripcion,
+                        'score', ROUND(score_categoria,2),
+                        'nivel', nivel,
+                        'script', script,
+                        'variables', variables
+                    )
+                    ORDER BY categoria_orden
+                )
+
+            ) AS diagnostico_json
+
+        FROM categorias_json
     )
 
+    INSERT INTO diagnostico_score_general
+    (creador_id, modelo_id, puntaje_total, nivel, diagnostico_json)
+
     SELECT
-        jsonb_agg(
-            jsonb_build_object(
-                'categoria_id', n.categoria_id,
-                'categoria_nombre', n.categoria_nombre,
-                'descripcion', n.categoria_descripcion,
-                'score', ROUND(n.score_categoria,2),
-                'nivel', n.nivel,
-                'script', s.script,
-                'variables', n.variables
-            )
-            ORDER BY n.categoria_orden
-        ) AS categorias,
+        %(creador_id)s,
+        %(modelo_id)s,
 
-        SUM(n.score_categoria * (n.peso_categoria / 100.0)) AS score_total
+        (diagnostico_json->>'score_total')::numeric,
 
-    FROM niveles n
+        CASE
+            WHEN (diagnostico_json->>'score_total')::numeric >= 3.75 THEN 3
+            WHEN (diagnostico_json->>'score_total')::numeric >= 2.75 THEN 2
+            ELSE 1
+        END,
 
-    LEFT JOIN diagnostico_interpretacion_categoria s
-        ON s.categoria_id = n.categoria_id
-        AND s.nivel = n.nivel
-        AND s.escala = 5
+        diagnostico_json
+
+    FROM json_final
+
+    ON CONFLICT (creador_id, modelo_id)
+    DO UPDATE
+    SET
+        puntaje_total = EXCLUDED.puntaje_total,
+        nivel = EXCLUDED.nivel,
+        diagnostico_json = EXCLUDED.diagnostico_json
     """
 
     cur.execute(sql, {
         "creador_id": creador_id,
         "modelo_id": modelo_id
     })
-
-    r = cur.fetchone()
-
-    categorias = r[0] if r[0] else []
-    score_total = float(r[1] or 0)
-
-    return {
-        "categorias": categorias,
-        "score_total": score_total
-    }
-
 
 
 def guardar_scores_desde_perfil(cur, creador_id: int):
@@ -2376,3 +2381,426 @@ def guardar_scores_desde_perfil(cur, creador_id: int):
 #         "score_total": score_total
 #     }
 
+# def obtener_diagnosticoV1(cur, creador_id: int, modelo_id: int):
+#
+#     sql = """
+#     WITH variables_calc AS (
+#
+#         SELECT
+#             mc.categoria_id,
+#             mc.peso_categoria,
+#             mc.orden AS categoria_orden,
+#
+#             v.id AS variable_id,
+#             v.nombre AS variable_nombre,
+#             v.tipo,
+#             v.peso_variable,
+#             v.orden AS variable_orden,
+#
+#             sv.valor,
+#             vv.score,
+#             vv.label,
+#             vv.nivel,
+#
+#             CASE
+#                 WHEN v.tipo = 'numérica'
+#                 THEN COALESCE(vv.score,0)
+#                 ELSE COALESCE(sv.valor,0)
+#             END AS score_variable
+#
+#         FROM diagnostico_modelo_categoria mc
+#
+#         JOIN diagnostico_variable v
+#             ON v.categoria_id = mc.categoria_id
+#             AND v.activa = true
+#
+#         LEFT JOIN diagnostico_score_variable sv
+#             ON sv.variable_id = v.id
+#             AND sv.creador_id = %(creador_id)s
+#
+#         LEFT JOIN diagnostico_variable_valor vv
+#             ON vv.id = sv.valor_id
+#
+#         WHERE mc.modelo_id = %(modelo_id)s
+#     ),
+#
+#     categorias_calc AS (
+#
+#         SELECT
+#             categoria_id,
+#             peso_categoria,
+#             categoria_orden,
+#
+#             jsonb_agg(
+#                 jsonb_build_object(
+#                     'variable_id', variable_id,
+#                     'variable', variable_nombre,
+#                     'tipo', tipo,
+#                     'score', score_variable,
+#                     'nivel', nivel,
+#                     'label', label
+#                 )
+#                 ORDER BY variable_orden
+#             ) AS variables,
+#
+#             SUM(score_variable * (peso_variable / 100.0)) AS score_categoria
+#
+#         FROM variables_calc
+#
+#         GROUP BY
+#             categoria_id,
+#             peso_categoria,
+#             categoria_orden
+#     )
+#
+#     SELECT
+#         jsonb_agg(
+#             jsonb_build_object(
+#                 'categoria_id', c.id,
+#                 'categoria_nombre', c.nombre,
+#                 'descripcion', c.descripcion,
+#                 'score', ROUND(cat.score_categoria,2),
+#                 'nivel',
+#                     CASE
+#                         WHEN cat.score_categoria >= 3.75 THEN 3
+#                         WHEN cat.score_categoria >= 2.75 THEN 2
+#                         ELSE 1
+#                     END,
+#                 'script', s.script,
+#                 'variables', cat.variables
+#             )
+#             ORDER BY cat.categoria_orden
+#         ) AS categorias,
+#
+#         SUM(cat.score_categoria * (cat.peso_categoria / 100.0)) AS score_total
+#
+#     FROM categorias_calc cat
+#
+#     JOIN diagnostico_categoria c
+#         ON c.id = cat.categoria_id
+#
+#     LEFT JOIN diagnostico_interpretacion_categoria s
+#         ON s.categoria_id = cat.categoria_id
+#         AND s.nivel =
+#             CASE
+#                 WHEN cat.score_categoria >= 3.75 THEN 3
+#                 WHEN cat.score_categoria >= 2.75 THEN 2
+#                 ELSE 1
+#             END
+#         AND s.escala = 5
+#     """
+#
+#     cur.execute(sql, {
+#         "creador_id": creador_id,
+#         "modelo_id": modelo_id
+#     })
+#
+#     r = cur.fetchone()
+#
+#     categorias = r[0] if r[0] else []
+#     score_total = float(r[1] or 0)
+#
+#     return {
+#         "categorias": categorias,
+#         "score_total": score_total
+#     }
+#
+
+
+# @router.get("/api/creadores/{creador_id}/diagnostico")
+# def obtener_diagnostico_creador(creador_id: int):
+#
+#     try:
+#         TENANT = current_tenant.get()
+#         if TENANT is None:
+#             raise HTTPException(status_code=400, detail="Tenant no disponible")
+#
+#         with get_connection_context() as conn:
+#             cur = conn.cursor()
+#
+#             # -----------------------------
+#             # Modelo activo
+#             # -----------------------------
+#             cur.execute("""
+#                 SELECT id, nombre, descripcion
+#                 FROM diagnostico_modelo
+#                 WHERE activo = true
+#                 LIMIT 1
+#             """)
+#             modelo = cur.fetchone()
+#
+#             if not modelo:
+#                 raise HTTPException(status_code=404, detail="No hay modelo activo")
+#
+#             modelo_id = modelo[0]
+#             modelo_nombre = modelo[1]
+#             modelo_descripcion = modelo[2]
+#
+#             # -----------------------------
+#             # Perfil del creador
+#             # -----------------------------
+#             cur.execute("""
+#                 SELECT nombre, edad, genero, pais, ciudad
+#                 FROM perfil_creador
+#                 WHERE creador_id = %s
+#             """, (creador_id,))
+#             p = cur.fetchone()
+#
+#             perfil = None
+#             if p:
+#                 perfil = {
+#                     "nombre": p[0],
+#                     "edad": p[1],
+#                     "genero": p[2],
+#                     "pais": p[3],
+#                     "ciudad": p[4]
+#                 }
+#
+#             # -----------------------------
+#             # Diagnóstico
+#             # -----------------------------
+#             diagnostico = obtener_diagnostico(
+#                 cur,
+#                 creador_id,
+#                 modelo_id
+#             )
+#
+#         # -----------------------------
+#         # Agencia
+#         # -----------------------------
+#         nombre_agencia = current_business_name.get()
+#
+#         return {
+#             "success": True,
+#             "agencia": {
+#                 "nombre": nombre_agencia
+#             },
+#             "modelo": {
+#                 "id": modelo_id,
+#                 "nombre": modelo_nombre,
+#                 "descripcion": modelo_descripcion   # <-- nueva descripción del modelo
+#             },
+#             "perfil": perfil,
+#             "score_total": round(diagnostico["score_total"], 2),
+#             "categorias": diagnostico["categorias"]
+#         }
+#
+#     except Exception as e:
+#         print(f"❌ Error generando diagnóstico: {e}")
+#         return {
+#             "success": False,
+#             "error": "Error generando diagnóstico"
+#         }
+
+
+# def obtener_diagnostico(cur, creador_id: int, modelo_id: int):
+#
+#     sql = """
+#     WITH base AS (
+#
+#         SELECT
+#             mc.categoria_id,
+#             mc.peso_categoria,
+#             mc.orden AS categoria_orden,
+#
+#                 c.nombre AS categoria_nombre,
+#                 c.descripcion AS categoria_descripcion,
+#
+#             v.id AS variable_id,
+#             v.nombre AS variable_nombre,
+#             v.tipo,
+#             v.peso_variable,
+#             v.orden AS variable_orden,
+#
+#             sv.valor,
+#             vv.score,
+#             vv.label,
+#             vv.nivel
+#
+#         FROM diagnostico_modelo_categoria mc
+#
+#         JOIN diagnostico_categoria c
+#             ON c.id = mc.categoria_id
+#
+#         JOIN diagnostico_variable v
+#             ON v.categoria_id = c.id
+#             AND v.activa = true
+#
+#         LEFT JOIN diagnostico_score_variable sv
+#             ON sv.variable_id = v.id
+#             AND sv.creador_id = %(creador_id)s
+#
+#         LEFT JOIN diagnostico_variable_valor vv
+#             ON vv.id = sv.valor_id
+#
+#         WHERE mc.modelo_id = %(modelo_id)s
+#     ),
+#
+#     variables_calc AS (
+#
+#         SELECT
+#             *,
+#             CASE
+#                 WHEN tipo = 'numérica' THEN COALESCE(score,0)
+#                 ELSE COALESCE(valor,0)
+#             END AS score_variable
+#         FROM base
+#     ),
+#
+#     categorias_calc AS (
+#
+#         SELECT
+#             categoria_id,
+#             categoria_nombre,
+#             categoria_descripcion,
+#             peso_categoria,
+#             categoria_orden,
+#
+#             jsonb_agg(
+#                 jsonb_build_object(
+#                     'variable_id', variable_id,
+#                     'variable', variable_nombre,
+#                     'tipo', tipo,
+#                     'score', score_variable,
+#                     'nivel', nivel,
+#                     'label', label
+#                 )
+#                 ORDER BY variable_orden
+#             ) AS variables,
+#
+#             SUM(score_variable * (peso_variable / 100.0)) AS score_categoria
+#
+#         FROM variables_calc
+#         GROUP BY
+#             categoria_id,
+#             categoria_nombre,
+#             categoria_descripcion,
+#             peso_categoria,
+#             categoria_orden
+#     ),
+#
+#     niveles AS (
+#
+#         SELECT *,
+#         CASE
+#             WHEN score_categoria >= 3.75 THEN 3
+#             WHEN score_categoria >= 2.75 THEN 2
+#             ELSE 1
+#         END AS nivel
+#         FROM categorias_calc
+#     )
+#
+#     SELECT
+#         jsonb_agg(
+#             jsonb_build_object(
+#                 'categoria_id', n.categoria_id,
+#                 'categoria_nombre', n.categoria_nombre,
+#                 'descripcion', n.categoria_descripcion,
+#                 'score', ROUND(n.score_categoria,2),
+#                 'nivel', n.nivel,
+#                 'script', s.script,
+#                 'variables', n.variables
+#             )
+#             ORDER BY n.categoria_orden
+#         ) AS categorias,
+#
+#         SUM(n.score_categoria * (n.peso_categoria / 100.0)) AS score_total
+#
+#     FROM niveles n
+#
+#     LEFT JOIN diagnostico_interpretacion_categoria s
+#         ON s.categoria_id = n.categoria_id
+#         AND s.nivel = n.nivel
+#         AND s.escala = 5
+#     """
+#
+#     cur.execute(sql, {
+#         "creador_id": creador_id,
+#         "modelo_id": modelo_id
+#     })
+#
+#     r = cur.fetchone()
+#
+#     categorias = r[0] if r[0] else []
+#     score_total = float(r[1] or 0)
+#
+#     return {
+#         "categorias": categorias,
+#         "score_total": score_total
+#     }
+
+
+@router.post("/api/perfil_creador/{creador_id}/talento/actualizar",
+#     tags=["Categoria talento"]
+# )
+# def sync_cualitativo_perfil_y_variables(
+#     creador_id: int,
+#     payload: PerfilCualitativoPayload,
+#     usuario_actual: dict = Depends(obtener_usuario_actual),
+# ):
+#
+#     try:
+#
+#         data = payload.model_dump()
+#
+#         # seguridad extra
+#         for k, v in data.items():
+#             try:
+#                 data[k] = int(v)
+#             except:
+#                 raise HTTPException(status_code=400, detail=f"{k} debe ser entero")
+#
+#             if not (0 <= data[k] <= 5):
+#                 raise HTTPException(status_code=400, detail=f"{k} debe estar entre 0 y 5")
+#
+#         with get_connection_context() as conn:
+#             with conn.cursor() as cur:
+#
+#                 # 1️⃣ actualizar perfil_creador
+#                 cur.execute("""
+#                     UPDATE perfil_creador
+#                     SET apariencia = %s,
+#                         engagement = %s,
+#                         calidad_contenido = %s,
+#                         eval_biografia = %s,
+#                         metadata_videos = %s,
+#                         eval_foto = %s,
+#                         potencial_estimado = %s
+#                     WHERE creador_id = %s
+#                 """, (
+#                     data["apariencia"],
+#                     data["engagement"],
+#                     data["calidad_contenido"],
+#                     data["eval_biografia"],
+#                     data["metadata_videos"],
+#                     data["eval_foto"],
+#                     data["potencial_estimado"],
+#                     creador_id
+#                 ))
+#
+#                 perfil_rows = cur.rowcount
+#
+#                 # 2️⃣ pasar valores del perfil al score_variable
+#                 guardar_scores_desde_perfil(cur, creador_id)
+#
+#             conn.commit()
+#
+#         return {
+#             "status": "ok",
+#             "mensaje": "perfil_creador actualizado y scores sincronizados",
+#             "creador_id": creador_id,
+#             "perfil_creador_filas_afectadas": perfil_rows,
+#             "payload": data
+#         }
+#
+#     except HTTPException:
+#         raise
+#
+#     except Exception as e:
+#         import traceback
+#         traceback.print_exc()
+#
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error en sync_cualitativo_perfil_y_variables: {str(e)}"
+#         )
