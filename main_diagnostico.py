@@ -170,6 +170,22 @@ def calcular_diagnostico_y_json(cur, creador_id: int, modelo_id: int):
         WHERE id = %(modelo_id)s
     ),
 
+    demograficos AS (
+
+        SELECT
+            jsonb_object_agg(v.nombre, vv.label) AS data
+        FROM diagnostico_score_variable sv
+
+        JOIN diagnostico_variable v
+            ON v.id = sv.variable_id
+
+        LEFT JOIN diagnostico_variable_valor vv
+            ON vv.id = sv.valor_id
+
+        WHERE sv.creador_id = %(creador_id)s
+        AND sv.variable_id IN (1,2,3,12,20)
+    ),
+
     variables_calc AS (
 
         SELECT
@@ -315,6 +331,8 @@ def calcular_diagnostico_y_json(cur, creador_id: int, modelo_id: int):
                 'modelo_nombre', m.nombre,
                 'modelo_descripcion', m.descripcion,
 
+                'demograficos', d.data,
+
                 'score_total', ROUND(tc.score_total,2),
 
                 'categorias',
@@ -340,12 +358,14 @@ def calcular_diagnostico_y_json(cur, creador_id: int, modelo_id: int):
         FROM categorias_json cj
         CROSS JOIN total_calc tc
         CROSS JOIN modelo_info m
+        CROSS JOIN demograficos d
 
         GROUP BY
             tc.score_total,
             m.id,
             m.nombre,
-            m.descripcion
+            m.descripcion,
+            d.data
     )
 
     INSERT INTO diagnostico_score_general
@@ -379,206 +399,6 @@ def calcular_diagnostico_y_json(cur, creador_id: int, modelo_id: int):
         "modelo_id": modelo_id
     })
 
-# def calcular_diagnostico_y_json(cur, creador_id: int, modelo_id: int):
-#
-#     sql = """
-#     WITH variables_calc AS (
-#
-#         SELECT
-#             mc.modelo_id,
-#             mc.categoria_id,
-#             mc.peso_categoria,
-#             mc.orden AS categoria_orden,
-#
-#             v.id AS variable_id,
-#             v.nombre AS variable_nombre,
-#             v.tipo,
-#             v.peso_variable,
-#             v.orden AS variable_orden,
-#
-#             sv.valor,
-#             vv.score,
-#             vv.nivel,
-#             vv.label,
-#
-#             COALESCE(vv.score,0) AS score_variable
-#
-#         FROM diagnostico_modelo_categoria mc
-#
-#         JOIN diagnostico_variable v
-#             ON v.categoria_id = mc.categoria_id
-#             AND v.activa = true
-#
-#         LEFT JOIN diagnostico_score_variable sv
-#             ON sv.variable_id = v.id
-#             AND sv.creador_id = %(creador_id)s
-#
-#         LEFT JOIN diagnostico_variable_valor vv
-#             ON vv.id = sv.valor_id
-#
-#         WHERE mc.modelo_id = %(modelo_id)s
-#     ),
-#
-#     categorias_calc AS (
-#
-#         SELECT
-#             modelo_id,
-#             categoria_id,
-#             peso_categoria,
-#             categoria_orden,
-#
-#             jsonb_agg(
-#                 jsonb_build_object(
-#                     'variable_id', variable_id,
-#                     'variable', variable_nombre,
-#                     'tipo', tipo,
-#                     'valor', valor,
-#                     'score', score_variable,
-#                     'nivel', nivel,
-#                     'label', label
-#                 )
-#                 ORDER BY variable_orden
-#             ) AS variables,
-#
-#             SUM(score_variable * (peso_variable / 100.0)) AS score_categoria
-#
-#         FROM variables_calc
-#
-#         GROUP BY
-#             modelo_id,
-#             categoria_id,
-#             peso_categoria,
-#             categoria_orden
-#     ),
-#
-#     categorias_nivel AS (
-#
-#         SELECT
-#             *,
-#             CASE
-#                 WHEN score_categoria >= 3.75 THEN 3
-#                 WHEN score_categoria >= 2.75 THEN 2
-#                 ELSE 1
-#             END AS nivel
-#         FROM categorias_calc
-#     ),
-#
-#     guardar_categoria AS (
-#
-#         INSERT INTO diagnostico_score_categoria
-#         (modelo_id, creador_id, categoria_id, score_categoria, nivel)
-#
-#         SELECT
-#             modelo_id,
-#             %(creador_id)s,
-#             categoria_id,
-#             ROUND(score_categoria,2),
-#             nivel
-#
-#         FROM categorias_nivel
-#
-#         ON CONFLICT (modelo_id, creador_id, categoria_id)
-#         DO UPDATE
-#         SET
-#             score_categoria = EXCLUDED.score_categoria,
-#             nivel = EXCLUDED.nivel
-#
-#         RETURNING categoria_id
-#     ),
-#
-#     categorias_json AS (
-#
-#         SELECT
-#             cn.categoria_id,
-#             cn.categoria_orden,
-#             cn.variables,
-#             cn.score_categoria,
-#             cn.peso_categoria,
-#             cn.nivel,
-#             c.nombre,
-#             c.descripcion,
-#             s.script
-#
-#         FROM categorias_nivel cn
-#
-#         JOIN diagnostico_categoria c
-#             ON c.id = cn.categoria_id
-#
-#         LEFT JOIN diagnostico_interpretacion_categoria s
-#             ON s.categoria_id = cn.categoria_id
-#             AND s.nivel = cn.nivel
-#             AND s.escala = 3
-#     ),
-#
-#     total_calc AS (
-#
-#         SELECT
-#             SUM(score_categoria * (peso_categoria / 100.0)) AS score_total
-#         FROM categorias_json
-#     ),
-#
-#     json_final AS (
-#
-#         SELECT
-#             jsonb_build_object(
-#
-#                 'score_total', ROUND(tc.score_total,2),
-#
-#                 'categorias',
-#
-#                 jsonb_agg(
-#                     jsonb_build_object(
-#                         'categoria_id', categoria_id,
-#                         'categoria_nombre', nombre,
-#                         'descripcion', descripcion,
-#                         'score', ROUND(score_categoria,2),
-#                         'nivel', nivel,
-#                         'script', script,
-#                         'variables', variables
-#                     )
-#                     ORDER BY categoria_orden
-#                 )
-#
-#             ) AS diagnostico_json,
-#
-#             tc.score_total
-#
-#         FROM categorias_json cj
-#         CROSS JOIN total_calc tc
-#
-#         GROUP BY tc.score_total
-#     )
-#
-#     INSERT INTO diagnostico_score_general
-#     (creador_id, modelo_id, puntaje_total, nivel, diagnostico_json)
-#
-#     SELECT
-#         %(creador_id)s,
-#         %(modelo_id)s,
-#         ROUND(score_total,2),
-#
-#         CASE
-#             WHEN score_total >= 3.75 THEN 3
-#             WHEN score_total >= 2.75 THEN 2
-#             ELSE 1
-#         END,
-#
-#         diagnostico_json
-#
-#     FROM json_final
-#
-#     ON CONFLICT (creador_id, modelo_id)
-#     DO UPDATE
-#     SET
-#         puntaje_total = EXCLUDED.puntaje_total,
-#         nivel = EXCLUDED.nivel,
-#         diagnostico_json = EXCLUDED.diagnostico_json
-#     """
-#
-#     cur.execute(sql, {
-#         "creador_id": creador_id,
-#         "modelo_id": modelo_id
-#     })
 
 
 def guardar_scores_desde_perfil(cur, creador_id: int):
@@ -3700,4 +3520,429 @@ def guardar_scores_desde_perfil(cur, creador_id: int):
 #             "success": True,
 #             **r[0]
 #         }
+
+
+
+# def calcular_diagnostico_y_json(cur, creador_id: int, modelo_id: int):
+#
+#     sql = """
+#     WITH modelo_info AS (
+#
+#         SELECT
+#             id,
+#             nombre,
+#             descripcion
+#         FROM diagnostico_modelo
+#         WHERE id = %(modelo_id)s
+#     ),
+#
+#     variables_calc AS (
+#
+#         SELECT
+#             mc.modelo_id,
+#             mc.categoria_id,
+#             mc.peso_categoria,
+#             mc.orden AS categoria_orden,
+#
+#             v.id AS variable_id,
+#             v.nombre AS variable_nombre,
+#             v.tipo,
+#             v.peso_variable,
+#             v.orden AS variable_orden,
+#
+#             sv.valor,
+#             vv.score,
+#             vv.nivel,
+#             vv.label,
+#
+#             COALESCE(vv.score,0) AS score_variable
+#
+#         FROM diagnostico_modelo_categoria mc
+#
+#         JOIN diagnostico_variable v
+#             ON v.categoria_id = mc.categoria_id
+#             AND v.activa = true
+#
+#         LEFT JOIN diagnostico_score_variable sv
+#             ON sv.variable_id = v.id
+#             AND sv.creador_id = %(creador_id)s
+#
+#         LEFT JOIN diagnostico_variable_valor vv
+#             ON vv.id = sv.valor_id
+#
+#         WHERE mc.modelo_id = %(modelo_id)s
+#     ),
+#
+#     categorias_calc AS (
+#
+#         SELECT
+#             modelo_id,
+#             categoria_id,
+#             peso_categoria,
+#             categoria_orden,
+#
+#             jsonb_agg(
+#                 jsonb_build_object(
+#                     'variable_id', variable_id,
+#                     'variable', variable_nombre,
+#                     'tipo', tipo,
+#                     'valor', valor,
+#                     'score', score_variable,
+#                     'peso_variable', peso_variable,
+#                     'nivel', nivel,
+#                     'label', label
+#                 )
+#                 ORDER BY variable_orden
+#             ) AS variables,
+#
+#             SUM(score_variable * (peso_variable / 100.0)) AS score_categoria
+#
+#         FROM variables_calc
+#
+#         GROUP BY
+#             modelo_id,
+#             categoria_id,
+#             peso_categoria,
+#             categoria_orden
+#     ),
+#
+#     categorias_nivel AS (
+#
+#         SELECT
+#             *,
+#             CASE
+#                 WHEN score_categoria >= 3.75 THEN 3
+#                 WHEN score_categoria >= 2.75 THEN 2
+#                 ELSE 1
+#             END AS nivel
+#         FROM categorias_calc
+#     ),
+#
+#     guardar_categoria AS (
+#
+#         INSERT INTO diagnostico_score_categoria
+#         (modelo_id, creador_id, categoria_id, score_categoria, nivel)
+#
+#         SELECT
+#             modelo_id,
+#             %(creador_id)s,
+#             categoria_id,
+#             ROUND(score_categoria,2),
+#             nivel
+#
+#         FROM categorias_nivel
+#
+#         ON CONFLICT (modelo_id, creador_id, categoria_id)
+#         DO UPDATE
+#         SET
+#             score_categoria = EXCLUDED.score_categoria,
+#             nivel = EXCLUDED.nivel
+#
+#         RETURNING categoria_id
+#     ),
+#
+#     categorias_json AS (
+#
+#         SELECT
+#             cn.categoria_id,
+#             cn.categoria_orden,
+#             cn.variables,
+#             cn.score_categoria,
+#             cn.peso_categoria,
+#             cn.nivel,
+#             c.nombre,
+#             c.descripcion,
+#             s.script
+#
+#         FROM categorias_nivel cn
+#
+#         JOIN diagnostico_categoria c
+#             ON c.id = cn.categoria_id
+#
+#         LEFT JOIN diagnostico_interpretacion_categoria s
+#             ON s.categoria_id = cn.categoria_id
+#             AND s.nivel = cn.nivel
+#             AND s.escala = 3
+#     ),
+#
+#     total_calc AS (
+#
+#         SELECT
+#             SUM(score_categoria * (peso_categoria / 100.0)) AS score_total
+#         FROM categorias_json
+#     ),
+#
+#     json_final AS (
+#
+#         SELECT
+#             jsonb_build_object(
+#
+#                 'modelo_id', m.id,
+#                 'modelo_nombre', m.nombre,
+#                 'modelo_descripcion', m.descripcion,
+#
+#                 'score_total', ROUND(tc.score_total,2),
+#
+#                 'categorias',
+#
+#                 jsonb_agg(
+#                     jsonb_build_object(
+#                         'categoria_id', categoria_id,
+#                         'categoria_nombre', nombre,
+#                         'descripcion', descripcion,
+#                         'peso_categoria', peso_categoria,
+#                         'score', ROUND(score_categoria,2),
+#                         'nivel', nivel,
+#                         'script', script,
+#                         'variables', variables
+#                     )
+#                     ORDER BY categoria_orden
+#                 )
+#
+#             ) AS diagnostico_json,
+#
+#             tc.score_total
+#
+#         FROM categorias_json cj
+#         CROSS JOIN total_calc tc
+#         CROSS JOIN modelo_info m
+#
+#         GROUP BY
+#             tc.score_total,
+#             m.id,
+#             m.nombre,
+#             m.descripcion
+#     )
+#
+#     INSERT INTO diagnostico_score_general
+#     (creador_id, modelo_id, puntaje_total, nivel, diagnostico_json)
+#
+#     SELECT
+#         %(creador_id)s,
+#         %(modelo_id)s,
+#         ROUND(score_total,2),
+#
+#         CASE
+#             WHEN score_total >= 3.75 THEN 3
+#             WHEN score_total >= 2.75 THEN 2
+#             ELSE 1
+#         END,
+#
+#         diagnostico_json
+#
+#     FROM json_final
+#
+#     ON CONFLICT (creador_id, modelo_id)
+#     DO UPDATE
+#     SET
+#         puntaje_total = EXCLUDED.puntaje_total,
+#         nivel = EXCLUDED.nivel,
+#         diagnostico_json = EXCLUDED.diagnostico_json
+#     """
+#
+#     cur.execute(sql, {
+#         "creador_id": creador_id,
+#         "modelo_id": modelo_id
+#     })
+
+# def calcular_diagnostico_y_json(cur, creador_id: int, modelo_id: int):
+#
+#     sql = """
+#     WITH variables_calc AS (
+#
+#         SELECT
+#             mc.modelo_id,
+#             mc.categoria_id,
+#             mc.peso_categoria,
+#             mc.orden AS categoria_orden,
+#
+#             v.id AS variable_id,
+#             v.nombre AS variable_nombre,
+#             v.tipo,
+#             v.peso_variable,
+#             v.orden AS variable_orden,
+#
+#             sv.valor,
+#             vv.score,
+#             vv.nivel,
+#             vv.label,
+#
+#             COALESCE(vv.score,0) AS score_variable
+#
+#         FROM diagnostico_modelo_categoria mc
+#
+#         JOIN diagnostico_variable v
+#             ON v.categoria_id = mc.categoria_id
+#             AND v.activa = true
+#
+#         LEFT JOIN diagnostico_score_variable sv
+#             ON sv.variable_id = v.id
+#             AND sv.creador_id = %(creador_id)s
+#
+#         LEFT JOIN diagnostico_variable_valor vv
+#             ON vv.id = sv.valor_id
+#
+#         WHERE mc.modelo_id = %(modelo_id)s
+#     ),
+#
+#     categorias_calc AS (
+#
+#         SELECT
+#             modelo_id,
+#             categoria_id,
+#             peso_categoria,
+#             categoria_orden,
+#
+#             jsonb_agg(
+#                 jsonb_build_object(
+#                     'variable_id', variable_id,
+#                     'variable', variable_nombre,
+#                     'tipo', tipo,
+#                     'valor', valor,
+#                     'score', score_variable,
+#                     'nivel', nivel,
+#                     'label', label
+#                 )
+#                 ORDER BY variable_orden
+#             ) AS variables,
+#
+#             SUM(score_variable * (peso_variable / 100.0)) AS score_categoria
+#
+#         FROM variables_calc
+#
+#         GROUP BY
+#             modelo_id,
+#             categoria_id,
+#             peso_categoria,
+#             categoria_orden
+#     ),
+#
+#     categorias_nivel AS (
+#
+#         SELECT
+#             *,
+#             CASE
+#                 WHEN score_categoria >= 3.75 THEN 3
+#                 WHEN score_categoria >= 2.75 THEN 2
+#                 ELSE 1
+#             END AS nivel
+#         FROM categorias_calc
+#     ),
+#
+#     guardar_categoria AS (
+#
+#         INSERT INTO diagnostico_score_categoria
+#         (modelo_id, creador_id, categoria_id, score_categoria, nivel)
+#
+#         SELECT
+#             modelo_id,
+#             %(creador_id)s,
+#             categoria_id,
+#             ROUND(score_categoria,2),
+#             nivel
+#
+#         FROM categorias_nivel
+#
+#         ON CONFLICT (modelo_id, creador_id, categoria_id)
+#         DO UPDATE
+#         SET
+#             score_categoria = EXCLUDED.score_categoria,
+#             nivel = EXCLUDED.nivel
+#
+#         RETURNING categoria_id
+#     ),
+#
+#     categorias_json AS (
+#
+#         SELECT
+#             cn.categoria_id,
+#             cn.categoria_orden,
+#             cn.variables,
+#             cn.score_categoria,
+#             cn.peso_categoria,
+#             cn.nivel,
+#             c.nombre,
+#             c.descripcion,
+#             s.script
+#
+#         FROM categorias_nivel cn
+#
+#         JOIN diagnostico_categoria c
+#             ON c.id = cn.categoria_id
+#
+#         LEFT JOIN diagnostico_interpretacion_categoria s
+#             ON s.categoria_id = cn.categoria_id
+#             AND s.nivel = cn.nivel
+#             AND s.escala = 3
+#     ),
+#
+#     total_calc AS (
+#
+#         SELECT
+#             SUM(score_categoria * (peso_categoria / 100.0)) AS score_total
+#         FROM categorias_json
+#     ),
+#
+#     json_final AS (
+#
+#         SELECT
+#             jsonb_build_object(
+#
+#                 'score_total', ROUND(tc.score_total,2),
+#
+#                 'categorias',
+#
+#                 jsonb_agg(
+#                     jsonb_build_object(
+#                         'categoria_id', categoria_id,
+#                         'categoria_nombre', nombre,
+#                         'descripcion', descripcion,
+#                         'score', ROUND(score_categoria,2),
+#                         'nivel', nivel,
+#                         'script', script,
+#                         'variables', variables
+#                     )
+#                     ORDER BY categoria_orden
+#                 )
+#
+#             ) AS diagnostico_json,
+#
+#             tc.score_total
+#
+#         FROM categorias_json cj
+#         CROSS JOIN total_calc tc
+#
+#         GROUP BY tc.score_total
+#     )
+#
+#     INSERT INTO diagnostico_score_general
+#     (creador_id, modelo_id, puntaje_total, nivel, diagnostico_json)
+#
+#     SELECT
+#         %(creador_id)s,
+#         %(modelo_id)s,
+#         ROUND(score_total,2),
+#
+#         CASE
+#             WHEN score_total >= 3.75 THEN 3
+#             WHEN score_total >= 2.75 THEN 2
+#             ELSE 1
+#         END,
+#
+#         diagnostico_json
+#
+#     FROM json_final
+#
+#     ON CONFLICT (creador_id, modelo_id)
+#     DO UPDATE
+#     SET
+#         puntaje_total = EXCLUDED.puntaje_total,
+#         nivel = EXCLUDED.nivel,
+#         diagnostico_json = EXCLUDED.diagnostico_json
+#     """
+#
+#     cur.execute(sql, {
+#         "creador_id": creador_id,
+#         "modelo_id": modelo_id
+#     })
 
