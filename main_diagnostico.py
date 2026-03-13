@@ -136,12 +136,17 @@ def diagnostico_creador(creador_id: int):
                     "message": "No hay modelo de diagnóstico activo"
                 }
 
-            # 2️⃣ buscar diagnóstico ya calculado
+            # 2️⃣ buscar diagnóstico y datos del creador
             cur.execute("""
-                SELECT diagnostico_json
-                FROM diagnostico_score_general
-                WHERE creador_id = %s
-                AND modelo_id = %s
+                SELECT 
+                    d.diagnostico_json,
+                    c.nickname,
+                    c.nombre
+                FROM diagnostico_score_general d
+                JOIN creadores c
+                    ON c.id = d.creador_id
+                WHERE d.creador_id = %s
+                AND d.modelo_id = %s
             """, (creador_id, modelo_id))
 
             r = cur.fetchone()
@@ -152,9 +157,15 @@ def diagnostico_creador(creador_id: int):
                     "message": "Diagnóstico no calculado"
                 }
 
+            diagnostico_json, nickname, nombre = r
+
             return {
                 "success": True,
-                **r[0]
+                "creador": {
+                    "nickname": nickname,
+                    "nombre": nombre
+                },
+                **diagnostico_json
             }
 
 def calcular_diagnostico_y_json(cur, creador_id: int, modelo_id: int):
