@@ -141,7 +141,7 @@ def diagnostico_creador(creador_id: int):
                 SELECT 
                     d.diagnostico_json,
                     c.nickname,
-                    c.nombre
+                    c.nombre_real as nombre
                 FROM diagnostico_score_general d
                 JOIN creadores c
                     ON c.id = d.creador_id
