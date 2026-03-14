@@ -245,8 +245,8 @@ def calcular_diagnostico_y_json(cur, creador_id: int, modelo_id: int):
             CASE
                 WHEN score_categoria < 1.5 THEN 1
                 WHEN score_categoria < 2.5 THEN 2
-                WHEN score_categoria < 3.25 THEN 3
-                WHEN score_categoria < 4.25 THEN 4
+                WHEN score_categoria < 3.5 THEN 3
+                WHEN score_categoria < 4.5 THEN 4
                 ELSE 5
             END AS nivel5
 
