@@ -491,8 +491,6 @@ def sync_cualitativo_perfil_y_variables(
             detail=f"Error en sync_cualitativo_perfil_y_variables: {str(e)}"
         )
 
-
-
 @router.get("/api/creadores/{creador_id}/diagnostico")
 def diagnostico_creador(creador_id: int):
 
@@ -607,6 +605,103 @@ def guardar_scores_desde_perfil(cur, creador_id: int):
     """
     cur.execute(sql, (creador_id,))
 
+ESTADO_MAP_PREEVAL = {
+    "No apto": 7,
+    "Entrevista": 4,
+    "Invitar a TikTok": 5,
+}
+ESTADO_DEFAULT = 99  # si no coincide
+
+def actualizar_estado_preevaluacion(creador_id: int, payload: dict):
+
+    estado = payload.get("estado_evaluacion")
+    estado_id = None
+
+    if estado:
+        estado_id = ESTADO_MAP_PREEVAL.get(estado, ESTADO_DEFAULT)
+
+    with get_connection_context() as conn:
+
+        cur = conn.cursor()
+
+        # ------------------------
+        # UPDATE perfil_creador
+        # ------------------------
+
+        sets = []
+        valores = []
+
+        for campo, valor in payload.items():
+            if valor is not None:
+                sets.append(f"{campo} = %s")
+                valores.append(valor)
+
+        if sets:
+
+            valores.append(creador_id)
+
+            query = f"""
+                UPDATE perfil_creador
+                SET {', '.join(sets)},
+                    actualizado_en = NOW()
+                WHERE creador_id = %s
+            """
+
+            cur.execute(query, valores)
+
+        # ------------------------
+        # UPDATE creadores
+        # ------------------------
+
+        if estado_id is not None:
+
+            cur.execute("""
+                UPDATE creadores
+                SET estado_id = %s
+                WHERE id = %s
+            """, (estado_id, creador_id))
+
+        conn.commit()
+
+    print(
+        f"✅ Creador {creador_id} actualizado "
+        f"(estado={estado}, estado_id={estado_id})"
+    )
+
+
+class ActualizarPreEvaluacionIn(BaseModel):
+    estado_evaluacion: Optional[str] = None  # "No apto" | "Entrevista" | "Invitar a TikTok"
+    usuario_evalua: Optional[str] = None
+    observaciones_finales: Optional[str] = None
+
+
+@router.put("/api/perfil_creador/{creador_id}/preevaluacion")
+def actualizar_preevaluacion(
+    creador_id: int,
+    datos: ActualizarPreEvaluacionIn,
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
+
+    try:
+
+        payload = {
+            "estado_evaluacion": datos.estado_evaluacion,
+            "usuario_evalua": datos.usuario_evalua,
+            "observaciones_finales": datos.observaciones_finales
+        }
+
+        actualizar_estado_preevaluacion(creador_id, payload)
+
+        return {
+            "status": "ok",
+            "mensaje": "Pre-evaluación actualizada correctamente",
+            "creador_id": creador_id,
+            "estado_evaluacion": datos.estado_evaluacion,
+        }
+
+    except Exception as e:
+
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 

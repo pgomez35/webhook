@@ -57,10 +57,10 @@ class LinkAgendamientoOut(BaseModel):
 
 
 
-class ActualizarPreEvaluacionIn(BaseModel):
-    estado_evaluacion: Optional[str] = None  # "No apto" | "Entrevista" | "Invitar a TikTok"
-    usuario_evalua: Optional[str] = None
-    observaciones_finales: Optional[str] = None
+# class ActualizarPreEvaluacionIn(BaseModel):
+#     estado_evaluacion: Optional[str] = None  # "No apto" | "Entrevista" | "Invitar a TikTok"
+#     usuario_evalua: Optional[str] = None
+#     observaciones_finales: Optional[str] = None
 
 
 class EventoIn(BaseModel):
@@ -177,40 +177,40 @@ def actualizar_estado_creador_preevaluacion(creador_id: int, estado: str):
 #         """, (estado_id, creador_id))
 
 
-@router.put("/api/perfil_creador/{creador_id}/preevaluacion")
-def actualizar_preevaluacion(
-    creador_id: int,
-    datos: ActualizarPreEvaluacionIn,
-    usuario_actual: dict = Depends(obtener_usuario_actual),
-):
-    try:
-        print("➡️ Payload recibido:", datos.dict())
-
-        payload = {
-            "estado_evaluacion": datos.estado_evaluacion,
-            "usuario_evalua": datos.usuario_evalua,
-            # "observaciones_finales": datos.observaciones_finales,
-        }
-
-        print("➡️ Actualizando perfil_creador con:", payload)
-        actualizar_preevaluacion_perfil(creador_id, payload)
-
-        if datos.estado_evaluacion:
-            print("➡️ Actualizando tabla creadores.estado_id con:", datos.estado_evaluacion)
-            actualizar_estado_creador_preevaluacion(creador_id, datos.estado_evaluacion)
-
-        print("✔️ Pre-evaluación actualizada correctamente")
-
-        return {
-            "status": "ok",
-            "mensaje": "Pre-evaluación actualizada correctamente",
-            "creador_id": creador_id,
-            "estado_evaluacion": datos.estado_evaluacion,
-        }
-
-    except Exception as e:
-        print("❌ ERROR en actualizar_preevaluacion:", str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+# @router.put("/api/perfil_creador/{creador_id}/preevaluacion")
+# def actualizar_preevaluacion(
+#     creador_id: int,
+#     datos: ActualizarPreEvaluacionIn,
+#     usuario_actual: dict = Depends(obtener_usuario_actual),
+# ):
+#     try:
+#         print("➡️ Payload recibido:", datos.dict())
+#
+#         payload = {
+#             "estado_evaluacion": datos.estado_evaluacion,
+#             "usuario_evalua": datos.usuario_evalua,
+#             # "observaciones_finales": datos.observaciones_finales,
+#         }
+#
+#         print("➡️ Actualizando perfil_creador con:", payload)
+#         actualizar_preevaluacion_perfil(creador_id, payload)
+#
+#         if datos.estado_evaluacion:
+#             print("➡️ Actualizando tabla creadores.estado_id con:", datos.estado_evaluacion)
+#             actualizar_estado_creador_preevaluacion(creador_id, datos.estado_evaluacion)
+#
+#         print("✔️ Pre-evaluación actualizada correctamente")
+#
+#         return {
+#             "status": "ok",
+#             "mensaje": "Pre-evaluación actualizada correctamente",
+#             "creador_id": creador_id,
+#             "estado_evaluacion": datos.estado_evaluacion,
+#         }
+#
+#     except Exception as e:
+#         print("❌ ERROR en actualizar_preevaluacion:", str(e))
+#         raise HTTPException(status_code=500, detail=str(e))
 
 
 # services/db_service.py

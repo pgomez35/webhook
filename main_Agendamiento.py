@@ -1802,8 +1802,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-@router.post("/api/agendamientos/aspirante/enviar", response_model=LinkAgendamientoOut)
-def enviar_link_agendamiento_aspirante(
+@router.post("/api/agendamientos/aspirante/enviarV0", response_model=LinkAgendamientoOut)
+def enviar_link_agendamiento_aspiranteV0(
     data: CrearLinkAgendamientoIn,
     usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
@@ -2246,8 +2246,8 @@ def mensaje_invitacion_simple(nombre: Optional[str], business_name: str) -> str:
 # ---------------CREAR NUEVO MODULO .PY PRE-EVALUACION------------------------
 # -----------------------------------------------------
 
-@router.post("/api/aspirantes/no_apto/enviar")
-def enviar_mensaje_no_apto(
+@router.post("/api/aspirantes/no_apto/enviarV0")
+def enviar_mensaje_no_aptoV0(
     data: EnviarNoAptoIn,
     usuario_actual: dict = Depends(obtener_usuario_actual)
 ):
@@ -2346,8 +2346,8 @@ def enviar_mensaje_no_apto(
             detail=f"Error enviando mensaje NO APTO: {str(e)}"
         )
 
-@router.post("/api/aspirantes/invitacion/enviar")
-def enviar_mensaje_invitacion(
+@router.post("/api/aspirantes/invitacion/enviarV0")
+def enviar_mensaje_invitacionV0(
     data: EnviarNoAptoIn,
     usuario_actual: dict = Depends(obtener_usuario_actual)
 ):
