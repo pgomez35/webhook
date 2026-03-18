@@ -739,7 +739,7 @@ def calcular_score_final(
         return round(diagnostico_score, 2)
 
     # Ajusta ponderación si luego quieres
-    return round((diagnostico_score * 0.5) + (score_prueba * 0.5), 2)
+    return round((diagnostico_score * 0.4) + (score_prueba * 0.6), 2)
 
 
 def obtener_nivel_score(score: Optional[float]) -> Optional[str]:
