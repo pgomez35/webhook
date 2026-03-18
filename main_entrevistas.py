@@ -550,26 +550,30 @@ def obtener_entrevista_con_agendamientos(creador_id: int) -> Optional[dict]:
 
                 # 2️⃣ Agendamientos asociados (JOIN correcto)
                 cur.execute("""
-                    SELECT ea.id, 
-                           ea.agendamiento_id,
-                           ea.creado_en,
-
-                           a.titulo,
-                           a.descripcion,
-                           a.fecha_inicio,
-                           a.fecha_fin,
-                           a.creador_id,
-                           a.responsable_id,
-                           a.estado,
-                           a.link_meet,
-                           a.google_event_id,
-                           a.creado_en,
-                           a.actualizado_en
-
-                    FROM entrevista_agendamiento ea
-                    JOIN agendamientos a ON a.id = ea.agendamiento_id
-                    WHERE ea.entrevista_id = %s
-                    ORDER BY a.fecha_inicio ASC
+                        SELECT
+                            ea.id,
+                            ea.agendamiento_id,
+                            ea.creado_en AS entrevista_agendamiento_creado_en,
+                        
+                            a.titulo,
+                            a.descripcion,
+                            a.fecha_inicio,
+                            a.fecha_fin,
+                            COALESCE(a.creador_id, ap.creador_id) AS creador_id,
+                            a.responsable_id,
+                            a.estado,
+                            a.link_meet,
+                            a.google_event_id,
+                            a.creado_en AS agendamiento_creado_en,
+                            a.actualizado_en
+                        
+                        FROM entrevista_agendamiento ea
+                        JOIN agendamientos a
+                            ON a.id = ea.agendamiento_id
+                        LEFT JOIN agendamientos_participantes ap
+                            ON ap.agendamiento_id = a.id
+                        WHERE ea.entrevista_id = %s
+                        ORDER BY a.fecha_inicio ASC
                 """, (entrevista_id,))
                 rows = cur.fetchall()
 
@@ -907,28 +911,38 @@ def obtener_diagnostico_score(cur, creador_id: int) -> Dict[str, Any]:
 
 
 def asegurar_entrevista_existe(cur, agendamiento_id: int, creador_id: int) -> int:
+    # 1) Si ya existe entrevista para ese agendamiento, la devuelve
     cur.execute("""
-        SELECT id
-        FROM entrevistas
-        WHERE agendamiento_id = %s
+        SELECT e.id
+        FROM entrevistas e
+        JOIN agendamientos_participantes ap
+          ON ap.agendamiento_id = e.agendamiento_id
+        WHERE e.agendamiento_id = %s
+          AND ap.creador_id = %s
         LIMIT 1
-    """, (agendamiento_id,))
+    """, (agendamiento_id, creador_id))
     row = cur.fetchone()
 
     if row:
         return row[0]
 
+    # 2) Validar que el agendamiento exista para ese creador vía participantes
     cur.execute("""
-        SELECT tipo_agendamiento
-        FROM agendamientos
-        WHERE id = %s
-          AND creador_id = %s
+        SELECT a.tipo_agendamiento
+        FROM agendamientos a
+        JOIN agendamientos_participantes ap
+          ON ap.agendamiento_id = a.id
+        WHERE a.id = %s
+          AND ap.creador_id = %s
         LIMIT 1
     """, (agendamiento_id, creador_id))
     ag = cur.fetchone()
 
     if not ag:
-        raise HTTPException(status_code=404, detail="Agendamiento no encontrado")
+        raise HTTPException(
+            status_code=404,
+            detail="Agendamiento no encontrado para este creador"
+        )
 
     tipo_agendamiento = ag[0]
 
@@ -938,9 +952,6 @@ def asegurar_entrevista_existe(cur, agendamiento_id: int, creador_id: int) -> in
             detail=f"Solo se pueden crear entrevistas para tipo_agendamiento 1 o 2. Recibido: {tipo_agendamiento}"
         )
 
-    # Mapeo confirmado por tu BD:
-    # tipo_agendamiento 1 -> entrevista_tipo.id 1 -> live
-    # tipo_agendamiento 2 -> entrevista_tipo.id 2 -> entrevista
     entrevista_tipo_id = tipo_agendamiento
 
     cur.execute("""
@@ -1003,6 +1014,7 @@ def obtener_pantalla_evaluacion_entrevistas(creador_id: int):
                     a.link_meet,
                     a.tipo_agendamiento,
                     a.estado AS agendamiento_estado,
+                    ap.creador_id,
 
                     ta.nombre AS tipo_agendamiento_nombre,
                     ta.color AS tipo_agendamiento_color,
@@ -1025,13 +1037,15 @@ def obtener_pantalla_evaluacion_entrevistas(creador_id: int):
                     et.tipo AS tipo_codigo
 
                 FROM agendamientos a
+                JOIN agendamientos_participantes ap
+                  ON ap.agendamiento_id = a.id
                 LEFT JOIN tipos_agendamiento ta
-                    ON ta.id = a.tipo_agendamiento
+                  ON ta.id = a.tipo_agendamiento
                 LEFT JOIN entrevistas e
-                    ON e.agendamiento_id = a.id
+                  ON e.agendamiento_id = a.id
                 LEFT JOIN entrevista_tipo et
-                    ON et.id = e.entrevista_tipo_id
-                WHERE a.creador_id = %s
+                  ON et.id = e.entrevista_tipo_id
+                WHERE ap.creador_id = %s
                   AND a.tipo_agendamiento IN (1, 2)
                 ORDER BY a.fecha_inicio ASC, a.id ASC
             """, (creador_id,))
@@ -1081,8 +1095,11 @@ def obtener_pantalla_evaluacion_entrevistas(creador_id: int):
 # ENDPOINT 2: DETALLE POR AGENDAMIENTO
 # =========================================================
 
-@router.get("/api/entrevistas/agendamiento/{agendamiento_id}")
-def obtener_detalle_entrevista_por_agendamiento(agendamiento_id: int):
+@router.get("/api/entrevistas/agendamiento/{agendamiento_id}/creador/{creador_id}")
+def obtener_detalle_entrevista_por_agendamiento(
+    agendamiento_id: int,
+    creador_id: int
+):
     now = datetime.now()
 
     with get_connection_context() as conn:
@@ -1090,7 +1107,7 @@ def obtener_detalle_entrevista_por_agendamiento(agendamiento_id: int):
             cur.execute("""
                 SELECT
                     a.id AS agendamiento_id,
-                    a.creador_id,
+                    ap.creador_id,
                     a.titulo,
                     a.descripcion,
                     a.fecha_inicio,
@@ -1120,25 +1137,31 @@ def obtener_detalle_entrevista_por_agendamiento(agendamiento_id: int):
                     et.tipo AS tipo_codigo
 
                 FROM agendamientos a
+                JOIN agendamientos_participantes ap
+                  ON ap.agendamiento_id = a.id
                 LEFT JOIN tipos_agendamiento ta
-                    ON ta.id = a.tipo_agendamiento
+                  ON ta.id = a.tipo_agendamiento
                 LEFT JOIN entrevistas e
-                    ON e.agendamiento_id = a.id
+                  ON e.agendamiento_id = a.id
                 LEFT JOIN entrevista_tipo et
-                    ON et.id = e.entrevista_tipo_id
+                  ON et.id = e.entrevista_tipo_id
                 WHERE a.id = %s
+                  AND ap.creador_id = %s
                   AND a.tipo_agendamiento IN (1, 2)
                 LIMIT 1
-            """, (agendamiento_id,))
+            """, (agendamiento_id, creador_id))
 
             row = cur.fetchone()
             if not row:
-                raise HTTPException(status_code=404, detail="Agendamiento no encontrado")
+                raise HTTPException(
+                    status_code=404,
+                    detail="Agendamiento no encontrado para este creador"
+                )
 
             columns = [desc[0] for desc in cur.description]
             item = normalizar_item_db(dict(zip(columns, row)))
 
-            diagnostico_data = obtener_diagnostico_score(cur, item["creador_id"])
+            diagnostico_data = obtener_diagnostico_score(cur, creador_id)
             item["diagnostico_score"] = diagnostico_data["puntaje_total"]
             item["diagnostico_resumen"] = diagnostico_data["diagnostico_resumen"]
 
@@ -1160,8 +1183,8 @@ def obtener_detalle_entrevista_por_agendamiento(agendamiento_id: int):
 # ENDPOINT 3: DETALLE POR ENTREVISTA ID
 # =========================================================
 
-@router.get("/api/entrevistas/{entrevista_id}")
-def obtener_entrevista_por_id(entrevista_id: int):
+@router.get("/api/entrevistas/{entrevista_id}/creador/{creador_id}")
+def obtener_entrevista_por_id(entrevista_id: int, creador_id: int):
     now = datetime.now()
 
     with get_connection_context() as conn:
@@ -1169,7 +1192,7 @@ def obtener_entrevista_por_id(entrevista_id: int):
             cur.execute("""
                 SELECT
                     a.id AS agendamiento_id,
-                    a.creador_id,
+                    ap.creador_id,
                     a.titulo,
                     a.descripcion,
                     a.fecha_inicio,
@@ -1199,24 +1222,30 @@ def obtener_entrevista_por_id(entrevista_id: int):
                     et.tipo AS tipo_codigo
 
                 FROM entrevistas e
-                LEFT JOIN agendamientos a
-                    ON a.id = e.agendamiento_id
+                JOIN agendamientos a
+                  ON a.id = e.agendamiento_id
+                JOIN agendamientos_participantes ap
+                  ON ap.agendamiento_id = a.id
                 LEFT JOIN tipos_agendamiento ta
-                    ON ta.id = a.tipo_agendamiento
+                  ON ta.id = a.tipo_agendamiento
                 LEFT JOIN entrevista_tipo et
-                    ON et.id = e.entrevista_tipo_id
+                  ON et.id = e.entrevista_tipo_id
                 WHERE e.id = %s
+                  AND ap.creador_id = %s
                 LIMIT 1
-            """, (entrevista_id,))
+            """, (entrevista_id, creador_id))
 
             row = cur.fetchone()
             if not row:
-                raise HTTPException(status_code=404, detail="Entrevista no encontrada")
+                raise HTTPException(
+                    status_code=404,
+                    detail="Entrevista no encontrada para este creador"
+                )
 
             columns = [desc[0] for desc in cur.description]
             item = normalizar_item_db(dict(zip(columns, row)))
 
-            diagnostico_data = obtener_diagnostico_score(cur, item["creador_id"])
+            diagnostico_data = obtener_diagnostico_score(cur, creador_id)
             item["diagnostico_score"] = diagnostico_data["puntaje_total"]
             item["diagnostico_resumen"] = diagnostico_data["diagnostico_resumen"]
 
@@ -1238,8 +1267,12 @@ def obtener_entrevista_por_id(entrevista_id: int):
 # ENDPOINT 4: EVALUAR POR ENTREVISTA ID
 # =========================================================
 
-@router.patch("/api/entrevistas/{entrevista_id}/evaluar")
-def evaluar_entrevista(entrevista_id: int, data: EntrevistaEvaluacionUpdate):
+@router.patch("/api/entrevistas/{entrevista_id}/creador/{creador_id}/evaluar")
+def evaluar_entrevista(
+    entrevista_id: int,
+    creador_id: int,
+    data: EntrevistaEvaluacionUpdate
+):
     with get_connection_context() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -1248,15 +1281,121 @@ def evaluar_entrevista(entrevista_id: int, data: EntrevistaEvaluacionUpdate):
                     e.creador_id,
                     e.agendamiento_id
                 FROM entrevistas e
+                JOIN agendamientos_participantes ap
+                  ON ap.agendamiento_id = e.agendamiento_id
                 WHERE e.id = %s
+                  AND ap.creador_id = %s
                 LIMIT 1
-            """, (entrevista_id,))
+            """, (entrevista_id, creador_id))
             base = cur.fetchone()
 
             if not base:
-                raise HTTPException(status_code=404, detail="Entrevista no encontrada")
+                raise HTTPException(
+                    status_code=404,
+                    detail="Entrevista no encontrada para este creador"
+                )
 
-            _, creador_id, agendamiento_id = base
+            _, creador_id_db, agendamiento_id = base
+
+            diagnostico_data = obtener_diagnostico_score(cur, creador_id)
+            diagnostico_score = diagnostico_data["puntaje_total"]
+            diagnostico_resumen = diagnostico_data["diagnostico_resumen"]
+
+            score_prueba = calcular_score_prueba(
+                data.aspecto_tecnico,
+                data.presencia_carisma,
+                data.interaccion_audiencia,
+                data.profesionalismo_normas
+            )
+
+            score_final = calcular_score_final(diagnostico_score, score_prueba)
+
+            cur.execute("""
+                UPDATE entrevistas
+                SET
+                    observaciones = %s,
+                    aspecto_tecnico = %s,
+                    presencia_carisma = %s,
+                    interaccion_audiencia = %s,
+                    profesionalismo_normas = %s,
+                    score_total_entrevista = %s,
+                    score_total = %s,
+                    estado_id = %s
+                WHERE id = %s
+                RETURNING
+                    id,
+                    creador_id,
+                    agendamiento_id,
+                    score_total_entrevista,
+                    score_total,
+                    estado_id
+            """, (
+                data.observaciones,
+                data.aspecto_tecnico,
+                data.presencia_carisma,
+                data.interaccion_audiencia,
+                data.profesionalismo_normas,
+                score_prueba,
+                score_final,
+                data.estado_id,
+                entrevista_id
+            ))
+
+            updated = cur.fetchone()
+            conn.commit()
+
+            return {
+                "success": True,
+                "message": "Evaluación guardada correctamente",
+                "data": {
+                    "entrevista_id": updated[0],
+                    "creador_id": creador_id_db,
+                    "agendamiento_id": updated[2],
+                    "scores": {
+                        "diagnostico": diagnostico_score,
+                        "prueba": to_float(updated[3]),
+                        "final": to_float(updated[4]),
+                        "nivel_prueba": obtener_nivel_score(to_float(updated[3])),
+                        "nivel_final": obtener_nivel_score(to_float(updated[4]))
+                    },
+                    "diagnostico_resumen": diagnostico_resumen,
+                    "decision_sugerida": sugerir_decision(to_float(updated[4])),
+                    "estado_id": updated[5]
+                }
+            }
+
+
+# =========================================================
+# ENDPOINT 5: EVALUAR POR AGENDAMIENTO
+# =========================================================
+
+@router.patch("/api/agendamientos/{agendamiento_id}/creador/{creador_id}/evaluar")
+def evaluar_por_agendamiento(
+    agendamiento_id: int,
+    creador_id: int,
+    data: EntrevistaEvaluacionUpdate
+):
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT a.id, a.tipo_agendamiento
+                FROM agendamientos a
+                JOIN agendamientos_participantes ap
+                  ON ap.agendamiento_id = a.id
+                WHERE a.id = %s
+                  AND ap.creador_id = %s
+                  AND a.tipo_agendamiento IN (1, 2)
+                LIMIT 1
+            """, (agendamiento_id, creador_id))
+            ag = cur.fetchone()
+
+            if not ag:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Agendamiento no encontrado para este creador"
+                )
+
+            entrevista_id = asegurar_entrevista_existe(cur, agendamiento_id, creador_id)
 
             diagnostico_data = obtener_diagnostico_score(cur, creador_id)
             diagnostico_score = diagnostico_data["puntaje_total"]
@@ -1327,114 +1466,40 @@ def evaluar_entrevista(entrevista_id: int, data: EntrevistaEvaluacionUpdate):
 
 
 # =========================================================
-# ENDPOINT 5: EVALUAR POR AGENDAMIENTO
+# ENDPOINT 6: GUARDAR DECISIÓN FINAL
 # =========================================================
 
-@router.patch("/api/agendamientos/{agendamiento_id}/evaluar")
-def evaluar_por_agendamiento(agendamiento_id: int, data: EntrevistaEvaluacionUpdate):
+@router.patch("/api/entrevistas/{entrevista_id}/creador/{creador_id}/decision")
+def guardar_decision_final(
+    entrevista_id: int,
+    creador_id: int,
+    data: DecisionUpdate
+):
     with get_connection_context() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT creador_id
-                FROM agendamientos
-                WHERE id = %s
-                  AND tipo_agendamiento IN (1, 2)
-                LIMIT 1
-            """, (agendamiento_id,))
-            ag = cur.fetchone()
-
-            if not ag:
-                raise HTTPException(status_code=404, detail="Agendamiento no encontrado")
-
-            creador_id = ag[0]
-            entrevista_id = asegurar_entrevista_existe(cur, agendamiento_id, creador_id)
-
-            diagnostico_data = obtener_diagnostico_score(cur, creador_id)
-            diagnostico_score = diagnostico_data["puntaje_total"]
-            diagnostico_resumen = diagnostico_data["diagnostico_resumen"]
-
-            score_prueba = calcular_score_prueba(
-                data.aspecto_tecnico,
-                data.presencia_carisma,
-                data.interaccion_audiencia,
-                data.profesionalismo_normas
-            )
-
-            score_final = calcular_score_final(diagnostico_score, score_prueba)
-
-            cur.execute("""
-                UPDATE entrevistas
-                SET
-                    observaciones = %s,
-                    aspecto_tecnico = %s,
-                    presencia_carisma = %s,
-                    interaccion_audiencia = %s,
-                    profesionalismo_normas = %s,
-                    score_total_entrevista = %s,
-                    score_total = %s,
-                    estado_id = %s
-                WHERE id = %s
-                RETURNING id, score_total_entrevista, score_total, estado_id
-            """, (
-                data.observaciones,
-                data.aspecto_tecnico,
-                data.presencia_carisma,
-                data.interaccion_audiencia,
-                data.profesionalismo_normas,
-                score_prueba,
-                score_final,
-                data.estado_id,
-                entrevista_id
-            ))
-
-            updated = cur.fetchone()
-            conn.commit()
-
-            return {
-                "success": True,
-                "message": "Evaluación guardada correctamente",
-                "data": {
-                    "entrevista_id": updated[0],
-                    "agendamiento_id": agendamiento_id,
-                    "scores": {
-                        "diagnostico": diagnostico_score,
-                        "prueba": to_float(updated[1]),
-                        "final": to_float(updated[2]),
-                        "nivel_prueba": obtener_nivel_score(to_float(updated[1])),
-                        "nivel_final": obtener_nivel_score(to_float(updated[2]))
-                    },
-                    "diagnostico_resumen": diagnostico_resumen,
-                    "decision_sugerida": sugerir_decision(to_float(updated[2])),
-                    "estado_id": updated[3]
-                }
-            }
-
-
-# =========================================================
-# ENDPOINT 6: GUARDAR DECISIÓN FINAL (opcional)
-# Requiere columnas decision_final y observacion_decision
-# =========================================================
-
-@router.patch("/api/entrevistas/{entrevista_id}/decision")
-def guardar_decision_final(entrevista_id: int, data: DecisionUpdate):
-    with get_connection_context() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE entrevistas
+                UPDATE entrevistas e
                 SET
                     decision_final = %s,
                     observacion_decision = %s
-                WHERE id = %s
-                RETURNING id, decision_final, observacion_decision
+                FROM agendamientos_participantes ap
+                WHERE e.id = %s
+                  AND ap.agendamiento_id = e.agendamiento_id
+                  AND ap.creador_id = %s
+                RETURNING e.id, e.decision_final, e.observacion_decision
             """, (
                 data.decision_final,
                 data.observacion_decision,
-                entrevista_id
+                entrevista_id,
+                creador_id
             ))
 
             updated = cur.fetchone()
             if not updated:
-                raise HTTPException(status_code=404, detail="Entrevista no encontrada")
+                raise HTTPException(
+                    status_code=404,
+                    detail="Entrevista no encontrada para este creador"
+                )
 
             conn.commit()
 
