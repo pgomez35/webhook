@@ -67,7 +67,7 @@ def listar_agendamientos_filtros(estado=None, desde=None, hasta=None, responsabl
                    d.nombre_completo AS responsable 
             FROM agendamientos a
             LEFT JOIN creadores c ON a.creador_id = c.id
-            LEFT JOIN admin_usuario d ON a.responsable_id = d.id
+            LEFT JOIN usuarios d ON a.responsable_id = d.id
             WHERE 1=1
         """
         params = []
@@ -114,7 +114,7 @@ def listar_agendamientos():
             SELECT a.*, c.nickname,d.nombre_completo as responsable 
             FROM agendamientos a
             LEFT JOIN creadores c ON a.creador_id = c.id
-            LEFT JOIN admin_usuario d ON a.responsable_id =d.id
+            LEFT JOIN usuarios d ON a.responsable_id =d.id
             ORDER BY a.fecha_inicio DESC;
         """)
         rows = cur.fetchall()
@@ -254,7 +254,7 @@ def listar_agendamientos_grupales():
                    a.estado, d.nombre_completo AS responsable,
                    c.id as creador_id, c.nickname
             FROM agendamientos a
-            LEFT JOIN admin_usuario d ON a.responsable_id = d.id
+            LEFT JOIN usuarios d ON a.responsable_id = d.id
             LEFT JOIN agendamiento_creadores ac ON a.id = ac.agendamiento_id
             LEFT JOIN creadores c ON ac.creador_id = c.id
             ORDER BY a.fecha_inicio DESC;

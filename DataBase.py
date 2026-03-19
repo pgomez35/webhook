@@ -826,10 +826,10 @@ def verify_password(password: str, hashed_password: str) -> bool:
     return bcrypt.checkpw(password_bytes, hashed_password_bytes)
 
 # ===============================
-# FUNCIONES PARA ADMIN_USUARIO
+# FUNCIONES PARA usuarios
 # ===============================
 
-def obtener_todos_admin_usuarios():
+def obtener_todos_usuarioss():
     """Obtiene todos los usuarios administradores"""
     try:
         with get_connection_context() as conn:
@@ -837,7 +837,7 @@ def obtener_todos_admin_usuarios():
                 cur.execute("""
                     SELECT id, username, nombre_completo, email, telefono, rol, grupo, activo, 
                            creado_en, actualizado_en
-                    FROM admin_usuario
+                    FROM usuarios
                     ORDER BY creado_en DESC
                 """)
                 
@@ -876,7 +876,7 @@ def obtener_todos_responsables_agendas():
                 cur.execute("""
                     SELECT id, username, nombre_completo, email, telefono, rol, grupo, activo, 
                            creado_en, actualizado_en
-                    FROM admin_usuario
+                    FROM usuarios
                     ORDER BY creado_en DESC
                 """)
 
@@ -908,7 +908,7 @@ def obtener_todos_responsables_agendas():
 
 
 
-def crear_admin_usuario(datos):
+def crear_usuarios(datos):
     """Crea un nuevo usuario administrador."""
 
     # Normalizar datos si vienen de un modelo Pydantic
@@ -943,14 +943,14 @@ def crear_admin_usuario(datos):
         with psycopg2.connect(INTERNAL_DATABASE_URL) as conn:
             with conn.cursor() as cur:
                 # Verificar duplicados
-                cur.execute("SELECT 1 FROM admin_usuario WHERE username=%s", (username,))
+                cur.execute("SELECT 1 FROM usuarios WHERE username=%s", (username,))
                 if cur.fetchone():
                     return JSONResponse(
                         status_code=409,
                         content={"status": "error", "mensaje": "El username ya existe"}
                     )
 
-                cur.execute("SELECT 1 FROM admin_usuario WHERE email=%s", (email,))
+                cur.execute("SELECT 1 FROM usuarios WHERE email=%s", (email,))
                 if email and cur.fetchone():
                     return JSONResponse(
                         status_code=409,
@@ -959,7 +959,7 @@ def crear_admin_usuario(datos):
 
                 # Insertar usuario
                 cur.execute("""
-                    INSERT INTO admin_usuario (
+                    INSERT INTO usuarios (
                         username, nombre_completo, email, telefono, rol, grupo, activo,
                         password_hash, creado_en, actualizado_en
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
@@ -993,7 +993,7 @@ def crear_admin_usuario(datos):
         )
 
 
-def obtener_admin_usuario_por_id(usuario_id):
+def obtener_usuarios_por_id(usuario_id):
     """Obtiene un usuario administrador por ID"""
     try:
         with get_connection_context() as conn:
@@ -1001,7 +1001,7 @@ def obtener_admin_usuario_por_id(usuario_id):
                 cur.execute("""
                     SELECT id, username, nombre_completo, email, telefono, rol, grupo, activo,
                            creado_en, actualizado_en
-                    FROM admin_usuario
+                    FROM usuarios
                     WHERE id = %s
                 """, (usuario_id,))
                 
@@ -1026,13 +1026,13 @@ def obtener_admin_usuario_por_id(usuario_id):
         print("❌ Error al obtener usuario administrador:", e)
         return None
 
-def actualizar_admin_usuario(usuario_id, datos):
+def actualizar_usuarios(usuario_id, datos):
     """Actualiza un usuario administrador y retorna los datos actualizados"""
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 # Verificar si el usuario existe
-                cur.execute("SELECT id FROM admin_usuario WHERE id = %s", (usuario_id,))
+                cur.execute("SELECT id FROM usuarios WHERE id = %s", (usuario_id,))
                 if not cur.fetchone():
                     # En vez de devolver dict, lanza excepción en el endpoint
                     return None
@@ -1040,7 +1040,7 @@ def actualizar_admin_usuario(usuario_id, datos):
                 # Verificar username único (excluyendo el usuario actual)
                 if datos.get("username"):
                     cur.execute(
-                        "SELECT id FROM admin_usuario WHERE username = %s AND id != %s",
+                        "SELECT id FROM usuarios WHERE username = %s AND id != %s",
                         (datos.get("username"), usuario_id)
                     )
                     if cur.fetchone():
@@ -1049,7 +1049,7 @@ def actualizar_admin_usuario(usuario_id, datos):
                 # Verificar email único (excluyendo el usuario actual)
                 if datos.get("email"):
                     cur.execute(
-                        "SELECT id FROM admin_usuario WHERE email = %s AND id != %s",
+                        "SELECT id FROM usuarios WHERE email = %s AND id != %s",
                         (datos.get("email"), usuario_id)
                     )
                     if cur.fetchone():
@@ -1071,13 +1071,13 @@ def actualizar_admin_usuario(usuario_id, datos):
                 updates.append("actualizado_en = NOW()")
                 valores.append(usuario_id)
 
-                query = f"UPDATE admin_usuario SET {', '.join(updates)} WHERE id = %s"
+                query = f"UPDATE usuarios SET {', '.join(updates)} WHERE id = %s"
                 cur.execute(query, tuple(valores))
                 conn.commit()
 
                 # Obtener los datos actualizados
                 cur.execute(
-                    "SELECT id, username, rol, nombre_completo, email, telefono, grupo, activo FROM admin_usuario WHERE id = %s",
+                    "SELECT id, username, rol, nombre_completo, email, telefono, grupo, activo FROM usuarios WHERE id = %s",
                     (usuario_id,)
                 )
                 row = cur.fetchone()
@@ -1105,17 +1105,17 @@ def actualizar_admin_usuario(usuario_id, datos):
         raise e
 
 
-def eliminar_admin_usuario(usuario_id):
+def eliminar_usuarios(usuario_id):
     """Elimina un usuario administrador"""
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 # Verificar si el usuario existe
-                cur.execute("SELECT id FROM admin_usuario WHERE id = %s", (usuario_id,))
+                cur.execute("SELECT id FROM usuarios WHERE id = %s", (usuario_id,))
                 if not cur.fetchone():
                     return {"status": "error", "mensaje": "Usuario no encontrado"}
                 
-                cur.execute("DELETE FROM admin_usuario WHERE id = %s", (usuario_id,))
+                cur.execute("DELETE FROM usuarios WHERE id = %s", (usuario_id,))
                 conn.commit()
                 
                 return {"status": "ok", "mensaje": "Usuario eliminado correctamente"}
@@ -1125,18 +1125,18 @@ def eliminar_admin_usuario(usuario_id):
         return {"status": "error", "mensaje": str(e)}
 
 
-def cambiar_estado_admin_usuario(usuario_id, activo):
+def cambiar_estado_usuarios(usuario_id, activo):
     """Cambia el estado activo/inactivo de un usuario administrador"""
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 # Verificar si el usuario existe
-                cur.execute("SELECT id FROM admin_usuario WHERE id = %s", (usuario_id,))
+                cur.execute("SELECT id FROM usuarios WHERE id = %s", (usuario_id,))
                 if not cur.fetchone():
                     return {"status": "error", "mensaje": "Usuario no encontrado"}
                 
                 cur.execute("""
-                    UPDATE admin_usuario 
+                    UPDATE usuarios 
                     SET activo = %s, actualizado_en = NOW() 
                     WHERE id = %s
                 """, (activo, usuario_id))
@@ -1151,7 +1151,7 @@ def cambiar_estado_admin_usuario(usuario_id, activo):
         return {"status": "error", "mensaje": str(e)}
 
 
-def obtener_admin_usuario_por_username(username):
+def obtener_usuarios_por_username(username):
     """Obtiene un usuario administrador por username (útil para autenticación)"""
     try:
         with get_connection_context() as conn:
@@ -1159,7 +1159,7 @@ def obtener_admin_usuario_por_username(username):
                 cur.execute("""
                     SELECT id, username, nombre_completo AS nombre, email, telefono, rol, grupo, activo,
                            password_hash, creado_en, actualizado_en
-                    FROM admin_usuario
+                    FROM usuarios
                     WHERE username = %s
                 """, (username,))
                 
@@ -1195,7 +1195,7 @@ def actualiza_password_usuario(user_id: int, nuevo_hash: str):
             with conn.cursor() as cur:
                 # Siempre usa parámetros para evitar SQL Injection
                 cur.execute(
-                    "UPDATE admin_usuario SET password_hash = %s WHERE id = %s",
+                    "UPDATE usuarios SET password_hash = %s WHERE id = %s",
                     (nuevo_hash, user_id)
                 )
                 conn.commit()
@@ -1207,11 +1207,11 @@ def actualiza_password_usuario(user_id: int, nuevo_hash: str):
 
 
 
-def autenticar_admin_usuario(username, password):
+def autenticar_usuarios(username, password):
     """Autentica un usuario administrador"""
     try:
         # Obtener usuario por username
-        usuario = obtener_admin_usuario_por_username(username)
+        usuario = obtener_usuarios_por_username(username)
         
         if not usuario:
             return {"status": "error", "mensaje": "Usuario no encontrado"}
@@ -1530,7 +1530,7 @@ def obtener_todos_usuarios_db():
                 NULL AS actualizado_en,
                 'administrativo' AS tipo_usuario,
                 a.rol AS rol
-                FROM admin_usuario a
+                FROM usuarios a
                 WHERE a.activo = TRUE
                 ORDER BY actualizado_en DESC NULLS LAST, creado_en DESC;
                 """)
@@ -1956,7 +1956,7 @@ def obtener_todos_manager():
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT id, username, nombre_completo, rol, grupo, activo
-                    FROM admin_usuario WHERE rol='Manager'
+                    FROM usuarios WHERE rol='Manager'
                     ORDER BY nombre_completo DESC
                 """)
                 usuarios = []
@@ -2397,12 +2397,12 @@ def buscar_usuario_por_telefono(numero: str):
                 if row:
                     return dict(zip([desc[0] for desc in cur.description], row))
 
-                # Buscar en admin_usuario
+                # Buscar en usuarios
                 cur.execute("""
                     SELECT id, username AS nickname,
                            nombre_completo AS nombre,
                            'admin' AS rol
-                    FROM admin_usuario
+                    FROM usuarios
                     WHERE telefono = %s
                     LIMIT 1;
                 """, (numero,))

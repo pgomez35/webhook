@@ -43,29 +43,29 @@ def verificar_conexion_bd(db_url):
         cur.execute("""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables 
-                WHERE table_name = 'admin_usuario'
+                WHERE table_name = 'usuarios'
             )
         """)
         table_exists = cur.fetchone()[0]
         
         if table_exists:
-            print("✅ Tabla 'admin_usuario' existe")
+            print("✅ Tabla 'usuarios' existe")
             
             # Contar registros
-            cur.execute("SELECT COUNT(*) FROM admin_usuario")
+            cur.execute("SELECT COUNT(*) FROM usuarios")
             count = cur.fetchone()[0]
             print(f"📊 Registros en tabla: {count}")
             
             if count > 0:
                 # Mostrar algunos registros
-                cur.execute("SELECT id, username, nombre_completo, activo FROM admin_usuario LIMIT 3")
+                cur.execute("SELECT id, username, nombre_completo, activo FROM usuarios LIMIT 3")
                 for row in cur.fetchall():
                     status = "🟢" if row[3] else "🔴"
                     print(f"   {status} ID: {row[0]}, Username: {row[1]}, Nombre: {row[2]}")
             
         else:
-            print("❌ Tabla 'admin_usuario' NO existe")
-            print("💡 Ejecuta el script SQL: esquema_admin_usuario.sql")
+            print("❌ Tabla 'usuarios' NO existe")
+            print("💡 Ejecuta el script SQL: esquema_usuarios.sql")
         
         cur.close()
         conn.close()
@@ -109,7 +109,7 @@ def crear_usuario_prueba(db_url):
         cur = conn.cursor()
         
         # Verificar si ya existe el usuario de prueba
-        cur.execute("SELECT id FROM admin_usuario WHERE username = 'test_user'")
+        cur.execute("SELECT id FROM usuarios WHERE username = 'test_user'")
         if cur.fetchone():
             print("✅ Usuario de prueba ya existe")
             cur.close()
@@ -118,7 +118,7 @@ def crear_usuario_prueba(db_url):
         
         # Crear usuario de prueba
         cur.execute("""
-            INSERT INTO admin_usuario (username, nombre_completo, email, telefono, rol, grupo, password_hash) 
+            INSERT INTO usuarios (username, nombre_completo, email, telefono, rol, grupo, password_hash) 
             VALUES ('test_user', 'Usuario de Prueba', 'test@test.com', '+1111111111', 'USUARIO', 'PRUEBA', 'test123')
         """)
         
@@ -155,7 +155,7 @@ def main():
     
     if not tabla_existe:
         print("\n💡 PASOS PARA SOLUCIONAR:")
-        print("1. Ejecutar esquema_admin_usuario.sql en tu base de datos")
+        print("1. Ejecutar esquema_usuarios.sql en tu base de datos")
         print("2. Verificar que la conexión a BD sea correcta")
         return
     

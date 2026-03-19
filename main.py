@@ -1729,14 +1729,14 @@ async def test_conexion():
         cur.execute("""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables 
-                WHERE table_name = 'admin_usuario'
+                WHERE table_name = 'usuarios'
             )
         """)
         table_exists = cur.fetchone()[0]
 
         if table_exists:
             # Contar registros
-            cur.execute("SELECT COUNT(*) FROM admin_usuario")
+            cur.execute("SELECT COUNT(*) FROM usuarios")
             count = cur.fetchone()[0]
 
             cur.close()
@@ -1770,19 +1770,19 @@ async def test_conexion():
 @app.get("/api/admin-usuario", response_model=List[AdminUsuarioResponse])
 async def obtener_usuarios():
     """Obtiene todos los usuarios administradores"""
-    usuarios = obtener_todos_admin_usuarios()
+    usuarios = obtener_todos_usuarioss()
     return usuarios
 
 @app.post("/api/admin-usuario", response_model=AdminUsuarioResponse)
 async def crear_usuario(usuario: AdminUsuarioCreate):
     """Crea un nuevo usuario administrador"""
-    usuario_creado = crear_admin_usuario(usuario)
+    usuario_creado = crear_usuarios(usuario)
     return usuario_creado
 
 @app.get("/api/admin-usuario/{usuario_id}", response_model=AdminUsuarioResponse)
 async def obtener_usuario(usuario_id: int):
     """Obtiene un usuario administrador por ID"""
-    usuario = obtener_admin_usuario_por_id(usuario_id)
+    usuario = obtener_usuarios_por_id(usuario_id)
 
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
@@ -1793,19 +1793,19 @@ async def obtener_usuario(usuario_id: int):
 @app.delete("/api/admin-usuario/{usuario_id}")
 async def eliminar_usuario(usuario_id: int):
     """Elimina un usuario administrador"""
-    eliminar_admin_usuario(usuario_id)
+    eliminar_usuarios(usuario_id)
     return {"mensaje": "Usuario eliminado exitosamente"}
 
 @app.patch("/api/admin-usuario/{usuario_id}/activo")
 async def cambiar_estado_usuario(usuario_id: int, activo: bool = Body(...)):
     """Cambia el estado activo/inactivo de un usuario administrador"""
-    cambiar_estado_admin_usuario(usuario_id, activo)
+    cambiar_estado_usuarios(usuario_id, activo)
     return {"mensaje": f"Estado actualizado a {'activo' if activo else 'inactivo'}"}
 
 @app.get("/api/admin-usuario/username/{username}", response_model=AdminUsuarioResponse)
 async def obtener_usuario_por_username(username: str):
     """Obtiene un usuario administrador por username (útil para autenticación)"""
-    usuario = obtener_admin_usuario_por_username(username)
+    usuario = obtener_usuarios_por_username(username)
 
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
@@ -2057,7 +2057,7 @@ async def cambiar_password_admin(
     if not es_admin(usuario_actual) and datos.user_id != int(usuario_actual["sub"]):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No puedes cambiar la contraseña de otro usuario.")
 
-    usuario = obtener_admin_usuario_por_id(datos.user_id)
+    usuario = obtener_usuarios_por_id(datos.user_id)
     if not usuario:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
 
@@ -2070,7 +2070,7 @@ async def cambiar_password_admin(
 @app.put("/api/admin-usuario/{usuario_id:int}", response_model=AdminUsuarioResponse)
 async def actualizar_usuario(usuario_id: int, usuario: AdminUsuarioUpdate):
     try:
-        usuario_actualizado = actualizar_admin_usuario(usuario_id, usuario.dict())
+        usuario_actualizado = actualizar_usuarios(usuario_id, usuario.dict())
         if not usuario_actualizado:
             raise HTTPException(status_code=404, detail="Usuario no encontrado")
         return usuario_actualizado
@@ -2703,7 +2703,7 @@ def obtener_creador_activo(id: int):
                 cur.execute("""
                     SELECT ca.*, au.nombre_completo AS manager_nombre
                     FROM creadores_activos ca
-                    LEFT JOIN admin_usuario au ON ca.manager_id = au.id
+                    LEFT JOIN usuarios au ON ca.manager_id = au.id
                     WHERE ca.id = %s
                 """, (id,))
                 row = cur.fetchone()
@@ -2904,7 +2904,7 @@ def listar_seguimientos_por_creador_activo(creador_activo_id: int):
                 cur.execute("""
                     SELECT sc.*, au.nombre_completo AS manager_nombre
                     FROM seguimiento_creadores sc
-                    LEFT JOIN admin_usuario au ON sc.manager_id = au.id
+                    LEFT JOIN usuarios au ON sc.manager_id = au.id
                     WHERE sc.creador_activo_id = %s
                     ORDER BY sc.fecha_seguimiento DESC
                 """, (creador_activo_id,))

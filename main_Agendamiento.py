@@ -925,7 +925,7 @@ def listar_agendamientos():
                 a.estado, a.link_meet,
                 u.nombre_completo AS responsable
             FROM agendamientos a
-            LEFT JOIN admin_usuario u ON u.id = a.responsable_id
+            LEFT JOIN usuarios u ON u.id = a.responsable_id
                 ORDER BY a.fecha_inicio DESC;
             """)
             agendamientos = cur.fetchall()
