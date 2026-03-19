@@ -80,6 +80,7 @@ from main_auth import router as main_auth_router
 from main_diagnostico import router as diagnostico_router
 from main_configuracionAgencias import router as bienvenida_router
 from main_mensajeria_whatsapp import router as main_mensajeria_whatsapp_router
+from main_invitacion import router as main_invitacion_router
 
 # ⚙️ Inicializar FastAPI
 app = FastAPI()
@@ -117,6 +118,7 @@ app.include_router(chatbot_estados_aspirante_router, tags=["chatbot estados aspi
 app.include_router(diagnostico_router, tags=["diagnostico"])
 app.include_router(bienvenida_router, tags=["bienvenida"])
 app.include_router(main_mensajeria_whatsapp_router, tags=["mensajeria whatsapp"])
+app.include_router(main_invitacion_router, tags=["invitacion"])
 
 
 # # ✅ Crear carpeta persistente de audios si no existe
