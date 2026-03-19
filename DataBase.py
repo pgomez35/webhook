@@ -12,6 +12,9 @@ from google.oauth2.service_account import Credentials
 from gspread.worksheet import JSONResponse as GSpreadJSONResponse
 from fastapi.responses import JSONResponse
 
+from fastapi import HTTPException
+from psycopg2.errors import UniqueViolation
+
 from schemas import ActualizacionContactoInfo
 from psycopg2.extras import RealDictCursor
 
@@ -908,20 +911,25 @@ def obtener_todos_responsables_agendas():
 
 
 
-def crear_usuarios(datos):
-    """Crea un nuevo usuario administrador."""
 
-    # Normalizar datos si vienen de un modelo Pydantic
+
+def crear_usuarios(datos):
+    """Crea un nuevo usuario administrador dentro del tenant actual."""
+
+    # Normalizar datos si vienen de Pydantic
     if hasattr(datos, "dict"):
         datos = datos.dict()
 
-    # Validar campos requeridos antes de abrir la conexión
+    # Validar campos requeridos
     requeridos = ["username", "nombre_completo", "email", "rol"]
     faltantes = [campo for campo in requeridos if not datos.get(campo)]
     if faltantes:
-        return {"status": "error", "mensaje": f"Faltan campos obligatorios: {', '.join(faltantes)}"}
+        raise HTTPException(
+            status_code=400,
+            detail=f"Faltan campos obligatorios: {', '.join(faltantes)}"
+        )
 
-    # Normalizar email y username
+    # Normalizar datos
     username = datos["username"].strip().lower()
     email = datos["email"].strip().lower()
     nombre_completo = datos.get("nombre_completo")
@@ -930,67 +938,60 @@ def crear_usuarios(datos):
     grupo = datos.get("grupo")
     activo = datos.get("activo", True)
 
-    # Generar contraseña fácil si no viene
+    # Generar contraseña si no viene
     password = datos.get("password")
     if not password:
-        password = f"{username}123"  # 👈 fácil de recordar
+        password = f"{username}123"
 
-    # Hashear contraseña
     password_hash = hash_password(password)
 
     try:
-        import psycopg2
-        with psycopg2.connect(INTERNAL_DATABASE_URL) as conn:
+        with get_connection_context() as conn:
             with conn.cursor() as cur:
-                # Verificar duplicados
-                cur.execute("SELECT 1 FROM usuarios WHERE username=%s", (username,))
-                if cur.fetchone():
-                    return JSONResponse(
-                        status_code=409,
-                        content={"status": "error", "mensaje": "El username ya existe"}
-                    )
 
-                cur.execute("SELECT 1 FROM usuarios WHERE email=%s", (email,))
-                if email and cur.fetchone():
-                    return JSONResponse(
-                        status_code=409,
-                        content={"status": "error", "mensaje": "El email ya existe"}
-                    )
-
-                # Insertar usuario
+                # 🔥 INSERT directo (la DB maneja duplicados)
                 cur.execute("""
                     INSERT INTO usuarios (
                         username, nombre_completo, email, telefono, rol, grupo, activo,
                         password_hash, creado_en, actualizado_en
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
-                    RETURNING id, creado_en, actualizado_en
+                    RETURNING id, username, nombre_completo, email, telefono, rol, grupo, activo,
+                              creado_en, actualizado_en
                 """, (
-                    username, nombre_completo, email, telefono, rol, grupo, activo, password_hash
+                    username, nombre_completo, email, telefono,
+                    rol, grupo, activo, password_hash
                 ))
 
-                usuario_id, creado_en, actualizado_en = cur.fetchone()
+                row = cur.fetchone()
                 conn.commit()
 
                 return {
-                    "id": usuario_id,
-                    "username": username,
-                    "nombre_completo": nombre_completo,
-                    "email": email,
-                    "telefono": telefono,
-                    "rol": rol,
-                    "grupo": grupo,
-                    "activo": activo,
-                    "creado_en": creado_en.isoformat() if creado_en else None,
-                    "actualizado_en": actualizado_en.isoformat() if actualizado_en else None,
-                    "password_inicial": password  # 👈 se devuelve para el admin
+                    "id": row[0],
+                    "username": row[1],
+                    "nombre_completo": row[2],
+                    "email": row[3],
+                    "telefono": row[4],
+                    "rol": row[5],
+                    "grupo": row[6],
+                    "activo": row[7],
+                    "creado_en": row[8].isoformat() if row[8] else None,
+                    "actualizado_en": row[9].isoformat() if row[9] else None,
+                    "password_inicial": password  # 👈 solo para admin
                 }
+
+    except UniqueViolation:
+        raise HTTPException(
+            status_code=409,
+            detail="El username o el email ya existe"
+        )
 
     except Exception as e:
         print("❌ Error al crear usuario administrador:", e)
-        return JSONResponse(
+        raise HTTPException(
             status_code=500,
-            content={"status": "error", "mensaje": str(e)}
+            detail="Error interno del servidor"
         )
+
 
 
 def obtener_usuarios_por_id(usuario_id):
