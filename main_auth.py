@@ -4,7 +4,7 @@ from fastapi import Depends, HTTPException, APIRouter, status, Body
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import jwt, JWTError, ExpiredSignatureError
 from pydantic import BaseModel
-from DataBase import get_connection_context, autenticar_admin_usuario
+from DataBase import get_connection_context, autenticar_usuarios
 from dotenv import load_dotenv
 import logging
 import bcrypt
@@ -113,7 +113,7 @@ async def login_usuario(credentials: dict = Body(...)):
     if not username or not password:
         raise HTTPException(status_code=400, detail="Username y password son requeridos")
 
-    resultado = autenticar_admin_usuario(username, password)
+    resultado = autenticar_usuarios(username, password)
     if resultado["status"] != "ok":
         raise HTTPException(status_code=401, detail=resultado["mensaje"])
 
