@@ -22,7 +22,6 @@ logger = logging.getLogger("uvicorn.error")
 router = APIRouter()   # ← ESTE ES EL ROUTER QUE VAS A IMPORTAR EN main.py
 
 
-
 # =========================================================
 # CONSTANTES
 # =========================================================
@@ -169,10 +168,20 @@ def validar_creador_existe(cur, creador_id: int) -> Dict[str, Any]:
             usuario,
             nickname,
             nombre_real,
+            email,
             telefono,
             whatsapp,
+            foto_url,
             estado_id,
-            activo
+            verificado,
+            fecha_verificacion,
+            activo,
+            creado_en,
+            actualizado_en,
+            foto_url_mini,
+            rol_id,
+            fecha_solicitud,
+            encuesta_terminada
         FROM creadores
         WHERE id = %s
         LIMIT 1
@@ -195,9 +204,15 @@ def validar_usuario_existe(cur, usuario_id: int) -> Dict[str, Any]:
         SELECT
             id,
             username,
+            password_hash,
             rol,
             nombre_completo,
-            activo
+            email,
+            telefono,
+            grupo,
+            activo,
+            creado_en,
+            actualizado_en
         FROM usuarios
         WHERE id = %s
         LIMIT 1
@@ -220,9 +235,15 @@ def validar_manager_existe(cur, manager_id: int) -> Dict[str, Any]:
         SELECT
             id,
             username,
+            password_hash,
             rol,
             nombre_completo,
-            activo
+            email,
+            telefono,
+            grupo,
+            activo,
+            creado_en,
+            actualizado_en
         FROM usuarios
         WHERE id = %s
           AND rol = %s
@@ -297,15 +318,40 @@ def obtener_invitacion_por_id(cur, invitacion_id: int) -> Dict[str, Any]:
             c.usuario AS creador_usuario,
             c.nickname AS creador_nickname,
             c.nombre_real AS creador_nombre_real,
+            c.email AS creador_email,
             c.telefono AS creador_telefono,
             c.whatsapp AS creador_whatsapp,
+            c.foto_url AS creador_foto_url,
             c.estado_id AS estado_creador_id,
+            c.verificado AS creador_verificado,
+            c.fecha_verificacion AS creador_fecha_verificacion,
+            c.activo AS creador_activo,
+            c.creado_en AS creador_creado_en,
+            c.actualizado_en AS creador_actualizado_en,
+            c.foto_url_mini AS creador_foto_url_mini,
+            c.rol_id AS creador_rol_id,
+            c.fecha_solicitud AS creador_fecha_solicitud,
+            c.encuesta_terminada AS creador_encuesta_terminada,
 
-            ui.nombre_completo AS nombre_usuario_invita,
             ui.username AS username_usuario_invita,
+            ui.rol AS rol_usuario_invita,
+            ui.nombre_completo AS nombre_usuario_invita,
+            ui.email AS email_usuario_invita,
+            ui.telefono AS telefono_usuario_invita,
+            ui.grupo AS grupo_usuario_invita,
+            ui.activo AS activo_usuario_invita,
+            ui.creado_en AS creado_en_usuario_invita,
+            ui.actualizado_en AS actualizado_en_usuario_invita,
 
+            um.username AS username_manager,
+            um.rol AS rol_manager,
             um.nombre_completo AS nombre_manager,
-            um.username AS username_manager
+            um.email AS email_manager,
+            um.telefono AS telefono_manager,
+            um.grupo AS grupo_manager,
+            um.activo AS activo_manager,
+            um.creado_en AS creado_en_manager,
+            um.actualizado_en AS actualizado_en_manager
         FROM invitaciones i
         JOIN creadores c
             ON c.id = i.creador_id
@@ -313,10 +359,9 @@ def obtener_invitacion_por_id(cur, invitacion_id: int) -> Dict[str, Any]:
             ON ui.id = i.usuario_invita
         LEFT JOIN usuarios um
             ON um.id = i.manager_id
-           AND um.rol = %s
         WHERE i.id = %s
         LIMIT 1
-    """, (ROL_MANAGER, invitacion_id))
+    """, (invitacion_id,))
     row = cur.fetchone()
 
     if not row:
@@ -347,15 +392,40 @@ def obtener_ultima_invitacion_por_creador(cur, creador_id: int) -> Optional[Dict
             c.usuario AS creador_usuario,
             c.nickname AS creador_nickname,
             c.nombre_real AS creador_nombre_real,
+            c.email AS creador_email,
             c.telefono AS creador_telefono,
             c.whatsapp AS creador_whatsapp,
+            c.foto_url AS creador_foto_url,
             c.estado_id AS estado_creador_id,
+            c.verificado AS creador_verificado,
+            c.fecha_verificacion AS creador_fecha_verificacion,
+            c.activo AS creador_activo,
+            c.creado_en AS creador_creado_en,
+            c.actualizado_en AS creador_actualizado_en,
+            c.foto_url_mini AS creador_foto_url_mini,
+            c.rol_id AS creador_rol_id,
+            c.fecha_solicitud AS creador_fecha_solicitud,
+            c.encuesta_terminada AS creador_encuesta_terminada,
 
-            ui.nombre_completo AS nombre_usuario_invita,
             ui.username AS username_usuario_invita,
+            ui.rol AS rol_usuario_invita,
+            ui.nombre_completo AS nombre_usuario_invita,
+            ui.email AS email_usuario_invita,
+            ui.telefono AS telefono_usuario_invita,
+            ui.grupo AS grupo_usuario_invita,
+            ui.activo AS activo_usuario_invita,
+            ui.creado_en AS creado_en_usuario_invita,
+            ui.actualizado_en AS actualizado_en_usuario_invita,
 
+            um.username AS username_manager,
+            um.rol AS rol_manager,
             um.nombre_completo AS nombre_manager,
-            um.username AS username_manager
+            um.email AS email_manager,
+            um.telefono AS telefono_manager,
+            um.grupo AS grupo_manager,
+            um.activo AS activo_manager,
+            um.creado_en AS creado_en_manager,
+            um.actualizado_en AS actualizado_en_manager
         FROM invitaciones i
         JOIN creadores c
             ON c.id = i.creador_id
@@ -363,11 +433,10 @@ def obtener_ultima_invitacion_por_creador(cur, creador_id: int) -> Optional[Dict
             ON ui.id = i.usuario_invita
         LEFT JOIN usuarios um
             ON um.id = i.manager_id
-           AND um.rol = %s
         WHERE i.creador_id = %s
         ORDER BY i.id DESC
         LIMIT 1
-    """, (ROL_MANAGER, creador_id))
+    """, (creador_id,))
     row = cur.fetchone()
 
     if not row:
@@ -402,11 +471,15 @@ def listar_managers():
                 SELECT
                     id,
                     username,
+                    password_hash,
+                    rol,
                     nombre_completo,
                     email,
                     telefono,
                     grupo,
-                    activo
+                    activo,
+                    creado_en,
+                    actualizado_en
                 FROM usuarios
                 WHERE rol = %s
                   AND activo = true
@@ -540,7 +613,7 @@ def listar_invitaciones(
     with get_connection_context() as conn:
         with conn.cursor() as cur:
             filtros = []
-            params: List[Any] = [ROL_MANAGER]
+            params: List[Any] = []
 
             if estado_invitacion:
                 validar_estado_invitacion(estado_invitacion)
@@ -581,15 +654,40 @@ def listar_invitaciones(
                     c.usuario AS creador_usuario,
                     c.nickname AS creador_nickname,
                     c.nombre_real AS creador_nombre_real,
+                    c.email AS creador_email,
                     c.telefono AS creador_telefono,
                     c.whatsapp AS creador_whatsapp,
+                    c.foto_url AS creador_foto_url,
                     c.estado_id AS estado_creador_id,
+                    c.verificado AS creador_verificado,
+                    c.fecha_verificacion AS creador_fecha_verificacion,
+                    c.activo AS creador_activo,
+                    c.creado_en AS creador_creado_en,
+                    c.actualizado_en AS creador_actualizado_en,
+                    c.foto_url_mini AS creador_foto_url_mini,
+                    c.rol_id AS creador_rol_id,
+                    c.fecha_solicitud AS creador_fecha_solicitud,
+                    c.encuesta_terminada AS creador_encuesta_terminada,
 
-                    ui.nombre_completo AS nombre_usuario_invita,
                     ui.username AS username_usuario_invita,
+                    ui.rol AS rol_usuario_invita,
+                    ui.nombre_completo AS nombre_usuario_invita,
+                    ui.email AS email_usuario_invita,
+                    ui.telefono AS telefono_usuario_invita,
+                    ui.grupo AS grupo_usuario_invita,
+                    ui.activo AS activo_usuario_invita,
+                    ui.creado_en AS creado_en_usuario_invita,
+                    ui.actualizado_en AS actualizado_en_usuario_invita,
 
+                    um.username AS username_manager,
+                    um.rol AS rol_manager,
                     um.nombre_completo AS nombre_manager,
-                    um.username AS username_manager
+                    um.email AS email_manager,
+                    um.telefono AS telefono_manager,
+                    um.grupo AS grupo_manager,
+                    um.activo AS activo_manager,
+                    um.creado_en AS creado_en_manager,
+                    um.actualizado_en AS actualizado_en_manager
                 FROM invitaciones i
                 JOIN creadores c
                     ON c.id = i.creador_id
@@ -597,7 +695,6 @@ def listar_invitaciones(
                     ON ui.id = i.usuario_invita
                 LEFT JOIN usuarios um
                     ON um.id = i.manager_id
-                   AND um.rol = %s
                 {where_sql}
                 ORDER BY i.id DESC
             """, params)
