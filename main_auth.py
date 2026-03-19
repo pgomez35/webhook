@@ -83,7 +83,7 @@ def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT id, nombre_completo, rol, activo
-                FROM admin_usuario
+                FROM usuarios
                 WHERE id = %s
             """, (user_id,))
             row = cursor.fetchone()
@@ -166,7 +166,7 @@ async def refresh_token(data: dict = Body(...)):
         with get_connection_context() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, nombre_completo, rol, activo FROM admin_usuario WHERE id = %s",
+                "SELECT id, nombre_completo, rol, activo FROM usuarios WHERE id = %s",
                 (user_id,)
             )
             row = cursor.fetchone()
