@@ -2,8 +2,8 @@ import os
 from fastapi import APIRouter, HTTPException, Depends
 import logging
 
-from DataBase import get_connection_context
-from enviar_msg_wp import enviar_mensaje_texto_simple
+from DataBase import get_connection_context, guardar_mensaje_nuevo, paso_limite_24h, buscar_usuario_por_telefono
+from enviar_msg_wp import enviar_mensaje_texto_simple, enviar_plantilla_generica
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -13,7 +13,7 @@ import re
 import requests
 import json
 from datetime import datetime, timedelta
-
+from typing import Optional, Dict, Any, Tuple
 
 # # --- MOCK DE BASE DE DATOS (Reemplaza con tu lógica real SQL) ---
 # def guardar_estado_eval(creador_id, estado):
@@ -922,7 +922,105 @@ def actualizar_mensaje_desde_status(
         print(f"❌ Error actualizando status {status_obj.get('id', 'unknown')}: {e}")
         traceback.print_exc()
 
+
 async def _procesar_error_envio(status_obj, tenant, phone_id, token):
+    errors = status_obj.get("errors", [])
+    recipient_id = status_obj.get("recipient_id")
+    message_id_meta = status_obj.get("id")  # El ID del mensaje que falló
+
+    for error in errors:
+        code = error.get("code")
+        message = error.get("message")
+
+        # 1. Registrar el error en la base de datos para el mensaje específico
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE mensajes_whatsapp
+                    SET estado        = 'failed',
+                        error_codigo  = %s,
+                        error_mensaje = %s
+                    WHERE message_id_meta = %s
+                    """,
+                    (code, message, message_id_meta)
+                )
+
+        # 2. Si el error es por ventana de 24h (Código 131047)
+        if code == 131047:
+            print(f"🔄 Ventana cerrada para {recipient_id}. Enviando reconexion_general_corta")
+
+            # Buscamos el nombre del creador para personalizar la plantilla
+            nombre_creador = buscar_usuario_por_telefono(recipient_id) or "Candidato"
+
+            # Enviamos la plantilla de reconexión
+            # await intentar_plantilla_reconexion_24h(
+            #     telefono=recipient_id,
+            #     nombre=nombre_creador,
+            #     token=token,
+            #     phone_number_id=phone_id,
+            #     plantilla="reconexion_general_corta"
+            # )
+
+def intentar_plantilla_reconexion_24h(
+    *,
+    telefono: str,
+    nombre: str = "",
+    token: str,
+    phone_number_id: str,
+    agencia_nombre: str = "",
+    plantilla: str = "reconexion_general_corta",
+    idioma: str = "es_CO",
+) -> Tuple[bool, Dict[str, Any]]:
+
+    if not telefono:
+        return False, {"status": "skip", "reason": "telefono_vacio"}
+
+    if not paso_limite_24h(telefono):
+        return False, {"status": "skip", "reason": "dentro_24h"}
+
+    # ✅ Fuera de 24h → plantilla
+    params = [
+        (nombre or "").strip() or "",
+        agencia_nombre or "Nuestro equipo"
+    ]
+
+    codigo, respuesta_api = enviar_plantilla_generica(
+        token=token,
+        phone_number_id=phone_number_id,
+        numero_destino=telefono,
+        nombre_plantilla=plantilla,
+        codigo_idioma=idioma,
+        parametros=params
+    )
+
+    # message_id_meta
+    message_id_meta = None
+    if respuesta_api and isinstance(respuesta_api, dict) and "messages" in respuesta_api:
+        try:
+            message_id_meta = respuesta_api["messages"][0].get("id")
+        except Exception:
+            pass
+
+    # Guardar en BD
+    guardar_mensaje_nuevo(
+        telefono=telefono,
+        contenido=f"Plantilla auto 24h: {plantilla}",
+        direccion="enviado",
+        tipo="template",
+        message_id_meta=message_id_meta,
+        estado="sent" if codigo == 200 else "failed"
+    )
+
+    return True, {
+        "status": "plantilla_auto",
+        "mensaje": "Se envió plantilla por estar fuera de ventana de 24h.",
+        "plantilla": plantilla,
+        "codigo_api": codigo,
+        "respuesta_api": respuesta_api
+    }
+
+async def _procesar_error_envioV0(status_obj, tenant, phone_id, token):
     """
     Analiza por qué falló el mensaje y toma acciones correctivas.
     """
@@ -1223,6 +1321,20 @@ def obtener_status_24hrs(telefono):
         print(f"❌ Error consultando status 24hrs: {e}")
         # Por seguridad, si falla la BD, asumimos ventana CERRADA para evitar bloqueos de Meta
         return False
+
+import re
+import logging
+from datetime import datetime
+from psycopg2 import DatabaseError
+
+logger = logging.getLogger(__name__)
+
+# ------------------------------------------------------------------------
+# ------------------------------------------------------------------------
+# ----------------------FUNCION OBSOLETA 20-03-2026 OJO!!!!!--------------------
+# ------------------------------------------------------------------------
+# ------------------------------------------------------------------------
+
 
 # def Enviar_menu_quickreply(creador_id, estado_evaluacion, phone_id, token, telefono):
 #     """

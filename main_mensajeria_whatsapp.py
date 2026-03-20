@@ -8,6 +8,7 @@ import httpx
 import tempfile
 
 from fastapi import APIRouter, Form, UploadFile, requests, HTTPException, Request, Depends
+from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, AnyUrl, Field
 from starlette.staticfiles import StaticFiles
 
@@ -29,7 +30,7 @@ from starlette.responses import StreamingResponse
 
 import cloudinary
 
-from utils_aspirantes import obtener_status_24hrs
+from utils_aspirantes import obtener_status_24hrs, intentar_plantilla_reconexion_24h
 
 cloudinary.config(
     cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
@@ -2078,79 +2079,139 @@ def preview_media_pdf(media_id: str):
     return StreamingResponse(iter_file(), media_type="application/pdf", headers=headers)
 
 
-def intentar_plantilla_reconexion_24h(
-    *,
-    telefono: str,
-    nombre: str = "",
-    token: str,
-    phone_number_id: str,
-    agencia_nombre: str = "",
-    plantilla: str = "reconexion_general_corta",
-    idioma: str = "es_CO",
-) -> Tuple[bool, Dict[str, Any]]:
-
-    if not telefono:
-        return False, {"status": "skip", "reason": "telefono_vacio"}
-
-    if not paso_limite_24h(telefono):
-        return False, {"status": "skip", "reason": "dentro_24h"}
-
-    # ✅ Fuera de 24h → plantilla
-    params = [
-        (nombre or "").strip() or "",
-        agencia_nombre or "Nuestro equipo"
-    ]
-
-    codigo, respuesta_api = enviar_plantilla_generica(
-        token=token,
-        phone_number_id=phone_number_id,
-        numero_destino=telefono,
-        nombre_plantilla=plantilla,
-        codigo_idioma=idioma,
-        parametros=params
-    )
-
-    # message_id_meta
-    message_id_meta = None
-    if respuesta_api and isinstance(respuesta_api, dict) and "messages" in respuesta_api:
-        try:
-            message_id_meta = respuesta_api["messages"][0].get("id")
-        except Exception:
-            pass
-
-    # Guardar en BD
-    guardar_mensaje_nuevo(
-        telefono=telefono,
-        contenido=f"Plantilla auto 24h: {plantilla}",
-        direccion="enviado",
-        tipo="template",
-        message_id_meta=message_id_meta,
-        estado="sent" if codigo == 200 else "failed"
-    )
-
-    return True, {
-        "status": "plantilla_auto",
-        "mensaje": "Se envió plantilla por estar fuera de ventana de 24h.",
-        "plantilla": plantilla,
-        "codigo_api": codigo,
-        "respuesta_api": respuesta_api
-    }
-
-
 import logging
 logger = logging.getLogger("whatsapp")
 
-
-# import logging
-# import tempfile
-# import httpx
 import mimetypes
-# from fastapi import HTTPException, UploadFile
-
-# logger = logging.getLogger("whatsapp")
-
 
 async def reenviar_ultimo_mensaje(telefono: str):
+    logger.info(f"🔄 Reenviando último mensaje para teléfono: {telefono}")
+
+    # =====================================================
+    # 1️⃣ Buscar el mensaje (Priorizando el error 131047)
+    # =====================================================
+    with get_connection_context() as conn:
+        # Usamos DictCursor para que el acceso sea más legible
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Esta consulta busca el último mensaje enviado.
+        # El ORDER BY prioriza mensajes con el error 131047, y luego por fecha.
+        cur.execute("""
+                    SELECT contenido, media_url, tipo, fecha, error_codigo
+                    FROM mensajes_whatsapp
+                    WHERE telefono = %s
+                      AND direccion = 'enviado'
+                      AND tipo IN ('text', 'document', 'audio', 'image', 'video')
+                    ORDER BY fecha DESC LIMIT 1
+                    """, (telefono,))
+        row = cur.fetchone()
+
+    if not row:
+        logger.warning(f"⚠ No hay mensajes previos para {telefono}")
+        raise HTTPException(status_code=404, detail="No hay mensajes para este teléfono")
+
+    # Extraer datos (ahora como diccionario por RealDictCursor)
+    contenido = row['contenido']
+    media_url = row['media_url']
+    tipo_mensaje = row['tipo']
+    fecha = row['fecha']
+    error_was_24h = (row['error_codigo'] == 131047)
+
+    logger.info(
+        f"📦 Mensaje recuperado | tipo={tipo_mensaje} | fecha={fecha} | "
+        f"¿Es error 24h?={error_was_24h} | media_url={media_url}"
+    )
+
+    # =====================================================
+    # 🔹 TEXTO
+    # =====================================================
+    if tipo_mensaje == "text":
+        logger.info("✉ Reenviando texto")
+        # Quitamos el request=None si tu api_enviar_mensaje no lo requiere estrictamente
+        return await api_enviar_mensaje(
+            request=None,
+            data={"telefono": telefono, "mensaje": contenido}
+        )
+
+    # =====================================================
+    # 🔹 DOCUMENTO CON MEDIA_ID DIRECTO
+    # =====================================================
+    if media_url and media_url.startswith("whatsapp_media_id:"):
+        media_id = media_url.replace("whatsapp_media_id:", "")
+        logger.info(f"📎 Reenviando usando media_id directo: {media_id}")
+
+        return await enviar_documento_id(
+            token=current_token.get(),
+            numero_id=current_phone_id.get(),
+            telefono_destino=telefono,
+            media_id=media_id,
+            filename=contenido.split("|")[0] if contenido and "|" in contenido else "documento",
+            caption=None
+        )
+
+    # =====================================================
+    # 🔹 VALIDACIÓN DE MULTIMEDIA CON URL
+    # =====================================================
+    if not media_url:
+        logger.error(f"❌ El mensaje tipo {tipo_mensaje} no tiene media_url ni media_id")
+        raise HTTPException(status_code=400, detail="Mensaje multimedia sin origen de datos")
+
+    # =====================================================
+    # ⬇ PROCESAMIENTO DE DESCARGA (Para Audio, Imagen, Video, Doc)
+    # =====================================================
+    logger.info(f"⬇ Descargando archivo desde URL para reenvío...")
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.get(media_url)
+            response.raise_for_status()
+            file_content = response.content
+    except Exception as e:
+        logger.exception(f"❌ Error descargando archivo: {e}")
+        raise HTTPException(status_code=500, detail="Error descargando archivo para reenvío")
+
+    # Nombre y MIME type
+    filename = media_url.split("/")[-1] or "file"
+    content_type = response.headers.get("content-type")
+    if not content_type or content_type == "application/octet-stream":
+        guessed, _ = mimetypes.guess_type(filename)
+        content_type = guessed or "application/octet-stream"
+
+    # Crear UploadFile compatible con tus funciones api_enviar_*
+    tmp = tempfile.NamedTemporaryFile(delete=False)
+    tmp.write(file_content)
+    tmp.seek(0)
+
+    upload_file = UploadFile(
+        filename=filename,
+        file=tmp,
+        headers={"content-type": content_type}
+    )
+
+    # Enviar según el tipo
+    try:
+        if tipo_mensaje == "audio":
+            return await api_enviar_audio(telefono=telefono, nombre="", audio=upload_file)
+
+        elif tipo_mensaje == "image":
+            return await api_enviar_imagen(telefono=telefono, nombre="", imagen=upload_file)
+
+        elif tipo_mensaje == "video":
+            return await api_enviar_video(telefono=telefono, nombre="", video=upload_file)
+
+        elif tipo_mensaje == "document":
+            return await api_enviar_documento(telefono=telefono, nombre="", documento=upload_file, caption=None)
+
+    finally:
+        # Importante: cerrar y eliminar el archivo temporal después del envío
+        tmp.close()
+        if os.path.exists(tmp.name):
+            os.unlink(tmp.name)
+
+    logger.error(f"❌ Tipo no soportado al final del flujo: {tipo_mensaje}")
+    raise HTTPException(status_code=400, detail=f"Tipo no soportado: {tipo_mensaje}")
+
+
+async def reenviar_ultimo_mensajeV0(telefono: str):
 
     logger.info(f"🔄 Reenviando último mensaje para teléfono: {telefono}")
 
@@ -2728,73 +2789,86 @@ def enviar_mensaje_invitacion(
     data: EnviarNoAptoIn,
     usuario_actual: dict = Depends(obtener_usuario_actual)
 ):
-    with get_connection_context() as conn:
-        cur = conn.cursor()
+    telefono = None
+    nombre = None
+    creador_id = None
+    tipo_envio = None
+    contenido_guardado = None
+    codigo = None
+    respuesta = None
+    message_id_meta = None
 
+    try:
+        # ======================================================
         # 1️⃣ Obtener aspirante
-        cur.execute("""
-            SELECT id,
-                   COALESCE(nickname, nombre_real) AS nombre,
-                   telefono
-            FROM creadores
-            WHERE id = %s;
-        """, (data.creador_id,))
-        row = cur.fetchone()
+        # ======================================================
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id,
+                           COALESCE(nickname, nombre_real) AS nombre,
+                           telefono
+                    FROM creadores
+                    WHERE id = %s;
+                """, (data.creador_id,))
+                row = cur.fetchone()
 
-        if not row:
-            raise HTTPException(status_code=404, detail="Aspirante no encontrado.")
+                if not row:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Aspirante no encontrado."
+                    )
 
-        creador_id, nombre, telefono = row
+                creador_id, nombre, telefono = row
 
         if not telefono:
-            raise HTTPException(status_code=400, detail="El aspirante no tiene número registrado.")
+            raise HTTPException(
+                status_code=400,
+                detail="El aspirante no tiene número registrado."
+            )
 
-        # 2️⃣ Marcar estado NO APTO
-        cur.execute("""
-            UPDATE perfil_creador
-            SET id_chatbot_estado = 4
-            WHERE creador_id = %s;
-        """, (creador_id,))
-        conn.commit()
+        # ======================================================
+        # 2️⃣ Obtener credenciales WABA
+        # ======================================================
+        subdominio = current_tenant.get()
+        cuenta = obtener_cuenta_por_subdominio(subdominio)
 
-    # 3️⃣ Obtener credenciales WABA
-    subdominio = current_tenant.get()
-    cuenta = obtener_cuenta_por_subdominio(subdominio)
+        if not cuenta:
+            raise HTTPException(
+                status_code=500,
+                detail=f"No hay credenciales WABA para '{subdominio}'."
+            )
 
-    if not cuenta:
-        raise HTTPException(500, f"No hay credenciales WABA para '{subdominio}'.")
+        token = cuenta["access_token"]
+        phone_id = cuenta["phone_number_id"]
+        business_name = (
+            cuenta.get("business_name")
+            or cuenta.get("nombre")
+            or "nuestra agencia"
+        )
 
-    token = cuenta["access_token"]
-    phone_id = cuenta["phone_number_id"]
-    business_name = (
-        cuenta.get("business_name")
-        or cuenta.get("nombre")
-        or "nuestra agencia"
-    )
+        # ======================================================
+        # 3️⃣ Validar ventana 24h
+        # True = abierta
+        # False = cerrada
+        # ======================================================
+        ventana_abierta = obtener_status_24hrs(telefono)
 
-    # 4️⃣ Verificar ventana de 24h
-    ventana_abierta = obtener_status_24hrs(telefono)
+        if ventana_abierta:
+            # 👉 MENSAJE LIBRE
+            tipo_envio = "mensaje_simple"
+            contenido_guardado = mensaje_invitacion_simple(nombre, business_name)
 
-    # ==============================
-    # 5️⃣ ENVÍO CONDICIONAL
-    # ==============================
-    try:
-        if not ventana_abierta:
-            # 👉 MENSAJE SIMPLE
-            mensaje = mensaje_invitacion_simple(nombre, business_name)
-            codigo, respuesta = enviar_mensaje(telefono, mensaje)
-
-            return {
-                "status": "ok" if codigo < 300 else "error",
-                "tipo_envio": "mensaje_simple",
-                "codigo_meta": codigo,
-                "respuesta_api": respuesta,
-                "telefono": telefono
-            }
-
+            codigo, respuesta = enviar_mensaje_texto_simple(
+                token=token,
+                numero_id=phone_id,
+                telefono_destino=telefono,
+                texto=contenido_guardado
+            )
         else:
             # 👉 PLANTILLA
-            parametros = [nombre, business_name, "t/ZMAqjPPCK/"]  # o URL completa según botón
+            tipo_envio = "plantilla"
+            parametros = [nombre or "amigo(a)", business_name, "t/ZMAqjPPCK/"]
 
             codigo, respuesta = enviar_plantilla_generica_parametros(
                 token=token,
@@ -2806,18 +2880,73 @@ def enviar_mensaje_invitacion(
                 body_vars_count=2
             )
 
-            return {
-                "status": "ok" if codigo < 300 else "error",
-                "tipo_envio": "plantilla",
-                "codigo_meta": codigo,
-                "respuesta_api": respuesta,
-                "telefono": telefono
-            }
+            contenido_guardado = (
+                f"PLANTILLA: invitacion_unirse_agencia | parametros={parametros}"
+            )
+
+        # ======================================================
+        # 4️⃣ Extraer message_id_meta
+        # ======================================================
+        if isinstance(respuesta, dict) and respuesta.get("messages"):
+            try:
+                message_id_meta = respuesta["messages"][0].get("id")
+            except Exception:
+                message_id_meta = None
+
+        # ======================================================
+        # 5️⃣ Guardar SIEMPRE en mensajes_whatsapp
+        # ======================================================
+        guardar_mensaje_nuevo(
+            telefono=telefono,
+            contenido=contenido_guardado,
+            direccion="enviado",
+            tipo="template" if tipo_envio == "plantilla" else "texto",
+            message_id_meta=message_id_meta,
+            estado="sent" if codigo and codigo < 300 else "error"
+        )
+
+        # ======================================================
+        # 6️⃣ Respuesta final
+        # ======================================================
+        return {
+            "status": "ok" if codigo and codigo < 300 else "error",
+            "tipo_envio": tipo_envio,
+            "codigo_meta": codigo,
+            "respuesta_api": respuesta if not (codigo and codigo < 300) else None,
+            "telefono": telefono,
+            "message_id_meta": message_id_meta,
+            "ventana_24h_abierta": ventana_abierta
+        }
+
+    except HTTPException:
+        raise
 
     except Exception as e:
+        logger.exception(
+            f"Error enviando invitación para creador_id={data.creador_id}"
+        )
+
+        # ======================================================
+        # 7️⃣ Guardar trazabilidad del error si es posible
+        # ======================================================
+        try:
+            if telefono:
+                guardar_mensaje_nuevo(
+                    telefono=telefono,
+                    contenido=contenido_guardado or f"ERROR EN ENVÍO DE INVITACIÓN: {str(e)}",
+                    direccion="enviado",
+                    tipo="template" if tipo_envio == "plantilla" else "texto",
+                    message_id_meta=None,
+                    estado="error"
+                )
+        except Exception as e2:
+            logger.exception(
+                f"No se pudo guardar el error en mensajes_whatsapp: {e2}"
+            )
+
         raise HTTPException(
             status_code=500,
-            detail=f"Error enviando mensaje NO APTO: {str(e)}"
+            detail=f"Error enviando mensaje de invitación: {str(e)}"
         )
 
 class AgendamientoUpdateIn(BaseModel):

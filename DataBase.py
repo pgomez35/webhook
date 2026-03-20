@@ -582,28 +582,37 @@ def guardar_mensaje_nuevo(
         traceback.print_exc()
 
 
+import re
+from datetime import datetime
+from psycopg2 import DatabaseError
 
 
 def guardar_mensaje(telefono, texto, tipo="recibido", es_audio=False):
     try:
-        # Si es un mensaje de audio, extrae solo el nombre del archivo
+        # Normalizar texto
+        texto = str(texto or "").strip()
+
+        # Extraer nombre de audio
         if es_audio and texto.startswith("[Audio guardado:"):
-            match = re.search(r"\[Audio guardado: (.+)\]", texto)
+            match = re.search(r"\[Audio guardado: (.+?)\]", texto)
             if match:
-                texto = match.group(1)  # Ej: "9998555913574750.ogg"
+                texto = match.group(1)
 
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                # Buscar si ya existe el usuario
-                cur.execute("SELECT id FROM creadores WHERE telefono = %s", (telefono,))
-                usuario = cur.fetchone()
 
-                # Insertar usuario si no existe
-                if not usuario:
-                    cur.execute("INSERT INTO creadores (telefono) VALUES (%s) RETURNING id", (telefono,))
-                    usuario_id = cur.fetchone()[0]
+                # Buscar o crear usuario
+                cur.execute("SELECT id FROM creadores WHERE telefono = %s", (telefono,))
+                row = cur.fetchone()
+
+                if row:
+                    usuario_id = row[0]
                 else:
-                    usuario_id = usuario[0]
+                    cur.execute(
+                        "INSERT INTO creadores (telefono) VALUES (%s) RETURNING id",
+                        (telefono,)
+                    )
+                    usuario_id = cur.fetchone()[0]
 
                 # Insertar mensaje
                 cur.execute("""
@@ -611,18 +620,19 @@ def guardar_mensaje(telefono, texto, tipo="recibido", es_audio=False):
                     VALUES (%s, %s, %s, %s, %s)
                 """, (usuario_id, texto, tipo, es_audio, datetime.now()))
 
-                conn.commit()
+            conn.commit()
 
-        print("✅ Mensaje y usuario guardados correctamente.")
-    except IntegrityError as e:
-        print(f"❌ Error de integridad al guardar mensaje: {e}")
-        traceback.print_exc()
-    except (OperationalError, DatabaseError) as e:
-        print(f"❌ Error de base de datos al guardar mensaje: {e}")
-        traceback.print_exc()
+        return True
+
+    except DatabaseError as e:
+        print(f"❌ Error de base de datos: {e}")
+        return False
+
     except Exception as e:
-        print(f"❌ Error inesperado al guardar mensaje: {e}")
-        traceback.print_exc()
+        print(f"❌ Error inesperado: {e}")
+        return False
+
+
 
 def actualizar_nombre_contacto(telefono, nuevo_nombre):
     try:
