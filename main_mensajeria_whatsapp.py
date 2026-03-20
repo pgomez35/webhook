@@ -2783,7 +2783,6 @@ def enviar_mensaje(numero: str, texto: str):
         traceback.print_exc()
         raise
 
-
 @router.post("/api/aspirantes/invitacion/enviar")
 def enviar_mensaje_invitacion(
     data: EnviarNoAptoIn,
@@ -2797,6 +2796,7 @@ def enviar_mensaje_invitacion(
     codigo = None
     respuesta = None
     message_id_meta = None
+    invitacion_id = None
 
     try:
         # ======================================================
@@ -2821,14 +2821,63 @@ def enviar_mensaje_invitacion(
 
                 creador_id, nombre, telefono = row
 
-        if not telefono:
-            raise HTTPException(
-                status_code=400,
-                detail="El aspirante no tiene número registrado."
-            )
+                if not telefono:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="El aspirante no tiene número registrado."
+                    )
+
+                # ======================================================
+                # 2️⃣ Buscar última invitación del creador
+                # ======================================================
+                cur.execute("""
+                    SELECT id, estado_invitacion
+                    FROM invitaciones
+                    WHERE creador_id = %s
+                    ORDER BY id DESC
+                    LIMIT 1
+                """, (creador_id,))
+                invitacion_row = cur.fetchone()
+
+                if invitacion_row:
+                    invitacion_id = invitacion_row[0]
+                else:
+                    # Crear invitación si no existe
+                    cur.execute("""
+                        INSERT INTO invitaciones (
+                            creador_id,
+                            fecha_invitacion,
+                            usuario_invita,
+                            manager_id,
+                            estado_invitacion,
+                            estado_tiktok,
+                            fecha_respuesta_invitacion,
+                            fecha_respuesta_tiktok,
+                            fecha_incorporacion,
+                            mensaje_enviado,
+                            solicitud_tiktok_enviada,
+                            observaciones,
+                            creado_en,
+                            actualizado_en
+                        )
+                        VALUES (
+                            %s, NULL, %s, NULL, %s, %s,
+                            NULL, NULL, NULL, false, false, %s, now(), now()
+                        )
+                        RETURNING id
+                    """, (
+                        creador_id,
+                        usuario_actual["id"],
+                        "pendiente_envio",
+                        "pendiente",
+                        "Invitación creada automáticamente desde envío WhatsApp"
+                    ))
+                    invitacion_id = cur.fetchone()[0]
+
+                conn.commit()
 
         # ======================================================
-        # 2️⃣ Obtener credenciales WABA
+        # 3️⃣ Obtener credenciales WABA
         # ======================================================
         subdominio = current_tenant.get()
         cuenta = obtener_cuenta_por_subdominio(subdominio)
@@ -2848,14 +2897,11 @@ def enviar_mensaje_invitacion(
         )
 
         # ======================================================
-        # 3️⃣ Validar ventana 24h
-        # True = abierta
-        # False = cerrada
+        # 4️⃣ Validar ventana 24h
         # ======================================================
         ventana_abierta = obtener_status_24hrs(telefono)
 
         if ventana_abierta:
-            # 👉 MENSAJE LIBRE
             tipo_envio = "mensaje_simple"
             contenido_guardado = mensaje_invitacion_simple(nombre, business_name)
 
@@ -2866,7 +2912,6 @@ def enviar_mensaje_invitacion(
                 texto=contenido_guardado
             )
         else:
-            # 👉 PLANTILLA
             tipo_envio = "plantilla"
             parametros = [nombre or "amigo(a)", business_name, "t/ZMAqjPPCK/"]
 
@@ -2885,7 +2930,7 @@ def enviar_mensaje_invitacion(
             )
 
         # ======================================================
-        # 4️⃣ Extraer message_id_meta
+        # 5️⃣ Extraer message_id_meta
         # ======================================================
         if isinstance(respuesta, dict) and respuesta.get("messages"):
             try:
@@ -2894,7 +2939,7 @@ def enviar_mensaje_invitacion(
                 message_id_meta = None
 
         # ======================================================
-        # 5️⃣ Guardar SIEMPRE en mensajes_whatsapp
+        # 6️⃣ Guardar en mensajes_whatsapp
         # ======================================================
         guardar_mensaje_nuevo(
             telefono=telefono,
@@ -2906,7 +2951,35 @@ def enviar_mensaje_invitacion(
         )
 
         # ======================================================
-        # 6️⃣ Respuesta final
+        # 7️⃣ Actualizar invitación si el envío fue exitoso
+        # ======================================================
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                if codigo and codigo < 300:
+                    cur.execute("""
+                        UPDATE invitaciones
+                        SET
+                            mensaje_enviado = true,
+                            estado_invitacion = %s,
+                            fecha_invitacion = CURRENT_DATE,
+                            usuario_invita = COALESCE(usuario_invita, %s),
+                            actualizado_en = now()
+                        WHERE id = %s
+                    """, ("enviada", usuario_actual["id"], invitacion_id))
+                else:
+                    cur.execute("""
+                        UPDATE invitaciones
+                        SET
+                            mensaje_enviado = false,
+                            usuario_invita = COALESCE(usuario_invita, %s),
+                            actualizado_en = now()
+                        WHERE id = %s
+                    """, (usuario_actual["id"], invitacion_id))
+
+                conn.commit()
+
+        # ======================================================
+        # 8️⃣ Respuesta final
         # ======================================================
         return {
             "status": "ok" if codigo and codigo < 300 else "error",
@@ -2915,20 +2988,14 @@ def enviar_mensaje_invitacion(
             "respuesta_api": respuesta if not (codigo and codigo < 300) else None,
             "telefono": telefono,
             "message_id_meta": message_id_meta,
-            "ventana_24h_abierta": ventana_abierta
+            "ventana_24h_abierta": ventana_abierta,
+            "invitacion_id": invitacion_id
         }
 
     except HTTPException:
         raise
 
     except Exception as e:
-        logger.exception(
-            f"Error enviando invitación para creador_id={data.creador_id}"
-        )
-
-        # ======================================================
-        # 7️⃣ Guardar trazabilidad del error si es posible
-        # ======================================================
         try:
             if telefono:
                 guardar_mensaje_nuevo(
@@ -2939,15 +3006,179 @@ def enviar_mensaje_invitacion(
                     message_id_meta=None,
                     estado="error"
                 )
-        except Exception as e2:
-            logger.exception(
-                f"No se pudo guardar el error en mensajes_whatsapp: {e2}"
-            )
+        except Exception:
+            pass
 
         raise HTTPException(
             status_code=500,
             detail=f"Error enviando mensaje de invitación: {str(e)}"
         )
+
+
+# @router.post("/api/aspirantes/invitacion/enviar")
+# def enviar_mensaje_invitacion(
+#     data: EnviarNoAptoIn,
+#     usuario_actual: dict = Depends(obtener_usuario_actual)
+# ):
+#     telefono = None
+#     nombre = None
+#     creador_id = None
+#     tipo_envio = None
+#     contenido_guardado = None
+#     codigo = None
+#     respuesta = None
+#     message_id_meta = None
+#
+#     try:
+#         # ======================================================
+#         # 1️⃣ Obtener aspirante
+#         # ======================================================
+#         with get_connection_context() as conn:
+#             with conn.cursor() as cur:
+#                 cur.execute("""
+#                     SELECT id,
+#                            COALESCE(nickname, nombre_real) AS nombre,
+#                            telefono
+#                     FROM creadores
+#                     WHERE id = %s;
+#                 """, (data.creador_id,))
+#                 row = cur.fetchone()
+#
+#                 if not row:
+#                     raise HTTPException(
+#                         status_code=404,
+#                         detail="Aspirante no encontrado."
+#                     )
+#
+#                 creador_id, nombre, telefono = row
+#
+#         if not telefono:
+#             raise HTTPException(
+#                 status_code=400,
+#                 detail="El aspirante no tiene número registrado."
+#             )
+#
+#         # ======================================================
+#         # 2️⃣ Obtener credenciales WABA
+#         # ======================================================
+#         subdominio = current_tenant.get()
+#         cuenta = obtener_cuenta_por_subdominio(subdominio)
+#
+#         if not cuenta:
+#             raise HTTPException(
+#                 status_code=500,
+#                 detail=f"No hay credenciales WABA para '{subdominio}'."
+#             )
+#
+#         token = cuenta["access_token"]
+#         phone_id = cuenta["phone_number_id"]
+#         business_name = (
+#             cuenta.get("business_name")
+#             or cuenta.get("nombre")
+#             or "nuestra agencia"
+#         )
+#
+#         # ======================================================
+#         # 3️⃣ Validar ventana 24h
+#         # True = abierta
+#         # False = cerrada
+#         # ======================================================
+#         ventana_abierta = obtener_status_24hrs(telefono)
+#
+#         if ventana_abierta:
+#             # 👉 MENSAJE LIBRE
+#             tipo_envio = "mensaje_simple"
+#             contenido_guardado = mensaje_invitacion_simple(nombre, business_name)
+#
+#             codigo, respuesta = enviar_mensaje_texto_simple(
+#                 token=token,
+#                 numero_id=phone_id,
+#                 telefono_destino=telefono,
+#                 texto=contenido_guardado
+#             )
+#         else:
+#             # 👉 PLANTILLA
+#             tipo_envio = "plantilla"
+#             parametros = [nombre or "amigo(a)", business_name, "t/ZMAqjPPCK/"]
+#
+#             codigo, respuesta = enviar_plantilla_generica_parametros(
+#                 token=token,
+#                 phone_number_id=phone_id,
+#                 numero_destino=telefono,
+#                 nombre_plantilla="invitacion_unirse_agencia",
+#                 codigo_idioma="es_CO",
+#                 parametros=parametros,
+#                 body_vars_count=2
+#             )
+#
+#             contenido_guardado = (
+#                 f"PLANTILLA: invitacion_unirse_agencia | parametros={parametros}"
+#             )
+#
+#         # ======================================================
+#         # 4️⃣ Extraer message_id_meta
+#         # ======================================================
+#         if isinstance(respuesta, dict) and respuesta.get("messages"):
+#             try:
+#                 message_id_meta = respuesta["messages"][0].get("id")
+#             except Exception:
+#                 message_id_meta = None
+#
+#         # ======================================================
+#         # 5️⃣ Guardar SIEMPRE en mensajes_whatsapp
+#         # ======================================================
+#         guardar_mensaje_nuevo(
+#             telefono=telefono,
+#             contenido=contenido_guardado,
+#             direccion="enviado",
+#             tipo="template" if tipo_envio == "plantilla" else "texto",
+#             message_id_meta=message_id_meta,
+#             estado="sent" if codigo and codigo < 300 else "error"
+#         )
+#
+#         # ======================================================
+#         # 6️⃣ Respuesta final
+#         # ======================================================
+#         return {
+#             "status": "ok" if codigo and codigo < 300 else "error",
+#             "tipo_envio": tipo_envio,
+#             "codigo_meta": codigo,
+#             "respuesta_api": respuesta if not (codigo and codigo < 300) else None,
+#             "telefono": telefono,
+#             "message_id_meta": message_id_meta,
+#             "ventana_24h_abierta": ventana_abierta
+#         }
+#
+#     except HTTPException:
+#         raise
+#
+#     except Exception as e:
+#         logger.exception(
+#             f"Error enviando invitación para creador_id={data.creador_id}"
+#         )
+#
+#         # ======================================================
+#         # 7️⃣ Guardar trazabilidad del error si es posible
+#         # ======================================================
+#         try:
+#             if telefono:
+#                 guardar_mensaje_nuevo(
+#                     telefono=telefono,
+#                     contenido=contenido_guardado or f"ERROR EN ENVÍO DE INVITACIÓN: {str(e)}",
+#                     direccion="enviado",
+#                     tipo="template" if tipo_envio == "plantilla" else "texto",
+#                     message_id_meta=None,
+#                     estado="error"
+#                 )
+#         except Exception as e2:
+#             logger.exception(
+#                 f"No se pudo guardar el error en mensajes_whatsapp: {e2}"
+#             )
+#
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error enviando mensaje de invitación: {str(e)}"
+#         )
 
 class AgendamientoUpdateIn(BaseModel):
     inicio: datetime
