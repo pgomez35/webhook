@@ -631,7 +631,7 @@ class PerfilCreadorSchema(BaseModel):
 
 # ==== Modelos Pydantic ====
 class CreadorActivoBase(BaseModel):
-    creador_id: Optional[int] = None
+    aspirante_id: Optional[int] = None
     nombre: str
     usuario_tiktok: str
     foto: Optional[str] = None
@@ -671,14 +671,14 @@ class AdminUsuarioManagerResponse(BaseModel):
     activo: bool
 
 class CreadorActivoAutoCreate(BaseModel):
-    creador_id: int
+    aspirante_id: int
     fecha_incorporacion: Optional[date] = None
     manager_id: Optional[int] = None
 
 # ESQUEMAS PARA SEGUIMIENTO
 # Modelo base: para creación y actualización (entrada)
 class SeguimientoCreadorBase(BaseModel):
-    creador_id: int
+    aspirante_id: int
     creador_activo_id: Optional[int] = None
     fecha_seguimiento: date
     estrategias_mejora: str
@@ -700,7 +700,7 @@ class SeguimientoCreadorDB(SeguimientoCreadorBase):
 
 # ESQUEMAS PARA ESTADISTICAS DE CREADOR ACTIVO
 class EstadisticaCreadorBase(BaseModel):
-    creador_id: int
+    aspirante_id: int
     creador_activo_id: int
     fecha_reporte: date
     grupo: str
@@ -751,14 +751,14 @@ class InvitacionBase(BaseModel):
     observaciones: Optional[str] = None
 
 class InvitacionCreate(InvitacionBase):
-    creador_id: int
+    aspirante_id: int
 
 class InvitacionUpdate(InvitacionBase):
     pass
 
 class InvitacionOut(InvitacionBase):
     id: int
-    creador_id: int
+    aspirante_id: int
     creado_en: datetime
 
 # # ========== ENTREVISTAS ==========
@@ -773,14 +773,14 @@ class InvitacionOut(InvitacionBase):
 #     evento_id: Optional[str] = None  # <-- agregado
 #
 # class EntrevistaCreate(EntrevistaBase):
-#     creador_id: int
+#     aspirante_id: int
 #
 # class EntrevistaUpdate(EntrevistaBase):
 #     pass
 #
 # class EntrevistaOut(EntrevistaBase):
 #     id: int
-#     creador_id: int
+#     aspirante_id: int
 #     creado_en: datetime
 
 

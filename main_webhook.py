@@ -30,7 +30,7 @@ from enviar_msg_wp import (
     enviar_plantilla_generica,
     enviar_plantilla_generica_parametros
 )
-from evaluaciones import evaluar_y_actualizar_perfil_pre_encuesta, diagnostico_perfil_creador_pre
+from evaluaciones import evaluar_y_actualizar_perfil_pre_encuesta, diagnostico_aspirantes_perfil_pre
 
 
 # from main_EvaluacionAspirante import poblar_scores_creador
@@ -41,7 +41,7 @@ from tenant import (
     current_tenant,
     current_token
 )
-from utils import *
+from borrar_utils import *
 from redis_client import redis_set_temp, redis_get_temp, redis_delete_temp
 from utils_aspirantes import guardar_estado_eval, obtener_status_24hrs, Enviar_msg_estado, \
     enviar_plantilla_estado_evaluacion, buscar_estado_creador, \
@@ -49,7 +49,7 @@ from utils_aspirantes import guardar_estado_eval, obtener_status_24hrs, Enviar_m
     actualizar_mensaje_desde_status, _handle_statuses, enviar_confirmacion_interactiva, manejar_input_link_tiktok
 
 # from utils_aspirantes import guardar_estado_eval, obtener_status_24hrs, Enviar_msg_estado, \
-#     enviar_plantilla_estado_evaluacion, obtener_creador_id_por_telefono, buscar_estado_creador, Enviar_menu_quickreply, \
+#     enviar_plantilla_estado_evaluacion, obtener_aspirante_id_por_telefono, buscar_estado_creador, Enviar_menu_quickreply, \
 #     accion_menu_estado_evaluacion, validar_url_link_tiktok_live, guardar_link_tiktok_live, \
 #     actualizar_mensaje_desde_status, _handle_statuses, enviar_confirmacion_interactiva
 
@@ -86,7 +86,7 @@ router = APIRouter()
 
 # Estado del flujo en memoria
 usuarios_flujo = {}    # { numero: paso_actual }
-# ⚠️ respuestas = {} - ELIMINADO: No se usaba. Las respuestas se guardan en perfil_creador_flujo_temp
+# ⚠️ respuestas = {} - ELIMINADO: No se usaba. Las respuestas se guardan en aspirantes_perfil_flujo_temp
 usuarios_temp = {}  # ⚠️ Fallback a memoria si Redis falla (solo para datos temporales de onboarding)
 
 # ============================
@@ -605,7 +605,7 @@ def enviar_menu_principal(numero, rol=None, nombre=None):
             f"{encabezado}"
             "1️⃣ Ver panel de control\n"
             "2️⃣ Ver todos los perfiles\n"
-            "3️⃣ Enviar comunicado a creadores/aspirantes\n"
+            "3️⃣ Enviar comunicado a aspirantes/aspirantes\n"
             "4️⃣ Gestión de recursos\n"
             "5️⃣ Chat libre con el equipo"
         )
@@ -654,7 +654,7 @@ def enviar_diagnostico(numero: str) -> bool:
                 cur.execute(
                     """
                     SELECT id, usuario, COALESCE(nombre_real, usuario) AS nombre_real
-                    FROM creadores
+                    FROM aspirantes
                     WHERE whatsapp = %s
                     LIMIT 1;
                     """,
@@ -667,17 +667,17 @@ def enviar_diagnostico(numero: str) -> bool:
                     enviar_mensaje(numero, "No encontramos tu perfil en el sistema. Verifica tu número.")
                     return False
 
-                creador_id, usuario, nombre_real = row
+                aspirante_id, usuario, nombre_real = row
 
-                # 2️⃣ Obtener mejoras_sugeridas desde perfil_creador
+                # 2️⃣ Obtener mejoras_sugeridas desde aspirantes_perfil
                 cur.execute(
                     """
                     SELECT mejoras_sugeridas
-                    FROM perfil_creador
-                    WHERE creador_id = %s
+                    FROM aspirantes_perfil
+                    WHERE aspirante_id = %s
                     LIMIT 1;
                     """,
-                    (creador_id,),
+                    (aspirante_id,),
                 )
                 fila = cur.fetchone()
 
@@ -1132,14 +1132,14 @@ def consolidar_perfil(
     tenant_schema: Optional[str] = None
 ):
     """
-    Procesa y actualiza un número en perfil_creador con manejo de errores.
+    Procesa y actualiza un número en aspirantes_perfil con manejo de errores.
 
-    - Lee creador por teléfono en creadores
-    - Si respuestas_dict es None, lee respuestas de {schema}.perfil_creador_flujo_temp
+    - Lee creador por teléfono en aspirantes
+    - Si respuestas_dict es None, lee respuestas de {schema}.aspirantes_perfil_flujo_temp
     - Procesa respuestas (procesar_respuestas)
     - Inserta en {schema}.aspirante_encuesta_inicial (NUEVO) si no existe aún
-    - Actualiza nombre_real en creadores
-    - Actualiza perfil_creador para ese creador_id
+    - Actualiza nombre_real en aspirantes
+    - Actualiza aspirantes_perfil para ese aspirante_id
 
     Retorna {"status": "ok"} si no revienta.
     """
@@ -1157,28 +1157,28 @@ def consolidar_perfil(
                 # -------------------------------
                 # 1) Buscar creador por teléfono
                 # -------------------------------
-                print("🔎 [CONSOLIDAR] Buscando creador en tabla creadores...")
+                print("🔎 [CONSOLIDAR] Buscando creador en tabla aspirantes...")
                 cur.execute(
-                    f"SELECT id, usuario, nombre_real, whatsapp FROM {schema}.creadores WHERE telefono=%s",
+                    f"SELECT id, usuario, nombre_real, whatsapp FROM {schema}.aspirantes WHERE telefono=%s",
                     (telefono,)
                 )
                 creador = cur.fetchone()
 
                 if not creador:
-                    print(f"⚠️ [CONSOLIDAR] No se encontró creador con telefono {telefono} en {schema}.creadores")
+                    print(f"⚠️ [CONSOLIDAR] No se encontró creador con telefono {telefono} en {schema}.aspirantes")
                     return {"status": "skip", "reason": "no_creator"}
 
-                creador_id = creador[0]
-                print(f"✅ [CONSOLIDAR] creador_id={creador_id}")
+                aspirante_id = creador[0]
+                print(f"✅ [CONSOLIDAR] aspirante_id={aspirante_id}")
 
                 # -------------------------------
                 # 2) Si no hay respuestas, leer de temp
                 # -------------------------------
                 if respuestas_dict is None:
-                    print("📋 [CONSOLIDAR] Leyendo respuestas desde perfil_creador_flujo_temp...")
+                    print("📋 [CONSOLIDAR] Leyendo respuestas desde aspirantes_perfil_flujo_temp...")
                     cur.execute(f"""
                         SELECT paso, respuesta
-                        FROM {schema}.perfil_creador_flujo_temp
+                        FROM {schema}.aspirantes_perfil_flujo_temp
                         WHERE telefono=%s
                         ORDER BY paso ASC
                     """, (telefono,))
@@ -1200,7 +1200,7 @@ def consolidar_perfil(
                 datos_update = procesar_respuestas(respuestas_dict)
                 print(f"🧠 [CONSOLIDAR] datos_update procesado: {datos_update}")
 
-                # AÑADIMOS teléfono al update de perfil_creador
+                # AÑADIMOS teléfono al update de aspirantes_perfil
                 datos_update["telefono"] = telefono
 
                 # PENDIENTE REVISAR 11 FEB 2026
@@ -1217,31 +1217,31 @@ def consolidar_perfil(
 
 
                 # -------------------------------
-                # 5) Actualizar nombre_real en creadores si hay nombre
+                # 5) Actualizar nombre_real en aspirantes si hay nombre
                 # -------------------------------
                 if datos_update.get("nombre"):
-                    print(f"🧩 [CONSOLIDAR] Actualizando nombre_real='{datos_update['nombre']}' en creadores...")
+                    print(f"🧩 [CONSOLIDAR] Actualizando nombre_real='{datos_update['nombre']}' en aspirantes...")
                     cur.execute(
-                        f"UPDATE {schema}.creadores SET nombre_real=%s WHERE id=%s",
-                        (datos_update["nombre"], creador_id)
+                        f"UPDATE {schema}.aspirantes SET nombre_real=%s WHERE id=%s",
+                        (datos_update["nombre"], aspirante_id)
                     )
 
                 # -------------------------------
-                # 6) UPDATE dinámico perfil_creador
+                # 6) UPDATE dinámico aspirantes_perfil
                 # -------------------------------
-                print("🛠️ [CONSOLIDAR] Actualizando perfil_creador...")
+                print("🛠️ [CONSOLIDAR] Actualizando aspirantes_perfil...")
                 set_clause = ", ".join([f"{k}=%s" for k in datos_update.keys()])
                 values = list(datos_update.values())
-                values.append(creador_id)
+                values.append(aspirante_id)
 
-                query = f"UPDATE {schema}.perfil_creador SET {set_clause} WHERE creador_id=%s"
-                print(f"🧾 [CONSOLIDAR] Query UPDATE perfil_creador: {query}")
+                query = f"UPDATE {schema}.aspirantes_perfil SET {set_clause} WHERE aspirante_id=%s"
+                print(f"🧾 [CONSOLIDAR] Query UPDATE aspirantes_perfil: {query}")
                 print(f"🧾 [CONSOLIDAR] Values (len={len(values)}): {values}")
 
                 cur.execute(query, values)
 
                 conn.commit()
-                print(f"✅ [CONSOLIDAR] Actualizado perfil_creador para creador_id={creador_id} ({telefono})")
+                print(f"✅ [CONSOLIDAR] Actualizado aspirantes_perfil para aspirante_id={aspirante_id} ({telefono})")
                 print("🧩 [CONSOLIDAR] ===============================")
 
         return {"status": "ok"}
@@ -1269,30 +1269,30 @@ def consolidar_perfil(
 
 def consolidar_perfilV2(telefono: str, respuestas_dict: dict | None = None, tenant_schema: str | None = None):
     """
-    Si el creador existe: actualiza perfil_creador + creadores.
+    Si el creador existe: actualiza aspirantes_perfil + aspirantes.
     Si NO existe: guarda encuesta en aspirante_encuesta_temp para sincronizar después.
     """
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
 
-                # Si no se pasaron respuestas, leerlas de perfil_creador_flujo_temp
+                # Si no se pasaron respuestas, leerlas de aspirantes_perfil_flujo_temp
                 if respuestas_dict is None:
                     cur.execute("""
                         SELECT paso, respuesta
-                        FROM perfil_creador_flujo_temp
+                        FROM aspirantes_perfil_flujo_temp
                         WHERE telefono=%s
                         ORDER BY paso ASC
                     """, (telefono,))
                     rows = cur.fetchall()
                     respuestas_dict = {int(p): r for p, r in rows} if rows else {}
-                    print(f"📋 Respuestas leídas de perfil_creador_flujo_temp: {respuestas_dict}")
+                    print(f"📋 Respuestas leídas de aspirantes_perfil_flujo_temp: {respuestas_dict}")
 
                 # Procesar respuestas -> dict con nombre, edad, genero, pais, etc.
                 datos_update = procesar_respuestas(respuestas_dict)
 
                 # ✅ Buscar creador
-                cur.execute("SELECT id FROM creadores WHERE telefono=%s LIMIT 1", (telefono,))
+                cur.execute("SELECT id FROM aspirantes WHERE telefono=%s LIMIT 1", (telefono,))
                 row = cur.fetchone()
 
                 # -------------------------------------------------------
@@ -1327,37 +1327,37 @@ def consolidar_perfilV2(telefono: str, respuestas_dict: dict | None = None, tena
                     print(f"⚠️ No existe creador aún. Encuesta guardada en aspirante_encuesta_temp ({telefono}).")
                     return {"status": "saved_temp", "telefono": telefono}
 
-                creador_id = row[0]
+                aspirante_id = row[0]
 
                 # -------------------------------------------------------
-                # CASO B) EXISTE CREADOR → actualizar perfil_creador
+                # CASO B) EXISTE CREADOR → actualizar aspirantes_perfil
                 # -------------------------------------------------------
                 datos_update["telefono"] = telefono
 
                 if datos_update.get("nombre"):
                     cur.execute("""
-                        UPDATE creadores
+                        UPDATE aspirantes
                         SET nombre_real=%s
                         WHERE id=%s
-                    """, (datos_update["nombre"], creador_id))
+                    """, (datos_update["nombre"], aspirante_id))
 
                 set_clause = ", ".join([f"{k}=%s" for k in datos_update.keys()])
                 values = list(datos_update.values())
-                values.append(creador_id)
+                values.append(aspirante_id)
 
-                cur.execute(f"UPDATE perfil_creador SET {set_clause} WHERE creador_id=%s", values)
+                cur.execute(f"UPDATE aspirantes_perfil SET {set_clause} WHERE aspirante_id=%s", values)
 
                 # ✅ (opcional) marcar sincronización en temp si existía
                 cur.execute("""
                     UPDATE aspirante_encuesta_inicial
-                    SET creador_id=%s, sincronizado=TRUE, updated_at=NOW()
+                    SET aspirante_id=%s, sincronizado=TRUE, updated_at=NOW()
                     WHERE telefono=%s
-                """, (creador_id, telefono))
+                """, (aspirante_id, telefono))
 
                 conn.commit()
-                print(f"✅ Actualizado perfil_creador y sincronizado temp para {telefono}")
+                print(f"✅ Actualizado aspirantes_perfil y sincronizado temp para {telefono}")
 
-                return {"status": "updated_creador", "creador_id": creador_id}
+                return {"status": "updated_creador", "aspirante_id": aspirante_id}
 
     except Exception as e:
         print(f"❌ Error en consolidar_perfil({telefono}): {e}")
@@ -1366,31 +1366,31 @@ def consolidar_perfilV2(telefono: str, respuestas_dict: dict | None = None, tena
 
 
 def consolidar_perfilV1(telefono: str, respuestas_dict: dict | None = None, tenant_schema: Optional[str] = None):
-    """Procesa y actualiza un solo número en perfil_creador con manejo de errores
+    """Procesa y actualiza un solo número en aspirantes_perfil con manejo de errores
     
     Args:
         telefono: Número de teléfono del usuario
         respuestas_dict: Diccionario opcional con respuestas {paso: respuesta}.
-                        Si es None, se leen de la tabla perfil_creador_flujo_temp
+                        Si es None, se leen de la tabla aspirantes_perfil_flujo_temp
         tenant_schema: Schema del tenant. Si es None, usa current_tenant.get()
     """
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 # Buscar creador por número
-                cur.execute("SELECT id, usuario, nombre_real, whatsapp FROM creadores WHERE telefono=%s", (telefono,))
+                cur.execute("SELECT id, usuario, nombre_real, whatsapp FROM aspirantes WHERE telefono=%s", (telefono,))
                 creador = cur.fetchone()
                 if not creador:
                     print(f"⚠️ No se encontró creador con whatsapp {telefono}")
                     return
 
-                creador_id = creador[0]
+                aspirante_id = creador[0]
 
-                # Si no se pasaron respuestas, leerlas de la tabla perfil_creador_flujo_temp
+                # Si no se pasaron respuestas, leerlas de la tabla aspirantes_perfil_flujo_temp
                 if respuestas_dict is None:
                     cur.execute("""
                         SELECT paso, respuesta 
-                        FROM perfil_creador_flujo_temp 
+                        FROM aspirantes_perfil_flujo_temp 
                         WHERE telefono=%s 
                         ORDER BY paso ASC
                     """, (telefono,))
@@ -1401,28 +1401,28 @@ def consolidar_perfilV1(telefono: str, respuestas_dict: dict | None = None, tena
                 # Procesar respuestas
                 datos_update = procesar_respuestas(respuestas_dict)
 
-                # ⬅️ AÑADIMOS el teléfono al update de perfil_creador
+                # ⬅️ AÑADIMOS el teléfono al update de aspirantes_perfil
                 datos_update["telefono"] = telefono
 
-                # ✅ Si hay nombre, actualizamos también en la tabla creadores
+                # ✅ Si hay nombre, actualizamos también en la tabla aspirantes
                 if datos_update.get("nombre"):
                     cur.execute("""
-                        UPDATE creadores 
+                        UPDATE aspirantes 
                         SET nombre_real=%s 
                         WHERE id=%s
-                    """, (datos_update["nombre"], creador_id))
-                    print(f"🧩 Actualizado nombre_real='{datos_update['nombre']}' en creadores")
+                    """, (datos_update["nombre"], aspirante_id))
+                    print(f"🧩 Actualizado nombre_real='{datos_update['nombre']}' en aspirantes")
 
                 # Crear query dinámico UPDATE
                 set_clause = ", ".join([f"{k}=%s" for k in datos_update.keys()])
                 values = list(datos_update.values())
-                values.append(creador_id)
+                values.append(aspirante_id)
 
-                query = f"UPDATE perfil_creador SET {set_clause} WHERE creador_id=%s"
+                query = f"UPDATE aspirantes_perfil SET {set_clause} WHERE aspirante_id=%s"
                 cur.execute(query, values)
                 conn.commit()
 
-                print(f"✅ Actualizado perfil_creador para creador_id={creador_id} ({telefono})")
+                print(f"✅ Actualizado aspirantes_perfil para aspirante_id={aspirante_id} ({telefono})")
 
     except psycopg2.OperationalError as e:
         print(f"❌ Error de conexión a BD al consolidar perfil para {telefono}: {e}")
@@ -1689,7 +1689,7 @@ def enviar_preguntas_frecuentes(numero):
         "1️⃣ *¿Qué requisitos necesito para ingresar a la Agencia Prestige?*\n"
         "Debes tener una cuenta activa en TikTok, con contenido propio y al menos 50 seguidores.\n\n"
         "2️⃣ *¿Debo tener experiencia previa?*\n"
-        "No es necesario. Contamos con capacitaciones para nuevos creadores.\n\n"
+        "No es necesario. Contamos con capacitaciones para nuevos aspirantes.\n\n"
         "3️⃣ *¿Cuánto tiempo tarda el proceso de ingreso?*\n"
         "Generalmente entre 2 y 5 días hábiles, dependiendo de la respuesta a las entrevistas.\n\n"
         "4️⃣ *¿Puedo monetizar mis transmisiones en vivo?*\n"
@@ -1923,7 +1923,7 @@ def manejar_menu(numero, texto_normalizado, rol):
             return
         if texto_normalizado == "3":
             actualizar_flujo(numero, "comunicado")
-            enviar_mensaje(numero, "✉️ Escribe el comunicado a enviar a creadores/aspirantes:")
+            enviar_mensaje(numero, "✉️ Escribe el comunicado a enviar a aspirantes/aspirantes:")
             return
         if texto_normalizado == "4":
             actualizar_flujo(numero, "recursos_admin")
@@ -2464,7 +2464,7 @@ from pydantic import BaseModel
 class ConsolidarInput(BaseModel):
     numero: str
     respuestas: Optional[dict] = None  # Diccionario opcional: {1: "Ricardo", 2: "5", 3: "1", ...}
-                                      # Si es None, se leen de la tabla perfil_creador_flujo_temp
+                                      # Si es None, se leen de la tabla aspirantes_perfil_flujo_temp
 
 
 @router.post("/enviar_solicitud_informacion")
@@ -2535,22 +2535,22 @@ def lap(tag: str):
 from fastapi import BackgroundTasks
 
 
-def guardar_diagnostico_perfil_creador(creador_id: int, diagnostico: str):
-    if not creador_id:
+def guardar_diagnostico_aspirantes_perfil(aspirante_id: int, diagnostico: str):
+    if not aspirante_id:
         return
 
     with get_connection_context() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                UPDATE perfil_creador
+                UPDATE aspirantes_perfil
                 SET diagnostico = %s
-                WHERE creador_id = %s
-            """, (diagnostico or "", creador_id))
+                WHERE aspirante_id = %s
+            """, (diagnostico or "", aspirante_id))
 
             if cur.rowcount == 0:
-                print(f"⚠️ No se actualizó diagnostico: no existe perfil_creador para creador_id={creador_id}")
+                print(f"⚠️ No se actualizó diagnostico: no existe aspirantes_perfil para aspirante_id={aspirante_id}")
             else:
-                print(f"✅ Diagnóstico guardado en perfil_creador (creador_id={creador_id})")
+                print(f"✅ Diagnóstico guardado en aspirantes_perfil (aspirante_id={aspirante_id})")
 
 
 @router.post("/consolidarV1")
@@ -2571,7 +2571,7 @@ def consolidar_perfil_webV1(data: ConsolidarInput):
         current_business_name.set(business_name)
 
         # Procesar diccionario de respuestas si viene en el request
-        # Si no viene, consolidar_perfil leerá de la tabla perfil_creador_flujo_temp
+        # Si no viene, consolidar_perfil leerá de la tabla aspirantes_perfil_flujo_temp
         respuestas_dict = None
         if data.respuestas:
             # Procesar diccionario de respuestas directamente
@@ -2593,7 +2593,7 @@ def consolidar_perfil_webV1(data: ConsolidarInput):
                     respuestas_dict[key_int] = str(valor) if valor else ""
             print(f"📋 Respuestas recibidas en request: {respuestas_dict}")
         else:
-            print(f"📋 No se recibieron respuestas en request, se leerán de la tabla perfil_creador_flujo_temp")
+            print(f"📋 No se recibieron respuestas en request, se leerán de la tabla aspirantes_perfil_flujo_temp")
 
         print(f"🔗 Iniciando consolidación de perfil en subdominio: {subdominio}")
         consolidar_perfil(data.numero, respuestas_dict=respuestas_dict, tenant_schema=subdominio)
@@ -2667,7 +2667,7 @@ def registrar_mensaje_recibido(
                 cur.execute(
                     """
                     SELECT id
-                    FROM creadores
+                    FROM aspirantes
                     WHERE telefono = %s
                     LIMIT 1
                     """,
@@ -2678,7 +2678,7 @@ def registrar_mensaje_recibido(
                 usuario_id = row[0] if row else None
 
                 if usuario_id:
-                    print(f"🧾 Mensaje asociado a creador_id={usuario_id}")
+                    print(f"🧾 Mensaje asociado a aspirante_id={usuario_id}")
                 else:
                     print(f"🆕 Mensaje sin creador (usuario_id=NULL)")
 
@@ -2833,9 +2833,9 @@ def validar_link_tiktok(texto: str) -> bool:
 from typing import Optional
 
 
-def obtener_entrevista_id(creador_id: int, usuario_evalua: int) -> Optional[dict]:
+def obtener_entrevista_id(aspirante_id: int, usuario_evalua: int) -> Optional[dict]:
     """
-    Obtiene la entrevista asociada a (creador_id, usuario_evalua).
+    Obtiene la entrevista asociada a (aspirante_id, usuario_evalua).
     - Si ya existe una entrevista: la devuelve como dict.
     - Si no existe: crea una nueva entrevista con resultado='sin_programar'
       y la devuelve como dict.
@@ -2851,7 +2851,7 @@ def obtener_entrevista_id(creador_id: int, usuario_evalua: int) -> Optional[dict
                     """
                     SELECT
                         id,
-                        creador_id,
+                        aspirante_id,
                         usuario_evalua,
                         resultado,
                         observaciones,
@@ -2863,18 +2863,18 @@ def obtener_entrevista_id(creador_id: int, usuario_evalua: int) -> Optional[dict
                         creado_en,
                         modificado_en
                     FROM entrevistas
-                    WHERE creador_id = %s
+                    WHERE aspirante_id = %s
                       AND usuario_evalua = %s
                     ORDER BY id DESC
                     LIMIT 1
                     """,
-                    (creador_id, usuario_evalua)
+                    (aspirante_id, usuario_evalua)
                 )
                 row = cur.fetchone()
 
                 columnas = [
                     "id",
-                    "creador_id",
+                    "aspirante_id",
                     "usuario_evalua",
                     "resultado",
                     "observaciones",
@@ -2895,7 +2895,7 @@ def obtener_entrevista_id(creador_id: int, usuario_evalua: int) -> Optional[dict
                 cur.execute(
                     """
                     INSERT INTO entrevistas (
-                        creador_id,
+                        aspirante_id,
                         usuario_evalua,
                         resultado,
                         creado_en,
@@ -2910,7 +2910,7 @@ def obtener_entrevista_id(creador_id: int, usuario_evalua: int) -> Optional[dict
                     )
                     RETURNING
                         id,
-                        creador_id,
+                        aspirante_id,
                         usuario_evalua,
                         resultado,
                         observaciones,
@@ -2922,19 +2922,19 @@ def obtener_entrevista_id(creador_id: int, usuario_evalua: int) -> Optional[dict
                         creado_en,
                         modificado_en
                     """,
-                    (creador_id, usuario_evalua)
+                    (aspirante_id, usuario_evalua)
                 )
 
                 row = cur.fetchone()
                 if not row:
                     print(
-                        f"⚠️ No se pudo crear entrevista para creador_id={creador_id}, usuario_evalua={usuario_evalua}")
+                        f"⚠️ No se pudo crear entrevista para aspirante_id={aspirante_id}, usuario_evalua={usuario_evalua}")
                     return None
 
                 return dict(zip(columnas, row))
 
     except Exception as e:
-        print(f"❌ Error en obtener_entrevista_id para creador_id={creador_id}, usuario_evalua={usuario_evalua}: {e}")
+        print(f"❌ Error en obtener_entrevista_id para aspirante_id={aspirante_id}, usuario_evalua={usuario_evalua}: {e}")
         return None
 
 
@@ -2956,7 +2956,7 @@ def enviar_citas_agendadas(numero: str) -> None:
       - buscar_usuario_por_telefono(numero)
       - get_connection_context()
       - agendamientos, agendamientos_participantes
-      - crear_token_portal_citas(creador_id, responsable_id?, minutos_validez?)
+      - crear_token_portal_citas(aspirante_id, responsable_id?, minutos_validez?)
       - construir_url_portal_citas(token, tenant_name)
       - current_tenant.get()
       - enviar_mensaje(numero, texto)
@@ -2971,8 +2971,8 @@ def enviar_citas_agendadas(numero: str) -> None:
         )
         return
 
-    creador_id = aspirante.get("id")
-    if not creador_id:
+    aspirante_id = aspirante.get("id")
+    if not aspirante_id:
         enviar_mensaje(
             numero,
             "⚠️ No encontramos tu perfil completo. Por favor intenta más tarde."
@@ -2997,10 +2997,10 @@ def enviar_citas_agendadas(numero: str) -> None:
                     FROM agendamientos a
                     JOIN agendamientos_participantes ap
                       ON ap.agendamiento_id = a.id
-                    WHERE ap.creador_id = %s
+                    WHERE ap.aspirante_id = %s
                     ORDER BY a.fecha_inicio ASC
                     """,
-                    (creador_id,)
+                    (aspirante_id,)
                 )
                 rows = cur.fetchall()
     except Exception as e:
@@ -3062,9 +3062,9 @@ def enviar_citas_agendadas(numero: str) -> None:
 
     # 5️⃣ Generar token para portal de citas
     try:
-        token = crear_token_portal_citas(creador_id=creador_id)
+        token = crear_token_portal_citas(aspirante_id=aspirante_id)
     except Exception as e:
-        print(f"❌ Error creando token de portal de citas para creador_id={creador_id}: {e}")
+        print(f"❌ Error creando token de portal de citas para aspirante_id={aspirante_id}: {e}")
         token = None
 
     if not token:
@@ -3134,7 +3134,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 def crear_token_portal_citas(
-    creador_id: int,
+    aspirante_id: int,
     responsable_id: Optional[int] = None,
     minutos_validez: int = 24 * 60  # por defecto, 24 horas
 ) -> Optional[str]:
@@ -3155,11 +3155,11 @@ def crear_token_portal_citas(
                         """
                         SELECT usuario_evalua
                         FROM entrevistas
-                        WHERE creador_id = %s
+                        WHERE aspirante_id = %s
                         ORDER BY id DESC
                         LIMIT 1
                         """,
-                        (creador_id,)
+                        (aspirante_id,)
                     )
                     row = cur.fetchone()
                     if row and row[0] is not None:
@@ -3168,7 +3168,7 @@ def crear_token_portal_citas(
                 # Fallback mínimo si sigue siendo None
                 if responsable_id is None:
                     print(
-                        f"⚠️ crear_token_portal_citas: sin responsable para creador_id={creador_id}. "
+                        f"⚠️ crear_token_portal_citas: sin responsable para aspirante_id={aspirante_id}. "
                         f"Usando responsable_id=1 por defecto."
                     )
                     responsable_id = 1
@@ -3185,7 +3185,7 @@ def crear_token_portal_citas(
                     """
                     INSERT INTO link_agendamiento_tokens (
                         token,
-                        creador_id,
+                        aspirante_id,
                         responsable_id,
                         expiracion,
                         usado,
@@ -3193,17 +3193,17 @@ def crear_token_portal_citas(
                     )
                     VALUES (%s, %s, %s, %s, false, NOW() AT TIME ZONE 'UTC')
                     """,
-                    (token, creador_id, responsable_id, expiracion.replace(tzinfo=None))
+                    (token, aspirante_id, responsable_id, expiracion.replace(tzinfo=None))
                 )
 
                 print(
-                    f"✅ Token portal citas creado para creador_id={creador_id}, "
+                    f"✅ Token portal citas creado para aspirante_id={aspirante_id}, "
                     f"responsable_id={responsable_id}, token={token}"
                 )
                 return token
 
     except Exception as e:
-        print(f"❌ Error en crear_token_portal_citas para creador_id={creador_id}: {e}")
+        print(f"❌ Error en crear_token_portal_citas para aspirante_id={aspirante_id}: {e}")
         return None
 
 
@@ -3456,7 +3456,7 @@ def enviar_texto_simple(wa_id, texto):
 
 
 class EstadoEvalInput(BaseModel):
-    creador_id: int
+    aspirante_id: int
     estado_evaluacion: str
 
 
@@ -3491,11 +3491,11 @@ def actualizar_estado_aspiranteV1(data: EstadoEvalInput):
         # current_phone_id.set(phone_id_cliente)
 
         # 2. Obtener datos del creador
-        # info_creador = obtener_info_creador(data.creador_id)
+        # info_creador = obtener_info_creador(data.aspirante_id)
         telefono = "573153638069"  # Mock
 
         # 3. Guardar nuevo estado en BD
-        guardar_estado_eval(data.creador_id, data.estado_evaluacion)
+        guardar_estado_eval(data.aspirante_id, data.estado_evaluacion)
 
         # 4. Verificar ventana 24hrs (Tarea 2 - Parte A aplicada al envío)
         en_ventana = obtener_status_24hrs(telefono)
@@ -3503,7 +3503,7 @@ def actualizar_estado_aspiranteV1(data: EstadoEvalInput):
         if en_ventana:
             print("✅ En ventana: Enviando Mensaje Interactivo + Botón Opciones")
             Enviar_msg_estado(
-                data.creador_id,
+                data.aspirante_id,
                 data.estado_evaluacion,
                 phone_id_cliente,
                 token_cliente,
@@ -3512,7 +3512,7 @@ def actualizar_estado_aspiranteV1(data: EstadoEvalInput):
         else:
             print("⚠️ Fuera de ventana: Enviando Plantilla + Botón Opciones")
             enviar_plantilla_estado_evaluacion(
-                data.creador_id,
+                data.aspirante_id,
                 data.estado_evaluacion,
                 phone_id_cliente,
                 token_cliente,
@@ -3543,8 +3543,8 @@ def procesar_evento_webhook_anticuado(body, phone_id_cliente, token_cliente):
         tipo_mensaje = message['type']
 
         # 1. Identificar al creador y su estado actual
-        creador_id = obtener_creador_id_por_telefono(telefono)
-        estado_actual = buscar_estado_creador(creador_id)
+        aspirante_id = obtener_aspirante_id_por_telefono(telefono)
+        estado_actual = buscar_estado_creador(aspirante_id)
 
         print(f"📩 Msg de {telefono} | Estado DB: {estado_actual} | Tipo: {tipo_mensaje}")
 
@@ -3565,11 +3565,11 @@ def procesar_evento_webhook_anticuado(body, phone_id_cliente, token_cliente):
         if boton_id:
             # Caso 1: El botón es "Opciones" (viene de msg inicial o plantilla)
             if boton_id == "BTN_ABRIR_MENU_OPCIONES":
-                Enviar_menu_quickreply(creador_id, estado_actual, phone_id_cliente, token_cliente, telefono)
+                Enviar_menu_quickreply(aspirante_id, estado_actual, phone_id_cliente, token_cliente, telefono)
 
             # Caso 2: Es una opción específica (Ej: "Enviar Link")
             else:
-                accion_menu_estado_evaluacion(creador_id, boton_id, phone_id_cliente, token_cliente, estado_actual,
+                accion_menu_estado_evaluacion(aspirante_id, boton_id, phone_id_cliente, token_cliente, estado_actual,
                                               telefono)
 
             return  # Fin del procesamiento de botón
@@ -3584,9 +3584,9 @@ def procesar_evento_webhook_anticuado(body, phone_id_cliente, token_cliente):
                 es_valido = validar_url_link_tiktok_live(texto_usuario)
 
                 if es_valido:
-                    guardar_link_tiktok_live(creador_id, texto_usuario)
+                    guardar_link_tiktok_live(aspirante_id, texto_usuario)
                     # Opcional: Avanzar al siguiente estado
-                    guardar_estado_eval(creador_id, "revision_link_tiktok")
+                    guardar_estado_eval(aspirante_id, "revision_link_tiktok")
                     enviar_texto_simple(telefono, "✅ ¡Link recibido! Lo revisaremos pronto.", phone_id_cliente,
                                         token_cliente)
                 else:
@@ -3620,8 +3620,8 @@ async def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, 
     print(f"\n📨 [INICIO] Recibido de: {wa_id} | Tipo: {tipo} | Payload: {payload_id} | Texto: '{texto}'")
 
     # 1. IDENTIFICACIÓN DEL ASPIRANTE
-    creador_id = obtener_creador_id_por_telefono(wa_id)
-    if not creador_id:
+    aspirante_id = obtener_aspirante_id_por_telefono(wa_id)
+    if not aspirante_id:
         print(f"❌ [DEBUG] El teléfono {wa_id} no está registrado como aspirante. Ignorando flujo.")
         return False
 
@@ -3633,7 +3633,7 @@ async def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, 
     # =================================================================
     # Si el usuario estaba en medio de un proceso de escritura (ej. enviando su link de TikTok),
     # esta función captura el mensaje y retorna True para detener el flujo.
-    if manejar_input_link_tiktok(creador_id, wa_id, tipo, texto, payload_id, token_cliente, phone_number_id):
+    if manejar_input_link_tiktok(aspirante_id, wa_id, tipo, texto, payload_id, token_cliente, phone_number_id):
         print("⚡ [DEBUG] Capturado por interceptor Redis.")
         return True
 
@@ -3642,9 +3642,9 @@ async def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, 
     # =================================================================
 
     # Consultamos en qué parte del embudo de reclutamiento está el usuario
-    estado_creador = buscar_estado_creador(creador_id)
+    estado_creador = buscar_estado_creador(aspirante_id)
     if not estado_creador or not estado_creador.get("codigo_estado"):
-        print(f"⚠️ [DEBUG] Creador {creador_id} existe pero no tiene un estado de evaluación asignado.")
+        print(f"⚠️ [DEBUG] Creador {aspirante_id} existe pero no tiene un estado de evaluación asignado.")
         return False
 
     estado_actual = estado_creador["codigo_estado"]
@@ -3669,21 +3669,21 @@ async def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, 
             except Exception as e:
                 print(f"❌ [ERROR] Falló el reenvío tras reconexión: {e}")
                 # Si falla el reenvío, permitimos que caiga al menú normal para no dejar al usuario bloqueado
-                Enviar_menu_quickreply(creador_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
+                Enviar_menu_quickreply(aspirante_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
                 return True
 
         # A.2 ACCIONES ESPECÍFICAS DE MENÚ (MENU_*)
         # Ejemplo: "MENU_AGENDAR_CITA", "MENU_VER_REQUISITOS"
         if payload_limpio.startswith("MENU_"):
             print(f"⚡ [DEBUG] Ejecutando acción de menú: {payload_limpio}")
-            accion_menu_estado_evaluacion(creador_id, payload_limpio, phone_number_id, token_cliente, estado_actual,
+            accion_menu_estado_evaluacion(aspirante_id, payload_limpio, phone_number_id, token_cliente, estado_actual,
                                           wa_id)
             return True
 
         # A.3 BOTONES DE NAVEGACIÓN GENERAL O RE-APERTURA
         if payload_limpio == "BTN_ABRIR_MENU_OPCIONES":
             print(f"📋 [DEBUG] Solicitando menú de opciones para estado: {estado_actual}")
-            Enviar_menu_quickreply(creador_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
+            Enviar_menu_quickreply(aspirante_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
             return True
 
     # --- B. TEXTO SUELTO / REENGANCHE ---
@@ -3691,7 +3691,7 @@ async def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, 
     # ni es un botón, le enviamos el menú correspondiente a su estado actual para guiarlo.
     if tipo == "text" and estado_actual:
         print(f"🔄 [DEBUG] Texto sin contexto temporal. Re-enviando guía de estado '{estado_actual}'.")
-        Enviar_menu_quickreply(creador_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
+        Enviar_menu_quickreply(aspirante_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
         return True
 
     # Si llega aquí, el mensaje no pertenece al flujo de aspirante
@@ -3707,8 +3707,8 @@ async def procesar_flujo_aspiranteV0(tenant, phone_number_id, wa_id, tipo, texto
     print(f"\n📨 [INICIO] Recibido de: {wa_id} | Tipo: {tipo} | Payload: {payload_id} | Texto: '{texto}'")
 
     # 1. Identificación
-    creador_id = obtener_creador_id_por_telefono(wa_id)
-    if not creador_id:
+    aspirante_id = obtener_aspirante_id_por_telefono(wa_id)
+    if not aspirante_id:
         print("❌ [DEBUG] Usuario no es aspirante.")
         return False
 
@@ -3719,16 +3719,16 @@ async def procesar_flujo_aspiranteV0(tenant, phone_number_id, wa_id, tipo, texto
     # =================================================================
     # Verifica si estamos esperando texto de este usuario.
     # Si devuelve True, Redis ya manejó el mensaje (era el link o un error de validación).
-    if manejar_input_link_tiktok(creador_id, wa_id, tipo, texto, payload_id, token_cliente, phone_number_id):
+    if manejar_input_link_tiktok(aspirante_id, wa_id, tipo, texto, payload_id, token_cliente, phone_number_id):
         return True
 
     # =================================================================
     # 🐢 CAPA 2: LÓGICA DE NEGOCIO (Base de Datos)
     # =================================================================
     # Si Redis no atrapó el mensaje, consultamos el estado general.
-    estado_creador = buscar_estado_creador(creador_id)
+    estado_creador = buscar_estado_creador(aspirante_id)
     if not estado_creador or not estado_creador.get("codigo_estado"):
-        print(f"⚠️ [DEBUG] Creador {creador_id} sin estado en BD.")
+        print(f"⚠️ [DEBUG] Creador {aspirante_id} sin estado en BD.")
         return False
 
     estado_actual = estado_creador["codigo_estado"]
@@ -3755,12 +3755,12 @@ async def procesar_flujo_aspiranteV0(tenant, phone_number_id, wa_id, tipo, texto
         # A.1 Acciones del Menú (MENU_*)
         # Aquí caerá MENU_INGRESAR_LINK_TIKTOK y llamará a accion_menu...
         if payload_id.startswith("MENU_"):
-            accion_menu_estado_evaluacion(creador_id, payload_id, phone_number_id, token_cliente, estado_actual, wa_id)
+            accion_menu_estado_evaluacion(aspirante_id, payload_id, phone_number_id, token_cliente, estado_actual, wa_id)
             return True
 
         # A.2 Botones de Navegación (Continuar/Opciones)
         if payload_id in ["Continuar", "BTN_ABRIR_MENU_OPCIONES"]:
-            Enviar_menu_quickreply(creador_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
+            Enviar_menu_quickreply(aspirante_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
             return True
 
     # --- B. REENGANCHE (Texto suelto) ---
@@ -3768,7 +3768,7 @@ async def procesar_flujo_aspiranteV0(tenant, phone_number_id, wa_id, tipo, texto
     # le mostramos el menú de su estado actual.
     if tipo == "text" and estado_actual:
         print(f"🔄 [DEBUG] Texto sin contexto. Mostrando menú de estado '{estado_actual}'.")
-        Enviar_menu_quickreply(creador_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
+        Enviar_menu_quickreply(aspirante_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
         return True
 
     return False
@@ -3786,9 +3786,9 @@ def procesar_flujo_aspiranteV4(tenant, phone_number_id, wa_id, tipo, texto, payl
     # ------------------------------------------------------------------
     # 0. SETUP: IDENTIFICACIÓN BÁSICA
     # ------------------------------------------------------------------
-    creador_id = obtener_creador_id_por_telefono(wa_id)
-    if not creador_id:
-        print("❌ [DEBUG] Usuario no encontrado en tabla creadores. Pasando al Bot General.")
+    aspirante_id = obtener_aspirante_id_por_telefono(wa_id)
+    if not aspirante_id:
+        print("❌ [DEBUG] Usuario no encontrado en tabla aspirantes. Pasando al Bot General.")
         return False  # No es aspirante
 
     token_cliente = current_token.get()
@@ -3799,7 +3799,7 @@ def procesar_flujo_aspiranteV4(tenant, phone_number_id, wa_id, tipo, texto, payl
     # Verifica si el usuario quiere ingresar un link o si ya lo estábamos esperando.
     # Si retorna True, Redis manejó todo y terminamos aquí.
 
-    if manejar_input_link_tiktok(creador_id, wa_id, tipo, texto, payload_id, token_cliente, phone_number_id):
+    if manejar_input_link_tiktok(aspirante_id, wa_id, tipo, texto, payload_id, token_cliente, phone_number_id):
         return True
 
     # =================================================================
@@ -3807,15 +3807,15 @@ def procesar_flujo_aspiranteV4(tenant, phone_number_id, wa_id, tipo, texto, payl
     # =================================================================
     # Si Redis devolvió False, consultamos el estado persistente en Postgres.
 
-    estado_creador = buscar_estado_creador(creador_id)
+    estado_creador = buscar_estado_creador(aspirante_id)
     if not estado_creador or not estado_creador.get("codigo_estado"):
-        print(f"⚠️ [DEBUG] Creador ID {creador_id} existe pero NO TIENE estado en BD.")
+        print(f"⚠️ [DEBUG] Creador ID {aspirante_id} existe pero NO TIENE estado en BD.")
         return False
 
     estado_actual = estado_creador["codigo_estado"]
     msg_chat_bot = estado_creador.get("mensaje_chatbot_simple") or "Selecciona una opción:"
 
-    print(f"💾 [DEBUG] ID Creador: {creador_id} | Estado BD: '{estado_actual}' (Procesando capa 2)")
+    print(f"💾 [DEBUG] ID Creador: {aspirante_id} | Estado BD: '{estado_actual}' (Procesando capa 2)")
 
     # --- A. CLIC EN BOTONES (Payloads) ---
     if payload_id:
@@ -3824,7 +3824,7 @@ def procesar_flujo_aspiranteV4(tenant, phone_number_id, wa_id, tipo, texto, payl
         # A.1 Botones de Navegación/Reenganche
         if payload_id.strip().lower() == "continuar" or payload_id == "BTN_ABRIR_MENU_OPCIONES":
             print("🚀 [DEBUG] Acción: Mostrar menú actual.")
-            Enviar_menu_quickreply(creador_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
+            Enviar_menu_quickreply(aspirante_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
             return True
 
         # A.2 Acciones del Menú (MENU_*)
@@ -3832,7 +3832,7 @@ def procesar_flujo_aspiranteV4(tenant, phone_number_id, wa_id, tipo, texto, payl
         # Aquí llegan el resto de botones (Ver guía, Agendar cita, etc.)
         if payload_id.startswith("MENU_"):
             print("⚡ [DEBUG] Acción: Ejecutar lógica de botón de menú (BD).")
-            accion_menu_estado_evaluacion(creador_id, payload_id, phone_number_id, token_cliente, estado_actual, wa_id)
+            accion_menu_estado_evaluacion(aspirante_id, payload_id, phone_number_id, token_cliente, estado_actual, wa_id)
             return True
 
     # --- B. TEXTO GENÉRICO (Reenganche) ---
@@ -3840,7 +3840,7 @@ def procesar_flujo_aspiranteV4(tenant, phone_number_id, wa_id, tipo, texto, payl
     # le mostramos el menú de su estado actual.
     if tipo == "text" and estado_actual:
         print(f"🔄 [DEBUG] Texto sin contexto temporal. Mostrando menú de estado '{estado_actual}'.")
-        Enviar_menu_quickreply(creador_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
+        Enviar_menu_quickreply(aspirante_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
         return True
 
     print("🔻 [DEBUG] Ningún caso coincidió. Pasando al Bot IA.")
@@ -3859,14 +3859,14 @@ def procesar_flujo_aspiranteV2(tenant, phone_number_id, wa_id, tipo, texto, payl
     # ------------------------------------------------------------------
     # 1. IDENTIFICACIÓN Y ESTADO (BASE DE DATOS)
     # ------------------------------------------------------------------
-    creador_id = obtener_creador_id_por_telefono(wa_id)
-    if not creador_id:
-        print("❌ [DEBUG] Usuario no encontrado en tabla creadores. Pasando al Bot General.")
+    aspirante_id = obtener_aspirante_id_por_telefono(wa_id)
+    if not aspirante_id:
+        print("❌ [DEBUG] Usuario no encontrado en tabla aspirantes. Pasando al Bot General.")
         return False  # No es aspirante
 
-    estado_creador = buscar_estado_creador(creador_id)
+    estado_creador = buscar_estado_creador(aspirante_id)
     if not estado_creador or not estado_creador.get("codigo_estado"):
-        print(f"⚠️ [DEBUG] Creador ID {creador_id} existe pero NO TIENE estado en BD.")
+        print(f"⚠️ [DEBUG] Creador ID {aspirante_id} existe pero NO TIENE estado en BD.")
         return False
 
     estado_actual = estado_creador["codigo_estado"]
@@ -3874,7 +3874,7 @@ def procesar_flujo_aspiranteV2(tenant, phone_number_id, wa_id, tipo, texto, payl
     token_cliente = current_token.get()
 
     # [LOG 2] Estado Crucial
-    print(f"💾 [DEBUG] ID Creador: {creador_id} | Estado en BD: '{estado_actual}'")
+    print(f"💾 [DEBUG] ID Creador: {aspirante_id} | Estado en BD: '{estado_actual}'")
 
     # ====================================================
     # CASO A: CLIC EN BOTONES (Payloads)
@@ -3885,19 +3885,19 @@ def procesar_flujo_aspiranteV2(tenant, phone_number_id, wa_id, tipo, texto, payl
         # A.1 Botón "Continuar" (Plantillas)
         if payload_id.strip().lower() == "continuar":
             print("🚀 [DEBUG] Acción: Reenganche plantilla.")
-            Enviar_menu_quickreply(creador_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
+            Enviar_menu_quickreply(aspirante_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
             return True
 
         # A.2 Botón "Opciones"
         if payload_id == "BTN_ABRIR_MENU_OPCIONES":
             print("📂 [DEBUG] Acción: Abrir menú opciones.")
-            Enviar_menu_quickreply(creador_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
+            Enviar_menu_quickreply(aspirante_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
             return True
 
         # A.3 Acciones del Menú (MENU_*)
         if payload_id.startswith("MENU_"):
             print("⚡ [DEBUG] Acción: Ejecutar lógica de botón de menú.")
-            accion_menu_estado_evaluacion(creador_id, payload_id, phone_number_id, token_cliente, estado_actual, wa_id)
+            accion_menu_estado_evaluacion(aspirante_id, payload_id, phone_number_id, token_cliente, estado_actual, wa_id)
             return True
 
     # ====================================================
@@ -3919,8 +3919,8 @@ def procesar_flujo_aspiranteV2(tenant, phone_number_id, wa_id, tipo, texto, payl
 
             if es_valido:
                 print("💾 [DEBUG] URL Válida. Guardando en BD...")
-                guardar_link_tiktok_live(creador_id, texto)
-                guardar_estado_eval(creador_id, "revision_link_tiktok")
+                guardar_link_tiktok_live(aspirante_id, texto)
+                guardar_estado_eval(aspirante_id, "revision_link_tiktok")
 
                 print("📤 [DEBUG] Enviando confirmación de éxito...")
                 # USAMOS TU FUNCIÓN CORRECTA (Token, PhoneID, Destino, Texto)
@@ -3949,7 +3949,7 @@ def procesar_flujo_aspiranteV2(tenant, phone_number_id, wa_id, tipo, texto, payl
 
         # Si prefieres enviar solo texto, usa enviar_msg_estado.
         # Si prefieres botones, usa Enviar_menu_quickreply.
-        Enviar_menu_quickreply(creador_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
+        Enviar_menu_quickreply(aspirante_id, estado_actual, msg_chat_bot, phone_number_id, token_cliente, wa_id)
 
         return True  # ✅ DETENER AQUÍ.
 
@@ -3966,19 +3966,19 @@ def procesar_flujo_aspiranteV1(tenant, phone_number_id, wa_id, tipo, texto, payl
     """
     # 1. Identificar al creador y estado
     # (Estas funciones deben venir de tu capa de base de datos)
-    creador_id = obtener_creador_id_por_telefono(wa_id)
-    if not creador_id:
+    aspirante_id = obtener_aspirante_id_por_telefono(wa_id)
+    if not aspirante_id:
         return False  # No es aspirante, pasar al bot normal
 
-    estado_creador = buscar_estado_creador(creador_id)
+    estado_creador = buscar_estado_creador(aspirante_id)
     if not estado_creador or not estado_creador.get("codigo_estado"):
-        print(f"⚠️ creador_id={creador_id} sin estado asociado")
+        print(f"⚠️ aspirante_id={aspirante_id} sin estado asociado")
         return False
 
     estado_actual = estado_creador["codigo_estado"]
 
     # [LOG 2] VER EL ESTADO REAL EN BD
-    print(f"💾 ESTADO EN BD: '{estado_actual}' (ID Creador: {creador_id})")
+    print(f"💾 ESTADO EN BD: '{estado_actual}' (ID Creador: {aspirante_id})")
 
     # -PENDIENTE REVISAR SI NO SE NECESITA ENVIAR MSG CHAT
     msg_chat_bot = estado_creador.get("mensaje_chatbot_simple") or "Selecciona una opción:"
@@ -3995,7 +3995,7 @@ def procesar_flujo_aspiranteV1(tenant, phone_number_id, wa_id, tipo, texto, payl
         # ✅ Botón continuar de plantilla
         if payload_id.strip().lower() == "continuar":
             Enviar_menu_quickreply(
-                creador_id,
+                aspirante_id,
                 estado_actual,
                 msg_chat_bot,
                 phone_number_id,
@@ -4006,13 +4006,13 @@ def procesar_flujo_aspiranteV1(tenant, phone_number_id, wa_id, tipo, texto, payl
 
         # A.1 Botón "Opciones" (Viene de Plantilla o Mensaje previo)
         if payload_id == "BTN_ABRIR_MENU_OPCIONES":
-            Enviar_menu_quickreply(creador_id, estado_actual,msg_chat_bot, phone_number_id, token_cliente, wa_id)
+            Enviar_menu_quickreply(aspirante_id, estado_actual,msg_chat_bot, phone_number_id, token_cliente, wa_id)
             return True
 
         # A.2 Acciones específicas del menú
         # Verificamos si el payload empieza con BTN_ para saber si es nuestro
         if payload_id.startswith("MENU_"):
-            accion_menu_estado_evaluacion(creador_id, payload_id, phone_number_id, token_cliente, estado_actual, wa_id)
+            accion_menu_estado_evaluacion(aspirante_id, payload_id, phone_number_id, token_cliente, estado_actual, wa_id)
             return True
 
     # ====================================================
@@ -4022,9 +4022,9 @@ def procesar_flujo_aspiranteV1(tenant, phone_number_id, wa_id, tipo, texto, payl
     #     es_valido = validar_url_link_tiktok_live(texto)
     #
     #     if es_valido:
-    #         guardar_link_tiktok_live(creador_id, texto)
+    #         guardar_link_tiktok_live(aspirante_id, texto)
     #         # Avanzar estado
-    #         guardar_estado_eval(creador_id, "revision_link_tiktok")
+    #         guardar_estado_eval(aspirante_id, "revision_link_tiktok")
     #         enviar_texto_simple(wa_id, "✅ Link recibido. Lo revisaremos pronto.", phone_number_id, token_cliente)
     #     else:
     #         enviar_texto_simple(wa_id, "❌ Link no válido. Asegúrate de copiar la URL de TikTok completa.",
@@ -4040,8 +4040,8 @@ def procesar_flujo_aspiranteV1(tenant, phone_number_id, wa_id, tipo, texto, payl
             es_valido = validar_url_link_tiktok_live(texto)
 
             if es_valido:
-                guardar_link_tiktok_live(creador_id, texto)
-                guardar_estado_eval(creador_id, "revision_link_tiktok")
+                guardar_link_tiktok_live(aspirante_id, texto)
+                guardar_estado_eval(aspirante_id, "revision_link_tiktok")
 
                 # 📍 CORRECCIÓN: Usamos tu función con el orden correcto de parámetros:
                 # 1. token_cliente
@@ -4072,7 +4072,7 @@ def procesar_flujo_aspiranteV1(tenant, phone_number_id, wa_id, tipo, texto, payl
     # le recordamos sus opciones enviando el menú de nuevo.
     if tipo == "text" and estado_actual:
         # Opcional: Solo si pasaron X horas o si la intención no es clara
-        Enviar_msg_estado(creador_id, estado_actual, phone_number_id, token_cliente, wa_id)
+        Enviar_msg_estado(aspirante_id, estado_actual, phone_number_id, token_cliente, wa_id)
         return True
 
     return False  # Si no coincide nada, dejar que el bot conversacional responda
@@ -4569,17 +4569,17 @@ async def _procesar_error_envio(status_obj, tenant, phone_id, token):
 
             # 1. Identificar al aspirante
             # Nota: Usamos recipient_id como wa_id (teléfono)
-            creador_id = obtener_creador_id_por_telefono(recipient_id)
+            aspirante_id = obtener_aspirante_id_por_telefono(recipient_id)
 
-            if creador_id:
+            if aspirante_id:
                 # 2. Buscar en qué estado se quedó para enviar la plantilla correcta
-                estado_actual = buscar_estado_creador(creador_id)
+                estado_actual = buscar_estado_creador(aspirante_id)
 
                 if estado_actual:
                     # 3. Enviar la PLANTILLA correspondiente
                     # Esta función ya la definimos en "Tarea 3" y sabe qué template usar
                     enviar_plantilla_estado_evaluacion(
-                        creador_id=creador_id,
+                        aspirante_id=aspirante_id,
                         estado_evaluacion=estado_actual,
                         phone_id=phone_id,
                         token=token,
@@ -4587,7 +4587,7 @@ async def _procesar_error_envio(status_obj, tenant, phone_id, token):
                     )
                     print(f"✅ Plantilla de recuperación enviada a {recipient_id}")
                 else:
-                    print(f"⚠️ No se encontró estado para creador {creador_id}, no se pudo enviar plantilla.")
+                    print(f"⚠️ No se encontró estado para creador {aspirante_id}, no se pudo enviar plantilla.")
             else:
                 print(f"⚠️ El destinatario {recipient_id} no es un aspirante registrado.")
 
@@ -4598,7 +4598,7 @@ async def _procesar_error_envio(status_obj, tenant, phone_id, token):
             print("⚠️ Mensaje no entregado: Usuario bloqueó al bot o no tiene WhatsApp.")
             # Aquí podrías marcar al usuario como 'inactivo' en tu BD
 
-def obtener_datos_envio_aspirante(creador_id):
+def obtener_datos_envio_aspirante(aspirante_id):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
@@ -4610,15 +4610,15 @@ def obtener_datos_envio_aspirante(creador_id):
                         cea.descripcion,
                         cea.mensaje_chatbot_simple,
                         cea.nombre_template
-                    FROM creadores c
-                    INNER JOIN perfil_creador pc
-                        ON pc.creador_id = c.id
+                    FROM aspirantes c
+                    INNER JOIN aspirantes_perfil pc
+                        ON pc.aspirante_id = c.id
                     LEFT JOIN chatbot_estados_aspirante cea
                         ON cea.id_chatbot_estado = pc.id_chatbot_estado
                     WHERE c.id = %s
                     LIMIT 1
                 """
-                cur.execute(sql, (creador_id,))
+                cur.execute(sql, (aspirante_id,))
                 row = cur.fetchone()
 
                 if not row:
@@ -4634,7 +4634,7 @@ def obtener_datos_envio_aspirante(creador_id):
                 }
 
     except Exception as e:
-        print(f"❌ Error al obtener datos de envío para creador {creador_id}:", e)
+        print(f"❌ Error al obtener datos de envío para creador {aspirante_id}:", e)
         return None
 
 
@@ -4663,9 +4663,9 @@ def obtener_mensaje_por_codigo(codigo_estado):
         return "Error recuperando mensaje."
 
 
-def actualizar_estado_aspirante_(creador_id, nuevo_codigo_estado):
+def actualizar_estado_aspirante_(aspirante_id, nuevo_codigo_estado):
     """
-    Actualiza el estado de un aspirante en perfil_creador basándose en el CÓDIGO de estado.
+    Actualiza el estado de un aspirante en aspirantes_perfil basándose en el CÓDIGO de estado.
     Primero busca el ID del estado y luego actualiza.
     """
     try:
@@ -4684,22 +4684,22 @@ def actualizar_estado_aspirante_(creador_id, nuevo_codigo_estado):
 
                 # 2. Actualizar el perfil del creador
                 sql_update = """
-                             UPDATE perfil_creador
+                             UPDATE aspirantes_perfil
                              SET id_chatbot_estado   = %s, \
                                  fecha_actualizacion = CURRENT_TIMESTAMP
-                             WHERE creador_id = %s \
+                             WHERE aspirante_id = %s \
                              """
-                cur.execute(sql_update, (new_id_estado, creador_id))
+                cur.execute(sql_update, (new_id_estado, aspirante_id))
                 conn.commit()
-                print(f"✅ Estado actualizado a '{nuevo_codigo_estado}' (ID: {new_id_estado}) para creador {creador_id}")
+                print(f"✅ Estado actualizado a '{nuevo_codigo_estado}' (ID: {new_id_estado}) para creador {aspirante_id}")
                 return True
 
     except Exception as e:
-        print(f"❌ Error actualizando estado para creador {creador_id}:", e)
+        print(f"❌ Error actualizando estado para creador {aspirante_id}:", e)
         return False
 
 
-def obtener_creador_id_por_telefono(telefono):
+def obtener_aspirante_id_por_telefono(telefono):
     """
     Busca el ID del creador a partir de su número de WhatsApp.
     """
@@ -4707,7 +4707,7 @@ def obtener_creador_id_por_telefono(telefono):
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 # Nota: Asegúrate de que el formato del teléfono en BD coincida (con o sin +)
-                cur.execute("SELECT id FROM creadores WHERE telefono = %s", (telefono,))
+                cur.execute("SELECT id FROM aspirantes WHERE telefono = %s", (telefono,))
                 row = cur.fetchone()
 
                 if row:
@@ -4802,7 +4802,7 @@ MENUS = {
 
 def Enviar_menu_quickreplyV3(
     *,
-    creador_id: int,
+    aspirante_id: int,
     estado_evaluacion: str,
     phone_id: str,
     token: str,
@@ -4840,7 +4840,7 @@ def Enviar_menu_quickreplyV3(
 
 
 
-def Enviar_menu_quickreply_V1(creador_id, estado_evaluacion, phone_id, token, telefono_override=None):
+def Enviar_menu_quickreply_V1(aspirante_id, estado_evaluacion, phone_id, token, telefono_override=None):
     """
     Envía un menú interactivo.
     - TEXTO y TELÉFONO: Se obtienen dinámicamente de la Base de Datos.
@@ -4937,7 +4937,7 @@ def Enviar_menu_quickreply_V1(creador_id, estado_evaluacion, phone_id, token, te
     # A. MODO PRODUCCIÓN (Sin override de teléfono)
     if not telefono_override:
         # Buscamos en la BD usando tu función SQL real
-        datos_db = obtener_datos_envio_aspirante(creador_id)
+        datos_db = obtener_datos_envio_aspirante(aspirante_id)
 
         if datos_db:
             telefono_destino = datos_db["telefono"]
@@ -4950,7 +4950,7 @@ def Enviar_menu_quickreply_V1(creador_id, estado_evaluacion, phone_id, token, te
             else:
                 print("⚠️ El estado en BD no tiene mensaje_chatbot_simple configurado.")
         else:
-            print(f"❌ Error CRÍTICO: No se encontraron datos para creador_id {creador_id}")
+            print(f"❌ Error CRÍTICO: No se encontraron datos para aspirante_id {aspirante_id}")
             return
 
     # B. MODO TESTING (Con override de teléfono desde React)
@@ -5049,13 +5049,13 @@ from pydantic import BaseModel
 
 # --- MODELOS DE DATOS (PYDANTIC) ---
 class EnvioPruebaRequest(BaseModel):
-    creador_id: int
+    aspirante_id: int
     estado_codigo: str
     tenant_name: str  # El Front envía el subdominio (ej: 'webhook_axec') para resolver credenciales
 
 
 class ActualizarEstadoRequest(BaseModel):
-    creador_id: int
+    aspirante_id: int
     estado_codigo: Optional[str] = None
 
 
@@ -5087,13 +5087,13 @@ def listar_estados_db():
 # =============================================================================
 # ENDPOINT 2: OBTENER ESTADO ACTUAL (Consultar Creador)
 # =============================================================================
-@router.get("/obtener-estado-actual/{creador_id}")
-def get_estado_actual(creador_id: int):
+@router.get("/obtener-estado-actual/{aspirante_id}")
+def get_estado_actual(aspirante_id: int):
     """
     Consulta el estado actual de un creador con metadata del chatbot.
     """
     try:
-        datos = obtener_datos_envio_aspirante(creador_id)
+        datos = obtener_datos_envio_aspirante(aspirante_id)
 
         if not datos:
             raise HTTPException(status_code=404, detail="Creador no encontrado en BD")
@@ -5121,7 +5121,7 @@ def guardar_estado_db(data: ActualizarEstadoRequest):
     Fuerza la actualización del estado de un creador en la base de datos.
     """
     try:
-        exito = actualizar_estado_aspirante_(data.creador_id, data.estado_codigo)
+        exito = actualizar_estado_aspirante_(data.aspirante_id, data.estado_codigo)
 
         if exito:
             return {"status": "success", "mensaje": f"Estado actualizado a '{data.estado_codigo}'."}
@@ -5165,9 +5165,9 @@ def enviar_mensaje_estado(data: EnvioPruebaRequest):
         current_phone_id.set(phone_id_cliente)
         current_business_name.set(business_name)
 
-        datos_creador = obtener_datos_envio_aspirante(data.creador_id)
+        datos_creador = obtener_datos_envio_aspirante(data.aspirante_id)
         if not datos_creador:
-            raise HTTPException(status_code=404, detail=f"Creador ID {data.creador_id} no existe")
+            raise HTTPException(status_code=404, detail=f"Creador ID {data.aspirante_id} no existe")
 
         telefono_destino = datos_creador["telefono"]
         estado_real = datos_creador["codigo_estado"]
@@ -5180,7 +5180,7 @@ def enviar_mensaje_estado(data: EnvioPruebaRequest):
         if en_ventana:
             print("✅ En ventana: Enviando MENÚ quick reply")
             Enviar_menu_quickreply(
-                creador_id=data.creador_id,
+                aspirante_id=data.aspirante_id,
                 estado_real=estado_real,
                 msg_chat_bot=texto_final,
                 phone_id=phone_id_cliente,
@@ -5274,16 +5274,16 @@ def enviar_mensaje_estadoV1(data: EnvioPruebaRequest):
         current_business_name.set(business_name)
 
         # C. VALIDAR DESTINATARIO
-        datos_creador = obtener_datos_envio_aspirante(data.creador_id)
+        datos_creador = obtener_datos_envio_aspirante(data.aspirante_id)
         if not datos_creador:
-            raise HTTPException(status_code=404, detail=f"Creador ID {data.creador_id} no existe")
+            raise HTTPException(status_code=404, detail=f"Creador ID {data.aspirante_id} no existe")
 
         telefono_destino = datos_creador["telefono"]
 
         # D. EJECUTAR EL ENVÍO
         # Pasamos las credenciales resueltas aquí
         Enviar_menu_quickreply(
-            creador_id=data.creador_id,
+            aspirante_id=data.aspirante_id,
             estado_evaluacion=datos_creador["codigo_estado"],  # ✅ VIENE DE BD
             phone_id=phone_id_cliente,
             token=token_cliente,
@@ -5302,7 +5302,7 @@ def enviar_mensaje_estadoV1(data: EnvioPruebaRequest):
 
 
 def Enviar_boton_opciones_unico(
-    creador_id: int,
+    aspirante_id: int,
     estado_evaluacion: str,
     phone_id: str,
     token: str,
@@ -5348,14 +5348,14 @@ def Enviar_boton_opciones_unico(
 
 
 
-def Enviar_menu_quickreply(creador_id, estado_real,msg_chat_bot, phone_id, token, telefono_destino):
+def Enviar_menu_quickreply(aspirante_id, estado_real,msg_chat_bot, phone_id, token, telefono_destino):
     """
     Envía el MENÚ de opciones (quick replies) basado en el estado REAL.
     Se usa desde webhook al hacer clic en MENU_OPCIONES.
     """
     texto_final = msg_chat_bot
 
-    print(f"🏗️ Desplegando menú para estado REAL: {estado_real} (creador_id={creador_id})")
+    print(f"🏗️ Desplegando menú para estado REAL: {estado_real} (aspirante_id={aspirante_id})")
 
     menu_config = MENUS.get(estado_real)
     if not menu_config:
@@ -5390,14 +5390,14 @@ def Enviar_menu_quickreply(creador_id, estado_real,msg_chat_bot, phone_id, token
 
 
 # ------ENVIAR MENU SIN MENSAJE INICIAL
-def Enviar_menu_quickreply_v4(creador_id, estado_real, phone_id, token, telefono_destino):
+def Enviar_menu_quickreply_v4(aspirante_id, estado_real, phone_id, token, telefono_destino):
     """
     Envía el MENÚ de opciones (quick replies) basado en el estado REAL.
     Se usa desde webhook al hacer clic en MENU_OPCIONES.
     """
     texto_final = "Elige una opción"
 
-    print(f"🏗️ Desplegando menú para estado REAL: {estado_real} (creador_id={creador_id})")
+    print(f"🏗️ Desplegando menú para estado REAL: {estado_real} (aspirante_id={aspirante_id})")
 
     menu_config = MENUS.get(estado_real)
     if not menu_config:
@@ -5432,9 +5432,9 @@ def Enviar_menu_quickreply_v4(creador_id, estado_real, phone_id, token, telefono
 
 
 
-def poblar_scores_creador(creador_id: int,telefono_webhook: str):
+def poblar_scores_creador(aspirante_id: int,telefono_webhook: str):
     """
-    Lee los datos crudos de perfil_creador,
+    Lee los datos crudos de aspirantes_perfil,
     normaliza variables según modelo y guarda en talento_variable_score.
     """
 
@@ -5465,14 +5465,14 @@ def poblar_scores_creador(creador_id: int,telefono_webhook: str):
                            frecuencia_lives,
                            tiempo_disponible,
                            intencion_trabajo
-                    FROM perfil_creador
-                    WHERE creador_id = %s
+                    FROM aspirantes_perfil
+                    WHERE aspirante_id = %s
                     LIMIT 1
-                """, (creador_id,))
+                """, (aspirante_id,))
 
                 row = cur.fetchone()
                 if not row:
-                    print(f"⚠️ No se encontró el creador {creador_id}")
+                    print(f"⚠️ No se encontró el creador {aspirante_id}")
                     return False
 
                 nombres_columnas = [desc[0] for desc in cur.description]
@@ -5559,20 +5559,20 @@ def poblar_scores_creador(creador_id: int,telefono_webhook: str):
                         score_final = max(1, min(5, score_final))
 
                         registros_a_insertar.append(
-                            (creador_id, var_id, score_final)
+                            (aspirante_id, var_id, score_final)
                         )
 
                 # 4. Guardar en BD
                 if registros_a_insertar:
 
                     cur.execute(
-                        "DELETE FROM diagnostico_score_variable WHERE creador_id = %s",
-                        (creador_id,)
+                        "DELETE FROM diagnostico_score_variable WHERE aspirante_id = %s",
+                        (aspirante_id,)
                     )
 
                     query_insert = """
                         INSERT INTO diagnostico_score_variable
-                        (creador_id, variable_id, valor)
+                        (aspirante_id, variable_id, valor)
                         VALUES (%s, %s, %s)
                     """
 
@@ -5590,7 +5590,7 @@ def poblar_scores_creador(creador_id: int,telefono_webhook: str):
         print(f"❌ Error: {e}")
         return False
 
-def poblar_categoria_1(creador_id: int):
+def poblar_categoria_1(aspirante_id: int):
     """
     Población exclusiva de variables con categoria_id = 1
     (Variables que ya vienen normalizadas 1-5).
@@ -5616,14 +5616,14 @@ def poblar_categoria_1(creador_id: int):
                 # 2. Obtener perfil del creador
                 cur.execute("""
                     SELECT *
-                    FROM perfil_creador
-                    WHERE creador_id = %s
+                    FROM aspirantes_perfil
+                    WHERE aspirante_id = %s
                     LIMIT 1
-                """, (creador_id,))
+                """, (aspirante_id,))
 
                 row = cur.fetchone()
                 if not row:
-                    print(f"⚠️ No existe creador {creador_id}")
+                    print(f"⚠️ No existe creador {aspirante_id}")
                     return False
 
                 columnas = [desc[0] for desc in cur.description]
@@ -5650,7 +5650,7 @@ def poblar_categoria_1(creador_id: int):
                     # 🔒 Asegurar rango 1 - 5
                     score = max(1, min(5, score))
 
-                    registros.append((creador_id, var_id, score))
+                    registros.append((aspirante_id, var_id, score))
 
                 # 4. Guardar
                 if registros:
@@ -5658,16 +5658,16 @@ def poblar_categoria_1(creador_id: int):
                     # Borrar solo categoría 1 previamente almacenada
                     cur.execute("""
                         DELETE FROM diagnostico_score_variable
-                        WHERE creador_id = %s
+                        WHERE aspirante_id = %s
                           AND variable_id IN (
                               SELECT id FROM diagnostico_variable
                               WHERE categoria_id = 1
                           )
-                    """, (creador_id,))
+                    """, (aspirante_id,))
 
                     insert_query = """
                         INSERT INTO diagnostico_score_variable
-                        (creador_id, variable_id, valor)
+                        (aspirante_id, variable_id, valor)
                         VALUES (%s, %s, %s)
                     """
 
@@ -5804,12 +5804,12 @@ def consolidar_perfil_webV1(
             usuario_bd = buscar_usuario_por_telefono(data.numero)
 
             nombre_usuario = usuario_bd.get("nombre") if usuario_bd else None
-            creador_id = usuario_bd.get("id") if usuario_bd else None
+            aspirante_id = usuario_bd.get("id") if usuario_bd else None
 
         except Exception as e:
             print(f"⚠️ Error obteniendo usuario {data.numero}: {e}")
             nombre_usuario = None
-            creador_id = None
+            aspirante_id = None
 
         # -------------------------------
         # Marcar encuesta completada
@@ -5819,7 +5819,7 @@ def consolidar_perfil_webV1(
         # -------------------------------
         # Guardar diagnóstico
         # -------------------------------
-        if creador_id and respuestas_dict:
+        if aspirante_id and respuestas_dict:
 
             with get_connection_context() as conn:
 
@@ -5837,8 +5837,8 @@ def consolidar_perfil_webV1(
                 # 2️⃣ Borrar scores anteriores del creador
                 cur.execute("""
                     DELETE FROM diagnostico_score_variable
-                    WHERE creador_id = %s
-                """, (creador_id,))
+                    WHERE aspirante_id = %s
+                """, (aspirante_id,))
 
                 inserts = []
 
@@ -5851,12 +5851,12 @@ def consolidar_perfil_webV1(
                     if valor and str(valor).isdigit():
 
                         inserts.append((
-                            creador_id,
+                            aspirante_id,
                             pregunta_id,
                             int(valor)
                         ))
 
-                    # Actualizar perfil_creador
+                    # Actualizar aspirantes_perfil
                     if campo_db:
 
                         # Seguridad básica
@@ -5864,19 +5864,19 @@ def consolidar_perfil_webV1(
                             continue
 
                         query = f"""
-                            UPDATE perfil_creador
+                            UPDATE aspirantes_perfil
                             SET {campo_db} = %s
-                            WHERE creador_id = %s
+                            WHERE aspirante_id = %s
                         """
 
-                        cur.execute(query, (valor, creador_id))
+                        cur.execute(query, (valor, aspirante_id))
 
                 # 4️⃣ Insert masivo
                 if inserts:
 
                     cur.executemany("""
                         INSERT INTO diagnostico_score_variable
-                        (creador_id, variable_id, valor)
+                        (aspirante_id, variable_id, valor)
                         VALUES (%s,%s,%s)
                     """, inserts)
 
@@ -5888,12 +5888,12 @@ def consolidar_perfil_webV1(
                 if not datos_pais.get("error"):
 
                     cur.execute("""
-                        UPDATE perfil_creador
+                        UPDATE aspirantes_perfil
                         SET pais = %s
-                        WHERE creador_id = %s
+                        WHERE aspirante_id = %s
                     """, (
                         datos_pais.get("nombre_pais"),
-                        creador_id
+                        aspirante_id
                     ))
 
                 conn.commit()
@@ -5904,11 +5904,11 @@ def consolidar_perfil_webV1(
         tenant_key = subdominio if subdominio != "public" else "test"
 
         url_info = None
-        if creador_id:
+        if aspirante_id:
 
             url_info = (
                 f"https://{tenant_key}.talentum-manager.com/"
-                f"info-incorporacion?cid={creador_id}"
+                f"info-incorporacion?cid={aspirante_id}"
             )
 
         # -------------------------------
@@ -6004,13 +6004,13 @@ def consolidar_perfil_web(
             usuario_bd = buscar_usuario_por_telefono(data.numero)
 
             nombre_usuario = usuario_bd.get("nombre") if usuario_bd else None
-            creador_id = usuario_bd.get("id") if usuario_bd else None
+            aspirante_id = usuario_bd.get("id") if usuario_bd else None
 
         except Exception as e:
 
             print(f"⚠️ Error obteniendo usuario {data.numero}: {e}")
             nombre_usuario = None
-            creador_id = None
+            aspirante_id = None
 
         # -------------------------------
         # Marcar encuesta completada
@@ -6020,7 +6020,7 @@ def consolidar_perfil_web(
         # -------------------------------
         # Guardar diagnóstico
         # -------------------------------
-        if creador_id and respuestas_dict:
+        if aspirante_id and respuestas_dict:
 
             with get_connection_context() as conn:
 
@@ -6048,19 +6048,19 @@ def consolidar_perfil_web(
 
                         cur.execute("""
                                     INSERT INTO diagnostico_score_variable
-                                        (creador_id, variable_id, valor_id)
-                                    VALUES (%s, %s, %s) ON CONFLICT (creador_id, variable_id)
+                                        (aspirante_id, variable_id, valor_id)
+                                    VALUES (%s, %s, %s) ON CONFLICT (aspirante_id, variable_id)
                             DO
                                     UPDATE SET
                                         valor_id = EXCLUDED.valor_id
                                     """, (
-                                        creador_id,
+                                        aspirante_id,
                                         pregunta_id,
                                         valor_int
                                     ))
 
                     # -------------------------------
-                    # Actualizar perfil_creador
+                    # Actualizar aspirantes_perfil
                     # -------------------------------
                     if campo_db:
 
@@ -6068,12 +6068,12 @@ def consolidar_perfil_web(
                             continue
 
                         query = f"""
-                            UPDATE perfil_creador
+                            UPDATE aspirantes_perfil
                             SET {campo_db} = %s
-                            WHERE creador_id = %s
+                            WHERE aspirante_id = %s
                         """
 
-                        cur.execute(query, (valor, creador_id))
+                        cur.execute(query, (valor, aspirante_id))
 
                         if campo_db == "nombre":
                             nombre_usuario = valor
@@ -6087,11 +6087,11 @@ def consolidar_perfil_web(
 
         url_info = None
 
-        if creador_id:
+        if aspirante_id:
 
             url_info = (
                 f"https://{tenant_key}.talentum-manager.com/"
-                f"info-incorporacion?cid={creador_id}"
+                f"info-incorporacion?cid={aspirante_id}"
             )
 
         # -------------------------------
@@ -6182,12 +6182,12 @@ def consolidar_perfil_webV0(
             usuario_bd = buscar_usuario_por_telefono(data.numero)
 
             nombre_usuario = usuario_bd.get("nombre") if usuario_bd else None
-            creador_id = usuario_bd.get("id") if usuario_bd else None
+            aspirante_id = usuario_bd.get("id") if usuario_bd else None
 
         except Exception as e:
             print(f"⚠️ Error obteniendo usuario {data.numero}: {e}")
             nombre_usuario = None
-            creador_id = None
+            aspirante_id = None
 
         # -------------------------------
         # Marcar encuesta completada
@@ -6197,7 +6197,7 @@ def consolidar_perfil_webV0(
         # -------------------------------
         # Guardar diagnóstico
         # -------------------------------
-        if creador_id and respuestas_dict:
+        if aspirante_id and respuestas_dict:
 
             with get_connection_context() as conn:
 
@@ -6215,8 +6215,8 @@ def consolidar_perfil_webV0(
                 # Borrar respuestas anteriores
                 cur.execute("""
                     DELETE FROM diagnostico_score_variable
-                    WHERE creador_id = %s
-                """, (creador_id,))
+                    WHERE aspirante_id = %s
+                """, (aspirante_id,))
 
                 inserts = []
 
@@ -6229,31 +6229,31 @@ def consolidar_perfil_webV0(
                     if valor and str(valor).isdigit():
 
                         inserts.append((
-                            creador_id,
+                            aspirante_id,
                             pregunta_id,
                             int(valor)
                         ))
 
-                    # Actualizar perfil_creador si corresponde
+                    # Actualizar aspirantes_perfil si corresponde
                     if campo_db:
 
                         if not campo_db.replace("_", "").isalnum():
                             continue
 
                         query = f"""
-                            UPDATE perfil_creador
+                            UPDATE aspirantes_perfil
                             SET {campo_db} = %s
-                            WHERE creador_id = %s
+                            WHERE aspirante_id = %s
                         """
 
-                        cur.execute(query, (valor, creador_id))
+                        cur.execute(query, (valor, aspirante_id))
 
                 # Insert masivo
                 if inserts:
 
                     cur.executemany("""
                         INSERT INTO diagnostico_score_variable
-                        (creador_id, variable_id, valor)
+                        (aspirante_id, variable_id, valor)
                         VALUES (%s,%s,%s)
                     """, inserts)
 
@@ -6265,11 +6265,11 @@ def consolidar_perfil_webV0(
         tenant_key = subdominio if subdominio != "public" else "test"
 
         url_info = None
-        if creador_id:
+        if aspirante_id:
 
             url_info = (
                 f"https://{tenant_key}.talentum-manager.com/"
-                f"info-incorporacion?cid={creador_id}"
+                f"info-incorporacion?cid={aspirante_id}"
             )
 
         # -------------------------------

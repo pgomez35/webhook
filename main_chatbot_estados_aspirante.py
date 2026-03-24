@@ -1,7 +1,7 @@
 # app/routes/main_chatbot_estados_aspirante.py
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field, constr
+from pydantic import BaseModel, constr
 import psycopg2
 
 # ✅ Importa tu contexto de conexión (respeta tenant/search_path)

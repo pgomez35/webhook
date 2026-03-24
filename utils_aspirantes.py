@@ -16,17 +16,17 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, Tuple
 
 # # --- MOCK DE BASE DE DATOS (Reemplaza con tu lógica real SQL) ---
-# def guardar_estado_eval(creador_id, estado):
-#     # UPDATE perfil_creador SET estado_evaluacion = estado WHERE creador_id = creador_id
-#     print(f"💾 BD: Estado actualizado a '{estado}' para ID {creador_id}")
+# def guardar_estado_eval(aspirante_id, estado):
+#     # UPDATE aspirantes_perfil SET estado_evaluacion = estado WHERE aspirante_id = aspirante_id
+#     print(f"💾 BD: Estado actualizado a '{estado}' para ID {aspirante_id}")
 # Asegúrate de importar tu conexión
 # from .db_config import get_connection_context
 
-def guardar_estado_eval(creador_id, codigo_estado):
+def guardar_estado_eval(aspirante_id, codigo_estado):
     """
-    Actualiza la tabla perfil_creador con el nuevo estado.
+    Actualiza la tabla aspirantes_perfil con el nuevo estado.
     1. Busca el ID numérico del estado en 'chatbot_estados_aspirante' usando el código.
-    2. Actualiza 'perfil_creador'.
+    2. Actualiza 'aspirantes_perfil'.
     """
     try:
         with get_connection_context() as conn:
@@ -50,23 +50,23 @@ def guardar_estado_eval(creador_id, codigo_estado):
 
                 # PASO 2: Actualizar el perfil del creador
                 query_update = """
-                               UPDATE perfil_creador
+                               UPDATE aspirantes_perfil
                                SET id_chatbot_estado = %s
-                               WHERE creador_id = %s \
+                               WHERE aspirante_id = %s \
                                """
-                cur.execute(query_update, (id_estado_numerico, creador_id))
+                cur.execute(query_update, (id_estado_numerico, aspirante_id))
                 conn.commit()
 
-                print(f"💾 BD Actualizada: Creador {creador_id} -> Estado '{codigo_estado}' (ID: {id_estado_numerico})")
+                print(f"💾 BD Actualizada: Creador {aspirante_id} -> Estado '{codigo_estado}' (ID: {id_estado_numerico})")
                 return True
 
     except Exception as e:
         print(f"❌ Error al guardar estado en BD: {e}")
         return False
 
-def buscar_estado_creador(creador_id):
+def buscar_estado_creador(aspirante_id):
     """
-    Obtiene el estado actual del creador a partir de perfil_creador
+    Obtiene el estado actual del creador a partir de aspirantes_perfil
     y trae:
     - codigo_estado
     - mensaje_frontend_simple
@@ -80,12 +80,12 @@ def buscar_estado_creador(creador_id):
                         cea.codigo,
                         cea.mensaje_frontend_simple,
                         cea.mensaje_chatbot_simple
-                    FROM perfil_creador pc
+                    FROM aspirantes_perfil pc
                     INNER JOIN chatbot_estados_aspirante cea
                         ON pc.id_chatbot_estado = cea.id_chatbot_estado
-                    WHERE pc.creador_id = %s
+                    WHERE pc.aspirante_id = %s
                 """
-                cur.execute(sql, (creador_id,))
+                cur.execute(sql, (aspirante_id,))
                 row = cur.fetchone()
 
                 if row:
@@ -98,18 +98,18 @@ def buscar_estado_creador(creador_id):
                 return None
 
     except Exception as e:
-        print(f"❌ Error al buscar estado del creador {creador_id}: {e}")
+        print(f"❌ Error al buscar estado del creador {aspirante_id}: {e}")
         return None
 
 
 
-def obtener_creador_id_por_telefono(telefono):
-    # SELECT creador_id FROM perfil_creador WHERE telefono = ...
+def obtener_aspirante_id_por_telefono(telefono):
+    # SELECT aspirante_id FROM aspirantes_perfil WHERE telefono = ...
     return 3236
 
 
-# def guardar_link_tiktok_live(creador_id, url):
-#     # UPDATE perfil_creador SET link_tiktok = url WHERE ...
+# def guardar_link_tiktok_live(aspirante_id, url):
+#     # UPDATE aspirantes_perfil SET link_tiktok = url WHERE ...
 #     print(f"💾 URL guardada: {url}")
 
 from datetime import datetime
@@ -118,7 +118,7 @@ from datetime import datetime
 # Asegúrate de importar tu conexión
 # from .db_config import get_connection_context
 
-def guardar_link_tiktok_live(creador_id, url_tiktok):
+def guardar_link_tiktok_live(aspirante_id, url_tiktok):
     """
     Guarda la URL del Live de TikTok en la tabla de agendamientos.
     1. Busca el último agendamiento tipo 'LIVE' del creador.
@@ -132,19 +132,19 @@ def guardar_link_tiktok_live(creador_id, url_tiktok):
                 # PASO 1: Buscar si ya existe un agendamiento 'LIVE' reciente (pendiente o programado)
                 query_buscar = """
                                SELECT id \
-                               FROM test.agendamientos
-                               WHERE creador_id = %s
+                               FROM agendamientos
+                               WHERE aspirante_id = %s
                                  AND tipo_agendamiento = 'LIVE'
                                ORDER BY id DESC LIMIT 1 \
                                """
-                cur.execute(query_buscar, (creador_id,))
+                cur.execute(query_buscar, (aspirante_id,))
                 resultado = cur.fetchone()
 
                 if resultado:
                     # --- ESCENARIO A: ACTUALIZAR EXISTENTE ---
                     agendamiento_id = resultado[0]
                     query_update = """
-                                   UPDATE test.agendamientos
+                                   UPDATE agendamientos
                                    SET link_meet      = %s,
                                        actualizado_en = NOW()
                                    WHERE id = %s \
@@ -155,23 +155,23 @@ def guardar_link_tiktok_live(creador_id, url_tiktok):
                 else:
                     # --- ESCENARIO B: CREAR NUEVO (Si no había cita previa) ---
                     # Creamos un registro base para no perder el link
-                    titulo = f"Prueba TikTok Live - Creador {creador_id}"
+                    titulo = f"Prueba TikTok Live - Creador {aspirante_id}"
                     descripcion = "El usuario envió el link manualmente a través del Chatbot."
 
                     query_insert = """
-                                   INSERT INTO test.agendamientos
-                                   (creador_id, tipo_agendamiento, link_meet, estado, titulo, descripcion, creado_en)
+                                   INSERT INTO agendamientos
+                                   (aspirante_id, tipo_agendamiento, link_meet, estado, titulo, descripcion, creado_en)
                                    VALUES (%s, 'LIVE', %s, 'pendiente', %s, %s, NOW()) RETURNING id \
                                    """
-                    cur.execute(query_insert, (creador_id, url_tiktok, titulo, descripcion))
+                    cur.execute(query_insert, (aspirante_id, url_tiktok, titulo, descripcion))
                     nuevo_id = cur.fetchone()[0]
 
                     # Opcional: Registrar también en la tabla de participantes para mantener consistencia
                     query_participante = """
-                                         INSERT INTO test.agendamientos_participantes (agendamiento_id, creador_id, estado)
+                                         INSERT INTO agendamientos_participantes (agendamiento_id, aspirante_id, estado)
                                          VALUES (%s, %s, 'pendiente') \
                                          """
-                    cur.execute(query_participante, (nuevo_id, creador_id))
+                    cur.execute(query_participante, (nuevo_id, aspirante_id))
 
                     print(f"🆕 Nuevo agendamiento 'LIVE' creado (ID: {nuevo_id}) con Link TikTok.")
 
@@ -201,7 +201,7 @@ def validar_url_link_tiktok_live(url):
     return bool(re.match(patron, url))
 
 
-def Enviar_msg_estado(creador_id, estado_evaluacion, phone_id, token, telefono):
+def Enviar_msg_estado(aspirante_id, estado_evaluacion, phone_id, token, telefono):
     """
     Envía mensaje motivante + Botón 'Opciones' (QuickReply).
     Se usa cuando estamos DENTRO de la ventana de 24h.
@@ -233,7 +233,7 @@ def Enviar_msg_estado(creador_id, estado_evaluacion, phone_id, token, telefono):
     enviar_a_meta(payload, phone_id, token)
 
 
-def enviar_plantilla_estado_evaluacion(creador_id, estado_evaluacion, phone_id, token, telefono):
+def enviar_plantilla_estado_evaluacion(aspirante_id, estado_evaluacion, phone_id, token, telefono):
     """
     Envía una plantilla aprobada por Meta.
     Se usa cuando estamos FUERA de la ventana de 24h.
@@ -265,7 +265,7 @@ def enviar_plantilla_estado_evaluacion(creador_id, estado_evaluacion, phone_id, 
     }
     enviar_a_meta(payload, phone_id, token)
 
-def Enviar_menu_quickreply(creador_id, estado_evaluacion, phone_id, token, telefono):
+def Enviar_menu_quickreply(aspirante_id, estado_evaluacion, phone_id, token, telefono):
     texto_menu = "Elige una opción:"
     botones = []
 
@@ -399,7 +399,7 @@ def Enviar_menu_quickreply(creador_id, estado_evaluacion, phone_id, token, telef
     enviar_a_meta(payload, phone_id, token)
 
 
-def Enviar_menu_quickreplyV0(creador_id, estado_evaluacion, phone_id, token, telefono):
+def Enviar_menu_quickreplyV0(aspirante_id, estado_evaluacion, phone_id, token, telefono):
     botones = []
     texto_menu = "Elige una opción:"
 
@@ -434,7 +434,7 @@ def Enviar_menu_quickreplyV0(creador_id, estado_evaluacion, phone_id, token, tel
 
     enviar_a_meta(payload, phone_id, token)
 
-def Enviar_menu_quickreplyV1(creador_id, estado_evaluacion, phone_id, token, telefono):
+def Enviar_menu_quickreplyV1(aspirante_id, estado_evaluacion, phone_id, token, telefono):
     texto_menu = "Elige una opción:"
     botones = []
 
@@ -567,7 +567,7 @@ def Enviar_menu_quickreplyV1(creador_id, estado_evaluacion, phone_id, token, tel
 
 
 def accion_menu_estado_evaluacion(
-    creador_id: int,
+    aspirante_id: int,
     button_id: str,
     phone_id: str,
     token: str,
@@ -625,7 +625,7 @@ def accion_menu_estado_evaluacion(
         )
         return
         # # Cambiamos estado para que el próximo mensaje de texto sea capturado como URL
-        # guardar_estado_eval(creador_id, "esperando_link_tiktok_live")
+        # guardar_estado_eval(aspirante_id, "esperando_link_tiktok_live")
         # enviar_texto_simple(
         #     telefono,
         #     "🔗 Por favor, pega aquí el enlace de tu TikTok LIVE:",
@@ -635,7 +635,7 @@ def accion_menu_estado_evaluacion(
         # return
 
     if button_id == "MENU_INGRESAR_LINK_TIKTOK_2":
-        guardar_estado_eval(creador_id, "esperando_link_tiktok_live_2")
+        guardar_estado_eval(aspirante_id, "esperando_link_tiktok_live_2")
         enviar_texto_simple(
             telefono,
             "🔗 Por favor, pega aquí el enlace de tu *segundo* TikTok LIVE:",
@@ -775,7 +775,7 @@ def accion_menu_estado_evaluacion(
     # GRUPO 5: ACCIONES CRÍTICAS (Aceptar oferta / Hablar con Humano)
     # ==========================================================
     if button_id == "MENU_ACEPTAR_INCORPORACION":
-        guardar_estado_eval(creador_id, "incorporacion_en_tramite")
+        guardar_estado_eval(aspirante_id, "incorporacion_en_tramite")
         enviar_texto_simple(
             telefono,
             "🎉 ¡Bienvenido a la familia! Un administrador te contactará pronto para finalizar el papeleo.",
@@ -808,7 +808,7 @@ def accion_menu_estado_evaluacion(
     )
 
 
-def accion_menu_estado_evaluacionV0(creador_id, button_id, phone_id, token, estado_evaluacion, telefono):
+def accion_menu_estado_evaluacionV0(aspirante_id, button_id, phone_id, token, estado_evaluacion, telefono):
     """
     Ejecuta la acción final cuando el usuario selecciona una opción del menú.
     """
@@ -816,7 +816,7 @@ def accion_menu_estado_evaluacionV0(creador_id, button_id, phone_id, token, esta
 
     if button_id == "BTN_ENVIAR_LINK_TIKTOK" and estado_evaluacion == "solicitud_agendamiento_tiktok":
         # 1. Cambiar estado para esperar texto
-        guardar_estado_eval(creador_id, "solicitud_link_enviado")
+        guardar_estado_eval(aspirante_id, "solicitud_link_enviado")
 
         # 2. Pedir al usuario que escriba
         enviar_texto_simple(telefono, "Por favor, pega aquí la URL de tu TikTok Live:", phone_id, token)
@@ -850,7 +850,7 @@ import traceback
 
 
 # Importar tus funciones de lógica de negocio (ajusta los imports según tu estructura)
-# from services.aspirant_service import buscar_estado_creador, obtener_creador_id_por_telefono, enviar_plantilla_estado_evaluacion
+# from services.aspirant_service import buscar_estado_creador, obtener_aspirante_id_por_telefono, enviar_plantilla_estado_evaluacion
 # from services.db_service import actualizar_mensaje_desde_status
 
 async def _handle_statuses(statuses, tenant_name, phone_number_id, token_access, raw_payload):
@@ -887,7 +887,7 @@ def actualizar_mensaje_desde_status(
     raw_payload: dict,
 ) -> None:
     """
-    Actualiza el estado de un mensaje en test.mensajes_whatsapp
+    Actualiza el estado de un mensaje en mensajes_whatsapp
     usando message_id_meta.
     """
     try:
@@ -1041,11 +1041,11 @@ async def _procesar_error_envioV0(status_obj, tenant, phone_id, token):
 
             # 1. Identificar al aspirante
             # Nota: Usamos recipient_id como wa_id (teléfono)
-            creador_id = obtener_creador_id_por_telefono(recipient_id)
+            aspirante_id = obtener_aspirante_id_por_telefono(recipient_id)
 
-            if creador_id:
+            if aspirante_id:
                 # 2. Buscar en qué estado se quedó para enviar la plantilla correcta
-                estado_actual = buscar_estado_creador(creador_id)
+                estado_actual = buscar_estado_creador(aspirante_id)
 
                 if estado_actual:
                     # 3. Enviar la PLANTILLA correspondiente
@@ -1053,7 +1053,7 @@ async def _procesar_error_envioV0(status_obj, tenant, phone_id, token):
                     codigo_estado = estado_actual.get("codigo_estado")
 
                     enviar_plantilla_estado_evaluacion(
-                        creador_id=creador_id,
+                        aspirante_id=aspirante_id,
                         estado_evaluacion=codigo_estado,  # 👈 SOLO el string,
                         phone_id=phone_id,
                         token=token,
@@ -1061,7 +1061,7 @@ async def _procesar_error_envioV0(status_obj, tenant, phone_id, token):
                     )
                     print(f"✅ Plantilla de recuperación enviada a {recipient_id}")
                 else:
-                    print(f"⚠️ No se encontró estado para creador {creador_id}, no se pudo enviar plantilla.")
+                    print(f"⚠️ No se encontró estado para creador {aspirante_id}, no se pudo enviar plantilla.")
             else:
                 print(f"⚠️ El destinatario {recipient_id} no es un aspirante registrado.")
 
@@ -1123,7 +1123,7 @@ def enviar_confirmacion_interactiva(numero, nickname, phone_id, token):
 from redis_client import actualizar_flujo, obtener_flujo, eliminar_flujo
 
 
-def manejar_input_link_tiktok(creador_id, wa_id, tipo, texto, payload, token, phone_id):
+def manejar_input_link_tiktok(aspirante_id, wa_id, tipo, texto, payload, token, phone_id):
     """
     PROCESADOR: Solo actúa si el usuario ya tiene la bandera de Redis activa.
     No maneja el clic inicial (eso lo hace accion_menu_estado_evaluacion).
@@ -1157,8 +1157,8 @@ def manejar_input_link_tiktok(creador_id, wa_id, tipo, texto, payload, token, ph
         # Lógica de Validación
         if validar_url_link_tiktok_live(texto):
             # ✅ ÉXITO
-            guardar_link_tiktok_live(creador_id, texto)  # Guardar dato
-            # guardar_estado_eval(creador_id, "revision_link_tiktok")  # Avanzar estado negocio
+            guardar_link_tiktok_live(aspirante_id, texto)  # Guardar dato
+            # guardar_estado_eval(aspirante_id, "revision_link_tiktok")  # Avanzar estado negocio
             eliminar_flujo(wa_id)  # Limpiar memoria
 
             enviar_mensaje_texto_simple(
@@ -1178,7 +1178,7 @@ def manejar_input_link_tiktok(creador_id, wa_id, tipo, texto, payload, token, ph
     return False
 
 
-def manejar_input_link_tiktokv1(creador_id, wa_id, tipo, texto, payload, token, phone_id):
+def manejar_input_link_tiktokv1(aspirante_id, wa_id, tipo, texto, payload, token, phone_id):
     """
     Gestiona el micro-flujo para capturar el Link de TikTok usando Redis.
     Retorna True si el mensaje fue procesado (consumido).
@@ -1227,8 +1227,8 @@ def manejar_input_link_tiktokv1(creador_id, wa_id, tipo, texto, payload, token, 
         if validar_url_link_tiktok_live(texto):
             # ✅ ÉXITO
             # 1. Persistencia Permanente (Postgres)
-            guardar_link_tiktok_live(creador_id, texto)
-            guardar_estado_eval(creador_id, "revision_link_tiktok")  # Avanzamos estado de negocio
+            guardar_link_tiktok_live(aspirante_id, texto)
+            guardar_estado_eval(aspirante_id, "revision_link_tiktok")  # Avanzamos estado de negocio
 
             # 2. Limpieza Temporal (Redis) - Ya no necesitamos esperar
             eliminar_flujo(wa_id)
@@ -1262,7 +1262,7 @@ def obtener_configuracion_texto(clave, valor_por_defecto="Información no dispon
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                query = "SELECT valor FROM test.configuracion_agencia WHERE clave = %s"
+                query = "SELECT valor FROM configuracion_agencia WHERE clave = %s"
                 cur.execute(query, (clave,))
                 resultado = cur.fetchone()
 
@@ -1290,7 +1290,7 @@ def obtener_status_24hrs(telefono):
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 # 1. Buscamos el último mensaje ENTRANTE (inbound) de ese teléfono
-                # Usamos la tabla 'test.mensajes_whatsapp'
+                # Usamos la tabla 'mensajes_whatsapp'
                 query = """
                     SELECT fecha
                     FROM mensajes_whatsapp
@@ -1336,7 +1336,7 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------------------------
 
 
-# def Enviar_menu_quickreply(creador_id, estado_evaluacion, phone_id, token, telefono):
+# def Enviar_menu_quickreply(aspirante_id, estado_evaluacion, phone_id, token, telefono):
 #     """
 #     Envía el menú real de opciones según el estado.
 #     Se ejecuta cuando el usuario da clic en "Opciones".

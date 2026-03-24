@@ -10,7 +10,7 @@ from typing import Optional, List, Literal, Dict, Any
 
 from main_auth import obtener_usuario_actual
 from enviar_msg_wp import enviar_plantilla_generica_parametros, enviar_plantilla_generica
-from main_Agendamiento import crear_evento
+from main_agendamiento import crear_evento
 
 from main_webhook import enviar_mensaje, validar_link_tiktok
 from tenant import current_tenant
@@ -52,7 +52,7 @@ RESULTADO_TO_ESTADO_ID = {
 
 
 class AgendamientoBase(BaseModel):
-    creador_id: int
+    aspirante_id: int
     fecha_programada: datetime
     duracion_minutos: Optional[int] = 30  # Agregar este campo
     usuario_programa: Optional[int] = None
@@ -64,7 +64,7 @@ class AgendamientoCreate(AgendamientoBase):
 class AgendamientoOut(BaseModel):
     id: int
     entrevista_id: int
-    creador_id: int
+    aspirante_id: int
     fecha_programada: datetime
     duracion_minutos: Optional[int]
     realizada: bool
@@ -78,7 +78,7 @@ class AgendamientoOut(BaseModel):
 # =====================
 
 class EntrevistaBase(BaseModel):
-    creador_id: int
+    aspirante_id: int
     usuario_evalua: Optional[int] = None
     resultado: Optional[str] = None
     observaciones: Optional[str] = None
@@ -117,7 +117,7 @@ class EntrevistaDetalleOut(EntrevistaOut):
 from schemas import EventoIn,EventoOut
 
 from zoneinfo import ZoneInfo
-from main_Agendamiento import obtener_entrevista_id,obtener_entrevista_id
+from main_agendamiento import obtener_entrevista_id,obtener_entrevista_id
 
 from typing import Optional, Dict, Any
 from datetime import timedelta
@@ -137,7 +137,7 @@ def insertar_agendamiento(data: dict) -> Optional[Dict[str, Any]]:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
 
-                creador_id = data["creador_id"]
+                aspirante_id = data["aspirante_id"]
                 fecha_inicio = data["fecha_programada"]
                 duracion_minutos = data["duracion_minutos"]
                 usuario_programa = data["usuario_programa"]
@@ -163,7 +163,7 @@ def insertar_agendamiento(data: dict) -> Optional[Dict[str, Any]]:
                 cur.execute(
                     """
                     INSERT INTO agendamientos (
-                        creador_id,
+                        aspirante_id,
                         fecha_inicio,
                         fecha_fin,
                         usuario_programa
@@ -172,7 +172,7 @@ def insertar_agendamiento(data: dict) -> Optional[Dict[str, Any]]:
                     RETURNING id, creado_en
                     """,
                     (
-                        creador_id,
+                        aspirante_id,
                         fecha_inicio_utc,
                         fecha_fin_utc,
                         usuario_programa
@@ -186,7 +186,7 @@ def insertar_agendamiento(data: dict) -> Optional[Dict[str, Any]]:
                 # ==========================================
                 # 2️⃣ OBTENER O CREAR ENTREVISTA
                 # ==========================================
-                entrevista = obtener_entrevista_id(creador_id, usuario_programa)
+                entrevista = obtener_entrevista_id(aspirante_id, usuario_programa)
                 if not entrevista:
                     raise Exception("No se pudo obtener o crear la entrevista.")
 
@@ -212,10 +212,10 @@ def insertar_agendamiento(data: dict) -> Optional[Dict[str, Any]]:
                 # ==========================================
                 cur.execute(
                     """
-                    INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
+                    INSERT INTO agendamientos_participantes (agendamiento_id, aspirante_id)
                     VALUES (%s, %s)
                     """,
-                    (agendamiento_id, creador_id)
+                    (agendamiento_id, aspirante_id)
                 )
 
                 # ❌ Nada de conn.commit(): lo hace get_connection_context()
@@ -226,7 +226,7 @@ def insertar_agendamiento(data: dict) -> Optional[Dict[str, Any]]:
                 return {
                     "id": agendamiento_id,
                     "entrevista_id": entrevista_id,
-                    "creador_id": creador_id,
+                    "aspirante_id": aspirante_id,
                     "fecha_programada": fecha_inicio_utc,
                     "fecha_fin": fecha_fin_utc,
                     "duracion_minutos": duracion_minutos,
@@ -255,7 +255,7 @@ def actualizar_entrevista(entrevista_id: int, datos: dict):
                     UPDATE entrevistas
                     SET {', '.join(set_clauses)}
                     WHERE id = %s
-                    RETURNING id, creador_id, resultado, observaciones, evaluacion_global, creado_en
+                    RETURNING id, aspirante_id, resultado, observaciones, evaluacion_global, creado_en
                 """
                 values.append(entrevista_id)
                 cur.execute(sql, tuple(values))
@@ -266,7 +266,7 @@ def actualizar_entrevista(entrevista_id: int, datos: dict):
 
                 return {
                     "id": row[0],
-                    "creador_id": row[1],
+                    "aspirante_id": row[1],
                     "resultado": row[2],
                     "observaciones": row[3],
                     "evaluacion_global": row[4],
@@ -353,12 +353,12 @@ def crear_agendamientoV0(
             raise HTTPException(status_code=401, detail="Usuario no autorizado")
 
         # === Validaciones ===
-        if datos.creador_id is None:
-            raise HTTPException(status_code=400, detail="El campo creador_id es obligatorio")
+        if datos.aspirante_id is None:
+            raise HTTPException(status_code=400, detail="El campo aspirante_id es obligatorio")
         if datos.fecha_programada is None:
             raise HTTPException(status_code=400, detail="El campo fecha_programada es obligatorio")
 
-        creador_id = datos.creador_id
+        aspirante_id = datos.aspirante_id
         fecha_inicio: datetime = datos.fecha_programada
 
         # Default 60 minutos si no viene duración
@@ -368,7 +368,7 @@ def crear_agendamientoV0(
 
         # === Preparar payload para DB ===
         payload_ag = {
-            "creador_id": creador_id,
+            "aspirante_id": aspirante_id,
             "fecha_programada": fecha_inicio,
             "duracion_minutos": duracion_minutos,
             "usuario_programa": usuario_actual.get("id")
@@ -384,7 +384,7 @@ def crear_agendamientoV0(
         return AgendamientoOut(
             id=resultado["id"],
             entrevista_id=resultado["entrevista_id"],
-            creador_id=resultado["creador_id"],
+            aspirante_id=resultado["aspirante_id"],
             fecha_programada=resultado["fecha_programada"],
             duracion_minutos=resultado["duracion_minutos"],
             realizada=resultado.get("realizada"),
@@ -402,13 +402,13 @@ def crear_agendamientoV0(
 # ================================
 # 📌 OBTENER ENTREVISTA + AGENDAMIENTOS
 # ================================
-@router.get("/api/entrevistasV0/{creador_id}", response_model=EntrevistaDetalleOut)
-def obtener_entrevistaV0(creador_id: int):
+@router.get("/api/entrevistasV0/{aspirante_id}", response_model=EntrevistaDetalleOut)
+def obtener_entrevistaV0(aspirante_id: int):
     try:
-        entrevista = obtener_entrevista_con_agendamientos(creador_id)
+        entrevista = obtener_entrevista_con_agendamientos(aspirante_id)
         if not entrevista:
             # ❗ Si prefieres auto-crear entrevista en vez de 404,
-            # llama a crear_entrevista_base(creador_id) y retorna esa.
+            # llama a crear_entrevista_base(aspirante_id) y retorna esa.
             raise HTTPException(status_code=404, detail="Entrevista no encontrada")
         return entrevista
     except HTTPException:
@@ -416,9 +416,9 @@ def obtener_entrevistaV0(creador_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener entrevista: {e}")
 
-@router.put("/api/entrevistasV0/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
+@router.put("/api/entrevistasV0/{aspirante_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
 def actualizar_entrevistaV0(
-    creador_id: int,
+    aspirante_id: int,
     datos: EntrevistaUpdate,
     usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
@@ -438,7 +438,7 @@ def actualizar_entrevistaV0(
         payload.setdefault("usuario_evalua", usuario_id)
 
     # 1️⃣ Actualiza entrevista por creador
-    actualizado = actualizar_entrevista_por_creador(creador_id, payload)
+    actualizado = actualizar_entrevista_por_creador(aspirante_id, payload)
     if not actualizado:
         raise HTTPException(status_code=404, detail="No existe entrevista para este creador")
 
@@ -460,30 +460,30 @@ def actualizar_entrevistaV0(
                 print(f"🔄 Estado asignado: {estado_id} (según resultado '{resultado_norm}')")
 
                 # Actualiza el estado del creador
-                actualizar_estado_creador(creador_id, estado_id)
-                print(f"✅ Estado del creador {creador_id} actualizado correctamente a {estado_id}")
+                actualizar_estado_creador(aspirante_id, estado_id)
+                print(f"✅ Estado del creador {aspirante_id} actualizado correctamente a {estado_id}")
 
                 # 3️⃣ Crear invitación automática si el resultado implica una invitación
                 if estado_id == 5:  # 5 = INVITACIÓN
                     try:
-                        print(f"📩 Intentando crear invitación automática para creador {creador_id}...")
+                        print(f"📩 Intentando crear invitación automática para creador {aspirante_id}...")
 
                         # Llamamos directamente con parámetros, no con dict
                         invitacion_creada = crear_invitacion_minima(
-                            creador_id=creador_id,
+                            aspirante_id=aspirante_id,
                             usuario_invita=usuario_id,
                             manager_id=None,
                             estado="sin programar"
                         )
 
                         if invitacion_creada:
-                            print(f"✅ Invitación creada automáticamente para creador {creador_id}")
+                            print(f"✅ Invitación creada automáticamente para creador {aspirante_id}")
                         else:
                             print(
-                                f"⚠️ No se pudo crear la invitación para creador {creador_id} (posiblemente ya existe).")
+                                f"⚠️ No se pudo crear la invitación para creador {aspirante_id} (posiblemente ya existe).")
 
                     except Exception as e:
-                        print(f"❌ Error al crear invitación automática para creador {creador_id}: {e}")
+                        print(f"❌ Error al crear invitación automática para creador {aspirante_id}: {e}")
 
     except Exception as e:
         print(f"⚠️ Error general al actualizar estado o crear invitación: {e}")
@@ -494,7 +494,7 @@ def actualizar_entrevistaV0(
     return EntrevistaOut(
         id=actualizado["id"],
         creado_en=actualizado["creado_en"],
-        creador_id=actualizado["creador_id"],
+        aspirante_id=actualizado["aspirante_id"],
         usuario_evalua=actualizado.get("usuario_evalua"),
         resultado=actualizado.get("resultado"),
         observaciones=actualizado.get("observaciones"),
@@ -505,7 +505,7 @@ def actualizar_entrevistaV0(
         evaluacion_global=actualizado.get("evaluacion_global"),
     )
 
-def obtener_entrevista_con_agendamientos(creador_id: int) -> Optional[dict]:
+def obtener_entrevista_con_agendamientos(aspirante_id: int) -> Optional[dict]:
     """
     Obtiene la entrevista más reciente del creador y sus agendamientos asociados.
     Devuelve un diccionario compatible con EntrevistaDetalleOut
@@ -518,14 +518,14 @@ def obtener_entrevista_con_agendamientos(creador_id: int) -> Optional[dict]:
 
                 # 1️⃣ Entrevista más reciente del creador
                 cur.execute("""
-                    SELECT id, creador_id, usuario_evalua, resultado, observaciones,
+                    SELECT id, aspirante_id, usuario_evalua, resultado, observaciones,
                            aspecto_tecnico, presencia_carisma, interaccion_audiencia,
                            profesionalismo_normas, evaluacion_global, creado_en
                     FROM entrevistas
-                    WHERE creador_id = %s
+                    WHERE aspirante_id = %s
                     ORDER BY creado_en DESC
                     LIMIT 1
-                """, (creador_id,))
+                """, (aspirante_id,))
                 e = cur.fetchone()
 
                 if not e:
@@ -533,7 +533,7 @@ def obtener_entrevista_con_agendamientos(creador_id: int) -> Optional[dict]:
 
                 entrevista_dict = {
                     "id": e[0],
-                    "creador_id": e[1],
+                    "aspirante_id": e[1],
                     "usuario_evalua": e[2],
                     "resultado": e[3],
                     "observaciones": e[4],
@@ -559,7 +559,7 @@ def obtener_entrevista_con_agendamientos(creador_id: int) -> Optional[dict]:
                             a.descripcion,
                             a.fecha_inicio,
                             a.fecha_fin,
-                            COALESCE(a.creador_id, ap.creador_id) AS creador_id,
+                            COALESCE(a.aspirante_id, ap.aspirante_id) AS aspirante_id,
                             a.responsable_id,
                             a.estado,
                             a.link_meet,
@@ -587,7 +587,7 @@ def obtener_entrevista_con_agendamientos(creador_id: int) -> Optional[dict]:
                         descripcion,
                         fecha_inicio,
                         fecha_fin,
-                        creador_id_ag,
+                        aspirante_id_ag,
                         responsable_id,
                         estado,
                         link_meet,
@@ -610,7 +610,7 @@ def obtener_entrevista_con_agendamientos(creador_id: int) -> Optional[dict]:
                     entrevista_dict["agendamientos"].append({
                         "id": agendamiento_id,          # id del agendamiento
                         "entrevista_id": entrevista_id,
-                        "creador_id": creador_id_ag,
+                        "aspirante_id": aspirante_id_ag,
                         "fecha_programada": fecha_inicio,
                         "duracion_minutos": duracion_minutos,
                         "realizada": realizada,
@@ -888,14 +888,14 @@ def serializar_item_pantalla(item: Optional[Dict[str, Any]]) -> Optional[Dict[st
     }
 
 
-def obtener_diagnostico_score(cur, creador_id: int) -> Dict[str, Any]:
+def obtener_diagnostico_score(cur, aspirante_id: int) -> Dict[str, Any]:
     cur.execute("""
         SELECT puntaje_total, diagnostico_resumen
         FROM diagnostico_score_general
-        WHERE creador_id = %s
-        ORDER BY creador_id DESC
+        WHERE aspirante_id = %s
+        ORDER BY aspirante_id DESC
         LIMIT 1
-    """, (creador_id,))
+    """, (aspirante_id,))
 
     row = cur.fetchone()
     if not row:
@@ -910,7 +910,7 @@ def obtener_diagnostico_score(cur, creador_id: int) -> Dict[str, Any]:
     }
 
 
-def asegurar_entrevista_existe(cur, agendamiento_id: int, creador_id: int) -> int:
+def asegurar_entrevista_existe(cur, agendamiento_id: int, aspirante_id: int) -> int:
     # 1) Si ya existe entrevista para ese agendamiento, la devuelve
     cur.execute("""
         SELECT e.id
@@ -918,9 +918,9 @@ def asegurar_entrevista_existe(cur, agendamiento_id: int, creador_id: int) -> in
         JOIN agendamientos_participantes ap
           ON ap.agendamiento_id = e.agendamiento_id
         WHERE e.agendamiento_id = %s
-          AND ap.creador_id = %s
+          AND ap.aspirante_id = %s
         LIMIT 1
-    """, (agendamiento_id, creador_id))
+    """, (agendamiento_id, aspirante_id))
     row = cur.fetchone()
 
     if row:
@@ -933,9 +933,9 @@ def asegurar_entrevista_existe(cur, agendamiento_id: int, creador_id: int) -> in
         JOIN agendamientos_participantes ap
           ON ap.agendamiento_id = a.id
         WHERE a.id = %s
-          AND ap.creador_id = %s
+          AND ap.aspirante_id = %s
         LIMIT 1
-    """, (agendamiento_id, creador_id))
+    """, (agendamiento_id, aspirante_id))
     ag = cur.fetchone()
 
     if not ag:
@@ -971,7 +971,7 @@ def asegurar_entrevista_existe(cur, agendamiento_id: int, creador_id: int) -> in
 
     cur.execute("""
         INSERT INTO entrevistas (
-            creador_id,
+            aspirante_id,
             agendamiento_id,
             entrevista_tipo_id,
             estado_id,
@@ -980,7 +980,7 @@ def asegurar_entrevista_existe(cur, agendamiento_id: int, creador_id: int) -> in
         VALUES (%s, %s, %s, %s, now())
         RETURNING id
     """, (
-        creador_id,
+        aspirante_id,
         agendamiento_id,
         entrevista_tipo_id,
         ESTADO_ENTREVISTA_PROGRAMADA
@@ -994,13 +994,13 @@ def asegurar_entrevista_existe(cur, agendamiento_id: int, creador_id: int) -> in
 # ENDPOINT 1: PANTALLA COMPLETA
 # =========================================================
 
-@router.get("/api/creadores/{creador_id}/evaluacion-entrevistas")
-def obtener_pantalla_evaluacion_entrevistas(creador_id: int):
+@router.get("/api/aspirantes/{aspirante_id}/evaluacion-entrevistas")
+def obtener_pantalla_evaluacion_entrevistas(aspirante_id: int):
     now = datetime.now()
 
     with get_connection_context() as conn:
         with conn.cursor() as cur:
-            diagnostico_data = obtener_diagnostico_score(cur, creador_id)
+            diagnostico_data = obtener_diagnostico_score(cur, aspirante_id)
             diagnostico_score = diagnostico_data["puntaje_total"]
             diagnostico_resumen = diagnostico_data["diagnostico_resumen"]
 
@@ -1014,7 +1014,7 @@ def obtener_pantalla_evaluacion_entrevistas(creador_id: int):
                     a.link_meet,
                     a.tipo_agendamiento,
                     a.estado AS agendamiento_estado,
-                    ap.creador_id,
+                    ap.aspirante_id,
 
                     ta.nombre AS tipo_agendamiento_nombre,
                     ta.color AS tipo_agendamiento_color,
@@ -1045,10 +1045,10 @@ def obtener_pantalla_evaluacion_entrevistas(creador_id: int):
                   ON e.agendamiento_id = a.id
                 LEFT JOIN entrevista_tipo et
                   ON et.id = e.entrevista_tipo_id
-                WHERE ap.creador_id = %s
+                WHERE ap.aspirante_id = %s
                   AND a.tipo_agendamiento IN (1, 2)
                 ORDER BY a.fecha_inicio ASC, a.id ASC
-            """, (creador_id,))
+            """, (aspirante_id,))
 
             rows = cur.fetchall()
             columns = [desc[0] for desc in cur.description]
@@ -1072,7 +1072,7 @@ def obtener_pantalla_evaluacion_entrevistas(creador_id: int):
             prueba_activa = elegir_prueba_activa(items)
 
             resumen = {
-                "creador_id": creador_id,
+                "aspirante_id": aspirante_id,
                 "diagnostico_score": diagnostico_score,
                 "diagnostico_resumen": diagnostico_resumen,
                 "prueba_score": prueba_activa.get("score_total_entrevista") if prueba_activa else None,
@@ -1095,10 +1095,10 @@ def obtener_pantalla_evaluacion_entrevistas(creador_id: int):
 # ENDPOINT 2: DETALLE POR AGENDAMIENTO
 # =========================================================
 
-@router.get("/api/entrevistas/agendamiento/{agendamiento_id}/creador/{creador_id}")
+@router.get("/api/entrevistas/agendamiento/{agendamiento_id}/creador/{aspirante_id}")
 def obtener_detalle_entrevista_por_agendamiento(
     agendamiento_id: int,
-    creador_id: int
+    aspirante_id: int
 ):
     now = datetime.now()
 
@@ -1107,7 +1107,7 @@ def obtener_detalle_entrevista_por_agendamiento(
             cur.execute("""
                 SELECT
                     a.id AS agendamiento_id,
-                    ap.creador_id,
+                    ap.aspirante_id,
                     a.titulo,
                     a.descripcion,
                     a.fecha_inicio,
@@ -1146,10 +1146,10 @@ def obtener_detalle_entrevista_por_agendamiento(
                 LEFT JOIN entrevista_tipo et
                   ON et.id = e.entrevista_tipo_id
                 WHERE a.id = %s
-                  AND ap.creador_id = %s
+                  AND ap.aspirante_id = %s
                   AND a.tipo_agendamiento IN (1, 2)
                 LIMIT 1
-            """, (agendamiento_id, creador_id))
+            """, (agendamiento_id, aspirante_id))
 
             row = cur.fetchone()
             if not row:
@@ -1161,7 +1161,7 @@ def obtener_detalle_entrevista_por_agendamiento(
             columns = [desc[0] for desc in cur.description]
             item = normalizar_item_db(dict(zip(columns, row)))
 
-            diagnostico_data = obtener_diagnostico_score(cur, creador_id)
+            diagnostico_data = obtener_diagnostico_score(cur, aspirante_id)
             item["diagnostico_score"] = diagnostico_data["puntaje_total"]
             item["diagnostico_resumen"] = diagnostico_data["diagnostico_resumen"]
 
@@ -1183,8 +1183,8 @@ def obtener_detalle_entrevista_por_agendamiento(
 # ENDPOINT 3: DETALLE POR ENTREVISTA ID
 # =========================================================
 
-@router.get("/api/entrevistas/{entrevista_id}/creador/{creador_id}")
-def obtener_entrevista_por_id(entrevista_id: int, creador_id: int):
+@router.get("/api/entrevistas/{entrevista_id}/creador/{aspirante_id}")
+def obtener_entrevista_por_id(entrevista_id: int, aspirante_id: int):
     now = datetime.now()
 
     with get_connection_context() as conn:
@@ -1192,7 +1192,7 @@ def obtener_entrevista_por_id(entrevista_id: int, creador_id: int):
             cur.execute("""
                 SELECT
                     a.id AS agendamiento_id,
-                    ap.creador_id,
+                    ap.aspirante_id,
                     a.titulo,
                     a.descripcion,
                     a.fecha_inicio,
@@ -1231,9 +1231,9 @@ def obtener_entrevista_por_id(entrevista_id: int, creador_id: int):
                 LEFT JOIN entrevista_tipo et
                   ON et.id = e.entrevista_tipo_id
                 WHERE e.id = %s
-                  AND ap.creador_id = %s
+                  AND ap.aspirante_id = %s
                 LIMIT 1
-            """, (entrevista_id, creador_id))
+            """, (entrevista_id, aspirante_id))
 
             row = cur.fetchone()
             if not row:
@@ -1245,7 +1245,7 @@ def obtener_entrevista_por_id(entrevista_id: int, creador_id: int):
             columns = [desc[0] for desc in cur.description]
             item = normalizar_item_db(dict(zip(columns, row)))
 
-            diagnostico_data = obtener_diagnostico_score(cur, creador_id)
+            diagnostico_data = obtener_diagnostico_score(cur, aspirante_id)
             item["diagnostico_score"] = diagnostico_data["puntaje_total"]
             item["diagnostico_resumen"] = diagnostico_data["diagnostico_resumen"]
 
@@ -1267,10 +1267,10 @@ def obtener_entrevista_por_id(entrevista_id: int, creador_id: int):
 # ENDPOINT 4: EVALUAR POR ENTREVISTA ID
 # =========================================================
 
-@router.patch("/api/entrevistas/{entrevista_id}/creador/{creador_id}/evaluar")
+@router.patch("/api/entrevistas/{entrevista_id}/creador/{aspirante_id}/evaluar")
 def evaluar_entrevista(
     entrevista_id: int,
-    creador_id: int,
+    aspirante_id: int,
     data: EntrevistaEvaluacionUpdate
 ):
     with get_connection_context() as conn:
@@ -1278,15 +1278,15 @@ def evaluar_entrevista(
             cur.execute("""
                 SELECT
                     e.id,
-                    e.creador_id,
+                    e.aspirante_id,
                     e.agendamiento_id
                 FROM entrevistas e
                 JOIN agendamientos_participantes ap
                   ON ap.agendamiento_id = e.agendamiento_id
                 WHERE e.id = %s
-                  AND ap.creador_id = %s
+                  AND ap.aspirante_id = %s
                 LIMIT 1
-            """, (entrevista_id, creador_id))
+            """, (entrevista_id, aspirante_id))
             base = cur.fetchone()
 
             if not base:
@@ -1295,9 +1295,9 @@ def evaluar_entrevista(
                     detail="Entrevista no encontrada para este creador"
                 )
 
-            _, creador_id_db, agendamiento_id = base
+            _, aspirante_id_db, agendamiento_id = base
 
-            diagnostico_data = obtener_diagnostico_score(cur, creador_id)
+            diagnostico_data = obtener_diagnostico_score(cur, aspirante_id)
             diagnostico_score = diagnostico_data["puntaje_total"]
             diagnostico_resumen = diagnostico_data["diagnostico_resumen"]
 
@@ -1324,7 +1324,7 @@ def evaluar_entrevista(
                 WHERE id = %s
                 RETURNING
                     id,
-                    creador_id,
+                    aspirante_id,
                     agendamiento_id,
                     score_total_entrevista,
                     score_total,
@@ -1349,7 +1349,7 @@ def evaluar_entrevista(
                 "message": "Evaluación guardada correctamente",
                 "data": {
                     "entrevista_id": updated[0],
-                    "creador_id": creador_id_db,
+                    "aspirante_id": aspirante_id_db,
                     "agendamiento_id": updated[2],
                     "scores": {
                         "diagnostico": diagnostico_score,
@@ -1369,10 +1369,10 @@ def evaluar_entrevista(
 # ENDPOINT 5: EVALUAR POR AGENDAMIENTO
 # =========================================================
 
-@router.patch("/api/agendamientos/{agendamiento_id}/creador/{creador_id}/evaluar")
+@router.patch("/api/agendamientos/{agendamiento_id}/creador/{aspirante_id}/evaluar")
 def evaluar_por_agendamiento(
     agendamiento_id: int,
-    creador_id: int,
+    aspirante_id: int,
     data: EntrevistaEvaluacionUpdate
 ):
     with get_connection_context() as conn:
@@ -1383,10 +1383,10 @@ def evaluar_por_agendamiento(
                 JOIN agendamientos_participantes ap
                   ON ap.agendamiento_id = a.id
                 WHERE a.id = %s
-                  AND ap.creador_id = %s
+                  AND ap.aspirante_id = %s
                   AND a.tipo_agendamiento IN (1, 2)
                 LIMIT 1
-            """, (agendamiento_id, creador_id))
+            """, (agendamiento_id, aspirante_id))
             ag = cur.fetchone()
 
             if not ag:
@@ -1395,9 +1395,9 @@ def evaluar_por_agendamiento(
                     detail="Agendamiento no encontrado para este creador"
                 )
 
-            entrevista_id = asegurar_entrevista_existe(cur, agendamiento_id, creador_id)
+            entrevista_id = asegurar_entrevista_existe(cur, agendamiento_id, aspirante_id)
 
-            diagnostico_data = obtener_diagnostico_score(cur, creador_id)
+            diagnostico_data = obtener_diagnostico_score(cur, aspirante_id)
             diagnostico_score = diagnostico_data["puntaje_total"]
             diagnostico_resumen = diagnostico_data["diagnostico_resumen"]
 
@@ -1424,7 +1424,7 @@ def evaluar_por_agendamiento(
                 WHERE id = %s
                 RETURNING
                     id,
-                    creador_id,
+                    aspirante_id,
                     agendamiento_id,
                     score_total_entrevista,
                     score_total,
@@ -1449,7 +1449,7 @@ def evaluar_por_agendamiento(
                 "message": "Evaluación guardada correctamente",
                 "data": {
                     "entrevista_id": updated[0],
-                    "creador_id": updated[1],
+                    "aspirante_id": updated[1],
                     "agendamiento_id": updated[2],
                     "scores": {
                         "diagnostico": diagnostico_score,
@@ -1469,10 +1469,10 @@ def evaluar_por_agendamiento(
 # ENDPOINT 6: GUARDAR DECISIÓN FINAL
 # =========================================================
 
-@router.patch("/api/entrevistas/{entrevista_id}/creador/{creador_id}/decision")
+@router.patch("/api/entrevistas/{entrevista_id}/creador/{aspirante_id}/decision")
 def guardar_decision_final(
     entrevista_id: int,
-    creador_id: int,
+    aspirante_id: int,
     data: DecisionUpdate
 ):
     with get_connection_context() as conn:
@@ -1485,13 +1485,13 @@ def guardar_decision_final(
                 FROM agendamientos_participantes ap
                 WHERE e.id = %s
                   AND ap.agendamiento_id = e.agendamiento_id
-                  AND ap.creador_id = %s
+                  AND ap.aspirante_id = %s
                 RETURNING e.id, e.decision_final, e.observacion_decision
             """, (
                 data.decision_final,
                 data.observacion_decision,
                 entrevista_id,
-                creador_id
+                aspirante_id
             ))
 
             updated = cur.fetchone()

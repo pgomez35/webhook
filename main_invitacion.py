@@ -10,7 +10,7 @@ from typing import Optional, List, Literal, Dict, Any
 from DataBase import get_connection_context
 from main_auth import obtener_usuario_actual
 from enviar_msg_wp import enviar_plantilla_generica_parametros, enviar_plantilla_generica
-from main_Agendamiento import crear_evento
+from main_agendamiento import crear_evento
 
 from main_webhook import enviar_mensaje, validar_link_tiktok
 from tenant import current_tenant
@@ -68,7 +68,7 @@ ESTADOS_TIKTOK_VALIDOS = {
 # =========================================================
 
 class InvitacionCreate(BaseModel):
-    creador_id: int
+    aspirante_id: int
     usuario_invita: int
     fecha_invitacion: Optional[date] = None
     observaciones: Optional[constr(max_length=300)] = None
@@ -161,7 +161,7 @@ def validar_estado_tiktok(estado: str) -> None:
         )
 
 
-def validar_creador_existe(cur, creador_id: int) -> Dict[str, Any]:
+def validar_creador_existe(cur, aspirante_id: int) -> Dict[str, Any]:
     cur.execute("""
         SELECT
             id,
@@ -182,10 +182,10 @@ def validar_creador_existe(cur, creador_id: int) -> Dict[str, Any]:
             rol_id,
             fecha_solicitud,
             encuesta_terminada
-        FROM creadores
+        FROM aspirantes
         WHERE id = %s
         LIMIT 1
-    """, (creador_id,))
+    """, (aspirante_id,))
     row = cur.fetchone()
 
     if not row:
@@ -272,7 +272,7 @@ def puede_incorporarse(invitacion: Dict[str, Any]) -> bool:
 
 def actualizar_estado_creador_según_invitacion(
     cur,
-    creador_id: int,
+    aspirante_id: int,
     invitacion: Dict[str, Any]
 ) -> int:
     nuevo_estado = ESTADO_CREADOR_INVITACION
@@ -286,12 +286,12 @@ def actualizar_estado_creador_según_invitacion(
         nuevo_estado = ESTADO_CREADOR_INCORPORADO
 
     cur.execute("""
-        UPDATE creadores
+        UPDATE aspirantes
         SET
             estado_id = %s,
             actualizado_en = now()
         WHERE id = %s
-    """, (nuevo_estado, creador_id))
+    """, (nuevo_estado, aspirante_id))
 
     return nuevo_estado
 
@@ -300,7 +300,7 @@ def obtener_invitacion_por_id(cur, invitacion_id: int) -> Dict[str, Any]:
     cur.execute("""
         SELECT
             i.id,
-            i.creador_id,
+            i.aspirante_id,
             i.fecha_invitacion,
             i.usuario_invita,
             i.manager_id,
@@ -322,7 +322,7 @@ def obtener_invitacion_por_id(cur, invitacion_id: int) -> Dict[str, Any]:
             c.telefono AS creador_telefono,
             c.whatsapp AS creador_whatsapp,
             c.foto_url AS creador_foto_url,
-            c.estado_id AS estado_creador_id,
+            c.estado_id AS estado_aspirante_id,
             c.verificado AS creador_verificado,
             c.fecha_verificacion AS creador_fecha_verificacion,
             c.activo AS creador_activo,
@@ -353,8 +353,8 @@ def obtener_invitacion_por_id(cur, invitacion_id: int) -> Dict[str, Any]:
             um.creado_en AS creado_en_manager,
             um.actualizado_en AS actualizado_en_manager
         FROM invitaciones i
-        JOIN creadores c
-            ON c.id = i.creador_id
+        JOIN aspirantes c
+            ON c.id = i.aspirante_id
         LEFT JOIN usuarios ui
             ON ui.id = i.usuario_invita
         LEFT JOIN usuarios um
@@ -370,11 +370,11 @@ def obtener_invitacion_por_id(cur, invitacion_id: int) -> Dict[str, Any]:
     return row_to_dict(cur, row)
 
 
-def obtener_ultima_invitacion_por_creador(cur, creador_id: int) -> Optional[Dict[str, Any]]:
+def obtener_ultima_invitacion_por_creador(cur, aspirante_id: int) -> Optional[Dict[str, Any]]:
     cur.execute("""
         SELECT
             i.id,
-            i.creador_id,
+            i.aspirante_id,
             i.fecha_invitacion,
             i.usuario_invita,
             i.manager_id,
@@ -396,7 +396,7 @@ def obtener_ultima_invitacion_por_creador(cur, creador_id: int) -> Optional[Dict
             c.telefono AS creador_telefono,
             c.whatsapp AS creador_whatsapp,
             c.foto_url AS creador_foto_url,
-            c.estado_id AS estado_creador_id,
+            c.estado_id AS estado_aspirante_id,
             c.verificado AS creador_verificado,
             c.fecha_verificacion AS creador_fecha_verificacion,
             c.activo AS creador_activo,
@@ -427,16 +427,16 @@ def obtener_ultima_invitacion_por_creador(cur, creador_id: int) -> Optional[Dict
             um.creado_en AS creado_en_manager,
             um.actualizado_en AS actualizado_en_manager
         FROM invitaciones i
-        JOIN creadores c
-            ON c.id = i.creador_id
+        JOIN aspirantes c
+            ON c.id = i.aspirante_id
         LEFT JOIN usuarios ui
             ON ui.id = i.usuario_invita
         LEFT JOIN usuarios um
             ON um.id = i.manager_id
-        WHERE i.creador_id = %s
+        WHERE i.aspirante_id = %s
         ORDER BY i.id DESC
         LIMIT 1
-    """, (creador_id,))
+    """, (aspirante_id,))
     row = cur.fetchone()
 
     if not row:
@@ -504,10 +504,10 @@ def listar_managers():
 def crear_invitacion(data: InvitacionCreate):
     with get_connection_context() as conn:
         with conn.cursor() as cur:
-            validar_creador_existe(cur, data.creador_id)
+            validar_creador_existe(cur, data.aspirante_id)
             validar_usuario_existe(cur, data.usuario_invita)
 
-            ultima = obtener_ultima_invitacion_por_creador(cur, data.creador_id)
+            ultima = obtener_ultima_invitacion_por_creador(cur, data.aspirante_id)
             if ultima and ultima["estado_invitacion"] != ESTADO_INVITACION_RECHAZADA:
                 raise HTTPException(
                     status_code=400,
@@ -516,7 +516,7 @@ def crear_invitacion(data: InvitacionCreate):
 
             cur.execute("""
                 INSERT INTO invitaciones (
-                    creador_id,
+                    aspirante_id,
                     fecha_invitacion,
                     usuario_invita,
                     manager_id,
@@ -538,7 +538,7 @@ def crear_invitacion(data: InvitacionCreate):
                 )
                 RETURNING id
             """, (
-                data.creador_id,
+                data.aspirante_id,
                 data.fecha_invitacion,
                 data.usuario_invita,
                 None,
@@ -555,7 +555,7 @@ def crear_invitacion(data: InvitacionCreate):
             invitacion_id = cur.fetchone()[0]
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
 
-            actualizar_estado_creador_según_invitacion(cur, data.creador_id, invitacion)
+            actualizar_estado_creador_según_invitacion(cur, data.aspirante_id, invitacion)
             conn.commit()
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
@@ -571,12 +571,12 @@ def crear_invitacion(data: InvitacionCreate):
 # ENDPOINT 3: OBTENER ÚLTIMA INVITACIÓN POR CREADOR
 # =========================================================
 
-@router.get("/api/creadores/{creador_id}/invitacion")
-def obtener_invitacion_actual_creador(creador_id: int):
+@router.get("/api/aspirantes/{aspirante_id}/invitacion")
+def obtener_invitacion_actual_creador(aspirante_id: int):
     with get_connection_context() as conn:
         with conn.cursor() as cur:
-            validar_creador_existe(cur, creador_id)
-            invitacion = obtener_ultima_invitacion_por_creador(cur, creador_id)
+            validar_creador_existe(cur, aspirante_id)
+            invitacion = obtener_ultima_invitacion_por_creador(cur, aspirante_id)
 
             return {
                 "success": True,
@@ -608,7 +608,7 @@ def obtener_invitacion(invitacion_id: int):
 def listar_invitaciones(
     estado_invitacion: Optional[str] = None,
     estado_tiktok: Optional[str] = None,
-    creador_id: Optional[int] = None
+    aspirante_id: Optional[int] = None
 ):
     with get_connection_context() as conn:
         with conn.cursor() as cur:
@@ -625,9 +625,9 @@ def listar_invitaciones(
                 filtros.append("i.estado_tiktok = %s")
                 params.append(estado_tiktok)
 
-            if creador_id:
-                filtros.append("i.creador_id = %s")
-                params.append(creador_id)
+            if aspirante_id:
+                filtros.append("i.aspirante_id = %s")
+                params.append(aspirante_id)
 
             where_sql = ""
             if filtros:
@@ -636,7 +636,7 @@ def listar_invitaciones(
             cur.execute(f"""
                 SELECT
                     i.id,
-                    i.creador_id,
+                    i.aspirante_id,
                     i.fecha_invitacion,
                     i.usuario_invita,
                     i.manager_id,
@@ -658,7 +658,7 @@ def listar_invitaciones(
                     c.telefono AS creador_telefono,
                     c.whatsapp AS creador_whatsapp,
                     c.foto_url AS creador_foto_url,
-                    c.estado_id AS estado_creador_id,
+                    c.estado_id AS estado_aspirante_id,
                     c.verificado AS creador_verificado,
                     c.fecha_verificacion AS creador_fecha_verificacion,
                     c.activo AS creador_activo,
@@ -689,8 +689,8 @@ def listar_invitaciones(
                     um.creado_en AS creado_en_manager,
                     um.actualizado_en AS actualizado_en_manager
                 FROM invitaciones i
-                JOIN creadores c
-                    ON c.id = i.creador_id
+                JOIN aspirantes c
+                    ON c.id = i.aspirante_id
                 LEFT JOIN usuarios ui
                     ON ui.id = i.usuario_invita
                 LEFT JOIN usuarios um
@@ -781,7 +781,7 @@ def actualizar_invitacion(invitacion_id: int, data: InvitacionUpdate):
             ))
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
-            actualizar_estado_creador_según_invitacion(cur, invitacion["creador_id"], invitacion)
+            actualizar_estado_creador_según_invitacion(cur, invitacion["aspirante_id"], invitacion)
             conn.commit()
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
@@ -837,7 +837,7 @@ def actualizar_estados_invitacion(invitacion_id: int, data: InvitacionEstadosUpd
             ))
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
-            actualizar_estado_creador_según_invitacion(cur, invitacion["creador_id"], invitacion)
+            actualizar_estado_creador_según_invitacion(cur, invitacion["aspirante_id"], invitacion)
             conn.commit()
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
@@ -874,7 +874,7 @@ def marcar_mensaje_enviado(invitacion_id: int):
             """, (nuevo_estado, invitacion_id))
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
-            actualizar_estado_creador_según_invitacion(cur, invitacion["creador_id"], invitacion)
+            actualizar_estado_creador_según_invitacion(cur, invitacion["aspirante_id"], invitacion)
             conn.commit()
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
@@ -906,7 +906,7 @@ def marcar_tiktok_enviado(invitacion_id: int):
             """, (ESTADO_TIKTOK_ENVIADO, invitacion_id))
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
-            actualizar_estado_creador_según_invitacion(cur, invitacion["creador_id"], invitacion)
+            actualizar_estado_creador_según_invitacion(cur, invitacion["aspirante_id"], invitacion)
             conn.commit()
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
@@ -943,7 +943,7 @@ def aceptar_invitacion(invitacion_id: int, data: InvitacionDecisionFinalUpdate):
             ))
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
-            actualizar_estado_creador_según_invitacion(cur, invitacion["creador_id"], invitacion)
+            actualizar_estado_creador_según_invitacion(cur, invitacion["aspirante_id"], invitacion)
             conn.commit()
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
@@ -980,7 +980,7 @@ def rechazar_invitacion(invitacion_id: int, data: InvitacionDecisionFinalUpdate)
             ))
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
-            actualizar_estado_creador_según_invitacion(cur, invitacion["creador_id"], invitacion)
+            actualizar_estado_creador_según_invitacion(cur, invitacion["aspirante_id"], invitacion)
             conn.commit()
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
@@ -1017,7 +1017,7 @@ def aprobar_tiktok(invitacion_id: int, data: InvitacionDecisionFinalUpdate):
             ))
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
-            actualizar_estado_creador_según_invitacion(cur, invitacion["creador_id"], invitacion)
+            actualizar_estado_creador_según_invitacion(cur, invitacion["aspirante_id"], invitacion)
             conn.commit()
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
@@ -1054,7 +1054,7 @@ def rechazar_tiktok(invitacion_id: int, data: InvitacionDecisionFinalUpdate):
             ))
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
-            actualizar_estado_creador_según_invitacion(cur, invitacion["creador_id"], invitacion)
+            actualizar_estado_creador_según_invitacion(cur, invitacion["aspirante_id"], invitacion)
             conn.commit()
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
@@ -1095,7 +1095,7 @@ def asignar_manager_e_incorporacion(invitacion_id: int, data: InvitacionAsignaci
             ))
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
-            actualizar_estado_creador_según_invitacion(cur, invitacion["creador_id"], invitacion)
+            actualizar_estado_creador_según_invitacion(cur, invitacion["aspirante_id"], invitacion)
             conn.commit()
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)

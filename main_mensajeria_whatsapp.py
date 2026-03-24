@@ -25,7 +25,7 @@ from typing import Optional, Dict, Any, Tuple
 
 import requests
 
-from utils import AUDIO_DIR, subir_audio_cloudinary
+from borrar_utils import AUDIO_DIR, subir_audio_cloudinary
 from starlette.responses import StreamingResponse
 
 import cloudinary
@@ -2662,7 +2662,7 @@ async def enviar_mensaje_con_credenciales(
     }
 
 class EnviarNoAptoIn(BaseModel):
-    creador_id: int
+    aspirante_id: int
 
 def mensaje_invitacion_simple(nombre: Optional[str], business_name: str) -> str:
 
@@ -2735,7 +2735,7 @@ def mensaje_no_apto_simple(nombre: Optional[str], business_name: str) -> str:
     cuerpo = (
         f"Gracias por tu interés en *{business_name}* y por el tiempo que dedicaste a completar tu información.\n\n"
         "Después de revisar tu preevaluación, en este momento no cumples con los requisitos "
-        "para continuar en el proceso de selección de creadores de TikTok LIVE.\n\n"
+        "para continuar en el proceso de selección de aspirantes de TikTok LIVE.\n\n"
         "Esto no refleja tu talento ni tu potencial. Te invitamos a seguir fortaleciendo tu contenido "
         "y métricas, y a postular nuevamente más adelante si lo deseas.\n\n"
         "Puedes consultar el diagnóstico completo en el portal que te compartimos anteriormente.\n\n"
@@ -2790,7 +2790,7 @@ def enviar_mensaje_invitacion(
 ):
     telefono = None
     nombre = None
-    creador_id = None
+    aspirante_id = None
     tipo_envio = None
     contenido_guardado = None
     codigo = None
@@ -2808,9 +2808,9 @@ def enviar_mensaje_invitacion(
                     SELECT id,
                            COALESCE(nickname, nombre_real) AS nombre,
                            telefono
-                    FROM creadores
+                    FROM aspirantes
                     WHERE id = %s;
-                """, (data.creador_id,))
+                """, (data.aspirante_id,))
                 row = cur.fetchone()
 
                 if not row:
@@ -2819,7 +2819,7 @@ def enviar_mensaje_invitacion(
                         detail="Aspirante no encontrado."
                     )
 
-                creador_id, nombre, telefono = row
+                aspirante_id, nombre, telefono = row
 
                 if not telefono:
                     raise HTTPException(
@@ -2833,10 +2833,10 @@ def enviar_mensaje_invitacion(
                 cur.execute("""
                     SELECT id, estado_invitacion
                     FROM invitaciones
-                    WHERE creador_id = %s
+                    WHERE aspirante_id = %s
                     ORDER BY id DESC
                     LIMIT 1
-                """, (creador_id,))
+                """, (aspirante_id,))
                 invitacion_row = cur.fetchone()
 
                 if invitacion_row:
@@ -2845,7 +2845,7 @@ def enviar_mensaje_invitacion(
                     # Crear invitación si no existe
                     cur.execute("""
                         INSERT INTO invitaciones (
-                            creador_id,
+                            aspirante_id,
                             fecha_invitacion,
                             usuario_invita,
                             manager_id,
@@ -2866,7 +2866,7 @@ def enviar_mensaje_invitacion(
                         )
                         RETURNING id
                     """, (
-                        creador_id,
+                        aspirante_id,
                         usuario_actual["id"],
                         "pendiente_envio",
                         "pendiente",
@@ -3022,7 +3022,7 @@ def enviar_mensaje_invitacion(
 # ):
 #     telefono = None
 #     nombre = None
-#     creador_id = None
+#     aspirante_id = None
 #     tipo_envio = None
 #     contenido_guardado = None
 #     codigo = None
@@ -3039,9 +3039,9 @@ def enviar_mensaje_invitacion(
 #                     SELECT id,
 #                            COALESCE(nickname, nombre_real) AS nombre,
 #                            telefono
-#                     FROM creadores
+#                     FROM aspirantes
 #                     WHERE id = %s;
-#                 """, (data.creador_id,))
+#                 """, (data.aspirante_id,))
 #                 row = cur.fetchone()
 #
 #                 if not row:
@@ -3050,7 +3050,7 @@ def enviar_mensaje_invitacion(
 #                         detail="Aspirante no encontrado."
 #                     )
 #
-#                 creador_id, nombre, telefono = row
+#                 aspirante_id, nombre, telefono = row
 #
 #         if not telefono:
 #             raise HTTPException(
@@ -3154,7 +3154,7 @@ def enviar_mensaje_invitacion(
 #
 #     except Exception as e:
 #         logger.exception(
-#             f"Error enviando invitación para creador_id={data.creador_id}"
+#             f"Error enviando invitación para aspirante_id={data.aspirante_id}"
 #         )
 #
 #         # ======================================================
@@ -3191,7 +3191,7 @@ class LinkAgendamientoOut(BaseModel):
     expiracion: datetime
 
 class CrearLinkAgendamientoIn(BaseModel):
-    creador_id: int
+    aspirante_id: int
     responsable_id: int
     minutos_validez: int = 60          # vigencia del token
     duracion_minutos: int = 60         # duración estimada de la cita
@@ -3218,10 +3218,10 @@ def enviar_link_agendamiento_aspirante(
         cur.execute(
             """
             SELECT COALESCE(nickname, nombre_real) AS nombre, telefono
-            FROM creadores
+            FROM aspirantes
             WHERE id = %s
             """,
-            (data.creador_id,)
+            (data.aspirante_id,)
         )
         row = cur.fetchone()
         if not row:
@@ -3241,12 +3241,12 @@ def enviar_link_agendamiento_aspirante(
         if nuevo_estado_id:
             cur.execute(
                 """
-                UPDATE perfil_creador
+                UPDATE aspirantes_perfil
                 SET id_chatbot_estado = %s,
                     actualizado_en = NOW()
-                WHERE creador_id = %s
+                WHERE aspirante_id = %s
                 """,
-                (nuevo_estado_id, data.creador_id)
+                (nuevo_estado_id, data.aspirante_id)
             )
 
         conn.commit()
@@ -3257,7 +3257,7 @@ def enviar_link_agendamiento_aspirante(
 
     url = (
         f"https://{subdominio}.talentum-manager.com/agendar"
-        f"?creador_id={data.creador_id}"
+        f"?aspirante_id={data.aspirante_id}"
         f"&tipo={data.tipo_agendamiento}"
         f"&duracion={data.duracion_minutos}"
         f"&responsable_id={data.responsable_id}"
@@ -3309,8 +3309,8 @@ def enviar_link_agendamiento_aspirante(
 
     except Exception as e:
         logger.exception(
-            "❌ Error enviando link de agendamiento (creador_id=%s): %s",
-            data.creador_id, e
+            "❌ Error enviando link de agendamiento (aspirante_id=%s): %s",
+            data.aspirante_id, e
         )
 
     # 7️⃣ Respuesta API
@@ -3334,25 +3334,25 @@ def enviar_mensaje_no_apto(
             SELECT id,
                    COALESCE(nickname, nombre_real) AS nombre,
                    telefono
-            FROM creadores
+            FROM aspirantes
             WHERE id = %s;
-        """, (data.creador_id,))
+        """, (data.aspirante_id,))
         row = cur.fetchone()
 
         if not row:
             raise HTTPException(status_code=404, detail="Aspirante no encontrado.")
 
-        creador_id, nombre, telefono = row
+        aspirante_id, nombre, telefono = row
 
         if not telefono:
             raise HTTPException(status_code=400, detail="El aspirante no tiene número registrado.")
 
         # 2️⃣ Marcar estado NO APTO
         cur.execute("""
-            UPDATE perfil_creador
+            UPDATE aspirantes_perfil
             SET id_chatbot_estado = 4
-            WHERE creador_id = %s;
-        """, (creador_id,))
+            WHERE aspirante_id = %s;
+        """, (aspirante_id,))
         conn.commit()
 
     # 3️⃣ Obtener credenciales WABA

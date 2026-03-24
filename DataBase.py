@@ -190,33 +190,33 @@ def guardar_contactos(contactos, nombre_archivo=None, hoja_excel=None, lote_carg
                     fila_excel = c.get("fila_excel")
                     apto = not bool(str(motivo_no_apto).strip())
 
-                    # 1. creadores
-                    cur.execute("SELECT id FROM creadores WHERE usuario = %s", (usuario,))
+                    # 1. aspirantes
+                    cur.execute("SELECT id FROM aspirantes WHERE usuario = %s", (usuario,))
                     creador_row = cur.fetchone()
                     if creador_row:
-                        creador_id = creador_row[0]
+                        aspirante_id = creador_row[0]
                         cur.execute("""
-                            UPDATE creadores SET
+                            UPDATE aspirantes SET
                                 nickname = %s,
                                 email = %s,
                                 telefono = %s,
                                 actualizado_en = NOW()
                             WHERE id = %s
-                        """, (nickname, email, telefono, creador_id))
+                        """, (nickname, email, telefono, aspirante_id))
                     else:
                         cur.execute("""
-                            INSERT INTO creadores (usuario, nickname, email, telefono, activo, creado_en, actualizado_en)
+                            INSERT INTO aspirantes (usuario, nickname, email, telefono, activo, creado_en, actualizado_en)
                             VALUES (%s, %s, %s, %s, TRUE, NOW(), NOW())
                             RETURNING id
                         """, (usuario, nickname, email, telefono))
-                        creador_id = cur.fetchone()[0]
+                        aspirante_id = cur.fetchone()[0]
 
-                    # 2. perfil_creador
-                    cur.execute("SELECT id FROM perfil_creador WHERE creador_id = %s", (creador_id,))
+                    # 2. aspirantes_perfil
+                    cur.execute("SELECT id FROM aspirantes_perfil WHERE aspirante_id = %s", (aspirante_id,))
                     perfil_row = cur.fetchone()
                     if perfil_row:
                         cur.execute("""
-                            UPDATE perfil_creador SET
+                            UPDATE aspirantes_perfil SET
                                 perfil = %s,
                                 seguidores = %s,
                                 cantidad_videos = %s,
@@ -224,13 +224,13 @@ def guardar_contactos(contactos, nombre_archivo=None, hoja_excel=None, lote_carg
                                 duracion_emisiones = %s,
                                 dias_emisiones = %s,
                                 actualizado_en = NOW()
-                            WHERE creador_id = %s
+                            WHERE aspirante_id = %s
                         """, (
-                        perfil, seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones, creador_id))
+                        perfil, seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones, aspirante_id))
                     else:
                         cur.execute("""
-                            INSERT INTO perfil_creador (
-                                creador_id, perfil,
+                            INSERT INTO aspirantes_perfil (
+                                aspirante_id, perfil,
                                 seguidores, cantidad_videos, likes_totales,
                                 duracion_emisiones, dias_emisiones,
                                 creado_en, actualizado_en
@@ -238,15 +238,15 @@ def guardar_contactos(contactos, nombre_archivo=None, hoja_excel=None, lote_carg
                                 %s, %s, %s, %s, %s, %s, %s, NOW(), NOW()
                             )
                         """, (
-                        creador_id, perfil, seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones))
+                        aspirante_id, perfil, seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones))
 
-                    # 3. cargue_creadores
-                    cur.execute("SELECT id FROM cargue_creadores WHERE usuario = %s AND hoja_excel = %s", (usuario, hoja_excel))
+                    # 3. cargue_aspirantes
+                    cur.execute("SELECT id FROM cargue_aspirantes WHERE usuario = %s AND hoja_excel = %s", (usuario, hoja_excel))
                     cargue_row = cur.fetchone()
                     if cargue_row:
                         cargue_id = cargue_row[0]
                         cur.execute("""
-                            UPDATE cargue_creadores SET
+                            UPDATE cargue_aspirantes SET
                                 nickname = %s,
                                 email = %s,
                                 telefono = %s,
@@ -269,7 +269,7 @@ def guardar_contactos(contactos, nombre_archivo=None, hoja_excel=None, lote_carg
                                 estado = %s,
                                 procesado = %s,
                                 procesado_por = %s,
-                                creador_id = %s,
+                                aspirante_id = %s,
                                 apto = %s,
                                 observaciones = %s,
                                 actualizado_en = NOW()
@@ -279,16 +279,16 @@ def guardar_contactos(contactos, nombre_archivo=None, hoja_excel=None, lote_carg
                             contacto, respuesta_creador, entrevista, tipo_solicitud, razon_no_contacto,
                             seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones,
                             nombre_archivo, fila_excel, lote_carga, "Procesando", False, procesado_por,
-                            creador_id, apto, observaciones, cargue_id
+                            aspirante_id, apto, observaciones, cargue_id
                         ))
                     else:
                         cur.execute("""
-                            INSERT INTO cargue_creadores (
+                            INSERT INTO cargue_aspirantes (
                                 usuario, nickname, email, telefono, disponibilidad, perfil, motivo_no_apto,
                                 contacto, respuesta_creador, entrevista, tipo_solicitud, razon_no_contacto,
                                 seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones,
                                 nombre_archivo, hoja_excel, fila_excel, lote_carga,
-                                estado, procesado, procesado_por, creador_id,
+                                estado, procesado, procesado_por, aspirante_id,
                                 apto, observaciones, activo, creado_en, actualizado_en
                             ) VALUES (
                                 %s, %s, %s, %s, %s, %s, %s,
@@ -303,14 +303,14 @@ def guardar_contactos(contactos, nombre_archivo=None, hoja_excel=None, lote_carg
                             contacto, respuesta_creador, entrevista, tipo_solicitud, razon_no_contacto,
                             seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones,
                             nombre_archivo, hoja_excel, fila_excel, lote_carga,
-                            "Procesando", False, procesado_por, creador_id,
+                            "Procesando", False, procesado_por, aspirante_id,
                             apto, observaciones
                         ))
 
                     resultados.append({
                         "fila": fila_excel,
                         "usuario": usuario,
-                        "creador_id": creador_id
+                        "aspirante_id": aspirante_id
                     })
 
                 except Exception as err:
@@ -334,7 +334,7 @@ def obtener_usuario_id_por_telefono(telefono: str):
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT id FROM creadores WHERE telefono = %s
+                    SELECT id FROM aspirantes WHERE telefono = %s
                 """, (telefono,))
 
                 resultado = cur.fetchone()
@@ -409,7 +409,7 @@ def actualizar_contacto_info_db(telefono: str, datos: ActualizacionContactoInfo)
 
                 valores.append(telefono)
                 query = f"""
-                    UPDATE creadores
+                    UPDATE aspirantes
                     SET {', '.join(updates)}
                     WHERE telefono = %s
                 """
@@ -441,7 +441,7 @@ def obtener_contactos_db_nueva(estado=None):
                            a.nombre_real AS nombre,
                            a.whatsapp AS telefono,
                            b.nombre AS estado
-                    FROM creadores a
+                    FROM aspirantes a
                     INNER JOIN estados_creador b ON a.estado_id = b.id
                     WHERE a.whatsapp IS NOT NULL
                       AND a.whatsapp != ''
@@ -487,7 +487,7 @@ def obtener_contactos_db(estado: Optional[str] = None):
                 if estado:
                     cur.execute("""
                         SELECT a.usuario, a.nickname, a.nombre_real AS nombre, a.whatsapp as telefono, b.nombre AS estado
-                        FROM creadores a
+                        FROM aspirantes a
                         INNER JOIN estados_creador b ON a.estado_id = b.id
                         WHERE whatsapp IS NOT NULL
                           AND whatsapp != ''
@@ -497,7 +497,7 @@ def obtener_contactos_db(estado: Optional[str] = None):
                 else:
                     cur.execute("""
                         SELECT a.usuario, a.nickname, a.nombre_real AS nombre, a.whatsapp as telefono, b.nombre AS estado
-                        FROM creadores a
+                        FROM aspirantes a
                         INNER JOIN estados_creador b ON a.estado_id = b.id
                         WHERE whatsapp IS NOT NULL
                           AND whatsapp != ''
@@ -542,14 +542,14 @@ def guardar_mensaje_nuevo(
 
                 # Buscar usuario
                 cur.execute(
-                    "SELECT id FROM creadores WHERE telefono = %s",
+                    "SELECT id FROM aspirantes WHERE telefono = %s",
                     (telefono,)
                 )
                 usuario = cur.fetchone()
 
                 if not usuario:
                     cur.execute(
-                        "INSERT INTO creadores (telefono) VALUES (%s) RETURNING id",
+                        "INSERT INTO aspirantes (telefono) VALUES (%s) RETURNING id",
                         (telefono,)
                     )
                     usuario_id = cur.fetchone()[0]
@@ -602,14 +602,14 @@ def guardar_mensaje(telefono, texto, tipo="recibido", es_audio=False):
             with conn.cursor() as cur:
 
                 # Buscar o crear usuario
-                cur.execute("SELECT id FROM creadores WHERE telefono = %s", (telefono,))
+                cur.execute("SELECT id FROM aspirantes WHERE telefono = %s", (telefono,))
                 row = cur.fetchone()
 
                 if row:
                     usuario_id = row[0]
                 else:
                     cur.execute(
-                        "INSERT INTO creadores (telefono) VALUES (%s) RETURNING id",
+                        "INSERT INTO aspirantes (telefono) VALUES (%s) RETURNING id",
                         (telefono,)
                     )
                     usuario_id = cur.fetchone()[0]
@@ -639,7 +639,7 @@ def actualizar_nombre_contacto(telefono, nuevo_nombre):
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    UPDATE creadores
+                    UPDATE aspirantes
                     SET nombre_real = %s
                     WHERE telefono = %s
                 """, (nuevo_nombre, telefono))
@@ -665,9 +665,9 @@ def eliminar_mensajes(telefono):
             with conn.cursor() as cur:
                 cur.execute("""
                     DELETE FROM mensajes
-                    USING creadores
-                    WHERE mensajes.usuario_id = creadores.id
-                    AND creadores.telefono = %s
+                    USING aspirantes
+                    WHERE mensajes.usuario_id = aspirantes.id
+                    AND aspirantes.telefono = %s
                 """, (telefono,))
                 conn.commit()
         print(f"🗑️ Mensajes eliminados para {telefono}")
@@ -707,7 +707,7 @@ def obtener_contactos():
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT telefono, nombre, creado_en FROM creadores ORDER BY creado_en DESC")
+                cur.execute("SELECT telefono, nombre, creado_en FROM aspirantes ORDER BY creado_en DESC")
                 contactos = cur.fetchall()
                 return [
                     {"telefono": telefono, "nombre": nombre or "", "creado_en": creado_en.isoformat()}
@@ -767,7 +767,7 @@ def obtener_mensajesV0(telefono):
                 cur.execute("""
                     SELECT m.contenido, m.tipo, m.fecha, m.es_audio
                     FROM mensajes m
-                    INNER JOIN creadores u ON m.usuario_id = u.id
+                    INNER JOIN aspirantes u ON m.usuario_id = u.id
                     WHERE u.telefono = %s
                     ORDER BY m.fecha ASC
                 """, (telefono,))
@@ -798,7 +798,7 @@ def obtener_ultimos_mensajes(limit=10):
                 cur.execute("""
                     SELECT m.contenido, m.tipo, m.fecha, m.es_audio
                     FROM mensajes m
-                    JOIN creadores u ON m.usuario_id = u.id
+                    JOIN aspirantes u ON m.usuario_id = u.id
                     ORDER BY m.fecha ASC
                     LIMIT %s;
                     """, (limit,))
@@ -1243,13 +1243,13 @@ def autenticar_usuarios(username, password):
         return {"status": "error", "mensaje": "Error en autenticación"}
 
 def obtener_todos_perfiles_creador():
-    """Obtiene todos los perfiles de creadores"""
+    """Obtiene todos los perfiles de aspirantes"""
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT id, creador_id, perfil, biografia_actual as biografia, seguidores, cantidad_videos as videos, engagement_rate as engagement, clasificacion_actual as acciones
-                    FROM perfil_creador
+                    SELECT id, aspirante_id, perfil, biografia_actual as biografia, seguidores, cantidad_videos as videos, engagement_rate as engagement, clasificacion_actual as acciones
+                    FROM aspirantes_perfil
                     ORDER BY id DESC
                 """)
 
@@ -1257,7 +1257,7 @@ def obtener_todos_perfiles_creador():
                 for row in cur.fetchall():
                     perfiles.append({
                         "id": row[0],
-                        "creador_id": row[1] or f"creator_{row[0]}",
+                        "aspirante_id": row[1] or f"creator_{row[0]}",
                         "perfil": row[2] or "Sin clasificar",
                         "biografia": row[3] or "",
                         "seguidores": row[4] or 0,
@@ -1269,18 +1269,18 @@ def obtener_todos_perfiles_creador():
                 return perfiles
 
     except Exception as e:
-        print("❌ Error al obtener perfiles de creadores:", e)
+        print("❌ Error al obtener perfiles de aspirantes:", e)
         return []
 
 
-def obtener_perfil_creador_por_id(perfil_id: int):
+def obtener_aspirantes_perfil_por_id(perfil_id: int):
     """Obtiene un perfil de creador por ID"""
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT id, creador_id, perfil, biografia_actual as biografia, seguidores, cantidad_videos as videos, engagement_rate as engagement, clasificacion_actual as acciones
-                    FROM perfil_creador
+                    SELECT id, aspirante_id, perfil, biografia_actual as biografia, seguidores, cantidad_videos as videos, engagement_rate as engagement, clasificacion_actual as acciones
+                    FROM aspirantes_perfil
                     WHERE id = %s
                 """, (perfil_id,))
 
@@ -1288,7 +1288,7 @@ def obtener_perfil_creador_por_id(perfil_id: int):
                 if row:
                     perfil = {
                         "id": row[0],
-                        "creador_id": row[1] or f"creator_{row[0]}",
+                        "aspirante_id": row[1] or f"creator_{row[0]}",
                         "perfil": row[2] or "Sin clasificar",
                         "biografia": row[3] or "",
                         "seguidores": row[4] or 0,
@@ -1306,17 +1306,17 @@ def obtener_perfil_creador_por_id(perfil_id: int):
         return None
 
 
-def crear_perfil_creador(perfil_data):
+def crear_aspirantes_perfil(perfil_data):
     """Crea un nuevo perfil de creador"""
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    INSERT INTO perfil_creador (creador_id, perfil, biografia_actual, seguidores, cantidad_videos, engagement_rate, clasificacion_actual)
+                    INSERT INTO aspirantes_perfil (aspirante_id, perfil, biografia_actual, seguidores, cantidad_videos, engagement_rate, clasificacion_actual)
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    RETURNING id, creador_id, perfil, biografia_actual, seguidores, cantidad_videos, engagement_rate, clasificacion_actual
+                    RETURNING id, aspirante_id, perfil, biografia_actual, seguidores, cantidad_videos, engagement_rate, clasificacion_actual
                 """, (
-                    perfil_data["creador_id"],
+                    perfil_data["aspirante_id"],
                     perfil_data["perfil"],
                     perfil_data["biografia"],
                     perfil_data["seguidores"],
@@ -1328,7 +1328,7 @@ def crear_perfil_creador(perfil_data):
                 row = cur.fetchone()
                 perfil = {
                     "id": row[0],
-                    "creador_id": row[1],
+                    "aspirante_id": row[1],
                     "perfil": row[2],
                     "biografia": row[3],
                     "seguidores": row[4],
@@ -1344,7 +1344,7 @@ def crear_perfil_creador(perfil_data):
         print("❌ Error al crear perfil de creador:", e)
         return None
 
-def actualizar_perfil_creador_evalua(creador_id: int, data: Dict):
+def actualizar_aspirantes_perfil_evalua(aspirante_id: int, data: Dict):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
@@ -1353,13 +1353,13 @@ def actualizar_perfil_creador_evalua(creador_id: int, data: Dict):
                 values = list(data.values())
 
                 query = f"""
-                    UPDATE perfil_creador
+                    UPDATE aspirantes_perfil
                     SET {set_clause}
-                    WHERE creador_id = %s
+                    WHERE aspirante_id = %s
                     RETURNING *;
                 """
 
-                cur.execute(query, values + [creador_id])
+                cur.execute(query, values + [aspirante_id])
                 updated_row = cur.fetchone()
                 columnas = [desc[0] for desc in cur.description]
                 conn.commit()
@@ -1372,19 +1372,19 @@ def actualizar_perfil_creador_evalua(creador_id: int, data: Dict):
         return None
 
 
-def actualizar_perfil_creador(perfil_id: int, perfil_data):
+def actualizar_aspirantes_perfil(perfil_id: int, perfil_data):
     """Actualiza un perfil de creador"""
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    UPDATE perfil_creador 
-                    SET creador_id = %s, perfil = %s, biografia_actual = %s, seguidores = %s, 
+                    UPDATE aspirantes_perfil 
+                    SET aspirante_id = %s, perfil = %s, biografia_actual = %s, seguidores = %s, 
                         cantidad_videos = %s, engagement_rate = %s, clasificacion_actual = %s
                     WHERE id = %s
-                    RETURNING id, creador_id, perfil, biografia_actual, seguidores, cantidad_videos, engagement_rate, clasificacion_actual
+                    RETURNING id, aspirante_id, perfil, biografia_actual, seguidores, cantidad_videos, engagement_rate, clasificacion_actual
                 """, (
-                    perfil_data["creador_id"],
+                    perfil_data["aspirante_id"],
                     perfil_data["perfil"],
                     perfil_data["biografia"],
                     perfil_data["seguidores"],
@@ -1398,7 +1398,7 @@ def actualizar_perfil_creador(perfil_id: int, perfil_data):
                 if row:
                     perfil = {
                         "id": row[0],
-                        "creador_id": row[1],
+                        "aspirante_id": row[1],
                         "perfil": row[2],
                         "biografia": row[3],
                         "seguidores": row[4],
@@ -1417,12 +1417,12 @@ def actualizar_perfil_creador(perfil_id: int, perfil_data):
         return None
 
 
-def eliminar_perfil_creador(perfil_id: int):
+def eliminar_aspirantes_perfil(perfil_id: int):
     """Elimina un perfil de creador"""
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM perfil_creador WHERE id = %s", (perfil_id,))
+                cur.execute("DELETE FROM aspirantes_perfil WHERE id = %s", (perfil_id,))
                 affected_rows = cur.rowcount
                 conn.commit()
                 return affected_rows > 0
@@ -1435,7 +1435,7 @@ def eliminar_perfil_creador(perfil_id: int):
 # -----------------------------------
 # -----------------------------------
 
-def obtener_creadores_db():
+def obtener_aspirantes_db():
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
@@ -1448,7 +1448,7 @@ def obtener_creadores_db():
                         c.telefono,
                         ec.nombre AS estado_nombre,
                         COALESCE(c.fecha_solicitud, c.creado_en) AS creado_en
-                    FROM creadores c
+                    FROM aspirantes c
                     INNER JOIN estados_creador ec ON c.estado_id = ec.id
                     WHERE c.activo = TRUE
                       AND c.estado_id IN (3,4,5,7)
@@ -1462,13 +1462,13 @@ def obtener_creadores_db():
 
                 return resultados
     except Exception as e:
-        print("❌ Error al obtener creadores:", e)
+        print("❌ Error al obtener aspirantes:", e)
         return []
 
 
 
 
-def obtener_creadores_invitacion():
+def obtener_aspirantes_invitacion():
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
@@ -1482,9 +1482,9 @@ def obtener_creadores_invitacion():
                         ec.nombre AS estado_nombre,
                         c.creado_en,
                         d.puntaje_total_categoria
-                    FROM creadores c
+                    FROM aspirantes c
                     INNER JOIN estados_creador ec ON c.estado_id = ec.id
-                    INNER JOIN perfil_creador d ON d.creador_id=c.id
+                    INNER JOIN aspirantes_perfil d ON d.aspirante_id=c.id
                     WHERE c.activo = TRUE AND c.estado_id IN (4,5)
                     ORDER BY c.usuario ASC;
                 """)
@@ -1493,7 +1493,7 @@ def obtener_creadores_invitacion():
                 resultados = [dict(zip(columnas, fila)) for fila in datos]
                 return resultados
     except Exception as e:
-        print("❌ Error al obtener creadores:", e)
+        print("❌ Error al obtener aspirantes:", e)
         return []
 
 
@@ -1519,7 +1519,7 @@ def obtener_todos_usuarios_db():
                 c.actualizado_en,
                 'creador' AS tipo_usuario,
                 NULL AS rol
-                FROM creadores c
+                FROM aspirantes c
                 LEFT JOIN estados_creador ec ON c.estado_id = ec.id
                 WHERE c.activo = TRUE
                 
@@ -1551,14 +1551,14 @@ def obtener_todos_usuarios_db():
         print("❌ Error al obtener usuarios:", e)
         return []
 
-def obtener_perfil_creador(creador_id):
+def obtener_aspirantes_perfil(aspirante_id):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
                         SELECT
                             pc.id,
-                            pc.creador_id,
+                            pc.aspirante_id,
                             pc.edad,
                             pc.seguidores,
                             pc.siguiendo,
@@ -1614,13 +1614,13 @@ def obtener_perfil_creador(creador_id):
                             pc.fecha_entrevista,
                             pc.entrevista,
                             pc.estado_evaluacion,
-                            -- Campo traído desde la tabla creadores
+                            -- Campo traído desde la tabla aspirantes
                             c.encuesta_terminada
-                        FROM perfil_creador pc
-                        INNER JOIN creadores c
-                            ON pc.creador_id = c.id
-                        WHERE pc.creador_id = %s;
-                """, (creador_id,))
+                        FROM aspirantes_perfil pc
+                        INNER JOIN aspirantes c
+                            ON pc.aspirante_id = c.id
+                        WHERE pc.aspirante_id = %s;
+                """, (aspirante_id,))
                 fila = cur.fetchone()
                 columnas = [desc[0] for desc in cur.description]
                 if fila:
@@ -1630,7 +1630,7 @@ def obtener_perfil_creador(creador_id):
         print("❌ Error al obtener perfil del creador:", e)
         return None
 
-def obtener_perfil_creador_entrevista_invitacion(creador_id):
+def obtener_aspirantes_perfil_entrevista_invitacion(aspirante_id):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
@@ -1644,9 +1644,9 @@ def obtener_perfil_creador_entrevista_invitacion(creador_id):
                         acepta_invitacion,
                         fecha_incorporacion,
                         observaciones_finales   -- 🔹 agregado
-                    FROM perfil_creador
-                    WHERE creador_id = %s
-                """, (creador_id,))
+                    FROM aspirantes_perfil
+                    WHERE aspirante_id = %s
+                """, (aspirante_id,))
                 fila = cur.fetchone()
                 if not fila:
                     return None
@@ -1658,7 +1658,7 @@ def obtener_perfil_creador_entrevista_invitacion(creador_id):
 
 
 
-def obtener_datos_mejoras_perfil_creador(creador_id):
+def obtener_datos_mejoras_aspirantes_perfil(aspirante_id):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
@@ -1674,10 +1674,10 @@ def obtener_datos_mejoras_perfil_creador(creador_id):
                     puntaje_habitos_categoria,
                     puntaje_general_categoria,
                     puntaje_cualitativo_categoria
-                    FROM perfil_creador
-                    WHERE creador_id = %s
+                    FROM aspirantes_perfil
+                    WHERE aspirante_id = %s
                     LIMIT 1
-                """, (creador_id,))
+                """, (aspirante_id,))
                 fila = cur.fetchone()
                 columnas = [desc[0] for desc in cur.description]
                 if fila:
@@ -1687,16 +1687,16 @@ def obtener_datos_mejoras_perfil_creador(creador_id):
         print("❌ Error al obtener perfil del creador:", e)
         return None
 
-def obtener_biografia_perfil_creador(creador_id):
+def obtener_biografia_aspirantes_perfil(aspirante_id):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT biografia
-                    FROM perfil_creador
-                    WHERE creador_id = %s
+                    FROM aspirantes_perfil
+                    WHERE aspirante_id = %s
                     LIMIT 1
-                """, (creador_id,))
+                """, (aspirante_id,))
                 fila = cur.fetchone()
                 columnas = [desc[0] for desc in cur.description]
                 if fila:
@@ -1706,7 +1706,7 @@ def obtener_biografia_perfil_creador(creador_id):
         print("❌ Error al obtener perfil del creador:", e)
         return None
 
-def obtener_datos_estadisticas_perfil_creador(creador_id):
+def obtener_datos_estadisticas_aspirantes_perfil(aspirante_id):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
@@ -1717,10 +1717,10 @@ def obtener_datos_estadisticas_perfil_creador(creador_id):
                         videos,
                         likes,
                         duracion_emisiones
-                    FROM perfil_creador
-                    WHERE creador_id = %s
+                    FROM aspirantes_perfil
+                    WHERE aspirante_id = %s
                     LIMIT 1
-                """, (creador_id,))
+                """, (aspirante_id,))
                 fila = cur.fetchone()
                 columnas = [desc[0] for desc in cur.description]
                 if fila:
@@ -1730,16 +1730,16 @@ def obtener_datos_estadisticas_perfil_creador(creador_id):
         print("❌ Error al obtener perfil del creador:", e)
         return None
 
-def obtener_puntajes_perfil_creador(creador_id):
+def obtener_puntajes_aspirantes_perfil(aspirante_id):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT puntaje_general, puntaje_estadistica, puntaje_cualitativo, puntaje_habitos,puntaje_general_categoria, puntaje_estadistica_categoria, puntaje_cualitativo_categoria, puntaje_habitos_categoria,puntaje_total,puntaje_total_categoria
-                    FROM perfil_creador
-                    WHERE creador_id = %s
+                    FROM aspirantes_perfil
+                    WHERE aspirante_id = %s
                     LIMIT 1
-                """, (creador_id,))
+                """, (aspirante_id,))
                 fila = cur.fetchone()
                 columnas = [desc[0] for desc in cur.description]
                 if fila:
@@ -1749,10 +1749,10 @@ def obtener_puntajes_perfil_creador(creador_id):
         print("❌ Error al obtener perfil del creador:", e)
         return None
 
-def actualizar_datos_perfil_creador(creador_id, datos_dict):
+def actualizar_datos_aspirantes_perfil(aspirante_id, datos_dict):
     try:
         # Debug
-        print("📥 Datos recibidos en actualizar_datos_perfil_creador:", datos_dict)
+        print("📥 Datos recibidos en actualizar_datos_aspirantes_perfil:", datos_dict)
 
         # Aplanado “suave”
         flat_dict = {}
@@ -1786,7 +1786,7 @@ def actualizar_datos_perfil_creador(creador_id, datos_dict):
             "observaciones_finales", "estado_evaluacion",
         ]
 
-        # Construir UPDATE dinámico para perfil_creador
+        # Construir UPDATE dinámico para aspirantes_perfil
         campos = []
         valores = []
         for campo in campos_validos:
@@ -1802,42 +1802,42 @@ def actualizar_datos_perfil_creador(creador_id, datos_dict):
             raise ValueError("⚠️ No se enviaron campos válidos para actualizar")
 
         campos.append("actualizado_en = NOW()")
-        valores.append(creador_id)
+        valores.append(aspirante_id)
 
         query_perfil = f"""
-            UPDATE perfil_creador
+            UPDATE aspirantes_perfil
             SET {', '.join(campos)}
-            WHERE creador_id = %s;
+            WHERE aspirante_id = %s;
         """
 
-        # Posible update a creadores.telefono (opcional, sólo si viene en el payload)
+        # Posible update a aspirantes.telefono (opcional, sólo si viene en el payload)
         telefono_nuevo = flat_dict.get("telefono")
         telefono_nuevo = limpiar_telefono(telefono_nuevo) if telefono_nuevo else None
 
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                # 1) UPDATE perfil_creador
-                print("📤 Query perfil_creador:", query_perfil)
-                print("📤 Valores perfil_creador:", valores)
+                # 1) UPDATE aspirantes_perfil
+                print("📤 Query aspirantes_perfil:", query_perfil)
+                print("📤 Valores aspirantes_perfil:", valores)
                 cur.execute(query_perfil, valores)
 
-                # 2) UPDATE creadores.telefono (si aplica)
+                # 2) UPDATE aspirantes.telefono (si aplica)
                 if telefono_nuevo:
                     cur.execute(
-                        "UPDATE creadores SET telefono = %s, actualizado_en = NOW() WHERE id = %s",
-                        (telefono_nuevo, creador_id)
+                        "UPDATE aspirantes SET telefono = %s, actualizado_en = NOW() WHERE id = %s",
+                        (telefono_nuevo, aspirante_id)
                     )
-                    print(f"📞 creadores.telefono actualizado → {telefono_nuevo}")
+                    print(f"📞 aspirantes.telefono actualizado → {telefono_nuevo}")
 
                 conn.commit()
-                print(f"✅ Datos del perfil del creador {creador_id} actualizados (y teléfono de creadores si aplicaba).")
+                print(f"✅ Datos del perfil del creador {aspirante_id} actualizados (y teléfono de aspirantes si aplicaba).")
 
     except Exception as e:
-        print(f"❌ Error al actualizar datos del perfil del creador {creador_id}: {e}")
+        print(f"❌ Error al actualizar datos del perfil del creador {aspirante_id}: {e}")
         raise
 
 
-def actualizar_perfil_creador_(creador_id, evaluacion_dict):
+def actualizar_aspirantes_perfil_(aspirante_id, evaluacion_dict):
     try:
         campos = []
         valores = []
@@ -1853,12 +1853,12 @@ def actualizar_perfil_creador_(creador_id, evaluacion_dict):
         # Actualizar el campo actualizado_en también
         campos.append("actualizado_en = NOW()")
 
-        valores.append(creador_id)
+        valores.append(aspirante_id)
 
         query = f"""
-            UPDATE perfil_creador
+            UPDATE aspirantes_perfil
             SET {', '.join(campos)}
-            WHERE creador_id = %s;
+            WHERE aspirante_id = %s;
         """
 
         with get_connection_context() as conn:
@@ -1874,24 +1874,24 @@ def obtener_estadisticas_evaluacion():
     with get_connection_context() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT COUNT(*) FROM creadores;
+                SELECT COUNT(*) FROM aspirantes;
             """)
             total_aspirantes = cur.fetchone()[0]
 
             cur.execute("""
-                SELECT COUNT(*) FROM perfil_creador 
+                SELECT COUNT(*) FROM aspirantes_perfil 
                 WHERE puntaje_total IS NULL OR puntaje_total = 0;
             """)
             evaluaciones_pendientes = cur.fetchone()[0]
 
             cur.execute("""
-                SELECT COUNT(*) FROM perfil_creador 
+                SELECT COUNT(*) FROM aspirantes_perfil 
                 WHERE puntaje_total >= 3.0;
             """)
             aprobados = cur.fetchone()[0]
 
             cur.execute("""
-                SELECT AVG(puntaje_total) FROM perfil_creador 
+                SELECT AVG(puntaje_total) FROM aspirantes_perfil 
                 WHERE puntaje_total IS NOT NULL AND puntaje_total > 0;
             """)
             promedio = cur.fetchone()[0] or 0
@@ -1909,12 +1909,12 @@ def guardar_en_bd(agendamiento, meet_link, usuario_actual_id, creado):
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO agendamientos (
-                        creador_id, fecha_inicio, fecha_fin, titulo, descripcion,
+                        aspirante_id, fecha_inicio, fecha_fin, titulo, descripcion,
                         link_meet, estado, responsable_id, google_event_id
                     )
                     VALUES (%s, %s, %s, %s, %s, %s, 'programado', %s, %s)
                 """, (
-                    agendamiento.creador_id,
+                    agendamiento.aspirante_id,
                     agendamiento.inicio,
                     agendamiento.fin,
                     agendamiento.titulo,
@@ -1931,12 +1931,12 @@ def guardar_en_bd(agendamiento, meet_link, usuario_actual_id, creado):
         return False
 
 
-def obtener_creador_id_por_usuario(usuario: str) -> Optional[int]:
-    """Busca el creador_id en la base de datos por nombre de usuario"""
+def obtener_aspirante_id_por_usuario(usuario: str) -> Optional[int]:
+    """Busca el aspirante_id en la base de datos por nombre de usuario"""
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT id FROM creadores WHERE usuario = %s", (usuario,))
+                cur.execute("SELECT id FROM aspirantes WHERE usuario = %s", (usuario,))
                 result = cur.fetchone()
 
                 return result[0] if result else None
@@ -1946,12 +1946,12 @@ def obtener_creador_id_por_usuario(usuario: str) -> Optional[int]:
         return None
 
 
-def eliminar_perfil_creador(perfil_id: int):
+def eliminar_aspirantes_perfil(perfil_id: int):
     """Elimina un perfil de creador"""
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM perfil_creador WHERE id = %s", (perfil_id,))
+                cur.execute("DELETE FROM aspirantes_perfil WHERE id = %s", (perfil_id,))
                 affected_rows = cur.rowcount
                 conn.commit()
                 return affected_rows > 0
@@ -1985,7 +1985,7 @@ def obtener_todos_manager():
         print("❌ Error al obtener usuarios manager:", e)
         return []
 
-def actualizar_evaluacion_creador(creador_id: int, datos: dict):
+def actualizar_evaluacion_creador(aspirante_id: int, datos: dict):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
@@ -2007,39 +2007,39 @@ def actualizar_evaluacion_creador(creador_id: int, datos: dict):
 
                 fecha_actual = datetime.now()
 
-                # 🔹 Actualizar tabla creadores (estado_id)
+                # 🔹 Actualizar tabla aspirantes (estado_id)
                 cur.execute("""
-                    UPDATE creadores
+                    UPDATE aspirantes
                     SET estado_id = %s
                     WHERE id = %s
-                """, (estado_id, creador_id))
+                """, (estado_id, aspirante_id))
 
                 # 🔹 Verificar si viene de inicial o resumen
                 if "usuario_evaluador_inicial" in datos:
                     # Caso: Evaluación inicial
                     cur.execute("""
-                        UPDATE perfil_creador
+                        UPDATE aspirantes_perfil
                         SET estado_evaluacion = %s,
                             fecha_evaluacion_inicial = %s,
                             usuario_evaluador_inicial = %s
-                        WHERE creador_id = %s
+                        WHERE aspirante_id = %s
                         RETURNING estado_evaluacion, fecha_evaluacion_inicial, usuario_evaluador_inicial
                     """, (
                         datos["estado_evaluacion"],
                         fecha_actual,
                         datos["usuario_evaluador_inicial"],
-                        creador_id
+                        aspirante_id
                     ))
                 elif "usuario_evaluador_resumen" in datos:
                     # Caso: Resumen
                     cur.execute("""
-                        UPDATE perfil_creador
+                        UPDATE aspirantes_perfil
                         SET estado_evaluacion = %s,
                             puntaje_total = %s,
                             puntaje_total_categoria = %s,
                             usuario_evalua = %s,  -- campo string en BD
                             actualizado_en = %s
-                        WHERE creador_id = %s
+                        WHERE aspirante_id = %s
                         RETURNING estado_evaluacion, puntaje_total, puntaje_total_categoria, usuario_evalua
                     """, (
                         datos["estado_evaluacion"],
@@ -2047,7 +2047,7 @@ def actualizar_evaluacion_creador(creador_id: int, datos: dict):
                         datos.get("puntaje_total_categoria"),
                         str(datos["usuario_evaluador_resumen"]),  # guardar como string
                         fecha_actual,
-                        creador_id
+                        aspirante_id
                     ))
                 else:
                     raise ValueError("Datos inválidos: faltan campos de evaluador")
@@ -2062,7 +2062,7 @@ def actualizar_evaluacion_creador(creador_id: int, datos: dict):
 
 # ENTREVISTAS E INVITACIONES
 
-def actualizar_perfil_creador_entrevista(creador_id: int, datos: dict):
+def actualizar_aspirantes_perfil_entrevista(aspirante_id: int, datos: dict):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
@@ -2077,26 +2077,26 @@ def actualizar_perfil_creador_entrevista(creador_id: int, datos: dict):
                     return False  # No hay datos para actualizar
 
                 sql = f"""
-                    UPDATE perfil_creador
+                    UPDATE aspirantes_perfil
                     SET {', '.join(set_clauses)}
-                    WHERE creador_id = %s
+                    WHERE aspirante_id = %s
                 """
-                values.append(creador_id)
+                values.append(aspirante_id)
                 cur.execute(sql, tuple(values))
                 conn.commit()
                 return True
     except Exception as e:
-        print("❌ Error al actualizar perfil_creador:", e)
+        print("❌ Error al actualizar aspirantes_perfil:", e)
         return False
 
 
-def obtener_entrevista_por_creador(creador_id: int):
+def obtener_entrevista_por_creador(aspirante_id: int):
     bogota = pytz.timezone("America/Bogota")
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 sql = """
-                    SELECT e.id, e.creador_id, 
+                    SELECT e.id, e.aspirante_id, 
                            COALESCE(a.fecha_inicio, e.fecha_programada) AS fecha_programada,
                            e.usuario_programa, e.realizada, e.fecha_realizada, 
                            e.usuario_evalua, e.resultado, e.observaciones, e.creado_en,
@@ -2104,11 +2104,11 @@ def obtener_entrevista_por_creador(creador_id: int):
                     FROM entrevistas e
                     LEFT JOIN agendamientos a
                         ON e.evento_id = a.google_event_id
-                    WHERE e.creador_id = %s
+                    WHERE e.aspirante_id = %s
                     ORDER BY e.fecha_programada ASC
                     LIMIT 1
                 """
-                cur.execute(sql, (creador_id,))
+                cur.execute(sql, (aspirante_id,))
                 row = cur.fetchone()
                 if not row:
                     return None
@@ -2128,7 +2128,7 @@ def obtener_entrevista_por_creador(creador_id: int):
 
                 resultado = {
                     "id": row[0],
-                    "creador_id": row[1],
+                    "aspirante_id": row[1],
                     "fecha_programada": fecha_programada,
                     "usuario_programa": row[3],
                     "realizada": row[4],
@@ -2145,7 +2145,7 @@ def obtener_entrevista_por_creador(creador_id: int):
         return None
 
 # Función para actualizar entrevista
-def actualizar_entrevista_por_creador(creador_id: int, payload: dict) -> dict | None:
+def actualizar_entrevista_por_creador(aspirante_id: int, payload: dict) -> dict | None:
     """
     Actualiza la entrevista más reciente del creador y devuelve el registro actualizado.
     Retorna None si no hay entrevista para ese creador.
@@ -2157,10 +2157,10 @@ def actualizar_entrevista_por_creador(creador_id: int, payload: dict) -> dict | 
                 cur.execute("""
                     SELECT id
                     FROM entrevistas
-                    WHERE creador_id = %s
+                    WHERE aspirante_id = %s
                     ORDER BY creado_en DESC
                     LIMIT 1
-                """, (creador_id,))
+                """, (aspirante_id,))
                 row = cur.fetchone()
                 if not row:
                     return None
@@ -2192,7 +2192,7 @@ def actualizar_entrevista_por_creador(creador_id: int, payload: dict) -> dict | 
                         WHERE id = %s
                         RETURNING
                             id,
-                            creador_id,
+                            aspirante_id,
                             usuario_evalua,
                             resultado,
                             observaciones,
@@ -2210,7 +2210,7 @@ def actualizar_entrevista_por_creador(creador_id: int, payload: dict) -> dict | 
                     cur.execute("""
                         SELECT
                             id,
-                            creador_id,
+                            aspirante_id,
                             usuario_evalua,
                             resultado,
                             observaciones,
@@ -2255,26 +2255,26 @@ def insertar_invitacion(datos: dict):
         print("❌ Error al insertar invitación:", e)
         return None
 
-# Función para obtener invitaciones por creador_id
-def obtener_invitacion_por_creador(creador_id: int):
+# Función para obtener invitaciones por aspirante_id
+def obtener_invitacion_por_creador(aspirante_id: int):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 sql = """
                     -- obtener_invitaciones_por_creador
-                    SELECT id, creador_id, fecha_invitacion, usuario_invita, estado,
+                    SELECT id, aspirante_id, fecha_invitacion, usuario_invita, estado,
                            acepta_invitacion, manager_id, fecha_incorporacion, observaciones, creado_en
                     FROM invitaciones
-                    WHERE creador_id = %s
+                    WHERE aspirante_id = %s
                     ORDER BY creado_en DESC
                 """
-                cur.execute(sql, (creador_id,))
+                cur.execute(sql, (aspirante_id,))
                 rows = cur.fetchall()
                 invitaciones = []
                 for row in rows:
                     invitaciones.append({
                         "id": row[0],
-                        "creador_id": row[1],
+                        "aspirante_id": row[1],
                         "fecha_revision": row[2],
                         "usuario_revision": row[3],
                         "estado": row[4],
@@ -2287,7 +2287,7 @@ def obtener_invitacion_por_creador(creador_id: int):
         print("❌ Error al obtener invitaciones:", e)
         return None
 
-def actualizar_invitacion_por_creador(creador_id: int, datos: dict):
+def actualizar_invitacion_por_creador(aspirante_id: int, datos: dict):
     if not datos:
         return None  # Nada que actualizar
 
@@ -2300,10 +2300,10 @@ def actualizar_invitacion_por_creador(creador_id: int, datos: dict):
                 sql = f"""
                     UPDATE invitaciones
                        SET {', '.join(set_clauses)}
-                     WHERE creador_id = %s
+                     WHERE aspirante_id = %s
                  RETURNING
                         id,
-                        creador_id,
+                        aspirante_id,
                         fecha_invitacion,
                         usuario_invita,
                         estado,
@@ -2313,7 +2313,7 @@ def actualizar_invitacion_por_creador(creador_id: int, datos: dict):
                         observaciones,
                         creado_en
                 """
-                values.append(creador_id)
+                values.append(aspirante_id)
                 cur.execute(sql, tuple(values))
                 row = cur.fetchone()
                 conn.commit()
@@ -2323,7 +2323,7 @@ def actualizar_invitacion_por_creador(creador_id: int, datos: dict):
 
                 return {
                     "id": row[0],
-                    "creador_id": row[1],
+                    "aspirante_id": row[1],
                     "fecha_invitacion": row[2],
                     "usuario_invita": row[3],
                     "estado": row[4],
@@ -2345,16 +2345,16 @@ ESTADO_MAP = {
 }
 ESTADO_DEFAULT = 99  # si te mandan algo desconocido
 
-def actualizar_estado_creador(creador_id: int, estado_id: int):
+def actualizar_estado_creador(aspirante_id: int, estado_id: int):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    UPDATE creadores
+                    UPDATE aspirantes
                        SET estado_id = %s
                      WHERE id = %s
                  RETURNING id, estado_id
-                """, (estado_id, creador_id))
+                """, (estado_id, aspirante_id))
                 row = cur.fetchone()
                 conn.commit()
                 if not row:
@@ -2364,12 +2364,12 @@ def actualizar_estado_creador(creador_id: int, estado_id: int):
         raise
 
 def buscar_aspirante_por_usuario_tiktok(usuario_tiktok: str):
-    """Busca un creador en la tabla creadores por el usuario de TikTok usando with para cerrar la conexión."""
+    """Busca un creador en la tabla aspirantes por el usuario de TikTok usando with para cerrar la conexión."""
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT id,nickname FROM creadores WHERE usuario = %s LIMIT 1",
+                    "SELECT id,nickname FROM aspirantes WHERE usuario = %s LIMIT 1",
                     (usuario_tiktok,)
                 )
                 row = cur.fetchone()
@@ -2395,11 +2395,11 @@ def buscar_usuario_por_telefono(numero: str):
         numero = normalizar_numero(numero)
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                # Buscar en creadores
+                # Buscar en aspirantes
                 cur.execute("""
                     SELECT c.id, c.nickname, COALESCE(NULLIF(TRIM(c.nickname), ''), c.nombre_real) AS nombre ,
                            COALESCE(r.nombre, 'aspirante') AS rol
-                    FROM creadores c
+                    FROM aspirantes c
                     LEFT JOIN roles r ON c.rol_id = r.id
                     WHERE c.telefono = %s OR c.whatsapp = %s
                     LIMIT 1;
@@ -2430,13 +2430,13 @@ def buscar_usuario_por_telefono(numero: str):
 
 
 def marcar_encuesta_completada(numero: str) -> bool:
-    """Marca la encuesta como completada en la tabla creadores."""
+    """Marca la encuesta como completada en la tabla aspirantes."""
     try:
         numero = normalizar_numero(numero)
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    UPDATE creadores
+                    UPDATE aspirantes
                     SET encuesta_terminada = TRUE
                     WHERE telefono = %s OR whatsapp = %s
                     RETURNING id;
@@ -2457,13 +2457,13 @@ def marcar_encuesta_completada(numero: str) -> bool:
         return False
 
 def marcar_encuesta_no_finalizada(numero: str) -> bool:
-    """Marca la encuesta como completada en la tabla creadores."""
+    """Marca la encuesta como completada en la tabla aspirantes."""
     try:
         numero = normalizar_numero(numero)
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    UPDATE creadores
+                    UPDATE aspirantes
                     SET encuesta_terminada = FALSE
                     WHERE telefono = %s OR whatsapp = %s
                     RETURNING id;
@@ -2491,7 +2491,7 @@ def encuesta_finalizada(numero: str) -> bool:
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT encuesta_terminada
-                    FROM creadores
+                    FROM aspirantes
                     WHERE telefono = %s OR whatsapp = %s
                     LIMIT 1;
                 """, (numero, numero))
@@ -2519,7 +2519,7 @@ def obtener_ultimo_paso_respondido(numero: str) -> int | None:
                 cur.execute(
                     """
                     SELECT MAX(paso)
-                    FROM perfil_creador_flujo_temp
+                    FROM aspirantes_perfil_flujo_temp
                     WHERE telefono = %s
                     """,
                     (numero,)
@@ -2553,7 +2553,7 @@ def actualizar_telefono_aspirante(aspirante_id: int, numero: str):
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    UPDATE creadores
+                    UPDATE aspirantes
                     SET telefono = %s, whatsapp = %s, actualizado_en = now()
                     WHERE id = %s
                     """,
@@ -2566,29 +2566,29 @@ def actualizar_telefono_aspirante(aspirante_id: int, numero: str):
         return False
 
 
-def crear_invitacion_minima(creador_id: int, usuario_invita: int, manager_id: int = None, estado: str = "sin programar"):
+def crear_invitacion_minima(aspirante_id: int, usuario_invita: int, manager_id: int = None, estado: str = "sin programar"):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 # Verificar si ya existe una invitación
                 cur.execute(
-                    "SELECT id FROM invitaciones WHERE creador_id = %s",
-                    (creador_id,)
+                    "SELECT id FROM invitaciones WHERE aspirante_id = %s",
+                    (aspirante_id,)
                 )
                 if cur.fetchone():
-                    print(f"⚠️ Ya existe una invitación para el creador {creador_id}.")
+                    print(f"⚠️ Ya existe una invitación para el creador {aspirante_id}.")
                     return False
 
                 # Insertar solo los campos mínimos
                 cur.execute(
                     """
                     INSERT INTO invitaciones (
-                        creador_id, usuario_invita, manager_id, estado, creado_en
+                        aspirante_id, usuario_invita, manager_id, estado, creado_en
                     )
                     VALUES (%s, %s, %s, %s, NOW())
-                    RETURNING creador_id, usuario_invita, manager_id, estado, creado_en
+                    RETURNING aspirante_id, usuario_invita, manager_id, estado, creado_en
                     """,
-                    (creador_id, usuario_invita, manager_id, estado)
+                    (aspirante_id, usuario_invita, manager_id, estado)
                 )
 
                 row = cur.fetchone()
@@ -2597,19 +2597,19 @@ def crear_invitacion_minima(creador_id: int, usuario_invita: int, manager_id: in
                 if row:
                     columns = [desc[0] for desc in cur.description]
                     invitacion = dict(zip(columns, row))
-                    print(f"✅ Invitación mínima creada correctamente para creador {creador_id}")
+                    print(f"✅ Invitación mínima creada correctamente para creador {aspirante_id}")
                     return invitacion
 
-                print(f"⚠️ No se retornaron datos al crear la invitación para creador {creador_id}.")
+                print(f"⚠️ No se retornaron datos al crear la invitación para creador {aspirante_id}.")
                 return None
 
     except Exception as e:
-        print(f"❌ Error al crear invitación mínima para creador {creador_id}:", e)
+        print(f"❌ Error al crear invitación mínima para creador {aspirante_id}:", e)
         return None
 
 
 
-def obtener_invitacion_por_creador(creador_id: int):
+def obtener_invitacion_por_creador(aspirante_id: int):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
@@ -2617,7 +2617,7 @@ def obtener_invitacion_por_creador(creador_id: int):
                     """
                     SELECT 
                         id,
-                        creador_id,
+                        aspirante_id,
                         fecha_invitacion,
                         usuario_invita,
                         manager_id,
@@ -2627,11 +2627,11 @@ def obtener_invitacion_por_creador(creador_id: int):
                         observaciones,
                         creado_en
                     FROM invitaciones
-                    WHERE creador_id = %s
+                    WHERE aspirante_id = %s
                     ORDER BY fecha_invitacion DESC
                     LIMIT 1;
                     """,
-                    (creador_id,)
+                    (aspirante_id,)
                 )
                 row = cur.fetchone()
                 if row:
@@ -2640,45 +2640,45 @@ def obtener_invitacion_por_creador(creador_id: int):
                     return invitacion
                 return None
     except Exception as e:
-        print(f"❌ Error al consultar invitación de creador {creador_id}: {e}")
+        print(f"❌ Error al consultar invitación de creador {aspirante_id}: {e}")
         return None
 
 #
-# def obtener_potencial_estimado(creador_id: int):
+# def obtener_potencial_estimado(aspirante_id: int):
 #     try:
 #         # Validación defensiva
-#         if not isinstance(creador_id, int):
-#             print("❌ Error: creador_id inválido (debe ser int).")
+#         if not isinstance(aspirante_id, int):
+#             print("❌ Error: aspirante_id inválido (debe ser int).")
 #             return 2  # Valor por defecto
 #
 #         with get_connection_context() as conn:
 #             with conn.cursor() as cur:
 #                 cur.execute("""
 #                     SELECT potencial_estimado
-#                     FROM perfil_creador
-#                     WHERE creador_id = %s;
-#                 """, (creador_id,))
+#                     FROM aspirantes_perfil
+#                     WHERE aspirante_id = %s;
+#                 """, (aspirante_id,))
 #
 #                 row = cur.fetchone()
 #
 #         # Si no hay fila → usar 2
 #         if row is None:
-#             print(f"⚠️ No existe registro de potencial_estimado para creador_id={creador_id}. Usando valor=2 (default)")
+#             print(f"⚠️ No existe registro de potencial_estimado para aspirante_id={aspirante_id}. Usando valor=2 (default)")
 #             return 0
 #
 #         valor = row[0]
 #
 #         # Si hay fila pero valor es NULL → usar 2
 #         if valor is None:
-#             print(f"⚠️ potencial_estimado es NULL para creador_id={creador_id}. Usando valor=2 (default)")
+#             print(f"⚠️ potencial_estimado es NULL para aspirante_id={aspirante_id}. Usando valor=2 (default)")
 #             return 0
 #
 #         # Valor válido
-#         print(f"✅ potencial_estimado obtenido para creador_id={creador_id}: {valor}")
+#         print(f"✅ potencial_estimado obtenido para aspirante_id={aspirante_id}: {valor}")
 #         return valor
 #
 #     except Exception as e:
-#         print(f"❌ Error al obtener potencial_estimado (creador_id={creador_id}): {e}")
+#         print(f"❌ Error al obtener potencial_estimado (aspirante_id={aspirante_id}): {e}")
 #         return 2  # fallback seguro
 #
 #

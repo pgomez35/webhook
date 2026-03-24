@@ -34,13 +34,13 @@ from uuid import uuid4
 
 # Tu propio código/librerías
 from enviar_msg_wp import *
-from buscador import inicializar_busqueda, responder_pregunta
+from borrar_buscador import inicializar_busqueda, responder_pregunta
 from DataBase import *
 from Excel import *
 
 import cloudinary
 
-from utils import actualizar_info_phone
+from borrar_utils import actualizar_info_phone
 
 cloudinary.config(
     cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
@@ -67,12 +67,12 @@ SERVICE_ACCOUNT_INFO = os.getenv("GOOGLE_CREDENTIALS_JSON")
 CALENDAR_ID = os.getenv("CALENDAR_ID")
 # CALENDAR_ID = "primary" # para que sea siempre primary, pero tambien puedo configurarlo en variables del backend
 
-from main_webhook import router as perfil_creador_router
-from mainCargarAspirantes import router as aspirantes_router
+from main_webhook import router as aspirantes_perfil_router
+from main_cargar_aspirantes import router as aspirantes_router
 from middleware_tenant import TenantMiddleware   # 👈 importa tu middleware
-from middleware_rate_limit import RateLimitMiddleware  # 👈 Rate limiting por tenant
-from main_Agendamiento import router as agendamiento_router
-from main_EvaluacionAspirante import router as EvaluacionAspirante_router
+from borrar_middleware_rate_limit import RateLimitMiddleware  # 👈 Rate limiting por tenant
+from main_agendamiento import router as agendamiento_router
+from main_evaluacionAspirante import router as EvaluacionAspirante_router
 from main_entrevistas import router as entrevistas_router
 from utils_aspirantes import router as utils_aspirantes_router
 from main_chatbot_estados_aspirante import router as chatbot_estados_aspirante_router
@@ -102,13 +102,13 @@ app.add_middleware(
     ]
 )
 
-# Incluir las rutas del módulo perfil_creador_whatsapp
+# Incluir las rutas del módulo aspirantes_perfil_whatsapp
 # ✅ IMPORTANTE: Registrar rutas específicas ANTES de rutas dinámicas
 # El router de auth debe ir ANTES de routers con rutas dinámicas sin prefijo
 app.include_router(main_auth_router, tags=["auth"])
 
 # Resto de routers
-app.include_router(perfil_creador_router, tags=["Perfil Creador WhatsApp"])
+app.include_router(aspirantes_perfil_router, tags=["Perfil Creador WhatsApp"])
 app.include_router(aspirantes_router, tags=["Cargar Aspirantes"])
 app.include_router(agendamiento_router, tags=["Agendamiento"])
 app.include_router(EvaluacionAspirante_router, tags=["Evaluacion Aspirante"])
@@ -128,7 +128,7 @@ app.include_router(main_invitacion_router, tags=["invitacion"])
 # # ✅ Montar ruta para servir archivos estáticos desde /audios
 # app.mount("/audios", StaticFiles(directory=AUDIO_DIR), name="audios")
 
-from utils import AUDIO_DIR
+from borrar_utils import AUDIO_DIR
 from fastapi.staticfiles import StaticFiles
 
 
@@ -232,26 +232,26 @@ def leer_token_de_bd(nombre='calendar'):
         raise
 
 # ==================== GOOGLE CALENDAR SERVICE ==============================
-from google.oauth2 import service_account
-def get_calendar_service():
-    try:
-        SCOPES = ["https://www.googleapis.com/auth/calendar"]
-        creds_dict = json.loads(SERVICE_ACCOUNT_INFO)  # string JSON desde env
-        creds = service_account.Credentials.from_service_account_info(
-            creds_dict, scopes=SCOPES
-        )
-
-        # 👉 Impersonar al usuario de Workspace
-        delegated_creds = creds.with_subject(os.getenv("CALENDAR_ID"))
-
-        service = build("calendar", "v3", credentials=delegated_creds)
-        logger.info(f"✅ Servicio de Google Calendar inicializado con impersonación como {os.getenv('CALENDAR_ID')}")
-        return service
-
-    except Exception as e:
-        logger.error("❌ Error al inicializar el servicio de Google Calendar:")
-        logger.error(traceback.format_exc())
-        raise
+# from google.oauth2 import service_account
+# def get_calendar_service():
+#     try:
+#         SCOPES = ["https://www.googleapis.com/auth/calendar"]
+#         creds_dict = json.loads(SERVICE_ACCOUNT_INFO)  # string JSON desde env
+#         creds = service_account.Credentials.from_service_account_info(
+#             creds_dict, scopes=SCOPES
+#         )
+#
+#         # 👉 Impersonar al usuario de Workspace
+#         delegated_creds = creds.with_subject(os.getenv("CALENDAR_ID"))
+#
+#         service = build("calendar", "v3", credentials=delegated_creds)
+#         logger.info(f"✅ Servicio de Google Calendar inicializado con impersonación como {os.getenv('CALENDAR_ID')}")
+#         return service
+#
+#     except Exception as e:
+#         logger.error("❌ Error al inicializar el servicio de Google Calendar:")
+#         logger.error(traceback.format_exc())
+#         raise
 
 # def get_calendar_service():
 #     try:
@@ -272,28 +272,28 @@ def get_calendar_service():
 #         logger.error(traceback.format_exc())
 #         raise
 
-def get_calendar_service_():
-    try:
-        token_info = leer_token_de_bd()
-        creds = UserCredentials.from_authorized_user_info(token_info, SCOPES)
-
-        if not creds.valid:
-            if creds.expired and creds.refresh_token:
-                logger.warning("⚠️ Token expirado. Refrescando...")
-                creds.refresh(GoogleRequest())
-                guardar_token_en_bd(json.loads(creds.to_json()))
-                logger.info("✅ Token refrescado y guardado en la base de datos.")
-            else:
-                raise Exception("❌ Token inválido y no puede ser refrescado (sin refresh_token)")
-
-        service = build("calendar", "v3", credentials=creds)
-        logger.info("📅 Servicio de Google Calendar inicializado correctamente.")
-        return service
-
-    except Exception as e:
-        logger.error("❌ Error al inicializar el servicio de Google Calendar:")
-        logger.error(traceback.format_exc())
-        raise
+# def get_calendar_service_():
+#     try:
+#         token_info = leer_token_de_bd()
+#         creds = UserCredentials.from_authorized_user_info(token_info, SCOPES)
+#
+#         if not creds.valid:
+#             if creds.expired and creds.refresh_token:
+#                 logger.warning("⚠️ Token expirado. Refrescando...")
+#                 creds.refresh(GoogleRequest())
+#                 guardar_token_en_bd(json.loads(creds.to_json()))
+#                 logger.info("✅ Token refrescado y guardado en la base de datos.")
+#             else:
+#                 raise Exception("❌ Token inválido y no puede ser refrescado (sin refresh_token)")
+#
+#         service = build("calendar", "v3", credentials=creds)
+#         logger.info("📅 Servicio de Google Calendar inicializado correctamente.")
+#         return service
+#
+#     except Exception as e:
+#         logger.error("❌ Error al inicializar el servicio de Google Calendar:")
+#         logger.error(traceback.format_exc())
+#         raise
 
 import time
 import traceback
@@ -305,218 +305,218 @@ from dateutil.parser import isoparse
 
 
 
-def obtener_eventos_google_id(time_min: datetime = None, time_max: datetime = None, max_results: int = 100) -> List[EventoOut]:
-    start_time = time.time()
-    try:
-        service = get_calendar_service()
-    except Exception as e:
-        logger.error(f"❌ Error al obtener el servicio de Calendar: {e}")
-        raise
-
-    # Rango por defecto: 30 días atrás y 30 adelante
-    if time_min is None:
-        time_min = datetime.utcnow() - timedelta(days=30)
-    if time_max is None:
-        time_max = datetime.utcnow() + timedelta(days=30)
-
-    # ✅ Formato ISO correcto (sin microsegundos ni doble zona horaria)
-    time_min_iso = time_min.replace(microsecond=0).isoformat() + "Z"
-    time_max_iso = time_max.replace(microsecond=0).isoformat() + "Z"
-
-    fields = "items(id,summary,description,start,end,conferenceData),nextPageToken"
-
-    events = []
-    page_token = None
-    try:
-        while True:
-            resp = service.events().list(
-                calendarId=CALENDAR_ID,
-                timeMin=time_min_iso,
-                timeMax=time_max_iso,
-                maxResults=max_results,
-                singleEvents=True,
-                orderBy="startTime",
-                fields=fields,
-                pageToken=page_token
-            ).execute()
-            items = resp.get("items", [])
-            events.extend(items)
-            page_token = resp.get("nextPageToken")
-            if not page_token:
-                break
-    except Exception as e:
-        logger.error(f"❌ Error al obtener eventos de Google Calendar API: {e}")
-        logger.error(traceback.format_exc())
-        raise
-
-    logger.debug(f"[TIMING] Google events fetched: count={len(events)} time={(time.time()-start_time):.2f}s")
-
-    if not events:
-        logger.info("✅ No hay eventos en el rango solicitado")
-        return []
-
-    event_ids = [e.get("id") for e in events if e.get("id")]
-    unique_event_ids = list(set(event_ids))
-    participantes_por_evento: Dict[str, List[Dict]] = {}
-    responsables_por_evento: Dict[str, int] = {}  # ✅ NUEVO diccionario para responsable_id
-
-    try:
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-                if unique_event_ids:
-                    placeholders = ",".join(["%s"] * len(unique_event_ids))
-                    sql = f"""
-                        SELECT 
-                            a.google_event_id,
-                            a.responsable_id,
-                            c.id,
-                            COALESCE(NULLIF(c.nombre_real, ''), c.nickname) AS nombre,
-                            c.nickname
-                        FROM agendamientos_participantes ap
-                        JOIN creadores c ON c.id = ap.creador_id
-                        JOIN agendamientos a ON a.id = ap.agendamiento_id
-                        WHERE a.google_event_id IN ({placeholders})
-                    """
-                    cur.execute(sql, tuple(unique_event_ids))
-                    rows = cur.fetchall()
-
-                    # ✅ Ajuste: recorremos filas y guardamos tanto participantes como responsable
-                    for google_event_id, responsable_id, creador_id, nombre, nickname in rows:
-                        # Registrar participantes
-                        participantes_por_evento.setdefault(google_event_id, []).append({
-                            "id": creador_id,
-                            "nombre": nombre,
-                            "nickname": nickname
-                        })
-                        # Registrar responsable (una sola vez por evento)
-                        if google_event_id not in responsables_por_evento:
-                            responsables_por_evento[google_event_id] = responsable_id
-    except Exception as e:
-        logger.error(f"❌ Error obteniendo participantes: {e}")
-        logger.error(traceback.format_exc())
-        participantes_por_evento = {}
-
-    # ✅ Construcción final incluyendo responsable_id
-    resultado: List[EventoOut] = []
-    for event in events:
-        try:
-            event_id = event.get("id")
-            start_dt = (event.get("start") or {}).get("dateTime")
-            end_dt = (event.get("end") or {}).get("dateTime")
-            if not start_dt or not end_dt:
-                continue
-
-            titulo = event.get("summary", "Sin título")
-            descripcion = event.get("description", "")
-            meet_link = None
-            conf = event.get("conferenceData") or {}
-            entry_points = conf.get("entryPoints", []) if conf else []
-            for ep in entry_points:
-                if ep.get("entryPointType") == "video":
-                    meet_link = ep.get("uri")
-                    break
-
-            part_list = participantes_por_evento.get(event_id, [])
-            participantes_ids = [p["id"] for p in part_list]
-            responsable_id = responsables_por_evento.get(event_id)  # ✅ NUEVO
-
-            resultado.append(EventoOut(
-                id=event_id,
-                titulo=titulo,
-                inicio=isoparse(start_dt),
-                fin=isoparse(end_dt),
-                descripcion=descripcion,
-                link_meet=meet_link,
-                participantes_ids=participantes_ids,
-                participantes=part_list,
-                responsable_id=responsable_id,  # ✅ Incluido
-                origen="google_calendar"
-            ))
-        except Exception as e:
-            logger.warning(f"⚠️ Saltando evento con error: {event.get('id', 'unknown')} - {e}")
-
-    logger.info(f"✅ Se obtuvieron {len(resultado)} eventos de Google Calendar en {(time.time()-start_time):.2f}s")
-    return resultado
-
-
-def obtener_eventosV0() -> List[EventoOut]:
-    try:
-        service = get_calendar_service()
-    except Exception as e:
-        logger.error(f"❌ Error al obtener el servicio de Calendar: {str(e)}")
-        raise
-
-    # time_min = (datetime.utcnow() - timedelta(days=31)).isoformat() + 'Z'
-    time_min = datetime.utcnow().isoformat() + 'Z'
-    time_max = (datetime.utcnow() + timedelta(days=31)).isoformat() + 'Z'
-
-    try:
-        events_result = service.events().list(
-            calendarId=CALENDAR_ID,
-            timeMin=time_min,
-            timeMax=time_max,
-            maxResults=100,
-            singleEvents=True,
-            orderBy='startTime'
-        ).execute()
-    except Exception as e:
-        logger.error(f"❌ Error al obtener eventos de Google Calendar API: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise
-
-    events = events_result.get('items', [])
-    resultado = []
-
-    for event in events:
-        try:
-            inicio = event['start'].get('dateTime')
-            fin = event['end'].get('dateTime')
-            titulo = event.get('summary', 'Sin título')
-            descripcion = event.get('description', '')
-            event_id = event['id']
-
-            meet_link = None
-            if 'conferenceData' in event:
-                entry_points = event['conferenceData'].get('entryPoints', [])
-                for ep in entry_points:
-                    if ep.get('entryPointType') == 'video':
-                        meet_link = ep.get('uri')
-                        break
-
-            # Obtener participantes desde la base de datos
-            with get_connection_context() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT c.id, c.nombre_real as nombre, c.nickname
-                        FROM agendamientos_participantes ap
-                        JOIN creadores c ON c.id = ap.creador_id
-                        JOIN agendamientos a ON a.id = ap.agendamiento_id
-                        WHERE a.google_event_id = %s
-                    """, (event_id,))
-                    participantes = cur.fetchall()
-                    participantes_ids = [p[0] for p in participantes]
-                    participantes_out = [{"id": p[0], "nombre": p[1], "nickname": p[2]} for p in participantes]
-
-
-            if inicio and fin:
-                resultado.append(EventoOut(
-                    id=event_id,
-                    titulo=titulo,
-                    inicio=isoparse(inicio),
-                    fin=isoparse(fin),
-                    descripcion=descripcion,
-                    link_meet=meet_link,
-                    participantes_ids=participantes_ids,
-                    participantes=participantes_out,
-                    origen="google_calendar"
-                ))
-
-        except Exception as e:
-            logger.warning(f"⚠️ Saltando evento con error: {event.get('id', 'unknown')} - {str(e)}")
-            continue
-
-    logger.info(f"✅ Se obtuvieron {len(resultado)} eventos de Google Calendar")
-    return resultado
+# def obtener_eventos_google_id(time_min: datetime = None, time_max: datetime = None, max_results: int = 100) -> List[EventoOut]:
+#     start_time = time.time()
+#     try:
+#         service = get_calendar_service()
+#     except Exception as e:
+#         logger.error(f"❌ Error al obtener el servicio de Calendar: {e}")
+#         raise
+#
+#     # Rango por defecto: 30 días atrás y 30 adelante
+#     if time_min is None:
+#         time_min = datetime.utcnow() - timedelta(days=30)
+#     if time_max is None:
+#         time_max = datetime.utcnow() + timedelta(days=30)
+#
+#     # ✅ Formato ISO correcto (sin microsegundos ni doble zona horaria)
+#     time_min_iso = time_min.replace(microsecond=0).isoformat() + "Z"
+#     time_max_iso = time_max.replace(microsecond=0).isoformat() + "Z"
+#
+#     fields = "items(id,summary,description,start,end,conferenceData),nextPageToken"
+#
+#     events = []
+#     page_token = None
+#     try:
+#         while True:
+#             resp = service.events().list(
+#                 calendarId=CALENDAR_ID,
+#                 timeMin=time_min_iso,
+#                 timeMax=time_max_iso,
+#                 maxResults=max_results,
+#                 singleEvents=True,
+#                 orderBy="startTime",
+#                 fields=fields,
+#                 pageToken=page_token
+#             ).execute()
+#             items = resp.get("items", [])
+#             events.extend(items)
+#             page_token = resp.get("nextPageToken")
+#             if not page_token:
+#                 break
+#     except Exception as e:
+#         logger.error(f"❌ Error al obtener eventos de Google Calendar API: {e}")
+#         logger.error(traceback.format_exc())
+#         raise
+#
+#     logger.debug(f"[TIMING] Google events fetched: count={len(events)} time={(time.time()-start_time):.2f}s")
+#
+#     if not events:
+#         logger.info("✅ No hay eventos en el rango solicitado")
+#         return []
+#
+#     event_ids = [e.get("id") for e in events if e.get("id")]
+#     unique_event_ids = list(set(event_ids))
+#     participantes_por_evento: Dict[str, List[Dict]] = {}
+#     responsables_por_evento: Dict[str, int] = {}  # ✅ NUEVO diccionario para responsable_id
+#
+#     try:
+#         with get_connection_context() as conn:
+#             with conn.cursor() as cur:
+#                 if unique_event_ids:
+#                     placeholders = ",".join(["%s"] * len(unique_event_ids))
+#                     sql = f"""
+#                         SELECT
+#                             a.google_event_id,
+#                             a.responsable_id,
+#                             c.id,
+#                             COALESCE(NULLIF(c.nombre_real, ''), c.nickname) AS nombre,
+#                             c.nickname
+#                         FROM agendamientos_participantes ap
+#                         JOIN aspirantes c ON c.id = ap.aspirante_id
+#                         JOIN agendamientos a ON a.id = ap.agendamiento_id
+#                         WHERE a.google_event_id IN ({placeholders})
+#                     """
+#                     cur.execute(sql, tuple(unique_event_ids))
+#                     rows = cur.fetchall()
+#
+#                     # ✅ Ajuste: recorremos filas y guardamos tanto participantes como responsable
+#                     for google_event_id, responsable_id, aspirante_id, nombre, nickname in rows:
+#                         # Registrar participantes
+#                         participantes_por_evento.setdefault(google_event_id, []).append({
+#                             "id": aspirante_id,
+#                             "nombre": nombre,
+#                             "nickname": nickname
+#                         })
+#                         # Registrar responsable (una sola vez por evento)
+#                         if google_event_id not in responsables_por_evento:
+#                             responsables_por_evento[google_event_id] = responsable_id
+#     except Exception as e:
+#         logger.error(f"❌ Error obteniendo participantes: {e}")
+#         logger.error(traceback.format_exc())
+#         participantes_por_evento = {}
+#
+#     # ✅ Construcción final incluyendo responsable_id
+#     resultado: List[EventoOut] = []
+#     for event in events:
+#         try:
+#             event_id = event.get("id")
+#             start_dt = (event.get("start") or {}).get("dateTime")
+#             end_dt = (event.get("end") or {}).get("dateTime")
+#             if not start_dt or not end_dt:
+#                 continue
+#
+#             titulo = event.get("summary", "Sin título")
+#             descripcion = event.get("description", "")
+#             meet_link = None
+#             conf = event.get("conferenceData") or {}
+#             entry_points = conf.get("entryPoints", []) if conf else []
+#             for ep in entry_points:
+#                 if ep.get("entryPointType") == "video":
+#                     meet_link = ep.get("uri")
+#                     break
+#
+#             part_list = participantes_por_evento.get(event_id, [])
+#             participantes_ids = [p["id"] for p in part_list]
+#             responsable_id = responsables_por_evento.get(event_id)  # ✅ NUEVO
+#
+#             resultado.append(EventoOut(
+#                 id=event_id,
+#                 titulo=titulo,
+#                 inicio=isoparse(start_dt),
+#                 fin=isoparse(end_dt),
+#                 descripcion=descripcion,
+#                 link_meet=meet_link,
+#                 participantes_ids=participantes_ids,
+#                 participantes=part_list,
+#                 responsable_id=responsable_id,  # ✅ Incluido
+#                 origen="google_calendar"
+#             ))
+#         except Exception as e:
+#             logger.warning(f"⚠️ Saltando evento con error: {event.get('id', 'unknown')} - {e}")
+#
+#     logger.info(f"✅ Se obtuvieron {len(resultado)} eventos de Google Calendar en {(time.time()-start_time):.2f}s")
+#     return resultado
+#
+#
+# def obtener_eventosV0() -> List[EventoOut]:
+#     try:
+#         service = get_calendar_service()
+#     except Exception as e:
+#         logger.error(f"❌ Error al obtener el servicio de Calendar: {str(e)}")
+#         raise
+#
+#     # time_min = (datetime.utcnow() - timedelta(days=31)).isoformat() + 'Z'
+#     time_min = datetime.utcnow().isoformat() + 'Z'
+#     time_max = (datetime.utcnow() + timedelta(days=31)).isoformat() + 'Z'
+#
+#     try:
+#         events_result = service.events().list(
+#             calendarId=CALENDAR_ID,
+#             timeMin=time_min,
+#             timeMax=time_max,
+#             maxResults=100,
+#             singleEvents=True,
+#             orderBy='startTime'
+#         ).execute()
+#     except Exception as e:
+#         logger.error(f"❌ Error al obtener eventos de Google Calendar API: {str(e)}")
+#         logger.error(traceback.format_exc())
+#         raise
+#
+#     events = events_result.get('items', [])
+#     resultado = []
+#
+#     for event in events:
+#         try:
+#             inicio = event['start'].get('dateTime')
+#             fin = event['end'].get('dateTime')
+#             titulo = event.get('summary', 'Sin título')
+#             descripcion = event.get('description', '')
+#             event_id = event['id']
+#
+#             meet_link = None
+#             if 'conferenceData' in event:
+#                 entry_points = event['conferenceData'].get('entryPoints', [])
+#                 for ep in entry_points:
+#                     if ep.get('entryPointType') == 'video':
+#                         meet_link = ep.get('uri')
+#                         break
+#
+#             # Obtener participantes desde la base de datos
+#             with get_connection_context() as conn:
+#                 with conn.cursor() as cur:
+#                     cur.execute("""
+#                         SELECT c.id, c.nombre_real as nombre, c.nickname
+#                         FROM agendamientos_participantes ap
+#                         JOIN aspirantes c ON c.id = ap.aspirante_id
+#                         JOIN agendamientos a ON a.id = ap.agendamiento_id
+#                         WHERE a.google_event_id = %s
+#                     """, (event_id,))
+#                     participantes = cur.fetchall()
+#                     participantes_ids = [p[0] for p in participantes]
+#                     participantes_out = [{"id": p[0], "nombre": p[1], "nickname": p[2]} for p in participantes]
+#
+#
+#             if inicio and fin:
+#                 resultado.append(EventoOut(
+#                     id=event_id,
+#                     titulo=titulo,
+#                     inicio=isoparse(inicio),
+#                     fin=isoparse(fin),
+#                     descripcion=descripcion,
+#                     link_meet=meet_link,
+#                     participantes_ids=participantes_ids,
+#                     participantes=participantes_out,
+#                     origen="google_calendar"
+#                 ))
+#
+#         except Exception as e:
+#             logger.warning(f"⚠️ Saltando evento con error: {event.get('id', 'unknown')} - {str(e)}")
+#             continue
+#
+#     logger.info(f"✅ Se obtuvieron {len(resultado)} eventos de Google Calendar")
+#     return resultado
 
 
 # def sync_eventos():
@@ -583,7 +583,7 @@ def obtener_eventosV0() -> List[EventoOut]:
 #         cur.execute("""
 #             SELECT c.id, c.nombre_real AS nombre, c.nickname
 #             FROM agendamientos_participantes ap
-#             JOIN creadores c ON c.id = ap.creador_id
+#             JOIN aspirantes c ON c.id = ap.aspirante_id
 #             WHERE ap.agendamiento_id = %s
 #         """, (agendamiento_id,))
 #         participantes = cur.fetchall()
@@ -745,7 +745,7 @@ from googleapiclient.errors import HttpError
 #         cur.execute("DELETE FROM agendamientos_participantes WHERE agendamiento_id = %s", (agendamiento_id,))
 #         for participante_id in evento.participantes_ids:
 #             cur.execute("""
-#                 INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
+#                 INSERT INTO agendamientos_participantes (agendamiento_id, aspirante_id)
 #                 VALUES (%s, %s)
 #             """, (agendamiento_id, participante_id))
 #
@@ -756,7 +756,7 @@ from googleapiclient.errors import HttpError
 #         if evento.participantes_ids:
 #             cur.execute("""
 #                 SELECT id, nombre_real as nombre, nickname
-#                 FROM creadores
+#                 FROM aspirantes
 #                 WHERE id = ANY(%s)
 #             """, (evento.participantes_ids,))
 #             participantes = [{"id": row[0], "nombre": row[1], "nickname": row[2]} for row in cur.fetchall()]
@@ -808,126 +808,126 @@ from dateutil.parser import isoparse
 
 logger = logging.getLogger(__name__)
 
-@app.post("/api/eventos", response_model=EventoOut)
-def crear_eventoV0(evento: EventoIn, usuario_actual: dict = Depends(obtener_usuario_actual)):
-    try:
-        if evento.fin <= evento.inicio:
-            raise HTTPException(status_code=400, detail="La fecha de fin debe ser posterior a la fecha de inicio.")
-
-        # 1. Crear el evento en Google Calendar
-        google_event = crear_evento_google(
-            resumen=evento.titulo,
-            descripcion=evento.descripcion or "",
-            fecha_inicio=evento.inicio,
-            fecha_fin=evento.fin,
-            requiere_meet=evento.requiere_meet  # ✅ nuevo parámetro
-        )
-
-        link_meet = google_event.get("hangoutLink") if evento.requiere_meet else None
-        google_event_id = google_event.get("id")
-
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-                # 2. Insertar agendamiento principal
-                cur.execute("""
-                    INSERT INTO agendamientos (
-                        titulo, descripcion, fecha_inicio, fecha_fin,
-                        link_meet, estado, responsable_id, google_event_id
-                    )
-                    VALUES (%s, %s, %s, %s, %s, 'programado', %s, %s)
-                    RETURNING id;
-                """, (
-                    evento.titulo,
-                    evento.descripcion,
-                    evento.inicio,
-                    evento.fin,
-                    link_meet,
-                    usuario_actual["id"],
-                    google_event_id
-                ))
-                agendamiento_id = cur.fetchone()[0]
-
-                # 3. Insertar participantes
-                for participante_id in evento.participantes_ids:
-                    cur.execute("""
-                        INSERT INTO agendamientos_participantes (agendamiento_id, creador_id)
-                        VALUES (%s, %s)
-                    """, (agendamiento_id, participante_id))
-
-                # 4. Consultar nombres/nicknames
-                cur.execute("""
-                    SELECT id, nombre_real as nombre, nickname
-                    FROM creadores
-                    WHERE id = ANY(%s)
-                """, (evento.participantes_ids,))
-                participantes = [
-                    {"id": row[0], "nombre": row[1], "nickname": row[2]}
-                    for row in cur.fetchall()
-                ]
-
-                conn.commit()
-
-        return EventoOut(
-            id=google_event_id,
-            titulo=evento.titulo,
-            descripcion=evento.descripcion,
-            inicio=evento.inicio,
-            fin=evento.fin,
-            participantes_ids=evento.participantes_ids,
-            participantes=participantes,
-            link_meet=link_meet,
-            origen="google_calendar"
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print("❌ Error creando evento:", e)
-        # raise HTTPException(status_code=500, detail="Error creando evento")
-        raise HTTPException(status_code=500, detail=f"Error creando evento: {str(e)}")
-
-# from uuid import uuid4
-# from datetime import datetime
-
-def crear_evento_google(resumen, descripcion, fecha_inicio, fecha_fin, requiere_meet=False):
-    service = get_calendar_service()
-
-    # 🧱 Estructura base del evento
-    evento = {
-        'summary': resumen,
-        'description': descripcion,
-        'start': {
-            'dateTime': fecha_inicio.isoformat(),
-            'timeZone': 'America/Bogota',
-        },
-        'end': {
-            'dateTime': fecha_fin.isoformat(),
-            'timeZone': 'America/Bogota',
-        },
-    }
-
-    # ✅ Si requiere Meet, agregamos conferenceData
-    if requiere_meet:
-        evento['conferenceData'] = {
-            'createRequest': {
-                'requestId': str(uuid4()),
-                'conferenceSolutionKey': {'type': 'hangoutsMeet'},
-            }
-        }
-
-    # ⚙️ Insertar evento en Google Calendar
-    evento_creado = service.events().insert(
-        calendarId=CALENDAR_ID,
-        body=evento,
-        conferenceDataVersion=1 if requiere_meet else 0  # Solo activa el modo Meet si se requiere
-    ).execute()
-
-    logger.info(f"✅ Evento creado: {evento_creado.get('htmlLink')}")
-    if requiere_meet:
-        logger.info(f"🔗 Meet: {evento_creado.get('hangoutLink')}")
-
-    return evento_creado
-
+# # @app.post("/api/eventos", response_model=EventoOut)
+# # def crear_eventoV0(evento: EventoIn, usuario_actual: dict = Depends(obtener_usuario_actual)):
+# #     try:
+# #         if evento.fin <= evento.inicio:
+# #             raise HTTPException(status_code=400, detail="La fecha de fin debe ser posterior a la fecha de inicio.")
+# #
+# #         # 1. Crear el evento en Google Calendar
+# #         google_event = crear_evento_google(
+# #             resumen=evento.titulo,
+# #             descripcion=evento.descripcion or "",
+# #             fecha_inicio=evento.inicio,
+# #             fecha_fin=evento.fin,
+# #             requiere_meet=evento.requiere_meet  # ✅ nuevo parámetro
+# #         )
+# #
+# #         link_meet = google_event.get("hangoutLink") if evento.requiere_meet else None
+# #         google_event_id = google_event.get("id")
+# #
+# #         with get_connection_context() as conn:
+# #             with conn.cursor() as cur:
+# #                 # 2. Insertar agendamiento principal
+# #                 cur.execute("""
+# #                     INSERT INTO agendamientos (
+# #                         titulo, descripcion, fecha_inicio, fecha_fin,
+# #                         link_meet, estado, responsable_id, google_event_id
+# #                     )
+# #                     VALUES (%s, %s, %s, %s, %s, 'programado', %s, %s)
+# #                     RETURNING id;
+# #                 """, (
+# #                     evento.titulo,
+# #                     evento.descripcion,
+# #                     evento.inicio,
+# #                     evento.fin,
+# #                     link_meet,
+# #                     usuario_actual["id"],
+# #                     google_event_id
+# #                 ))
+# #                 agendamiento_id = cur.fetchone()[0]
+# #
+# #                 # 3. Insertar participantes
+# #                 for participante_id in evento.participantes_ids:
+# #                     cur.execute("""
+# #                         INSERT INTO agendamientos_participantes (agendamiento_id, aspirante_id)
+# #                         VALUES (%s, %s)
+# #                     """, (agendamiento_id, participante_id))
+# #
+# #                 # 4. Consultar nombres/nicknames
+# #                 cur.execute("""
+# #                     SELECT id, nombre_real as nombre, nickname
+# #                     FROM   aspirantes
+# #                     WHERE id = ANY(%s)
+# #                 """, (evento.participantes_ids,))
+# #                 participantes = [
+# #                     {"id": row[0], "nombre": row[1], "nickname": row[2]}
+# #                     for row in cur.fetchall()
+# #                 ]
+# #
+# #                 conn.commit()
+# #
+# #         return EventoOut(
+# #             id=google_event_id,
+# #             titulo=evento.titulo,
+# #             descripcion=evento.descripcion,
+# #             inicio=evento.inicio,
+# #             fin=evento.fin,
+# #             participantes_ids=evento.participantes_ids,
+# #             participantes=participantes,
+# #             link_meet=link_meet,
+# #             origen="google_calendar"
+# #         )
+# #
+# #     except HTTPException:
+# #         raise
+# #     except Exception as e:
+# #         print("❌ Error creando evento:", e)
+# #         # raise HTTPException(status_code=500, detail="Error creando evento")
+# #         raise HTTPException(status_code=500, detail=f"Error creando evento: {str(e)}")
+#
+# # from uuid import uuid4
+# # from datetime import datetime
+#
+# # def crear_evento_google(resumen, descripcion, fecha_inicio, fecha_fin, requiere_meet=False):
+# #     service = get_calendar_service()
+#
+#     # # 🧱 Estructura base del evento
+#     # evento = {
+#     #     'summary': resumen,
+#     #     'description': descripcion,
+#     #     'start': {
+#     #         'dateTime': fecha_inicio.isoformat(),
+#     #         'timeZone': 'America/Bogota',
+#     #     },
+#     #     'end': {
+#     #         'dateTime': fecha_fin.isoformat(),
+#     #         'timeZone': 'America/Bogota',
+#     #     },
+#     # }
+#
+#     # ✅ Si requiere Meet, agregamos conferenceData
+#     if requiere_meet:
+#         evento['conferenceData'] = {
+#             'createRequest': {
+#                 'requestId': str(uuid4()),
+#                 'conferenceSolutionKey': {'type': 'hangoutsMeet'},
+#             }
+#         }
+#
+#     # ⚙️ Insertar evento en Google Calendar
+#     evento_creado = service.events().insert(
+#         calendarId=CALENDAR_ID,
+#         body=evento,
+#         conferenceDataVersion=1 if requiere_meet else 0  # Solo activa el modo Meet si se requiere
+#     ).execute()
+#
+#     logger.info(f"✅ Evento creado: {evento_creado.get('htmlLink')}")
+#     if requiere_meet:
+#         logger.info(f"🔗 Meet: {evento_creado.get('hangoutLink')}")
+#
+#     return evento_creado
+#
 
 # def crear_evento_google(resumen, descripcion, fecha_inicio, fecha_fin):
 #     service = get_calendar_service()
@@ -1018,35 +1018,35 @@ def crear_evento_google(resumen, descripcion, fecha_inicio, fecha_fin, requiere_
 #     return evento_creado
 
 
-def crear_evento_google_(resumen, descripcion, fecha_inicio, fecha_fin):
-    service = get_calendar_service()
-
-    evento = {
-        'summary': resumen,
-        'description': descripcion,
-        'start': {
-            'dateTime': fecha_inicio.isoformat(),
-            'timeZone': 'America/Bogota',
-        },
-        'end': {
-            'dateTime': fecha_fin.isoformat(),
-            'timeZone': 'America/Bogota',
-        },
-        'conferenceData': {
-            'createRequest': {
-                'requestId': str(uuid4()),
-                'conferenceSolutionKey': {'type': 'hangoutsMeet'},
-            },
-        },
-    }
-
-    evento_creado = service.events().insert(
-        calendarId=CALENDAR_ID,
-        body=evento,
-        conferenceDataVersion=1
-    ).execute()
-
-    return evento_creado
+# def crear_evento_google_(resumen, descripcion, fecha_inicio, fecha_fin):
+#     service = get_calendar_service()
+#
+#     evento = {
+#         'summary': resumen,
+#         'description': descripcion,
+#         'start': {
+#             'dateTime': fecha_inicio.isoformat(),
+#             'timeZone': 'America/Bogota',
+#         },
+#         'end': {
+#             'dateTime': fecha_fin.isoformat(),
+#             'timeZone': 'America/Bogota',
+#         },
+#         'conferenceData': {
+#             'createRequest': {
+#                 'requestId': str(uuid4()),
+#                 'conferenceSolutionKey': {'type': 'hangoutsMeet'},
+#             },
+#         },
+#     }
+#
+#     evento_creado = service.events().insert(
+#         calendarId=CALENDAR_ID,
+#         body=evento,
+#         conferenceDataVersion=1
+#     ).execute()
+#
+#     return evento_creado
 
 from psycopg2.extras import RealDictCursor
 
@@ -1150,73 +1150,73 @@ from googleapiclient.http import MediaFileUpload
 
 # cloudinary
 # cloudinary
-import cloudinary
-import cloudinary.uploader
-
-# Configuración (puedes usar variables de entorno)
-cloudinary.config(
-    cloud_name=os.environ.get("CLOUDINARY_CLOUD_NAME"),
-    api_key=os.environ.get("CLOUDINARY_API_KEY"),
-    api_secret=os.environ.get("CLOUDINARY_API_SECRET"),
-    secure=True
-)
-
-def subir_audio_cloudinary(ruta_local, public_id=None, carpeta="audios_whatsapp"):
-    try:
-        response = cloudinary.uploader.upload(
-            ruta_local,
-            resource_type="video",  # Cloudinary usa 'video' para audio/ogg/webm
-            folder=carpeta,
-            public_id=public_id,
-            overwrite=True
-        )
-        url = response.get("secure_url")
-        print(f"✅ Audio subido a Cloudinary: {url}")
-        return url
-    except Exception as e:
-        print("❌ Error subiendo audio a Cloudinary:", e)
-        return None
-# cloudinary
-# cloudinary
-
-import requests
-import os
-
-def descargar_audio(audio_id, token, carpeta_destino=AUDIO_DIR):
-    try:
-        url_info = f"https://graph.facebook.com/v19.0/{audio_id}"
-        headers = {"Authorization": f"Bearer {token}"}
-        response_info = requests.get(url_info, headers=headers)
-        response_info.raise_for_status()
-
-        media_url = response_info.json().get("url")
-        if not media_url:
-            print("❌ No se pudo obtener la URL del audio.")
-            return None
-
-        response_audio = requests.get(media_url, headers=headers)
-        response_audio.raise_for_status()
-
-        os.makedirs(carpeta_destino, exist_ok=True)
-        nombre_archivo = f"{audio_id}.ogg"
-        ruta_archivo = os.path.join(carpeta_destino, nombre_archivo)
-
-        with open(ruta_archivo, "wb") as f:
-            f.write(response_audio.content)
-
-        print(f"✅ Audio guardado en: {ruta_archivo}")
-
-        # Sube a Cloudinary y elimina el archivo local si quieres
-        url_cloudinary = subir_audio_cloudinary(ruta_archivo, public_id=audio_id)
-        if url_cloudinary:
-            # os.remove(ruta_archivo)  # Descomenta si quieres borrar el archivo local
-            return url_cloudinary
-        else:
-            return None
-
-    except Exception as e:
-        print("❌ Error al descargar audio:", e)
-        return None
+# import cloudinary
+# import cloudinary.uploader
+#
+# # Configuración (puedes usar variables de entorno)
+# cloudinary.config(
+#     cloud_name=os.environ.get("CLOUDINARY_CLOUD_NAME"),
+#     api_key=os.environ.get("CLOUDINARY_API_KEY"),
+#     api_secret=os.environ.get("CLOUDINARY_API_SECRET"),
+#     secure=True
+# )
+#
+# def subir_audio_cloudinary(ruta_local, public_id=None, carpeta="audios_whatsapp"):
+#     try:
+#         response = cloudinary.uploader.upload(
+#             ruta_local,
+#             resource_type="video",  # Cloudinary usa 'video' para audio/ogg/webm
+#             folder=carpeta,
+#             public_id=public_id,
+#             overwrite=True
+#         )
+#         url = response.get("secure_url")
+#         print(f"✅ Audio subido a Cloudinary: {url}")
+#         return url
+#     except Exception as e:
+#         print("❌ Error subiendo audio a Cloudinary:", e)
+#         return None
+# # cloudinary
+# # cloudinary
+#
+# import requests
+# import os
+#
+# def descargar_audio(audio_id, token, carpeta_destino=AUDIO_DIR):
+#     try:
+#         url_info = f"https://graph.facebook.com/v19.0/{audio_id}"
+#         headers = {"Authorization": f"Bearer {token}"}
+#         response_info = requests.get(url_info, headers=headers)
+#         response_info.raise_for_status()
+#
+#         media_url = response_info.json().get("url")
+#         if not media_url:
+#             print("❌ No se pudo obtener la URL del audio.")
+#             return None
+#
+#         response_audio = requests.get(media_url, headers=headers)
+#         response_audio.raise_for_status()
+#
+#         os.makedirs(carpeta_destino, exist_ok=True)
+#         nombre_archivo = f"{audio_id}.ogg"
+#         ruta_archivo = os.path.join(carpeta_destino, nombre_archivo)
+#
+#         with open(ruta_archivo, "wb") as f:
+#             f.write(response_audio.content)
+#
+#         print(f"✅ Audio guardado en: {ruta_archivo}")
+#
+#         # Sube a Cloudinary y elimina el archivo local si quieres
+#         url_cloudinary = subir_audio_cloudinary(ruta_archivo, public_id=audio_id)
+#         if url_cloudinary:
+#             # os.remove(ruta_archivo)  # Descomenta si quieres borrar el archivo local
+#             return url_cloudinary
+#         else:
+#             return None
+#
+#     except Exception as e:
+#         print("❌ Error al descargar audio:", e)
+#         return None
 
 # def descargar_audio(audio_id, token, carpeta_destino=AUDIO_DIR):
 #     try:
@@ -1265,50 +1265,50 @@ async def verify_webhook(request: Request):
         return PlainTextResponse(challenge or "")
     return PlainTextResponse("Verificación fallida", status_code=403)
 
-@app.post("/webhook_V0")
-async def recibir_mensaje(request: Request):
-    try:
-        datos = await request.json()
-        print("📨 Payload recibido:")
-        print(json.dumps(datos, indent=2))
-        entrada = datos.get("entry", [{}])[0]
-        cambio = entrada.get("changes", [{}])[0]
-        valor = cambio.get("value", {})
-        mensajes = valor.get("messages")
-        if not mensajes:
-            print("⚠️ No se encontraron mensajes en el payload.")
-            return JSONResponse({"status": "ok", "detalle": "Sin mensajes"}, status_code=200)
-        mensaje = mensajes[0]
-        telefono = mensaje.get("from")
-        tipo = mensaje.get("type")
-        es_audio = False
-        audio_id = None
-        mensaje_usuario = None
-
-        if tipo == "text":
-            mensaje_usuario = mensaje.get("text", {}).get("body")
-        elif tipo == "audio":
-            es_audio = True
-            audio_info = mensaje.get("audio", {})
-            audio_id = audio_info.get("id")
-        elif tipo == "button":
-            mensaje_usuario = mensaje.get("button", {}).get("text")
-            print(f"👆 Botón presionado: {mensaje_usuario}")
-
-        if not telefono or (not mensaje_usuario and not es_audio):
-            print("⚠️ Mensaje incompleto.")
-            return JSONResponse({"status": "ok", "detalle": "Mensaje incompleto"}, status_code=200)
-        print(f"📥 Mensaje recibido de {telefono}: {mensaje_usuario if mensaje_usuario else audio_id}")
-
-        if es_audio:
-            url_cloudinary = descargar_audio(audio_id, TOKEN)
-            if url_cloudinary:
-                guardar_mensaje(telefono, url_cloudinary, tipo="recibido", es_audio=True)
-                return JSONResponse({"status": "ok", "detalle": "Audio subido a Cloudinary", "url": url_cloudinary})
-            else:
-                return JSONResponse({"status": "error", "detalle": "No se pudo subir el audio"}, status_code=500)
-        else:
-            guardar_mensaje(telefono, mensaje_usuario, tipo="recibido", es_audio=False)
+# @app.post("/webhook_V0")
+# async def recibir_mensaje(request: Request):
+#     try:
+#         datos = await request.json()
+#         print("📨 Payload recibido:")
+#         print(json.dumps(datos, indent=2))
+#         entrada = datos.get("entry", [{}])[0]
+#         cambio = entrada.get("changes", [{}])[0]
+#         valor = cambio.get("value", {})
+#         mensajes = valor.get("messages")
+#         if not mensajes:
+#             print("⚠️ No se encontraron mensajes en el payload.")
+#             return JSONResponse({"status": "ok", "detalle": "Sin mensajes"}, status_code=200)
+#         mensaje = mensajes[0]
+#         telefono = mensaje.get("from")
+#         tipo = mensaje.get("type")
+#         es_audio = False
+#         audio_id = None
+#         mensaje_usuario = None
+#
+#         if tipo == "text":
+#             mensaje_usuario = mensaje.get("text", {}).get("body")
+#         elif tipo == "audio":
+#             es_audio = True
+#             audio_info = mensaje.get("audio", {})
+#             audio_id = audio_info.get("id")
+#         elif tipo == "button":
+#             mensaje_usuario = mensaje.get("button", {}).get("text")
+#             print(f"👆 Botón presionado: {mensaje_usuario}")
+#
+#         if not telefono or (not mensaje_usuario and not es_audio):
+#             print("⚠️ Mensaje incompleto.")
+#             return JSONResponse({"status": "ok", "detalle": "Mensaje incompleto"}, status_code=200)
+#         print(f"📥 Mensaje recibido de {telefono}: {mensaje_usuario if mensaje_usuario else audio_id}")
+#
+#         if es_audio:
+#             url_cloudinary = descargar_audio(audio_id, TOKEN)
+#             if url_cloudinary:
+#                 guardar_mensaje(telefono, url_cloudinary, tipo="recibido", es_audio=True)
+#                 return JSONResponse({"status": "ok", "detalle": "Audio subido a Cloudinary", "url": url_cloudinary})
+#             else:
+#                 return JSONResponse({"status": "error", "detalle": "No se pudo subir el audio"}, status_code=500)
+#         else:
+#             guardar_mensaje(telefono, mensaje_usuario, tipo="recibido", es_audio=False)
 
         # ✉️ Enviar respuesta automática
         # respuesta = "Gracias por tu mensaje, te escribiremos una respuesta tan pronto podamos"
@@ -1327,9 +1327,9 @@ async def recibir_mensaje(request: Request):
         #     "codigo_envio": codigo,
         #     "respuesta_api": respuesta_api,
         # })
-    except Exception as e:
-        print("❌ Error procesando mensaje:", e)
-        return JSONResponse({"error": str(e)}, status_code=500)
+    # except Exception as e:
+    #     print("❌ Error procesando mensaje:", e)
+    #     return JSONResponse({"error": str(e)}, status_code=500)
 
 # 📩 PROCESAMIENTO DE MENSAJES ENVIADOS AL WEBHOOK
 # @app.post("/webhook")
@@ -1480,103 +1480,103 @@ async def recibir_mensaje(request: Request):
 
 
 
-
-@app.post("/mensajesV0")
-async def api_enviar_mensajeV0(data: dict):
-    telefono = data.get("telefono")
-    mensaje = data.get("mensaje")
-    nombre = data.get("nombre", "").strip()
-    if not telefono or not mensaje:
-        return JSONResponse({"error": "Faltan datos"}, status_code=400)
-    usuario_id = obtener_usuario_id_por_telefono(telefono)
-    if usuario_id and paso_limite_24h(usuario_id):
-        print("⏱️ Usuario fuera de la ventana de 24h. Enviando plantilla reengagement.")
-        plantilla = "reconectar_usuario_saludo"
-        parametros = [nombre] if nombre else []
-        codigo, respuesta_api = enviar_plantilla_generica(
-            token=TOKEN,
-            phone_number_id=PHONE_NUMBER_ID,
-            numero_destino=telefono,
-            nombre_plantilla=plantilla,
-            codigo_idioma="es_CO",
-            parametros=parametros
-        )
-        guardar_mensaje(
-            telefono,
-            f"[Plantilla enviada por 24h: {plantilla} - {parametros}]",
-            tipo="enviado"
-        )
-        return {
-            "status": "plantilla_auto",
-            "mensaje": "Se envió plantilla por estar fuera de ventana de 24h.",
-            "codigo_api": codigo,
-            "respuesta_api": respuesta_api
-        }
-    codigo, respuesta_api = enviar_mensaje_texto_simple(
-        token=TOKEN,
-        numero_id=PHONE_NUMBER_ID,
-        telefono_destino=telefono,
-        texto=mensaje
-    )
-    guardar_mensaje(telefono, mensaje, tipo="enviado")
-    return {
-        "status": "ok",
-        "mensaje": "Mensaje enviado correctamente",
-        "codigo_api": codigo,
-        "respuesta_api": respuesta_api
-    }
-
-
-
-@router.post("/mensajes/audio")
-async def api_enviar_audio(telefono: str = Form(...), audio: UploadFile = Form(...)):
-    filename_webm = f"{telefono}_{int(datetime.now().timestamp())}.webm"
-    ruta_webm = os.path.join(AUDIO_DIR, filename_webm)
-    filename_ogg = filename_webm.replace(".webm", ".ogg")
-    ruta_ogg = os.path.join(AUDIO_DIR, filename_ogg)
-    os.makedirs(AUDIO_DIR, exist_ok=True)
-    audio_bytes = await audio.read()
-    with open(ruta_webm, "wb") as f:
-        f.write(audio_bytes)
-    print(f"✅ Audio guardado correctamente en: {ruta_webm}")
-    try:
-        subprocess.run(["ffmpeg", "-y", "-i", ruta_webm, "-acodec", "libopus", ruta_ogg], check=True)
-        print(f"✅ Audio convertido a .ogg: {ruta_ogg}")
-    except subprocess.CalledProcessError as e:
-        return {"status": "error", "mensaje": "Error al convertir el audio a .ogg", "error": str(e)}
-    # Subir a Cloudinary
-    url_cloudinary = subir_audio_cloudinary(ruta_ogg, public_id=filename_ogg.replace(".ogg", ""))
-    guardar_mensaje(
-        telefono,
-        url_cloudinary,
-        tipo="enviado",
-        es_audio=True
-    )
-    try:
-        codigo, respuesta_api = enviar_audio_base64(
-            token=TOKEN,
-            numero_id=PHONE_NUMBER_ID,
-            telefono_destino=telefono,
-            ruta_audio=ruta_ogg,
-            mimetype="audio/ogg; codecs=opus"
-        )
-        print(f"📤 Audio enviado a WhatsApp. Código: {codigo}")
-    except Exception as e:
-        return {
-            "status": "error",
-            "mensaje": "Audio guardado, pero no enviado por WhatsApp",
-            "archivo": filename_ogg,
-            "url_cloudinary": url_cloudinary,
-            "error": str(e)
-        }
-    return {
-        "status": "ok",
-        "mensaje": "Audio recibido, subido y enviado por WhatsApp",
-        "archivo": filename_ogg,
-        "url_cloudinary": url_cloudinary,
-        "codigo_api": codigo,
-        "respuesta_api": respuesta_api
-    }
+#
+# @app.post("/mensajesV0")
+# async def api_enviar_mensajeV0(data: dict):
+#     telefono = data.get("telefono")
+#     mensaje = data.get("mensaje")
+#     nombre = data.get("nombre", "").strip()
+#     if not telefono or not mensaje:
+#         return JSONResponse({"error": "Faltan datos"}, status_code=400)
+#     usuario_id = obtener_usuario_id_por_telefono(telefono)
+#     if usuario_id and paso_limite_24h(usuario_id):
+#         print("⏱️ Usuario fuera de la ventana de 24h. Enviando plantilla reengagement.")
+#         plantilla = "reconectar_usuario_saludo"
+#         parametros = [nombre] if nombre else []
+#         codigo, respuesta_api = enviar_plantilla_generica(
+#             token=TOKEN,
+#             phone_number_id=PHONE_NUMBER_ID,
+#             numero_destino=telefono,
+#             nombre_plantilla=plantilla,
+#             codigo_idioma="es_CO",
+#             parametros=parametros
+#         )
+#         guardar_mensaje(
+#             telefono,
+#             f"[Plantilla enviada por 24h: {plantilla} - {parametros}]",
+#             tipo="enviado"
+#         )
+#         return {
+#             "status": "plantilla_auto",
+#             "mensaje": "Se envió plantilla por estar fuera de ventana de 24h.",
+#             "codigo_api": codigo,
+#             "respuesta_api": respuesta_api
+#         }
+#     codigo, respuesta_api = enviar_mensaje_texto_simple(
+#         token=TOKEN,
+#         numero_id=PHONE_NUMBER_ID,
+#         telefono_destino=telefono,
+#         texto=mensaje
+#     )
+#     guardar_mensaje(telefono, mensaje, tipo="enviado")
+#     return {
+#         "status": "ok",
+#         "mensaje": "Mensaje enviado correctamente",
+#         "codigo_api": codigo,
+#         "respuesta_api": respuesta_api
+#     }
+#
+#
+#
+# @router.post("/mensajes/audio")
+# async def api_enviar_audio(telefono: str = Form(...), audio: UploadFile = Form(...)):
+#     filename_webm = f"{telefono}_{int(datetime.now().timestamp())}.webm"
+#     ruta_webm = os.path.join(AUDIO_DIR, filename_webm)
+#     filename_ogg = filename_webm.replace(".webm", ".ogg")
+#     ruta_ogg = os.path.join(AUDIO_DIR, filename_ogg)
+#     os.makedirs(AUDIO_DIR, exist_ok=True)
+#     audio_bytes = await audio.read()
+#     with open(ruta_webm, "wb") as f:
+#         f.write(audio_bytes)
+#     print(f"✅ Audio guardado correctamente en: {ruta_webm}")
+#     try:
+#         subprocess.run(["ffmpeg", "-y", "-i", ruta_webm, "-acodec", "libopus", ruta_ogg], check=True)
+#         print(f"✅ Audio convertido a .ogg: {ruta_ogg}")
+#     except subprocess.CalledProcessError as e:
+#         return {"status": "error", "mensaje": "Error al convertir el audio a .ogg", "error": str(e)}
+#     # Subir a Cloudinary
+#     url_cloudinary = subir_audio_cloudinary(ruta_ogg, public_id=filename_ogg.replace(".ogg", ""))
+#     guardar_mensaje(
+#         telefono,
+#         url_cloudinary,
+#         tipo="enviado",
+#         es_audio=True
+#     )
+#     try:
+#         codigo, respuesta_api = enviar_audio_base64(
+#             token=TOKEN,
+#             numero_id=PHONE_NUMBER_ID,
+#             telefono_destino=telefono,
+#             ruta_audio=ruta_ogg,
+#             mimetype="audio/ogg; codecs=opus"
+#         )
+#         print(f"📤 Audio enviado a WhatsApp. Código: {codigo}")
+#     except Exception as e:
+#         return {
+#             "status": "error",
+#             "mensaje": "Audio guardado, pero no enviado por WhatsApp",
+#             "archivo": filename_ogg,
+#             "url_cloudinary": url_cloudinary,
+#             "error": str(e)
+#         }
+#     return {
+#         "status": "ok",
+#         "mensaje": "Audio recibido, subido y enviado por WhatsApp",
+#         "archivo": filename_ogg,
+#         "url_cloudinary": url_cloudinary,
+#         "codigo_api": codigo,
+#         "respuesta_api": respuesta_api
+#     }
 
 
 
@@ -2110,19 +2110,19 @@ async def perfil(usuario: dict = Depends(obtener_usuario_actual)):
 from typing import Optional
 from fastapi import Query
 
-# === Listar todos los creadores (con filtro opcional por estado_id) ===
-@app.get("/api/creadores", tags=["Creadores"])
+# === Listar todos los aspirantes (con filtro opcional por estado_id) ===
+@app.get("/api/aspirantes", tags=["Creadores"])
 def listar_creadores(estado_id: Optional[int] = Query(None, description="Filtrar por estado_id")):
     try:
-        return obtener_creadores_db(estado_id=estado_id)
+        return   obtener_aspirantes_db(estado_id=estado_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 # === Endpoint para estados 3, 4 y 5 ===
-@app.get("/api/creadores/en_proceso", tags=["Creadores"])
+@app.get("/api/aspirantes/en_proceso", tags=["Creadores"])
 def listar_creadores_en_proceso():
     try:
-        return obtener_creadores_db()
+        return   obtener_aspirantes_db()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -2135,22 +2135,22 @@ def listar_TodosUsuarios():
         raise HTTPException(status_code=500, detail=str(e))
 
 # === Obtener el perfil de un creador por ID ===
-@app.get("/api/perfil_creador/{creador_id}", tags=["Perfil"])
-def perfil_creador(creador_id: int):
-    perfil = obtener_perfil_creador(creador_id)
+@app.get("/api/aspirantes_perfil/{aspirante_id}", tags=["Perfil"])
+def aspirantes_perfil(aspirante_id: int):
+    perfil = obtener_aspirantes_perfil(aspirante_id)
     if not perfil:
         raise HTTPException(status_code=404, detail="Perfil no encontrado")
     return perfil
 
 # === Actualizar el perfil completo del creador ===
-@app.put("/api/perfil_creador/{creador_id}", tags=["Perfil"])
-def actualizar_perfil_creador_endpoint(creador_id: int, evaluacion: PerfilCreadorSchema):
+@app.put("/api/aspirantes_perfil/{aspirante_id}", tags=["Perfil"])
+def actualizar_aspirantes_perfil_endpoint(aspirante_id: int, evaluacion: PerfilCreadorSchema):
     try:
         data_dict = evaluacion.dict(exclude_unset=True)
         if not data_dict:
             raise HTTPException(status_code=400, detail="No se enviaron datos para actualizar.")
 
-        actualizar_datos_perfil_creador(creador_id, data_dict)
+        actualizar_datos_aspirantes_perfil(aspirante_id, data_dict)
         return {"status": "ok", "mensaje": "Perfil actualizado correctamente"}
     except HTTPException:
         raise
@@ -2168,10 +2168,10 @@ def estadisticas_evaluacion():
         raise HTTPException(status_code=500, detail=str(e))
 
 # === Actualizar datos personales del perfil ===
-@app.put("/api/perfil_creador/{creador_id}/datos_personales",
+@app.put("/api/aspirantes_perfil/{aspirante_id}/datos_personales",
          tags=["Perfil"],
          response_model=DatosPersonalesOutput)
-def actualizar_datos_personales(creador_id: int, datos: DatosPersonalesInput):
+def actualizar_datos_personales(aspirante_id: int, datos: DatosPersonalesInput):
     try:
         data_dict = datos.dict(exclude_unset=True)
 
@@ -2190,7 +2190,7 @@ def actualizar_datos_personales(creador_id: int, datos: DatosPersonalesInput):
         data_dict["puntaje_general_categoria"] = score.get("puntaje_general_categoria")
 
         # Actualizar en BD
-        actualizar_datos_perfil_creador(creador_id, data_dict)
+        actualizar_datos_aspirantes_perfil(aspirante_id, data_dict)
 
         return DatosPersonalesOutput(
             status="ok",
@@ -2200,7 +2200,7 @@ def actualizar_datos_personales(creador_id: int, datos: DatosPersonalesInput):
         )
 
     except Exception as e:
-        logging.error(f"Error en PUT /api/perfil_creador/{creador_id}/datos_personales: {e}", exc_info=True)
+        logging.error(f"Error en PUT /api/aspirantes_perfil/{aspirante_id}/datos_personales: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail="Error al actualizar datos personales"
@@ -2209,12 +2209,12 @@ def actualizar_datos_personales(creador_id: int, datos: DatosPersonalesInput):
 from main_auth import obtener_usuario_actual  # o el nombre correcto del archivo
 
 @app.put(
-    "/api/perfil_creador/{creador_id}/evaluacion_cualitativa",
+    "/api/aspirantes_perfil/{aspirante_id}/evaluacion_cualitativa",
     response_model=EvaluacionCualitativaOutput,
     tags=["Evaluación"]
 )
 def actualizar_eval_cualitativa(
-    creador_id: int,
+    aspirante_id: int,
     datos: EvaluacionCualitativaInput,
     usuario_actual: dict = Depends(obtener_usuario_actual)
 ):
@@ -2237,12 +2237,12 @@ def actualizar_eval_cualitativa(
         data_dict["puntaje_manual_categoria"] = resultado["puntaje_cualitativo_categoria"]
 
         potencial_creador = evaluar_potencial_creador(
-            creador_id,
+            aspirante_id,
             resultado["puntaje_cualitativo"]
         )
         nivel_estimado = potencial_creador.get("nivel")
 
-        actualizar_datos_perfil_creador(creador_id, data_dict)
+        actualizar_datos_aspirantes_perfil(aspirante_id, data_dict)
 
         # === respuesta final ===
         return EvaluacionCualitativaOutput(
@@ -2254,7 +2254,7 @@ def actualizar_eval_cualitativa(
         )
 
     except Exception as e:
-        logging.error(f"Error en PUT /api/perfil_creador/{creador_id}/evaluacion_cualitativa: {e}", exc_info=True)
+        logging.error(f"Error en PUT /api/aspirantes_perfil/{aspirante_id}/evaluacion_cualitativa: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail="Ocurrió un error interno en el servidor al procesar la evaluación. Por favor inténtalo nuevamente o contacta al administrador."
@@ -2263,11 +2263,11 @@ def actualizar_eval_cualitativa(
 
 # === Actualizar estadísticas del perfil ===
 @app.put(
-    "/api/perfil_creador/{creador_id}/estadisticas",
+    "/api/aspirantes_perfil/{aspirante_id}/estadisticas",
     tags=["Estadísticas"],
     response_model=EstadisticasPerfilOutput
 )
-def actualizar_estadisticas(creador_id: int, datos: EstadisticasPerfilInput):
+def actualizar_estadisticas(aspirante_id: int, datos: EstadisticasPerfilInput):
     try:
         data_dict = datos.dict(exclude_unset=True)
 
@@ -2285,7 +2285,7 @@ def actualizar_estadisticas(creador_id: int, datos: EstadisticasPerfilInput):
         data_dict["puntaje_estadistica_categoria"] = score["puntaje_estadistica_categoria"]
 
         # Actualizar en BD
-        actualizar_datos_perfil_creador(creador_id, data_dict)
+        actualizar_datos_aspirantes_perfil(aspirante_id, data_dict)
 
         return EstadisticasPerfilOutput(
             status="ok",
@@ -2295,17 +2295,17 @@ def actualizar_estadisticas(creador_id: int, datos: EstadisticasPerfilInput):
         )
 
     except Exception as e:
-        logging.error(f"Error en PUT /api/perfil_creador/{creador_id}/estadisticas: {e}", exc_info=True)
+        logging.error(f"Error en PUT /api/aspirantes_perfil/{aspirante_id}/estadisticas: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Error al actualizar estadísticas")
 
 
 # === Actualizar preferencias y hábitos ===
 @app.put(
-    "/api/perfil_creador/{creador_id}/preferencias",
+    "/api/aspirantes_perfil/{aspirante_id}/preferencias",
     tags=["Preferencias"],
     response_model=PreferenciasHabitosOutput
 )
-def actualizar_preferencias(creador_id: int, datos: PreferenciasHabitosInput):
+def actualizar_preferencias(aspirante_id: int, datos: PreferenciasHabitosInput):
     try:
         data_dict = datos.dict(exclude_unset=True)
 
@@ -2324,7 +2324,7 @@ def actualizar_preferencias(creador_id: int, datos: PreferenciasHabitosInput):
         data_dict["puntaje_habitos_categoria"] = score["puntaje_habitos_categoria"]
 
         # Actualizar en BD
-        actualizar_datos_perfil_creador(creador_id, data_dict)
+        actualizar_datos_aspirantes_perfil(aspirante_id, data_dict)
 
         return PreferenciasHabitosOutput(
             status="ok",
@@ -2337,56 +2337,56 @@ def actualizar_preferencias(creador_id: int, datos: PreferenciasHabitosInput):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/perfil_creador/{creador_id}/resumen",
-         tags=["Resumen"],
-         response_model=ResumenEvaluacionOutput)
-def obtener_resumen(creador_id: int, usuario_actual: dict = Depends(obtener_usuario_actual)):
-    perfil = obtener_puntajes_perfil_creador(creador_id)
-    if not perfil:
-        raise HTTPException(status_code=404, detail="Perfil no encontrado")
-
-    score = evaluacion_total(
-        cualitativa_score=perfil.get("puntaje_manual", 0),
-        estadistica_score=perfil.get("puntaje_estadistica", 0),
-        general_score=perfil.get("puntaje_general", 0),
-        habitos_score=perfil.get("puntaje_habitos", 0)
-    )
-
-    diagnostico = "-"
-    mejoras = "-"
-    try:
-        diagnostico = diagnostico_perfil_creador(creador_id)
-    except Exception:
-        pass
-    try:
-        mejoras = generar_mejoras_sugeridas_total(creador_id)
-    except Exception:
-        pass
-
-    # 📝 Observaciones globales (texto descriptivo que combina puntajes y diagnóstico)
-    observaciones_totales = (
-        f"📊 Evaluación Global:\n"
-        f"Puntaje total: {score['puntaje_total']}\n"
-        f"Categoría: {score['puntaje_total_categoria']}\n\n"
-        f"🩺 Diagnóstico Detallado:\n{diagnostico}\n"
-    )
-
-    return ResumenEvaluacionOutput(
-        status="ok",
-        mensaje="Resumen calculado",
-        puntaje_manual=perfil.get("puntaje_manual"),
-        puntaje_manual_categoria=perfil.get("puntaje_manual_categoria"),
-        puntaje_estadistica=perfil.get("puntaje_estadistica"),
-        puntaje_estadistica_categoria=perfil.get("puntaje_estadistica_categoria"),
-        puntaje_general=perfil.get("puntaje_general"),
-        puntaje_general_categoria=perfil.get("puntaje_general_categoria"),
-        puntaje_habitos=perfil.get("puntaje_habitos"),
-        puntaje_habitos_categoria=perfil.get("puntaje_habitos_categoria"),
-        puntaje_total=score["puntaje_total"],
-        puntaje_total_categoria=score["puntaje_total_categoria"],
-        diagnostico=observaciones_totales,  # 👈 Se devuelve el texto armado
-        mejoras_sugeridas=mejoras
-    )
+# @app.get("/api/aspirantes_perfil/{aspirante_id}/resumen",
+#          tags=["Resumen"],
+#          response_model=ResumenEvaluacionOutput)
+# def obtener_resumen(aspirante_id: int, usuario_actual: dict = Depends(obtener_usuario_actual)):
+#     perfil = obtener_puntajes_aspirantes_perfil(aspirante_id)
+#     if not perfil:
+#         raise HTTPException(status_code=404, detail="Perfil no encontrado")
+#
+#     score = evaluacion_total(
+#         cualitativa_score=perfil.get("puntaje_manual", 0),
+#         estadistica_score=perfil.get("puntaje_estadistica", 0),
+#         general_score=perfil.get("puntaje_general", 0),
+#         habitos_score=perfil.get("puntaje_habitos", 0)
+#     )
+#
+#     diagnostico = "-"
+#     mejoras = "-"
+#     try:
+#         diagnostico = diagnostico_aspirantes_perfil(aspirante_id)
+#     except Exception:
+#         pass
+#     try:
+#         mejoras = generar_mejoras_sugeridas_total(aspirante_id)
+#     except Exception:
+#         pass
+#
+#     # 📝 Observaciones globales (texto descriptivo que combina puntajes y diagnóstico)
+#     observaciones_totales = (
+#         f"📊 Evaluación Global:\n"
+#         f"Puntaje total: {score['puntaje_total']}\n"
+#         f"Categoría: {score['puntaje_total_categoria']}\n\n"
+#         f"🩺 Diagnóstico Detallado:\n{diagnostico}\n"
+#     )
+#
+#     return ResumenEvaluacionOutput(
+#         status="ok",
+#         mensaje="Resumen calculado",
+#         puntaje_manual=perfil.get("puntaje_manual"),
+#         puntaje_manual_categoria=perfil.get("puntaje_manual_categoria"),
+#         puntaje_estadistica=perfil.get("puntaje_estadistica"),
+#         puntaje_estadistica_categoria=perfil.get("puntaje_estadistica_categoria"),
+#         puntaje_general=perfil.get("puntaje_general"),
+#         puntaje_general_categoria=perfil.get("puntaje_general_categoria"),
+#         puntaje_habitos=perfil.get("puntaje_habitos"),
+#         puntaje_habitos_categoria=perfil.get("puntaje_habitos_categoria"),
+#         puntaje_total=score["puntaje_total"],
+#         puntaje_total_categoria=score["puntaje_total_categoria"],
+#         diagnostico=observaciones_totales,  # 👈 Se devuelve el texto armado
+#         mejoras_sugeridas=mejoras
+#     )
 
 ESTADO_MAP = {
     "Evaluación": 3,
@@ -2396,10 +2396,10 @@ ESTADO_MAP = {
 }
 ESTADO_DEFAULT = 99  # si no coincide
 
-@app.put("/api/perfil_creador/{creador_id}/resumen")
-def guardar_resumen_final(creador_id: int, datos: GuardarResumenInput):
+@app.put("/api/aspirantes_perfil/{aspirante_id}/resumen")
+def guardar_resumen_final(aspirante_id: int, datos: GuardarResumenInput):
     try:
-        # 1) Actualiza perfil_creador
+        # 1) Actualiza aspirantes_perfil
         payload = {
             "diagnostico": datos.diagnostico,
             "mejoras_sugeridas": datos.mejoras_sugeridas,
@@ -2407,32 +2407,32 @@ def guardar_resumen_final(creador_id: int, datos: GuardarResumenInput):
             "usuario_evalua": datos.usuario_evalua,
             "estado_evaluacion": datos.estado_evaluacion,
         }
-        actualizar_datos_perfil_creador(creador_id, payload)
+        actualizar_datos_aspirantes_perfil(aspirante_id, payload)
 
         entrevista_creada = None
 
-        # 2) Si viene un estado, actualiza también creadores.estado_id
+        # 2) Si viene un estado, actualiza también aspirantes.estado_id
         if datos.estado_evaluacion:
             estado_id = ESTADO_MAP.get(datos.estado_evaluacion, ESTADO_DEFAULT)
-            actualizar_estado_creador(creador_id, estado_id)
+            actualizar_estado_creador(aspirante_id, estado_id)
 
             # 3) Si el estado es "Entrevista" (4), insertamos entrevista mínima
             if estado_id == 4:
                 # Crear entrevista mínima
                 entrevista_payload = {
-                    "creador_id": creador_id,
+                    "aspirante_id": aspirante_id,
                     # Campos mínimos
                 }
                 # entrevista_creada = insertar_entrevista(entrevista_payload)
 
             elif estado_id == 5:
                 # Crear invitación mínima
-                invitacion_creada = crear_invitacion_minima(creador_id, estado="pendiente_tiktok")
+                invitacion_creada = crear_invitacion_minima(aspirante_id, estado="pendiente_tiktok")
 
                 if invitacion_creada:
-                    print(f"✅ Invitación creada correctamente para creador {creador_id}: {invitacion_creada}")
+                    print(f"✅ Invitación creada correctamente para creador {aspirante_id}: {invitacion_creada}")
                 else:
-                    print(f"⚠️ No se pudo crear la invitación para el creador {creador_id}")
+                    print(f"⚠️ No se pudo crear la invitación para el creador {aspirante_id}")
 
         return {
             "status": "ok",
@@ -2442,8 +2442,8 @@ def guardar_resumen_final(creador_id: int, datos: GuardarResumenInput):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# @app.put("/api/perfil_creador/{creador_id}/resumen")
-# def guardar_resumen_final(creador_id: int, datos: GuardarResumenInput):
+# @app.put("/api/aspirantes_perfil/{aspirante_id}/resumen")
+# def guardar_resumen_final(aspirante_id: int, datos: GuardarResumenInput):
 #     try:
 #         payload = {
 #             "diagnostico": datos.diagnostico,
@@ -2453,24 +2453,24 @@ def guardar_resumen_final(creador_id: int, datos: GuardarResumenInput):
 #             "estado_evaluacion": datos.estado_evaluacion,
 #         }
 #
-#         # 1️⃣ Actualiza perfil_creador
-#         actualizar_datos_perfil_creador(creador_id, payload)
+#         # 1️⃣ Actualiza aspirantes_perfil
+#         actualizar_datos_aspirantes_perfil(aspirante_id, payload)
 #
-#         # 2️⃣ Si viene un estado, actualiza también creadores.estado_id
+#         # 2️⃣ Si viene un estado, actualiza también aspirantes.estado_id
 #         if datos.estado_evaluacion:
 #             estado_id = ESTADO_MAP.get(datos.estado_evaluacion, ESTADO_DEFAULT)
-#             actualizar_estado_creador(creador_id, estado_id)
+#             actualizar_estado_creador(aspirante_id, estado_id)
 #
 #         return {"status": "ok", "mensaje": "Resumen actualizado correctamente"}
 #     except Exception as e:
 #         raise HTTPException(status_code=500, detail=str(e))
 
 
-# @app.put("/api/perfil_creador/{creador_id}/resumen",
+# @app.put("/api/aspirantes_perfil/{aspirante_id}/resumen",
 #          tags=["Resumen"],
 #          response_model=ResumenEvaluacionOutput)
 # def actualizar_resumen(
-#     creador_id: int,
+#     aspirante_id: int,
 #     datos: ResumenEvaluacionInput,
 #     usuario_actual: dict = Depends(obtener_usuario_actual)
 # ):
@@ -2481,11 +2481,11 @@ def guardar_resumen_final(creador_id: int, datos: GuardarResumenInput):
 #             raise HTTPException(status_code=401, detail="Usuario no autorizado")
 #
 #         # Perfil actual
-#         perfil = obtener_puntajes_perfil_creador(creador_id)
+#         perfil = obtener_puntajes_aspirantes_perfil(aspirante_id)
 #         if not perfil:
 #             raise HTTPException(
 #                 status_code=404,
-#                 detail=f"No se encontró el perfil del creador con id {creador_id}."
+#                 detail=f"No se encontró el perfil del creador con id {aspirante_id}."
 #             )
 #
 #         # Calcular puntaje total y categoría
@@ -2498,12 +2498,12 @@ def guardar_resumen_final(creador_id: int, datos: GuardarResumenInput):
 #
 #         # Diagnóstico y mejoras sugeridas
 #         try:
-#             diagnostico = diagnostico_perfil_creador(creador_id)
+#             diagnostico = diagnostico_aspirantes_perfil(aspirante_id)
 #         except Exception:
 #             diagnostico = "-"
 #
 #         try:
-#             mejoras = generar_mejoras_sugeridas_total(creador_id)
+#             mejoras = generar_mejoras_sugeridas_total(aspirante_id)
 #         except Exception:
 #             mejoras = "-"
 #
@@ -2522,7 +2522,7 @@ def guardar_resumen_final(creador_id: int, datos: GuardarResumenInput):
 #             "puntaje_total_categoria": datos.puntaje_total_categoria or score["puntaje_total_categoria"],
 #             "usuario_evaluador_resumen": usuario_id
 #         }
-#         result = actualizar_evaluacion_creador(creador_id, estado_dict)
+#         result = actualizar_evaluacion_creador(aspirante_id, estado_dict)
 #
 #         # 🔹 Retornar toda la info calculada
 #         return ResumenEvaluacionOutput(
@@ -2549,20 +2549,20 @@ def guardar_resumen_final(creador_id: int, datos: GuardarResumenInput):
 #         raise HTTPException(status_code=500, detail="Error interno al generar el resumen")
 
 
-# @app.put("/api/perfil_creador/{creador_id}/resumen",
+# @app.put("/api/aspirantes_perfil/{aspirante_id}/resumen",
 #          tags=["Resumen"],
 #          response_model=ResumenEvaluacionOutput)
-# def actualizar_resumen(creador_id: int, datos: ResumenEvaluacionInput):
+# def actualizar_resumen(aspirante_id: int, datos: ResumenEvaluacionInput):
 #     try:
 #         # Depuración: ver datos recibidos
 #         print("Datos recibidos del frontend:", datos)
 #         data_dict = datos.dict(exclude_unset=True)
 #         print("Datos recibidos como dict:", data_dict)
 #
-#         perfil = obtener_puntajes_perfil_creador(creador_id)
+#         perfil = obtener_puntajes_aspirantes_perfil(aspirante_id)
 #         print("Puntajes del perfil recuperados:", perfil)
 #         if not perfil:
-#             raise HTTPException(status_code=404, detail=f"No se encontró el perfil del creador con id {creador_id}.")
+#             raise HTTPException(status_code=404, detail=f"No se encontró el perfil del creador con id {aspirante_id}.")
 #
 #         # Calcular puntaje general y categoría
 #         score = evaluacion_total(
@@ -2575,13 +2575,13 @@ def guardar_resumen_final(creador_id: int, datos: GuardarResumenInput):
 #
 #         # Generar diagnóstico y mejoras sugeridas, manejando errores
 #         try:
-#             diagnostico = diagnostico_perfil_creador(creador_id)
+#             diagnostico = diagnostico_aspirantes_perfil(aspirante_id)
 #         except Exception as e:
 #             print(f"Error generando diagnóstico: {e}")
 #             diagnostico = "-"
 #
 #         try:
-#             mejoras = generar_mejoras_sugeridas_total(creador_id)
+#             mejoras = generar_mejoras_sugeridas_total(aspirante_id)
 #         except Exception as e:
 #             print(f"Error generando mejoras: {e}")
 #             mejoras = "-"
@@ -2601,7 +2601,7 @@ def guardar_resumen_final(creador_id: int, datos: GuardarResumenInput):
 #         data_dict["puntaje_total_categoria"] = score["puntaje_total_categoria"]
 #
 #
-#         actualizar_datos_perfil_creador(creador_id, data_dict)
+#         actualizar_datos_aspirantes_perfil(aspirante_id, data_dict)
 #
 #         return ResumenEvaluacionOutput(
 #             status="ok",
@@ -2626,12 +2626,12 @@ def guardar_resumen_final(creador_id: int, datos: GuardarResumenInput):
 #         print("Error al guardar el perfil:", e)
 #         raise HTTPException(status_code=500, detail=str(e))
 
-@app.put("/api/perfil_creador/{creador_id}/biografia_ia",
+@app.put("/api/aspirantes_perfil/{aspirante_id}/biografia_ia",
          tags=["Biografía IA"])
-def actualizar_biografia_ia(creador_id: int):
+def actualizar_biografia_ia(aspirante_id: int):
     try:
         # 1. Validar que existe el perfil
-        bio_texto = obtener_biografia_perfil_creador(creador_id)
+        bio_texto = obtener_biografia_aspirantes_perfil(aspirante_id)
         if not bio_texto:
             raise HTTPException(status_code=404, detail="No existe biografía previa para este perfil.")
         # 2. Generar la biografía con IA
@@ -2649,7 +2649,7 @@ def actualizar_biografia_ia(creador_id: int):
 
         # 4. Guardar en base de datos
         try:
-            actualizar_datos_perfil_creador(creador_id, {"biografia_sugerida": biografia_sugerida})
+            actualizar_datos_aspirantes_perfil(aspirante_id, {"biografia_sugerida": biografia_sugerida})
         except Exception as e:
             print(f"Error guardando biografía en base: {e}")
             raise HTTPException(status_code=500, detail="Error guardando la biografía en la base de datos.")
@@ -2676,13 +2676,13 @@ async def obtener_responsables_agenda():
     return usuarios
 
 # if __name__ == "__main__":
-#     resultado = diagnostico_perfil_creador(27)  # id de prueba
+#     resultado = diagnostico_aspirantes_perfil(27)  # id de prueba
 #     print(resultado)
 
 
 # CREADORES ACTIVOS
 
-# 1. Listar todos los creadores activos
+# 1. Listar todos los aspirantes activos
 @app.get("/api/creadores_activos", response_model=List[CreadorActivoDB])
 def listar_creadores_activos():
     try:
@@ -2726,11 +2726,11 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO creadores_activos (
-                        creador_id, nombre, usuario_tiktok, foto, categoria, estado, manager_id,
+                        aspirante_id, nombre, usuario_tiktok, foto, categoria, estado, manager_id,
                         horario_lives, tiempo_disponible, fecha_incorporacion, fecha_graduacion,
                         seguidores, videos, me_gusta, diamantes, horas_live, numero_partidas, dias_emision
                     ) VALUES (
-                        %(creador_id)s, %(nombre)s, %(usuario_tiktok)s, %(foto)s, %(categoria)s, %(estado)s, %(manager_id)s,
+                        %(aspirante_id)s, %(nombre)s, %(usuario_tiktok)s, %(foto)s, %(categoria)s, %(estado)s, %(manager_id)s,
                         %(horario_lives)s, %(tiempo_disponible)s, %(fecha_incorporacion)s, %(fecha_graduacion)s,
                         %(seguidores)s, %(videos)s, %(me_gusta)s, %(diamantes)s, %(horas_live)s, %(numero_partidas)s, %(dias_emision)s
                     ) RETURNING *;
@@ -2750,7 +2750,7 @@ def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
             with conn.cursor() as cur:
                 cur.execute("""
                     UPDATE creadores_activos SET
-                        creador_id=%(creador_id)s,
+                        aspirante_id=%(aspirante_id)s,
                         nombre=%(nombre)s,
                         usuario_tiktok=%(usuario_tiktok)s,
                         foto=%(foto)s,
@@ -2794,7 +2794,7 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                # 1. Buscar datos del creador en la tabla creadores
+                # 1. Buscar datos del creador en la tabla   aspirantes
                 cur.execute("""
                     SELECT
                         id,
@@ -2803,9 +2803,9 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
                         NULL AS categoria,
                         'activo' AS estado,
                         nickname AS nombre
-                    FROM creadores
+                    FROM   aspirantes
                     WHERE id = %s
-                """, (data.creador_id,))
+                """, (data.aspirante_id,))
                 row = cur.fetchone()
                 if not row:
                     raise HTTPException(status_code=404, detail="Creador no encontrado")
@@ -2814,7 +2814,7 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
 
                 # 2. Preparar valores para insertar en creadores_activos
                 valores = {
-                    "creador_id": creador["id"],
+                    "aspirante_id": creador["id"],
                     "usuario_tiktok": creador["usuario_tiktok"],
                     "foto": creador["foto"],
                     "categoria": creador["categoria"],
@@ -2837,11 +2837,11 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
                 # 3. Insertar en creadores_activos
                 cur.execute("""
                     INSERT INTO creadores_activos (
-                        creador_id, usuario_tiktok, foto, categoria, estado, nombre,
+                        aspirante_id, usuario_tiktok, foto, categoria, estado, nombre,
                         manager_id, horario_lives, tiempo_disponible, fecha_incorporacion, fecha_graduacion,
                         seguidores, videos, me_gusta, diamantes, horas_live, numero_partidas, dias_emision
                     ) VALUES (
-                        %(creador_id)s, %(usuario_tiktok)s, %(foto)s, %(categoria)s, %(estado)s, %(nombre)s,
+                        %(aspirante_id)s, %(usuario_tiktok)s, %(foto)s, %(categoria)s, %(estado)s, %(nombre)s,
                         %(manager_id)s, %(horario_lives)s, %(tiempo_disponible)s, %(fecha_incorporacion)s, %(fecha_graduacion)s,
                         %(seguidores)s, %(videos)s, %(me_gusta)s, %(diamantes)s, %(horas_live)s, %(numero_partidas)s, %(dias_emision)s
                     )
@@ -2877,10 +2877,10 @@ def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
                 # 2. Insertar seguimiento usando manager_id obtenido
                 cur.execute("""
                     INSERT INTO seguimiento_creadores (
-                        creador_id, creador_activo_id, manager_id, fecha_seguimiento,
+                        aspirante_id, creador_activo_id, manager_id, fecha_seguimiento,
                         estrategias_mejora, compromisos
                     ) VALUES (
-                        %(creador_id)s, %(creador_activo_id)s, %(manager_id)s, %(fecha_seguimiento)s,
+                        %(aspirante_id)s, %(creador_activo_id)s, %(manager_id)s, %(fecha_seguimiento)s,
                         %(estrategias_mejora)s, %(compromisos)s
                     )
                     RETURNING *;
@@ -2952,20 +2952,20 @@ async def cargar_estadisticas_excel(file: UploadFile = File(...)):
 
                     # Buscar el registro en creadores_activos
                     cur.execute("""
-                        SELECT id, creador_id FROM creadores_activos WHERE usuario_tiktok = %s
+                        SELECT id, aspirante_id FROM creadores_activos WHERE usuario_tiktok = %s
                     """, (usuario_tiktok,))
                     res = cur.fetchone()
                     if not res:
                         continue
 
-                    creador_activo_id, creador_id = res
+                    creador_activo_id, aspirante_id = res
 
                     cur.execute("""
                         INSERT INTO estadisticas_creadores (
-                            creador_id, creador_activo_id, fecha_reporte, grupo, diamantes_ult_30, duracion_emsiones_live_ult_30
+                            aspirante_id, creador_activo_id, fecha_reporte, grupo, diamantes_ult_30, duracion_emsiones_live_ult_30
                         ) VALUES (%s, %s, CURRENT_DATE, %s, %s, %s)
                     """, (
-                        creador_id,
+                        aspirante_id,
                         creador_activo_id,
                         grupo,
                         diamantes,
@@ -3041,87 +3041,87 @@ def obtener_foto_creador_activo(creador_activo_id: int):
                 raise HTTPException(status_code=404, detail="Foto no encontrada")
             return {"foto_url": res[0]}
 
-# === Listar todos los aspirantes en proceso de entrevista/invitación ===
-@app.get("/api/creadores/invitacion", tags=["Creadores"])
-def listar_creadores_invitacion():
-    try:
-        return obtener_creadores_invitacion()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.put("/api/perfil_creador/{creador_id}/evaluacion_inicial",
-         tags=["Perfil"],
-         response_model=EvaluacionOutput)
-def actualizar_evaluacion_inicial(
-    creador_id: int,
-    datos: EvaluacionInput = Body(...),
-    usuario_actual: dict = Depends(obtener_usuario_actual)
-):
-    try:
-        # Usuario desde el token
-        usuario_id = usuario_actual.get("id")
-        if not usuario_id:
-            raise HTTPException(status_code=401, detail="Usuario no autorizado")
-
-        # Preparar datos a actualizar
-        data_dict = datos.dict()
-        data_dict["usuario_evaluador_inicial"] = usuario_id
-
-        # Actualizar en DB
-        result = actualizar_evaluacion_creador(creador_id, data_dict)
-
-        return EvaluacionOutput(
-            status="ok",
-            mensaje="Evaluación inicial actualizada correctamente",
-            **result
-        )
-
-    except HTTPException as he:
-        raise he
-    except Exception as e:
-        logging.error(f"❌ Error al actualizar evaluación inicial del creador {creador_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Error interno al actualizar la evaluación")
+# # === Listar todos los aspirantes en proceso de entrevista/invitación ===
+# @app.get("/api/aspirantes/invitacion", tags=["Creadores"])
+# def listar_creadores_invitacion():
+#     try:
+#         return obtener_creadores_invitacion()
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
+#
+# @app.put("/api/aspirantes_perfil/{aspirante_id}/evaluacion_inicial",
+#          tags=["Perfil"],
+#          response_model=EvaluacionOutput)
+# def actualizar_evaluacion_inicial(
+#     aspirante_id: int,
+#     datos: EvaluacionInput = Body(...),
+#     usuario_actual: dict = Depends(obtener_usuario_actual)
+# ):
+#     try:
+#         # Usuario desde el token
+#         usuario_id = usuario_actual.get("id")
+#         if not usuario_id:
+#             raise HTTPException(status_code=401, detail="Usuario no autorizado")
+#
+#         # Preparar datos a actualizar
+#         data_dict = datos.dict()
+#         data_dict["usuario_evaluador_inicial"] = usuario_id
+#
+#         # Actualizar en DB
+#         result = actualizar_evaluacion_creador(aspirante_id, data_dict)
+#
+#         return EvaluacionOutput(
+#             status="ok",
+#             mensaje="Evaluación inicial actualizada correctamente",
+#             **result
+#         )
+#
+#     except HTTPException as he:
+#         raise he
+#     except Exception as e:
+#         logging.error(f"❌ Error al actualizar evaluación inicial del creador {aspirante_id}: {e}", exc_info=True)
+#         raise HTTPException(status_code=500, detail="Error interno al actualizar la evaluación")
 
 
 
 # temporal
 
-@app.post("/api/entrevistas/debug")
-async def debug_entrevista(request: Request):
-    """Endpoint temporal para debuggear headers y token"""
-    # Headers completos
-    headers = dict(request.headers)
-    print("🔍 DEBUG: Headers recibidos:", headers)
-
-    # Obtener token directamente
-    token = headers.get("authorization")
-    print("🔑 DEBUG: Authorization header:", token)
-
-    # Body de la petición
-    try:
-        body = await request.json()
-        print("📦 DEBUG: Body recibado:", body)
-    except Exception as e:
-        print("❌ DEBUG: Error al leer body:", str(e))
-        body = None
-
-    # Información adicional útil
-    print("🌐 DEBUG: Method:", request.method)
-    print("🛣️ DEBUG: URL:", str(request.url))
-    print("🖥️ DEBUG: Client:", request.client)
-
-    return {
-        "message": "Debug recibido, revisa logs del backend",
-        "headers_count": len(headers),
-        "has_auth": "authorization" in headers,
-        "token_preview": token[:20] + "..." if token else None
-    }
+# @app.post("/api/entrevistas/debug")
+# async def debug_entrevista(request: Request):
+#     """Endpoint temporal para debuggear headers y token"""
+#     # Headers completos
+#     headers = dict(request.headers)
+#     print("🔍 DEBUG: Headers recibidos:", headers)
+#
+#     # Obtener token directamente
+#     token = headers.get("authorization")
+#     print("🔑 DEBUG: Authorization header:", token)
+#
+#     # Body de la petición
+#     try:
+#         body = await request.json()
+#         print("📦 DEBUG: Body recibado:", body)
+#     except Exception as e:
+#         print("❌ DEBUG: Error al leer body:", str(e))
+#         body = None
+#
+#     # Información adicional útil
+#     print("🌐 DEBUG: Method:", request.method)
+#     print("🛣️ DEBUG: URL:", str(request.url))
+#     print("🖥️ DEBUG: Client:", request.client)
+#
+#     return {
+#         "message": "Debug recibido, revisa logs del backend",
+#         "headers_count": len(headers),
+#         "has_auth": "authorization" in headers,
+#         "token_preview": token[:20] + "..." if token else None
+#     }
 
 
 # # POST crear
-# @app.post("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
+# @app.post("/api/entrevistas/{aspirante_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
 # def crear_entrevista(
-#     creador_id: int,
+#     aspirante_id: int,
 #     datos: EntrevistaCreate,
 #     usuario_actual: dict = Depends(obtener_usuario_actual)
 # ):
@@ -3130,7 +3130,7 @@ async def debug_entrevista(request: Request):
 #         raise HTTPException(status_code=401, detail="Usuario no autorizado")
 #
 #     payload = datos.dict(exclude_unset=True)
-#     payload["creador_id"] = creador_id
+#     payload["aspirante_id"] = aspirante_id
 #     payload["usuario_programa"] = usuario_id
 #     payload.setdefault("realizada", False)
 #     payload.setdefault("resultado", "sin evaluar")
@@ -3150,17 +3150,17 @@ from datetime import timedelta
 from fastapi import Depends, HTTPException
 
 # # Endpoint GET por creador
-# @app.get("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
-# def obtener_entrevista(creador_id: int):
-#     entrevista = obtener_entrevista_por_creador(creador_id)
+# @app.get("/api/entrevistas/{aspirante_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
+# def obtener_entrevista(aspirante_id: int):
+#     entrevista = obtener_entrevista_por_creador(aspirante_id)
 #     if not entrevista:
 #         raise HTTPException(status_code=404, detail="No existe entrevista para este creador")
 #     return entrevista
 #
 # # POST crear entrevista + evento
-# @app.post("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
+# @app.post("/api/entrevistas/{aspirante_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
 # def crear_entrevista(
-#     creador_id: int,
+#     aspirante_id: int,
 #     datos: EntrevistaCreate,
 #     usuario_actual: dict = Depends(obtener_usuario_actual)
 # ):
@@ -3169,7 +3169,7 @@ from fastapi import Depends, HTTPException
 #         raise HTTPException(status_code=401, detail="Usuario no autorizado")
 #
 #     payload = datos.dict(exclude_unset=True)
-#     payload["creador_id"] = creador_id
+#     payload["aspirante_id"] = aspirante_id
 #     payload["usuario_programa"] = usuario_id
 #     payload.setdefault("realizada", False)
 #     payload.setdefault("resultado", "sin evaluar")
@@ -3188,7 +3188,7 @@ from fastapi import Depends, HTTPException
 #             descripcion=payload.get("observaciones") or "Entrevista programada",
 #             inicio=fecha_inicio,
 #             fin=fecha_fin,
-#             participantes_ids=[creador_id],
+#             participantes_ids=[aspirante_id],
 #         )
 #         evento_creado = crear_evento(evento_payload, usuario_actual)
 #         payload["evento_id"] = evento_creado.id  # <-- guardar evento_id
@@ -3207,9 +3207,9 @@ from fastapi import Depends, HTTPException
 # from datetime import timedelta
 # from fastapi import Path, Depends, HTTPException
 #
-# @app.put("/api/entrevistas/reprogramar/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
+# @app.put("/api/entrevistas/reprogramar/{aspirante_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
 # def reprogramar_entrevista(
-#     creador_id: int = Path(..., description="ID del creador cuya entrevista se reprograma"),
+#     aspirante_id: int = Path(..., description="ID del creador cuya entrevista se reprograma"),
 #     datos: EntrevistaUpdate = None,
 #     usuario_actual: dict = Depends(obtener_usuario_actual)
 # ):
@@ -3218,13 +3218,13 @@ from fastapi import Depends, HTTPException
 #         raise HTTPException(status_code=401, detail="Usuario no autorizado")
 #
 #     # Obtener entrevista actual
-#     entrevista = obtener_entrevista_por_creador(creador_id)
+#     entrevista = obtener_entrevista_por_creador(aspirante_id)
 #     if not entrevista:
 #         raise HTTPException(status_code=404, detail="Entrevista no encontrada")
 #
 #     # Actualizar datos en DB
 #     payload = datos.dict(exclude_unset=True)
-#     entrevista_actualizada = actualizar_entrevista_por_creador(creador_id, payload)
+#     entrevista_actualizada = actualizar_entrevista_por_creador(aspirante_id, payload)
 #     if not entrevista_actualizada:
 #         raise HTTPException(status_code=500, detail="Error al actualizar la entrevista")
 #
@@ -3239,7 +3239,7 @@ from fastapi import Depends, HTTPException
 #                 descripcion=payload.get("observaciones") or entrevista.get("observaciones") or "Entrevista programada",
 #                 inicio=fecha_inicio,
 #                 fin=fecha_fin,
-#                 participantes_ids=[creador_id],
+#                 participantes_ids=[aspirante_id],
 #             )
 #             editar_evento(entrevista["evento_id"], evento_payload)
 #         except Exception as e:
@@ -3267,9 +3267,9 @@ from fastapi import Depends, HTTPException
 #     s = "".join(ch for ch in s if not unicodedata.combining(ch))
 #     return s.strip().upper()
 #
-# @app.put("/api/entrevistas/{creador_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
+# @app.put("/api/entrevistas/{aspirante_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
 # def actualizar_entrevista(
-#     creador_id: int,
+#     aspirante_id: int,
 #     datos: EntrevistaUpdate,
 #     usuario_actual: dict = Depends(obtener_usuario_actual),
 # ):
@@ -3285,7 +3285,7 @@ from fastapi import Depends, HTTPException
 #         data_dict.setdefault("fecha_realizada", datetime.utcnow())
 #
 #     # 1) Actualiza la entrevista
-#     actualizado = actualizar_entrevista_por_creador(creador_id, data_dict)
+#     actualizado = actualizar_entrevista_por_creador(aspirante_id, data_dict)
 #     if not actualizado:
 #         raise HTTPException(status_code=404, detail="No existe entrevista para este creador")
 #
@@ -3297,7 +3297,7 @@ from fastapi import Depends, HTTPException
 #     estado_id = RESULTADO_TO_ESTADO_ID.get(resultado_norm)
 #     if estado_id is not None:
 #         try:
-#             actualizar_estado_creador(creador_id, estado_id)
+#             actualizar_estado_creador(aspirante_id, estado_id)
 #         except Exception:
 #             # Opcional: loggear si quieres, pero no romper la respuesta.
 #             pass
@@ -3308,38 +3308,37 @@ from fastapi import Depends, HTTPException
 
 # GET por creador
 
-@app.get("/api/invitaciones/{creador_id}", response_model=InvitacionOut, tags=["Invitaciones"])
-def obtener_invitacion(creador_id: int):
-    invitacion = obtener_invitacion_por_creador(creador_id)
-    if not invitacion:
-        raise HTTPException(status_code=404, detail="No existe invitación para este creador")
-    return invitacion
-
-# POST crear
-@app.post("/api/invitaciones/{creador_id}", response_model=InvitacionOut, tags=["Invitaciones"])
-def crear_invitacion(
-    creador_id: int,
-    datos: InvitacionCreate,
-    usuario_actual: dict = Depends(obtener_usuario_actual)
-):
-    usuario_id = usuario_actual.get("id")
-    if not usuario_id:
-        raise HTTPException(status_code=401, detail="Usuario no autorizado")
-
-    payload = datos.dict(exclude_unset=True)
-    payload["creador_id"] = creador_id
-    payload["usuario_invita"] = usuario_id
-
-    resultado = insertar_invitacion(payload)
-    if not resultado:
-        raise HTTPException(status_code=500, detail="Error al crear la invitación")
-
-    return InvitacionOut.model_validate({**payload, **resultado})
-
-# # PUT actualizar (por creador_id)
-# @app.put("/api/invitaciones/{creador_id}", response_model=InvitacionOut, tags=["Invitaciones"])
+# @app.get("/api/invitaciones/{aspirante_id}", response_model=InvitacionOut, tags=["Invitaciones"])
+# def obtener_invitacion(aspirante_id: int):
+#     invitacion = obtener_invitacion_por_creador(aspirante_id)
+#     if not invitacion:
+#         raise HTTPException(status_code=404, detail="No existe invitación para este creador")
+#     return invitacion
+#
+# # POST crear
+# @app.post("/api/invitaciones/{aspirante_id}", response_model=InvitacionOut, tags=["Invitaciones"])
+# def crear_invitacion(
+#     aspirante_id: int,
+#     datos: InvitacionCreate,
+#     usuario_actual: dict = Depends(obtener_usuario_actual)
+# ):
+#     usuario_id = usuario_actual.get("id")
+#     if not usuario_id:
+#         raise HTTPException(status_code=401, detail="Usuario no autorizado")
+#
+#     payload = datos.dict(exclude_unset=True)
+#     payload["aspirante_id"] = aspirante_id
+#     payload["usuario_invita"] = usuario_id
+#
+#     resultado = insertar_invitacion(payload)
+#     if not resultado:
+#         raise HTTPException(status_code=500, detail="Error al crear la invitación")
+#
+#     return InvitacionOut.model_validate({**payload, **resultado})
+#
+# @app.put("/api/invitaciones/{aspirante_id}", response_model=InvitacionOut, tags=["Invitaciones"])
 # def actualizar_invitacion(
-#     creador_id: int,
+#     aspirante_id: int,
 #     datos: InvitacionUpdate,
 #     usuario_actual: dict = Depends(obtener_usuario_actual)
 # ):
@@ -3351,54 +3350,58 @@ def crear_invitacion(
 #     update_data = datos.dict(exclude_unset=True)
 #     update_data["usuario_invita"] = usuario_id
 #
-#     actualizado = actualizar_invitacion_por_creador(creador_id, update_data)
+#     # Actualizar invitación
+#     invitacion_actualizada = actualizar_invitacion_por_creador(aspirante_id, update_data)
+#     if not invitacion_actualizada:
+#         raise HTTPException(status_code=404, detail="No existe invitación para este creador")
+#
+#     # ✅ Lógica adicional: actualizar estado_id en aspirantes
+#     estado = update_data.get("estado")
+#     if estado:
+#         try:
+#             if estado == "Aceptada por Aspirante":
+#                 actualizar_estado_creador(aspirante_id, 6)
+#                 print(f"🔄 Estado del creador {aspirante_id} actualizado a 6 (Aceptada por Aspirante)")
+#             elif estado == "Rechazada":
+#                 actualizar_estado_creador(aspirante_id, 7)
+#                 print(f"🔄 Estado del creador {aspirante_id} actualizado a 7 (Rechazada)")
+#         except Exception as e:
+#             print(f"⚠️ Error al actualizar estado del creador {aspirante_id}: {e}")
+#
+#     return InvitacionOut.model_validate(invitacion_actualizada)
+
+
+
+# # PUT actualizar (por aspirante_id)
+# @app.put("/api/invitaciones/{aspirante_id}", response_model=InvitacionOut, tags=["Invitaciones"])
+# def actualizar_invitacion(
+#     aspirante_id: int,
+#     datos: InvitacionUpdate,
+#     usuario_actual: dict = Depends(obtener_usuario_actual)
+# ):
+#     usuario_id = usuario_actual.get("id")
+#     if not usuario_id:
+#         raise HTTPException(status_code=401, detail="Usuario no autorizado")
+#
+#     # Tomamos solo los campos enviados, pero forzamos usuario_invita = usuario actual
+#     update_data = datos.dict(exclude_unset=True)
+#     update_data["usuario_invita"] = usuario_id
+#
+#     actualizado = actualizar_invitacion_por_creador(aspirante_id, update_data)
 #     if not actualizado:
 #         raise HTTPException(status_code=404, detail="No existe invitación para este creador")
 #
 #     return InvitacionOut.model_validate(actualizado)
 
-# PUT actualizar invitación (por creador_id)
-@app.put("/api/invitaciones/{creador_id}", response_model=InvitacionOut, tags=["Invitaciones"])
-def actualizar_invitacion(
-    creador_id: int,
-    datos: InvitacionUpdate,
-    usuario_actual: dict = Depends(obtener_usuario_actual)
-):
-    usuario_id = usuario_actual.get("id")
-    if not usuario_id:
-        raise HTTPException(status_code=401, detail="Usuario no autorizado")
-
-    # Tomamos solo los campos enviados, pero forzamos usuario_invita = usuario actual
-    update_data = datos.dict(exclude_unset=True)
-    update_data["usuario_invita"] = usuario_id
-
-    # Actualizar invitación
-    invitacion_actualizada = actualizar_invitacion_por_creador(creador_id, update_data)
-    if not invitacion_actualizada:
-        raise HTTPException(status_code=404, detail="No existe invitación para este creador")
-
-    # ✅ Lógica adicional: actualizar estado_id en creadores
-    estado = update_data.get("estado")
-    if estado:
-        try:
-            if estado == "Aceptada por Aspirante":
-                actualizar_estado_creador(creador_id, 6)
-                print(f"🔄 Estado del creador {creador_id} actualizado a 6 (Aceptada por Aspirante)")
-            elif estado == "Rechazada":
-                actualizar_estado_creador(creador_id, 7)
-                print(f"🔄 Estado del creador {creador_id} actualizado a 7 (Rechazada)")
-        except Exception as e:
-            print(f"⚠️ Error al actualizar estado del creador {creador_id}: {e}")
-
-    return InvitacionOut.model_validate(invitacion_actualizada)
+# PUT actualizar invitación (por aspirante_id)
 
 
 
-@app.put("/api/creadores/{creador_id}/estado",
+@app.put("/api/aspirantes/{aspirante_id}/estado",
          tags=["Creadores"],
          response_model=EstadoCreadorOut)
 def actualizar_estado_creador_endpoint(
-    creador_id: int,
+    aspirante_id: int,
     datos: EstadoCreadorIn = Body(...),
     usuario_actual: dict = Depends(obtener_usuario_actual)
 ):
@@ -3423,7 +3426,7 @@ def actualizar_estado_creador_endpoint(
         )
 
     # Actualizar en DB
-    res = actualizar_estado_creador(creador_id, estado_id)
+    res = actualizar_estado_creador(aspirante_id, estado_id)
     if not res:
         raise HTTPException(status_code=404, detail="Creador no encontrado")
 
@@ -4125,7 +4128,7 @@ async def exchange_code(request: Request):
 
 
 from tenant import current_tenant
-from rate_limiter import get_rate_limiter
+from borrar_rate_limiter import get_rate_limiter
 
 @app.get("/debug")
 async def debug():
@@ -4282,11 +4285,11 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={"detail": exc.errors()}
     )
 
-# @app.get("/api/perfil_creador/{creador_id}/pre_resumen",
+# @app.get("/api/aspirantes_perfil/{aspirante_id}/pre_resumen",
 #          tags=["Resumen Pre-Evaluación"],
 #          response_model=ResumenEvaluacionOutput)
-# def obtener_pre_resumen(creador_id: int, usuario_actual: dict = Depends(obtener_usuario_actual)):
-#     perfil = obtener_puntajes_perfil_creador(creador_id)
+# def obtener_pre_resumen(aspirante_id: int, usuario_actual: dict = Depends(obtener_usuario_actual)):
+#     perfil = obtener_puntajes_aspirantes_perfil(aspirante_id)
 #     if not perfil:
 #         raise HTTPException(status_code=404, detail="Perfil no encontrado")
 #
@@ -4304,7 +4307,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 #     # Diagnóstico parcial
 #     diagnostico = "-"
 #     try:
-#         diagnostico = diagnostico_perfil_creador_pre(creador_id)
+#         diagnostico = diagnostico_aspirantes_perfil_pre(aspirante_id)
 #     except:
 #         pass
 #

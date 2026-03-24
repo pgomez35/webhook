@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import os
 
 # Cargar variables de entorno
-from DataBase import obtener_datos_mejoras_perfil_creador, obtener_datos_estadisticas_perfil_creador, \
+from DataBase import obtener_datos_mejoras_aspirantes_perfil, obtener_datos_estadisticas_aspirantes_perfil, \
     get_connection_context
 
 load_dotenv()
@@ -26,15 +26,15 @@ def to_num(val):
     except (TypeError, ValueError):
         return 0.0
 
-def diagnostico_perfil_creador(
-    creador_id: int,
+def diagnostico_aspirantes_perfil(
+    aspirante_id: int,
     puntajes_calculados: dict = None
 ) -> str:
     """
     Diagnóstico integral del perfil del creador, con puntajes, labels y unidades correctas.
     Si se pasan puntajes_calculados, se usan para la sección final de categorías y puntajes.
     """
-    datos = obtener_datos_mejoras_perfil_creador(creador_id)
+    datos = obtener_datos_mejoras_aspirantes_perfil(aspirante_id)
 
     # Obtén los puntajes y categorías, usando puntajes_calculados si está disponible
     puntajes = {
@@ -676,14 +676,14 @@ def evaluar_preferencias_habitos(
         "puntaje_habitos_categoria": categoria
     }
 
-def generar_mejoras_sugeridas_total(creador_id: int) -> str:
+def generar_mejoras_sugeridas_total(aspirante_id: int) -> str:
     def to_num(val):
         try:
             return float(val)
         except (TypeError, ValueError):
             return 0.0
 
-    datos = obtener_datos_mejoras_perfil_creador(creador_id)
+    datos = obtener_datos_mejoras_aspirantes_perfil(aspirante_id)
     sugerencias = {
         "🚀 Recomendaciones generales": [],
         "💡 Mejora tu contenido": [],
@@ -805,7 +805,7 @@ def mejoras_sugeridas_estadisticas(
         sugerencias.append("🌐 Promociona tu perfil en otras redes sociales o grupos para atraer seguidores iniciales.")
     elif seguidores < 300:
         sugerencias.append("⏫ Prueba nuevas temáticas o formatos para atraer diferentes públicos.")
-        sugerencias.append("🎯 Haz colaboraciones con otros creadores para aumentar tu alcance.")
+        sugerencias.append("🎯 Haz colaboraciones con otros aspirantes para aumentar tu alcance.")
     elif seguidores < 1000:
         sugerencias.append("🚀 Aprovecha los retos o tendencias populares para captar más seguidores.")
     else:
@@ -816,7 +816,7 @@ def mejoras_sugeridas_estadisticas(
         sugerencias.append(
             "🔄 Prioriza la creación de contenido interesante y útil para tu audiencia, en lugar de enfocarte únicamente en conseguir seguidores por intercambio.")
     elif siguiendo < (0.3 * seguidores):
-        sugerencias.append("🤝 Interactúa con otros creadores y participa en tendencias para aumentar tu visibilidad.")
+        sugerencias.append("🤝 Interactúa con otros aspirantes y participa en tendencias para aumentar tu visibilidad.")
 
     # Likes normalizados (engagement relativo)
     if likes_normalizado == 0:
@@ -1143,7 +1143,7 @@ def mejoras_sugeridas_preferencias_habitos(
     elif total_exp == 0:
         sugerencias_habitos.append(
             "🔰 No tienes experiencia previa como creador en plataformas digitales, incluido TikTok. "
-            "Esto puede dificultar tu adaptación. Te recomendamos explorar y analizar lo que hacen los creadores exitosos en TikTok y otras redes sociales, para entender tendencias y formatos populares."
+            "Esto puede dificultar tu adaptación. Te recomendamos explorar y analizar lo que hacen los aspirantes exitosos en TikTok y otras redes sociales, para entender tendencias y formatos populares."
         )
     elif total_exp <= 2:
         sugerencias_habitos.append(
@@ -1211,7 +1211,7 @@ def mejoras_sugeridas_preferencias_habitos(
             )
         else:  # tiempo_float >= 36
             sugerencias_habitos.append(
-                "🌟 Excelente, tienes 36 horas o más por semana para lives (por ejemplo, 3h en la mañana y 3h en la noche). Este nivel de dedicación es propio de creadores profesionales y te permitirá maximizar tu alcance y crecimiento."
+                "🌟 Excelente, tienes 36 horas o más por semana para lives (por ejemplo, 3h en la mañana y 3h en la noche). Este nivel de dedicación es propio de aspirantes profesionales y te permitirá maximizar tu alcance y crecimiento."
             )
 
     # Frecuencia de lives
@@ -1252,7 +1252,7 @@ def mejoras_sugeridas_preferencias_habitos(
             )
         elif "hobby" in intencion_str:
             sugerencias_habitos.append(
-                "🎨 Transforma tu hobby en una oportunidad: prueba distintos formatos, aprende de otros creadores y empieza a dar pasos hacia la profesionalización."
+                "🎨 Transforma tu hobby en una oportunidad: prueba distintos formatos, aprende de otros aspirantes y empieza a dar pasos hacia la profesionalización."
             )
         elif "diversión" in intencion_str:
             sugerencias_habitos.append(
@@ -1364,13 +1364,13 @@ def evaluacion_total(
         "puntaje_total_categoria": categoria
     }
 
-def evaluar_potencial_creador(creador_id, score_cualitativa: float):
+def evaluar_potencial_creador(aspirante_id, score_cualitativa: float):
     """
     Evalúa el potencial de un creador y retorna el potencial estimado como entero.
     """
     try:
         # 1. Obtener métricas del creador
-        data_dict = obtener_datos_estadisticas_perfil_creador(creador_id)
+        data_dict = obtener_datos_estadisticas_aspirantes_perfil(aspirante_id)
         if not data_dict:
             return {"error": "No se encontraron métricas para el creador."}
 
@@ -1466,14 +1466,14 @@ def mejoras_sugeridas_estadisticas_cortas(
         sugerencias.append("🌐 Promociona tu perfil en otras redes sociales o grupos para atraer seguidores iniciales.")
     elif seguidores < 300:
         sugerencias.append("⏫ Prueba nuevas temáticas o formatos para atraer diferentes públicos.")
-        sugerencias.append("🎯 Haz colaboraciones con otros creadores para aumentar tu alcance.")
+        sugerencias.append("🎯 Haz colaboraciones con otros aspirantes para aumentar tu alcance.")
 
     # Siguiendo
     if siguiendo >= seguidores or (seguidores > 0 and siguiendo >= (0.9 * seguidores)):
         sugerencias.append(
             "🔄 Prioriza la creación de contenido interesante y útil para tu audiencia, en lugar de enfocarte únicamente en conseguir seguidores por intercambio.")
     elif siguiendo < (0.3 * seguidores):
-        sugerencias.append("🤝 Interactúa con otros creadores y participa en tendencias para aumentar tu visibilidad.")
+        sugerencias.append("🤝 Interactúa con otros aspirantes y participa en tendencias para aumentar tu visibilidad.")
 
     # Likes normalizados (engagement relativo)
     if likes_normalizado == 0:
@@ -1864,7 +1864,7 @@ def evaluar_datos_generales_pre(edad, genero, pais=None, actividad_actual=None):
     }
 
 
-def evaluar_preferencias_habitos_pre(
+def  evaluar_preferencias_habitos_pre(
     exp_otras,
     tiempo=None,
     freq_lives=None,
@@ -2115,10 +2115,10 @@ import json
 
 import json
 
-def evaluar_y_actualizar_perfil_pre_encuesta(creador_id: int):
+def evaluar_y_actualizar_perfil_pre_encuesta(aspirante_id: int):
     """
     Evalúa perfil PRE (sin potencial_estimado), calcula puntajes y
-    actualiza perfil_creador con:
+    actualiza aspirantes_perfil con:
       puntaje_estadistica, puntaje_estadistica_categoria,
       puntaje_general, puntaje_general_categoria,
       puntaje_habitos, puntaje_habitos_categoria,
@@ -2156,17 +2156,17 @@ def evaluar_y_actualizar_perfil_pre_encuesta(creador_id: int):
                         frecuencia_lives,
                         intencion_trabajo,
                         experiencia_otras_plataformas
-                    FROM perfil_creador
-                    WHERE creador_id = %s
+                    FROM aspirantes_perfil
+                    WHERE aspirante_id = %s
                     LIMIT 1
-                """, (creador_id,))
+                """, (aspirante_id,))
                 row = cur.fetchone()
 
                 if not row:
                     return {
                         "status": "error",
-                        "msg": "No existe perfil_creador para ese creador_id",
-                        "creador_id": creador_id,
+                        "msg": "No existe aspirantes_perfil para ese aspirante_id",
+                        "aspirante_id": aspirante_id,
                     }
 
                 (
@@ -2258,10 +2258,10 @@ def evaluar_y_actualizar_perfil_pre_encuesta(creador_id: int):
                     alerta = 2
 
                 # -------------------------------
-                # 5) Update perfil_creador
+                # 5) Update aspirantes_perfil
                 # -------------------------------
                 cur.execute("""
-                    UPDATE perfil_creador
+                    UPDATE aspirantes_perfil
                     SET
                         puntaje_estadistica = %s,
                         puntaje_estadistica_categoria = %s,
@@ -2271,7 +2271,7 @@ def evaluar_y_actualizar_perfil_pre_encuesta(creador_id: int):
                         puntaje_habitos_categoria = %s,
                         puntaje_total = %s,
                         puntaje_total_categoria = %s
-                    WHERE creador_id = %s
+                    WHERE aspirante_id = %s
                 """, (
                     safe_round(puntaje_estadistica),
                     cat_estadistica,
@@ -2281,7 +2281,7 @@ def evaluar_y_actualizar_perfil_pre_encuesta(creador_id: int):
                     cat_habitos,
                     safe_round(puntaje_total),
                     cat_total,
-                    creador_id
+                    aspirante_id
                 ))
 
                 conn.commit()
@@ -2307,11 +2307,11 @@ def evaluar_y_actualizar_perfil_pre_encuesta(creador_id: int):
         return {
             "status": "error",
             "msg": "Error evaluando/actualizando perfil",
-            "creador_id": creador_id
+            "aspirante_id": aspirante_id
         }
 
 
-def evaluar_perfil_pre(creador_id: int):
+def evaluar_perfil_pre(aspirante_id: int):
 
     try:
         with get_connection_context() as conn:
@@ -2332,10 +2332,10 @@ def evaluar_perfil_pre(creador_id: int):
                         intencion_trabajo,
                         experiencia_otras_plataformas,
                         potencial_estimado
-                    FROM perfil_creador
-                    WHERE creador_id = %s
+                    FROM aspirantes_perfil
+                    WHERE aspirante_id = %s
                     LIMIT 1
-                """, (creador_id,))
+                """, (aspirante_id,))
                 row = cur.fetchone()
 
                 if not row:
@@ -2553,8 +2553,8 @@ def convertir_1a5_a_1a3(puntaje):
 
 import json
 
-def diagnostico_perfil_creador_pre(
-    creador_id: int,
+def diagnostico_aspirantes_perfil_pre(
+    aspirante_id: int,
     puntajes_calculados: dict = None
 ) -> str:
     """
@@ -2604,7 +2604,7 @@ def diagnostico_perfil_creador_pre(
     # =========================
     #  OBTENER DATOS
     # =========================
-    datos = obtener_datos_mejoras_perfil_creador(creador_id)
+    datos = obtener_datos_mejoras_aspirantes_perfil(aspirante_id)
     fuente = puntajes_calculados or datos or {}
 
     # =========================
@@ -2737,8 +2737,8 @@ def diagnostico_perfil_creador_pre(
 
 
 
-def diagnostico_perfil_creador_preV1(
-    creador_id: int,
+def diagnostico_aspirantes_perfil_preV1(
+    aspirante_id: int,
     puntajes_calculados: dict = None
 ) -> str:
     """
@@ -2786,7 +2786,7 @@ def diagnostico_perfil_creador_preV1(
     #  OBTENER DATOS
     # =========================
 
-    datos = obtener_datos_mejoras_perfil_creador(creador_id)
+    datos = obtener_datos_mejoras_aspirantes_perfil(aspirante_id)
 
     puntajes = {
         "Calificación parcial total": (
@@ -2915,22 +2915,22 @@ def diagnostico_perfil_creador_preV1(
 
 
 
-def obtener_guardar_pre_resumen(creador_id: int):
+def obtener_guardar_pre_resumen(aspirante_id: int):
     """
     Calcula la pre-evaluación del creador, genera el diagnóstico preliminar
-    y actualiza la tabla perfil_creador con los resultados.
+    y actualiza la tabla aspirantes_perfil con los resultados.
     Retorna un diccionario con toda la información.
     """
 
     # 1️⃣ Calcular puntajes parciales de pre-evaluación
-    resultado = evaluar_perfil_pre(creador_id)
+    resultado = evaluar_perfil_pre(aspirante_id)
 
     if resultado.get("status") != "ok":
         raise Exception("Perfil no encontrado")
 
     # 2️⃣ Obtener diagnóstico preliminar
     try:
-        diagnostico = diagnostico_perfil_creador_pre(creador_id)
+        diagnostico = diagnostico_aspirantes_perfil_pre(aspirante_id)
     except Exception:
         diagnostico = "-"
 
@@ -2942,14 +2942,14 @@ def obtener_guardar_pre_resumen(creador_id: int):
         f"🩺 Diagnóstico Preliminar:\n{diagnostico}\n"
     )
 
-    # 4️⃣ Guardar resultados en tabla perfil_creador
+    # 4️⃣ Guardar resultados en tabla aspirantes_perfil
     try:
         with get_connection_context() as conn:
             cur = conn.cursor()
 
             cur.execute(
                 """
-                UPDATE perfil_creador
+                UPDATE aspirantes_perfil
                 SET
                     puntaje_estadistica = %s,
                     puntaje_estadistica_categoria = %s,
@@ -2961,7 +2961,7 @@ def obtener_guardar_pre_resumen(creador_id: int):
                     puntaje_total_categoria = %s,
                     diagnostico = %s,
                     actualizado_en = NOW()
-                WHERE creador_id = %s
+                WHERE aspirante_id = %s
                 """,
                 (
                     resultado.get("puntaje_estadistica"),
@@ -2973,20 +2973,20 @@ def obtener_guardar_pre_resumen(creador_id: int):
                     resultado.get("puntaje_total_ponderado"),
                     resultado.get("puntaje_total_ponderado_cat"),
                     texto,
-                    creador_id,
+                    aspirante_id,
                 )
             )
 
             if cur.rowcount == 0:
-                raise Exception("No existe perfil_creador para este creador_id")
+                raise Exception("No existe aspirantes_perfil para este aspirante_id")
 
     except Exception as e:
-        raise Exception(f"Error al guardar la pre-evaluación en perfil_creador: {str(e)}")
+        raise Exception(f"Error al guardar la pre-evaluación en aspirantes_perfil: {str(e)}")
 
 
-# def evaluar_perfil_pre(creador_id: int):
+# def evaluar_perfil_pre(aspirante_id: int):
 #     """
-#     Obtiene datos de perfil_creador y calcula:
+#     Obtiene datos de aspirantes_perfil y calcula:
 #     - puntaje_estadisticas_pre
 #     - puntaje_datos_generales_pre
 #     - puntaje_preferencias_habitos_pre
@@ -3005,10 +3005,10 @@ def obtener_guardar_pre_resumen(creador_id: int):
 #                         seguidores, siguiendo, videos, likes, duracion_emisiones,
 #                         tiempo_disponible, frecuencia_lives, intencion_trabajo,
 #                         experiencia_otras_plataformas
-#                     FROM perfil_creador
-#                     WHERE creador_id = %s
+#                     FROM aspirantes_perfil
+#                     WHERE aspirante_id = %s
 #                     LIMIT 1
-#                 """, (creador_id,))
+#                 """, (aspirante_id,))
 #
 #                 row = cur.fetchone()
 #                 if not row:
@@ -3087,7 +3087,7 @@ def obtener_guardar_pre_resumen(creador_id: int):
 #     # ======================
 #     return {
 #         "status": "ok",
-#         "creador_id": creador_id,
+#         "aspirante_id": aspirante_id,
 #
 #         # Puntajes individuales
 #         "estadisticas": est,

@@ -20,7 +20,7 @@ class PerfilCualitativoPayload(BaseModel):
     calidad_contenido: int = Field(..., ge=0, le=5)
     eval_biografia: int = Field(..., ge=0, le=5)
     metadata_videos: int = Field(..., ge=0, le=5)
-    eval_foto: int = Field(..., ge=0, le=5)  # solo perfil_creador
+    eval_foto: int = Field(..., ge=0, le=5)  # solo aspirantes_perfil
 
 def obtener_modelo_activo(cur):
     cur.execute("""
@@ -134,7 +134,7 @@ def generar_insights_principales(categorias):
         "alerta_principal": alerta_principal
     }
 
-def calcular_diagnostico_y_json(cur, creador_id: int, modelo_id: int):
+def calcular_diagnostico_y_json(cur, aspirante_id: int, modelo_id: int):
 
     sql = """
 
@@ -157,7 +157,7 @@ def calcular_diagnostico_y_json(cur, creador_id: int, modelo_id: int):
             ON v.id = sv.variable_id
         LEFT JOIN diagnostico_variable_valor vv
             ON vv.id = sv.valor_id
-        WHERE sv.creador_id = %(creador_id)s
+        WHERE sv.aspirante_id = %(aspirante_id)s
         AND sv.variable_id IN (1,2,3,12,20)
     ),
 
@@ -190,7 +190,7 @@ def calcular_diagnostico_y_json(cur, creador_id: int, modelo_id: int):
 
         LEFT JOIN diagnostico_score_variable sv
             ON sv.variable_id = v.id
-            AND sv.creador_id = %(creador_id)s
+            AND sv.aspirante_id = %(aspirante_id)s
 
         LEFT JOIN diagnostico_variable_valor vv
             ON vv.id = sv.valor_id
@@ -337,10 +337,10 @@ def calcular_diagnostico_y_json(cur, creador_id: int, modelo_id: int):
     )
 
     INSERT INTO diagnostico_score_general
-    (creador_id, modelo_id, puntaje_total, nivel, diagnostico_json)
+    (aspirante_id, modelo_id, puntaje_total, nivel, diagnostico_json)
 
     SELECT
-        %(creador_id)s,
+        %(aspirante_id)s,
         %(modelo_id)s,
         ROUND(score_total,2),
 
@@ -354,7 +354,7 @@ def calcular_diagnostico_y_json(cur, creador_id: int, modelo_id: int):
 
     FROM json_final
 
-    ON CONFLICT (creador_id, modelo_id)
+    ON CONFLICT (aspirante_id, modelo_id)
     DO UPDATE
     SET
         puntaje_total = EXCLUDED.puntaje_total,
@@ -364,7 +364,7 @@ def calcular_diagnostico_y_json(cur, creador_id: int, modelo_id: int):
     """
 
     cur.execute(sql, {
-        "creador_id": creador_id,
+        "aspirante_id": aspirante_id,
         "modelo_id": modelo_id
     })
 
@@ -373,9 +373,9 @@ def calcular_diagnostico_y_json(cur, creador_id: int, modelo_id: int):
     cur.execute("""
         SELECT diagnostico_json
         FROM diagnostico_score_general
-        WHERE creador_id = %s
+        WHERE aspirante_id = %s
         AND modelo_id = %s
-    """, (creador_id, modelo_id))
+    """, (aspirante_id, modelo_id))
 
     row = cur.fetchone()
 
@@ -400,15 +400,15 @@ def calcular_diagnostico_y_json(cur, creador_id: int, modelo_id: int):
     cur.execute("""
         UPDATE diagnostico_score_general
         SET diagnostico_json = %s
-        WHERE creador_id = %s
+        WHERE aspirante_id = %s
         AND modelo_id = %s
-    """, (json.dumps(diagnostico), creador_id, modelo_id))
+    """, (json.dumps(diagnostico), aspirante_id, modelo_id))
 
-@router.post("/api/perfil_creador/{creador_id}/talento/actualizar",
+@router.post("/api/aspirantes_perfil/{aspirante_id}/talento/actualizar",
     tags=["Categoria talento"]
 )
 def sync_cualitativo_perfil_y_variables(
-    creador_id: int,
+    aspirante_id: int,
     payload: PerfilCualitativoPayload,
     usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
@@ -430,9 +430,9 @@ def sync_cualitativo_perfil_y_variables(
         with get_connection_context() as conn:
             with conn.cursor() as cur:
 
-                # 1️⃣ actualizar perfil_creador
+                # 1️⃣ actualizar aspirantes_perfil
                 cur.execute("""
-                    UPDATE perfil_creador
+                    UPDATE aspirantes_perfil
                     SET apariencia = %s,
                         engagement = %s,
                         calidad_contenido = %s,
@@ -440,7 +440,7 @@ def sync_cualitativo_perfil_y_variables(
                         metadata_videos = %s,
                         eval_foto = %s,
                         potencial_estimado = %s
-                    WHERE creador_id = %s
+                    WHERE aspirante_id = %s
                 """, (
                     data["apariencia"],
                     data["engagement"],
@@ -449,13 +449,13 @@ def sync_cualitativo_perfil_y_variables(
                     data["metadata_videos"],
                     data["eval_foto"],
                     data["potencial_estimado"],
-                    creador_id
+                    aspirante_id
                 ))
 
                 perfil_rows = cur.rowcount
 
                 # 2️⃣ pasar valores del perfil al score_variable
-                guardar_scores_desde_perfil(cur, creador_id)
+                guardar_scores_desde_perfil(cur, aspirante_id)
 
                 # 3️⃣ obtener modelo activo
                 modelo_id = obtener_modelo_activo(cur)
@@ -467,15 +467,15 @@ def sync_cualitativo_perfil_y_variables(
                     )
 
                 # 4️⃣ recalcular diagnóstico
-                calcular_diagnostico_y_json(cur, creador_id, modelo_id)
+                calcular_diagnostico_y_json(cur, aspirante_id, modelo_id)
 
             conn.commit()
 
         return {
             "status": "ok",
-            "mensaje": "perfil_creador actualizado, scores sincronizados y diagnóstico recalculado",
-            "creador_id": creador_id,
-            "perfil_creador_filas_afectadas": perfil_rows,
+            "mensaje": "aspirantes_perfil actualizado, scores sincronizados y diagnóstico recalculado",
+            "aspirante_id": aspirante_id,
+            "aspirantes_perfil_filas_afectadas": perfil_rows,
             "payload": data
         }
 
@@ -491,8 +491,8 @@ def sync_cualitativo_perfil_y_variables(
             detail=f"Error en sync_cualitativo_perfil_y_variables: {str(e)}"
         )
 
-@router.get("/api/creadores/{creador_id}/diagnostico")
-def diagnostico_creador(creador_id: int):
+@router.get("/api/aspirantes/{aspirante_id}/diagnostico")
+def diagnostico_creador(aspirante_id: int):
 
     with get_connection_context() as conn:
         with conn.cursor() as cur:
@@ -513,11 +513,11 @@ def diagnostico_creador(creador_id: int):
                     c.nickname,
                     c.nombre_real as nombre
                 FROM diagnostico_score_general d
-                JOIN creadores c
-                    ON c.id = d.creador_id
-                WHERE d.creador_id = %s
+                JOIN aspirantes c
+                    ON c.id = d.aspirante_id
+                WHERE d.aspirante_id = %s
                 AND d.modelo_id = %s
-            """, (creador_id, modelo_id))
+            """, (aspirante_id, modelo_id))
 
             r = cur.fetchone()
 
@@ -539,7 +539,7 @@ def diagnostico_creador(creador_id: int):
             }
 
 
-def guardar_scores_desde_perfil(cur, creador_id: int):
+def guardar_scores_desde_perfil(cur, aspirante_id: int):
     # 1️⃣ obtener variables del sistema
     cur.execute("""
         SELECT id, campo_db, tipo
@@ -562,20 +562,20 @@ def guardar_scores_desde_perfil(cur, creador_id: int):
     sql = f"""
     WITH perfil_vars AS (
         SELECT
-            p.creador_id,
+            p.aspirante_id,
             v.variable_id,
             v.valor
-        FROM perfil_creador p
+        FROM aspirantes_perfil p
         CROSS JOIN LATERAL (
             VALUES
             {values_sql}
         ) AS v(variable_id, valor)
-        WHERE p.creador_id = %s
+        WHERE p.aspirante_id = %s
         AND v.valor IS NOT NULL
     ),
     valores_resueltos AS (
         SELECT
-            pv.creador_id,
+            pv.aspirante_id,
             pv.variable_id,
             pv.valor AS valor_original,
             dvv.id AS valor_modificado
@@ -591,19 +591,19 @@ def guardar_scores_desde_perfil(cur, creador_id: int):
             )
     )
     INSERT INTO diagnostico_score_variable
-    (creador_id, variable_id, valor, valor_id)
+    (aspirante_id, variable_id, valor, valor_id)
     SELECT
-        creador_id,
+        aspirante_id,
         variable_id,
         valor_original,
         valor_modificado
     FROM valores_resueltos
-    ON CONFLICT (creador_id, variable_id)
+    ON CONFLICT (aspirante_id, variable_id)
     DO UPDATE
     SET valor = EXCLUDED.valor,
         valor_id = EXCLUDED.valor_id
     """
-    cur.execute(sql, (creador_id,))
+    cur.execute(sql, (aspirante_id,))
 
 ESTADO_MAP_PREEVAL = {
     "No apto": 7,
@@ -612,7 +612,7 @@ ESTADO_MAP_PREEVAL = {
 }
 ESTADO_DEFAULT = 99  # si no coincide
 
-def actualizar_estado_preevaluacion(creador_id: int, payload: dict):
+def actualizar_estado_preevaluacion(aspirante_id: int, payload: dict):
 
     estado = payload.get("estado_evaluacion")
     estado_id = None
@@ -625,7 +625,7 @@ def actualizar_estado_preevaluacion(creador_id: int, payload: dict):
         cur = conn.cursor()
 
         # ------------------------
-        # UPDATE perfil_creador
+        # UPDATE aspirantes_perfil
         # ------------------------
 
         sets = []
@@ -638,33 +638,33 @@ def actualizar_estado_preevaluacion(creador_id: int, payload: dict):
 
         if sets:
 
-            valores.append(creador_id)
+            valores.append(aspirante_id)
 
             query = f"""
-                UPDATE perfil_creador
+                UPDATE aspirantes_perfil
                 SET {', '.join(sets)},
                     actualizado_en = NOW()
-                WHERE creador_id = %s
+                WHERE aspirante_id = %s
             """
 
             cur.execute(query, valores)
 
         # ------------------------
-        # UPDATE creadores
+        # UPDATE aspirantes
         # ------------------------
 
         if estado_id is not None:
 
             cur.execute("""
-                UPDATE creadores
+                UPDATE aspirantes
                 SET estado_id = %s
                 WHERE id = %s
-            """, (estado_id, creador_id))
+            """, (estado_id, aspirante_id))
 
         conn.commit()
 
     print(
-        f"✅ Creador {creador_id} actualizado "
+        f"✅ Creador {aspirante_id} actualizado "
         f"(estado={estado}, estado_id={estado_id})"
     )
 
@@ -675,9 +675,9 @@ class ActualizarPreEvaluacionIn(BaseModel):
     observaciones_finales: Optional[str] = None
 
 
-@router.put("/api/perfil_creador/{creador_id}/preevaluacion")
+@router.put("/api/aspirantes_perfil/{aspirante_id}/preevaluacion")
 def actualizar_preevaluacion(
-    creador_id: int,
+    aspirante_id: int,
     datos: ActualizarPreEvaluacionIn,
     usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
@@ -690,12 +690,12 @@ def actualizar_preevaluacion(
             "observaciones_finales": datos.observaciones_finales
         }
 
-        actualizar_estado_preevaluacion(creador_id, payload)
+        actualizar_estado_preevaluacion(aspirante_id, payload)
 
         return {
             "status": "ok",
             "mensaje": "Pre-evaluación actualizada correctamente",
-            "creador_id": creador_id,
+            "aspirante_id": aspirante_id,
             "estado_evaluacion": datos.estado_evaluacion,
         }
 
