@@ -40,7 +40,7 @@ from Excel import *
 
 import cloudinary
 
-from borrar_utils import actualizar_info_phone
+# from borrar_utils import actualizar_info_phone
 
 cloudinary.config(
     cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
@@ -74,7 +74,7 @@ from borrar_middleware_rate_limit import RateLimitMiddleware  # 👈 Rate limiti
 from main_agendamiento import router as agendamiento_router
 from main_evaluacionAspirante import router as EvaluacionAspirante_router
 from main_entrevistas import router as entrevistas_router
-from utils_aspirantes import router as utils_aspirantes_router
+from utils_aspirantes import router as utils_aspirantes_router, actualizar_info_phone
 from main_chatbot_estados_aspirante import router as chatbot_estados_aspirante_router
 from main_auth import router as main_auth_router
 from main_diagnostico import router as diagnostico_router

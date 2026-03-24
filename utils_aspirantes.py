@@ -2,7 +2,8 @@ import os
 from fastapi import APIRouter, HTTPException, Depends
 import logging
 
-from DataBase import get_connection_context, guardar_mensaje_nuevo, paso_limite_24h, buscar_usuario_por_telefono
+from DataBase import get_connection_context, guardar_mensaje_nuevo, paso_limite_24h, buscar_usuario_por_telefono, \
+    actualizar_phone_info_db
 from enviar_msg_wp import enviar_mensaje_texto_simple, enviar_plantilla_generica
 
 logger = logging.getLogger("uvicorn.error")
@@ -1372,9 +1373,71 @@ logger = logging.getLogger(__name__)
 #     enviar_a_meta(payload, phone_id, token)
 
 
+def actualizar_info_phone(resultado_token: dict) -> bool:
+    """Actualiza en la base de datos la información del número asociado al WABA."""
+    try:
+        waba_id = resultado_token.get("waba_id")
+        access_token = resultado_token.get("access_token")
+        registro_id = resultado_token.get("id")
+
+        if not waba_id or not registro_id:
+            print("⚠️ No se encontró waba_id o id para actualizar phone info.")
+            return False
+
+        if not access_token:
+            print("⚠️ No se encontró access_token para actualizar phone info.")
+            return False
+
+        phone_info = obtener_phone_number_info(waba_id, access_token)
+        if not phone_info:
+            print(f"⚠️ No se pudo obtener información del número para WABA {waba_id}")
+            return False
+
+        actualizado = actualizar_phone_info_db(
+            id=registro_id,
+            phone_number=phone_info.get("display_phone_number"),
+            phone_number_id=phone_info.get("id"),
+            status="connected"
+        )
+
+        if actualizado:
+            print(f"✅ Phone info actualizada correctamente para WABA {waba_id}")
+        else:
+            print(f"⚠️ No se pudo actualizar la info de phone_number en DB (ID: {registro_id})")
+
+        return bool(actualizado)
+
+    except Exception as e:
+        print(f"❌ Error en actualizar_info_phone: {e}")
+        return False
 
 
+GRAPH_API_VERSION = os.getenv("GRAPH_API_VERSION") or "v19.0"
+def obtener_phone_number_info(waba_id: str, access_token: str):
+    """Obtiene el número de teléfono asociado a un WABA desde la API de Meta."""
+    url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{waba_id}/phone_numbers"
+    headers = {"Authorization": f"Bearer {access_token}"}
 
+    try:
+        r = requests.get(url, headers=headers, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        print("📞 Respuesta Meta phone_numbers:", json.dumps(data, indent=2))
+
+        phones = data.get("data", [])
+        if phones:
+            phone = phones[0]
+            return {
+                "id": phone.get("id"),
+                "display_phone_number": phone.get("display_phone_number"),
+            }
+
+    except requests.RequestException as e:
+        print(f"❌ Error HTTP al obtener phone_number_info: {e}")
+    except Exception as e:
+        print(f"❌ Error general obteniendo phone_number_info: {e}")
+
+    return None
 
 
 
