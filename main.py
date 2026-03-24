@@ -38,16 +38,7 @@ from enviar_msg_wp import *
 from DataBase import *
 from Excel import *
 
-import cloudinary
-
 # from borrar_utils import actualizar_info_phone
-
-cloudinary.config(
-    cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
-    api_key=os.environ["CLOUDINARY_API_KEY"],
-    api_secret=os.environ["CLOUDINARY_API_SECRET"],
-    secure=True
-)
 
 # 🔄 Cargar variables de entorno
 load_dotenv()
@@ -72,16 +63,21 @@ from main_cargar_aspirantes import router as aspirantes_router
 from middleware_tenant import TenantMiddleware   # 👈 importa tu middleware
 # from borrar_middleware_rate_limit import RateLimitMiddleware  # 👈 Rate limiting por tenant
 from main_agendamiento import router as agendamiento_router
-from main_evaluacionAspirante import router as EvaluacionAspirante_router
+from main_evaluacion_aspirante import router as EvaluacionAspirante_router
 from main_entrevistas import router as entrevistas_router
 from utils_aspirantes import router as utils_aspirantes_router
 from utils_aspirantes_1 import actualizar_info_phone
 from main_chatbot_estados_aspirante import router as chatbot_estados_aspirante_router
 from main_auth import router as main_auth_router
 from main_diagnostico import router as diagnostico_router
-from main_configuracionAgencias import router as bienvenida_router
+from main_configuracion import router as bienvenida_router
 from main_mensajeria_whatsapp import router as main_mensajeria_whatsapp_router
 from main_invitacion import router as main_invitacion_router
+from main_diagnostico_config import router as diagnostico_config_router
+
+
+
+
 
 # ⚙️ Inicializar FastAPI
 app = FastAPI()
@@ -120,6 +116,8 @@ app.include_router(diagnostico_router, tags=["diagnostico"])
 app.include_router(bienvenida_router, tags=["bienvenida"])
 app.include_router(main_mensajeria_whatsapp_router, tags=["mensajeria whatsapp"])
 app.include_router(main_invitacion_router, tags=["invitacion"])
+app.include_router(diagnostico_config_router, tags=["diagnostico configuracion"])
+
 
 
 # # ✅ Crear carpeta persistente de audios si no existe
@@ -3004,30 +3002,6 @@ def obtener_estadisticas_por_creador(creador_activo_id: int):
             columns = [desc[0] for desc in cur.description]
             resultados = [dict(zip(columns, row)) for row in rows]
             return resultados
-
-# 1. Subir foto y guardar URL en campo `foto`
-@app.post("/creadores_activos/{creador_activo_id}/foto")
-async def subir_foto_creador_activo(creador_activo_id: int, foto: UploadFile = File(...)):
-    try:
-        contents = await foto.read()
-        result = cloudinary.uploader.upload(
-            contents,
-            folder=f"creadores_activos/{creador_activo_id}",
-            public_id=f"foto_{creador_activo_id}",
-            overwrite=True,
-            resource_type="image"
-        )
-        url_foto = result["secure_url"]
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE creadores_activos SET foto = %s WHERE id = %s",
-                    (url_foto, creador_activo_id)
-                )
-                conn.commit()
-        return {"foto_url": url_foto}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al subir la foto: {e}")
 
 # 2. Consultar la URL de la foto
 @app.get("/creadores_activos/{creador_activo_id}/foto")

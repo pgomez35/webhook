@@ -18,7 +18,7 @@ from psycopg2.extras import RealDictCursor
 
 from DataBase import get_connection_context, obtener_cuenta_por_subdominio
 from enviar_msg_wp import enviar_plantilla_generica_parametros
-from main_configuracionAgencias import get_config
+from main_configuracion import get_config
 from main_webhook import validar_link_tiktok, enviar_mensaje
 from schemas import *
 from main_auth import obtener_usuario_actual
