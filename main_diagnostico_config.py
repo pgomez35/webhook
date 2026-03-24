@@ -1338,3 +1338,430 @@ def resumen_variables(usuario=Depends(obtener_usuario_actual)):
                 "ok": True,
                 "data": resumen
             }
+
+# =========================================================
+# PARTE 3: VALORES DE VARIABLES
+# =========================================================
+
+class VariableValorLabelUpdate(BaseModel):
+    label: str = Field(..., min_length=1, max_length=80)
+
+
+class VariableValorRangoUpdate(BaseModel):
+    min_val: Decimal
+    max_val: Decimal
+
+
+class VariableValorUpdate(BaseModel):
+    label: str = Field(..., min_length=1, max_length=80)
+    min_val: Optional[Decimal] = None
+    max_val: Optional[Decimal] = None
+
+
+# =========================================================
+# HELPERS VALORES
+# =========================================================
+
+def obtener_variable_valor(cur, valor_id: int) -> Optional[Dict[str, Any]]:
+    cur.execute("""
+        SELECT
+            id,
+            variable_id,
+            min_val,
+            max_val,
+            score,
+            label,
+            nivel,
+            orden,
+            created_at
+        FROM diagnostico_variable_valor
+        WHERE id = %s
+    """, (valor_id,))
+    return fetchone_as_dict(cur)
+
+
+def existe_variable_valor(cur, valor_id: int) -> bool:
+    cur.execute("""
+        SELECT 1 AS existe
+        FROM diagnostico_variable_valor
+        WHERE id = %s
+    """, (valor_id,))
+    return fetchone_as_dict(cur) is not None
+
+
+def obtener_variable_con_tipo(cur, variable_id: int) -> Optional[Dict[str, Any]]:
+    cur.execute("""
+        SELECT
+            id,
+            categoria_id,
+            nombre,
+            campo_db,
+            peso_variable,
+            tipo,
+            created_at,
+            encuesta_id,
+            activa,
+            tipo_form,
+            texto,
+            orden
+        FROM diagnostico_variable
+        WHERE id = %s
+    """, (variable_id,))
+    return fetchone_as_dict(cur)
+
+
+def validar_label_no_vacio(label: str):
+    if not label or not label.strip():
+        raise HTTPException(status_code=400, detail="El label es obligatorio")
+
+
+def validar_variable_es_tipo_rango(variable: Dict[str, Any]):
+    if not variable:
+        raise HTTPException(status_code=404, detail="Variable no encontrada")
+
+    tipo = (variable.get("tipo") or "").strip().lower()
+    if tipo != "rango":
+        raise HTTPException(
+            status_code=400,
+            detail="Solo se permite editar min_val y max_val en variables de tipo rango"
+        )
+
+
+def validar_rango_no_vacio(min_val: Optional[Decimal], max_val: Optional[Decimal]):
+    if min_val is None:
+        raise HTTPException(status_code=400, detail="min_val es obligatorio")
+    if max_val is None:
+        raise HTTPException(status_code=400, detail="max_val es obligatorio")
+
+
+def validar_rango_logico(min_val: Decimal, max_val: Decimal):
+    if min_val > max_val:
+        raise HTTPException(
+            status_code=400,
+            detail="min_val no puede ser mayor que max_val"
+        )
+
+
+def validar_rango_no_traslapado(cur, variable_id: int, min_val: Decimal, max_val: Decimal, exclude_id: Optional[int] = None):
+    query = """
+        SELECT
+            id,
+            variable_id,
+            min_val,
+            max_val,
+            score,
+            label,
+            nivel,
+            orden,
+            created_at
+        FROM diagnostico_variable_valor
+        WHERE variable_id = %s
+    """
+    params: List[Any] = [variable_id]
+
+    if exclude_id is not None:
+        query += " AND id <> %s"
+        params.append(exclude_id)
+
+    cur.execute(query, tuple(params))
+    existentes = fetchall_as_dict(cur)
+
+    for item in existentes:
+        min_exist = item["min_val"]
+        max_exist = item["max_val"]
+
+        if min_exist is None or max_exist is None:
+            continue
+
+        min_exist = Decimal(str(min_exist))
+        max_exist = Decimal(str(max_exist))
+
+        # Traslape si NO están completamente separados
+        if not (max_val < min_exist or min_val > max_exist):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"El rango {min_val} - {max_val} se cruza con el rango existente "
+                    f"{min_exist} - {max_exist} (id={item['id']}, label='{item['label']}')"
+                )
+            )
+
+
+def obtener_valores_por_variable(cur, variable_id: int) -> List[Dict[str, Any]]:
+    cur.execute("""
+        SELECT
+            id,
+            variable_id,
+            min_val,
+            max_val,
+            score,
+            label,
+            nivel,
+            orden,
+            created_at
+        FROM diagnostico_variable_valor
+        WHERE variable_id = %s
+        ORDER BY orden NULLS LAST, id
+    """, (variable_id,))
+    return fetchall_as_dict(cur)
+
+
+def obtener_resumen_valores_variable(cur, variable_id: int) -> Dict[str, Any]:
+    variable = obtener_variable_con_tipo(cur, variable_id)
+    if not variable:
+        raise HTTPException(status_code=404, detail="Variable no encontrada")
+
+    valores = obtener_valores_por_variable(cur, variable_id)
+
+    return {
+        "variable": variable,
+        "valores": valores
+    }
+
+
+# =========================================================
+# VALORES - LISTADOS
+# =========================================================
+
+@router.get("/api/diagnostico-config/variables/{variable_id}/valores")
+def listar_valores_por_variable(variable_id: int, usuario=Depends(obtener_usuario_actual)):
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            data = obtener_resumen_valores_variable(cur, variable_id)
+            return {"ok": True, "data": data}
+
+
+@router.get("/api/diagnostico-config/variable-valores/{valor_id}")
+def detalle_variable_valor(valor_id: int, usuario=Depends(obtener_usuario_actual)):
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            valor = obtener_variable_valor(cur, valor_id)
+            if not valor:
+                raise HTTPException(status_code=404, detail="Valor de variable no encontrado")
+
+            variable = obtener_variable_con_tipo(cur, valor["variable_id"])
+            valor["variable"] = variable
+
+            return {"ok": True, "data": valor}
+
+
+# =========================================================
+# VALORES - ACTUALIZAR LABEL
+# =========================================================
+
+@router.patch("/api/diagnostico-config/variable-valores/{valor_id}/label")
+def actualizar_label_variable_valor(
+    valor_id: int,
+    payload: VariableValorLabelUpdate,
+    usuario=Depends(obtener_usuario_actual)
+):
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            valor = obtener_variable_valor(cur, valor_id)
+            if not valor:
+                raise HTTPException(status_code=404, detail="Valor de variable no encontrado")
+
+            validar_label_no_vacio(payload.label)
+
+            cur.execute("""
+                UPDATE diagnostico_variable_valor
+                SET label = %s
+                WHERE id = %s
+                RETURNING
+                    id,
+                    variable_id,
+                    min_val,
+                    max_val,
+                    score,
+                    label,
+                    nivel,
+                    orden,
+                    created_at
+            """, (
+                payload.label.strip(),
+                valor_id
+            ))
+
+            actualizado = fetchone_as_dict(cur)
+            conn.commit()
+
+            return {
+                "ok": True,
+                "message": "Label actualizado correctamente",
+                "data": actualizado
+            }
+
+
+# =========================================================
+# VALORES - ACTUALIZAR RANGO
+# =========================================================
+
+@router.patch("/api/diagnostico-config/variable-valores/{valor_id}/rango")
+def actualizar_rango_variable_valor(
+    valor_id: int,
+    payload: VariableValorRangoUpdate,
+    usuario=Depends(obtener_usuario_actual)
+):
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            valor = obtener_variable_valor(cur, valor_id)
+            if not valor:
+                raise HTTPException(status_code=404, detail="Valor de variable no encontrado")
+
+            variable = obtener_variable_con_tipo(cur, valor["variable_id"])
+            validar_variable_es_tipo_rango(variable)
+
+            min_val = Decimal(str(payload.min_val))
+            max_val = Decimal(str(payload.max_val))
+
+            validar_rango_no_vacio(min_val, max_val)
+            validar_rango_logico(min_val, max_val)
+            validar_rango_no_traslapado(
+                cur=cur,
+                variable_id=valor["variable_id"],
+                min_val=min_val,
+                max_val=max_val,
+                exclude_id=valor_id
+            )
+
+            cur.execute("""
+                UPDATE diagnostico_variable_valor
+                SET min_val = %s,
+                    max_val = %s
+                WHERE id = %s
+                RETURNING
+                    id,
+                    variable_id,
+                    min_val,
+                    max_val,
+                    score,
+                    label,
+                    nivel,
+                    orden,
+                    created_at
+            """, (
+                min_val,
+                max_val,
+                valor_id
+            ))
+
+            actualizado = fetchone_as_dict(cur)
+            conn.commit()
+
+            return {
+                "ok": True,
+                "message": "Rango actualizado correctamente",
+                "data": actualizado
+            }
+
+
+# =========================================================
+# VALORES - ACTUALIZACIÓN COMBINADA
+# =========================================================
+
+@router.put("/api/diagnostico-config/variable-valores/{valor_id}")
+def actualizar_variable_valor(
+    valor_id: int,
+    payload: VariableValorUpdate,
+    usuario=Depends(obtener_usuario_actual)
+):
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            valor = obtener_variable_valor(cur, valor_id)
+            if not valor:
+                raise HTTPException(status_code=404, detail="Valor de variable no encontrado")
+
+            variable = obtener_variable_con_tipo(cur, valor["variable_id"])
+            validar_label_no_vacio(payload.label)
+
+            nuevo_label = payload.label.strip()
+            nuevo_min = valor["min_val"]
+            nuevo_max = valor["max_val"]
+
+            tipo_variable = (variable.get("tipo") or "").strip().lower()
+
+            if tipo_variable == "rango":
+                min_val = payload.min_val
+                max_val = payload.max_val
+
+                validar_rango_no_vacio(min_val, max_val)
+
+                nuevo_min = Decimal(str(min_val))
+                nuevo_max = Decimal(str(max_val))
+
+                validar_rango_logico(nuevo_min, nuevo_max)
+                validar_rango_no_traslapado(
+                    cur=cur,
+                    variable_id=valor["variable_id"],
+                    min_val=nuevo_min,
+                    max_val=nuevo_max,
+                    exclude_id=valor_id
+                )
+            else:
+                # Para variables que no son rango, min/max quedan intactos
+                nuevo_min = valor["min_val"]
+                nuevo_max = valor["max_val"]
+
+            cur.execute("""
+                UPDATE diagnostico_variable_valor
+                SET label = %s,
+                    min_val = %s,
+                    max_val = %s
+                WHERE id = %s
+                RETURNING
+                    id,
+                    variable_id,
+                    min_val,
+                    max_val,
+                    score,
+                    label,
+                    nivel,
+                    orden,
+                    created_at
+            """, (
+                nuevo_label,
+                nuevo_min,
+                nuevo_max,
+                valor_id
+            ))
+
+            actualizado = fetchone_as_dict(cur)
+            conn.commit()
+
+            return {
+                "ok": True,
+                "message": "Valor de variable actualizado correctamente",
+                "data": actualizado
+            }
+
+
+# =========================================================
+# VALORES - RESUMEN GLOBAL
+# =========================================================
+
+@router.get("/api/diagnostico-config/valores-resumen")
+def resumen_valores(usuario=Depends(obtener_usuario_actual)):
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    v.id AS variable_id,
+                    v.nombre AS variable_nombre,
+                    v.tipo AS variable_tipo,
+                    v.categoria_id,
+                    c.nombre AS categoria_nombre,
+                    COUNT(vv.id) AS total_valores
+                FROM diagnostico_variable v
+                LEFT JOIN diagnostico_categoria c
+                    ON c.id = v.categoria_id
+                LEFT JOIN diagnostico_variable_valor vv
+                    ON vv.variable_id = v.id
+                GROUP BY v.id, v.nombre, v.tipo, v.categoria_id, c.nombre
+                ORDER BY v.categoria_id, v.id
+            """)
+            variables = fetchall_as_dict(cur)
+
+            return {
+                "ok": True,
+                "data": variables
+            }
