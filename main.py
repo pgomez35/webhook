@@ -34,7 +34,7 @@ from uuid import uuid4
 
 # Tu propio código/librerías
 from enviar_msg_wp import *
-from borrar_buscador import inicializar_busqueda, responder_pregunta
+# from borrar_buscador import inicializar_busqueda, responder_pregunta
 from DataBase import *
 from Excel import *
 
@@ -162,7 +162,7 @@ async def log_requests(request, call_next):
 # -----------------------------------------------
 
 # 🧠 Inicializar búsqueda semántica
-client, collection = inicializar_busqueda(API_KEY, persist_dir=CHROMA_DIR)
+# client, collection = inicializar_busqueda(API_KEY, persist_dir=CHROMA_DIR)
 
 # ==================== PROYECTO CALENDAR ===========================
 # === Configuración ===
