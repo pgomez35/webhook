@@ -70,7 +70,7 @@ CALENDAR_ID = os.getenv("CALENDAR_ID")
 from main_webhook import router as aspirantes_perfil_router
 from main_cargar_aspirantes import router as aspirantes_router
 from middleware_tenant import TenantMiddleware   # 👈 importa tu middleware
-from borrar_middleware_rate_limit import RateLimitMiddleware  # 👈 Rate limiting por tenant
+# from borrar_middleware_rate_limit import RateLimitMiddleware  # 👈 Rate limiting por tenant
 from main_agendamiento import router as agendamiento_router
 from main_evaluacionAspirante import router as EvaluacionAspirante_router
 from main_entrevistas import router as entrevistas_router
@@ -90,18 +90,18 @@ app = FastAPI()
 app.add_middleware(TenantMiddleware)
 # Rate limiting DESPUÉS del TenantMiddleware para que el tenant ya esté resuelto
 # ✅ FASE 0: DESHABILITADO - Implementación gradual pendiente
-app.add_middleware(
-    RateLimitMiddleware,
-    enabled=False,  # ✅ DESHABILITADO - Ver PLAN_IMPLEMENTACION_GRADUAL.md
-    exempt_paths=[
-        "/health",  # Endpoint de health check (si existe)
-        "/metrics",  # Endpoint de métricas (si existe)
-        "/docs",  # Documentación de FastAPI
-        "/openapi.json",  # OpenAPI schema
-        "/redoc",  # ReDoc
-        "/webhook",  # Webhook de WhatsApp (siempre exento)
-    ]
-)
+# app.add_middleware(
+#     RateLimitMiddleware,
+#     enabled=False,  # ✅ DESHABILITADO - Ver PLAN_IMPLEMENTACION_GRADUAL.md
+#     exempt_paths=[
+#         "/health",  # Endpoint de health check (si existe)
+#         "/metrics",  # Endpoint de métricas (si existe)
+#         "/docs",  # Documentación de FastAPI
+#         "/openapi.json",  # OpenAPI schema
+#         "/redoc",  # ReDoc
+#         "/webhook",  # Webhook de WhatsApp (siempre exento)
+#     ]
+# )
 
 # Incluir las rutas del módulo aspirantes_perfil_whatsapp
 # ✅ IMPORTANTE: Registrar rutas específicas ANTES de rutas dinámicas
