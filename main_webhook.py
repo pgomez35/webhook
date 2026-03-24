@@ -41,7 +41,7 @@ from tenant import (
     current_tenant,
     current_token
 )
-from borrar_utils import *
+from utils_aspirantes_1 import *
 from redis_client import redis_set_temp, redis_get_temp, redis_delete_temp
 from utils_aspirantes import guardar_estado_eval, obtener_status_24hrs, Enviar_msg_estado, \
     enviar_plantilla_estado_evaluacion, buscar_estado_creador, \

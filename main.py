@@ -74,7 +74,8 @@ from borrar_middleware_rate_limit import RateLimitMiddleware  # 👈 Rate limiti
 from main_agendamiento import router as agendamiento_router
 from main_evaluacionAspirante import router as EvaluacionAspirante_router
 from main_entrevistas import router as entrevistas_router
-from utils_aspirantes import router as utils_aspirantes_router, actualizar_info_phone
+from utils_aspirantes import router as utils_aspirantes_router
+from utils_aspirantes_1 import actualizar_info_phone
 from main_chatbot_estados_aspirante import router as chatbot_estados_aspirante_router
 from main_auth import router as main_auth_router
 from main_diagnostico import router as diagnostico_router
@@ -128,7 +129,7 @@ app.include_router(main_invitacion_router, tags=["invitacion"])
 # # ✅ Montar ruta para servir archivos estáticos desde /audios
 # app.mount("/audios", StaticFiles(directory=AUDIO_DIR), name="audios")
 
-from borrar_utils import AUDIO_DIR
+from utils_aspirantes_1 import AUDIO_DIR
 from fastapi.staticfiles import StaticFiles
 
 

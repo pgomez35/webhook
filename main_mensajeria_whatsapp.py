@@ -25,7 +25,7 @@ from typing import Optional, Dict, Any, Tuple
 
 import requests
 
-from utils_aspirantes import AUDIO_DIR, subir_audio_cloudinary
+from utils_aspirantes_1 import AUDIO_DIR, subir_audio_cloudinary
 from starlette.responses import StreamingResponse
 
 import cloudinary
