@@ -588,6 +588,7 @@ def resumen_configuracion(usuario=Depends(obtener_usuario_actual)):
 # ------------------------------------------------
 
 
+
 # =========================================================
 # PARTE 2: VARIABLES
 # =========================================================
@@ -619,6 +620,10 @@ class VariableUpdate(BaseModel):
 
 class VariablePesoUpdate(BaseModel):
     peso_variable: Decimal = Field(..., ge=0, le=100)
+
+
+class VariableOrdenUpdate(BaseModel):
+    orden: Optional[int] = None
 
 
 class VariableCategoriaUpdate(BaseModel):
@@ -673,11 +678,11 @@ def obtener_variable(cur, variable_id: int) -> Optional[Dict[str, Any]]:
 
 def existe_variable(cur, variable_id: int) -> bool:
     cur.execute("""
-        SELECT 1
+        SELECT 1 AS existe
         FROM diagnostico_variable
         WHERE id = %s
     """, (variable_id,))
-    return cur.fetchone() is not None
+    return fetchone_as_dict(cur) is not None
 
 
 def categoria_existe_o_es_cero(cur, categoria_id: int) -> bool:
@@ -719,7 +724,7 @@ def validar_peso_variables_categoria_100(cur, categoria_id: int):
           AND activa = true
           AND COALESCE(peso_variable, 0) > 0
     """, (categoria_id,))
-    row = cur.fetchone()
+    row = fetchone_as_dict(cur)
     total = Decimal(str(row["total"] or 0))
 
     return {
@@ -766,22 +771,22 @@ def obtener_resumen_categoria_variables(cur, categoria_id: int) -> Dict[str, Any
 
 def variable_tiene_valores(cur, variable_id: int) -> bool:
     cur.execute("""
-        SELECT 1
+        SELECT 1 AS existe
         FROM diagnostico_variable_valor
         WHERE variable_id = %s
         LIMIT 1
     """, (variable_id,))
-    return cur.fetchone() is not None
+    return fetchone_as_dict(cur) is not None
 
 
 def variable_tiene_uso_en_scores(cur, variable_id: int) -> bool:
     cur.execute("""
-        SELECT 1
+        SELECT 1 AS existe
         FROM diagnostico_score_variable
         WHERE variable_id = %s
         LIMIT 1
     """, (variable_id,))
-    return cur.fetchone() is not None
+    return fetchone_as_dict(cur) is not None
 
 
 def validar_variables_pertenecen_a_categoria(cur, categoria_id: int, variable_ids: List[int]):
@@ -791,7 +796,8 @@ def validar_variables_pertenecen_a_categoria(cur, categoria_id: int, variable_id
         WHERE categoria_id = %s
           AND id = ANY(%s)
     """, (categoria_id, variable_ids))
-    existentes = {row["id"] for row in cur.fetchall()}
+    rows = fetchall_as_dict(cur)
+    existentes = {row["id"] for row in rows}
     faltantes = [v for v in variable_ids if v not in existentes]
 
     if faltantes:
@@ -811,10 +817,6 @@ def validar_variables_duplicadas(items: List[CategoriaVariablesPesosUpdateItem])
 
 
 def validar_suma_variables_100_payload(items: List[CategoriaVariablesPesosUpdateItem]):
-    """
-    Solo cuenta pesos > 0.
-    Si todas vienen en 0, el total será 0.
-    """
     total = sum(
         Decimal(str(x.peso_variable))
         for x in items
@@ -1088,6 +1090,47 @@ def cambiar_peso_variable(variable_id: int, payload: VariablePesoUpdate, usuario
 
 
 # =========================================================
+# VARIABLES - CAMBIO DE ORDEN
+# =========================================================
+
+@router.patch("/api/diagnostico-config/variables/{variable_id}/orden")
+def cambiar_orden_variable(variable_id: int, payload: VariableOrdenUpdate, usuario=Depends(obtener_usuario_actual)):
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            variable = obtener_variable(cur, variable_id)
+            if not variable:
+                raise HTTPException(status_code=404, detail="Variable no encontrada")
+
+            cur.execute("""
+                UPDATE diagnostico_variable
+                SET orden = %s
+                WHERE id = %s
+                RETURNING
+                    id,
+                    categoria_id,
+                    nombre,
+                    campo_db,
+                    peso_variable,
+                    tipo,
+                    created_at,
+                    encuesta_id,
+                    activa,
+                    tipo_form,
+                    texto,
+                    orden
+            """, (payload.orden, variable_id))
+
+            actualizada = fetchone_as_dict(cur)
+            conn.commit()
+
+            return {
+                "ok": True,
+                "message": "Orden de variable actualizado correctamente",
+                "data": actualizada
+            }
+
+
+# =========================================================
 # VARIABLES - CAMBIO DE CATEGORÍA
 # =========================================================
 
@@ -1271,7 +1314,6 @@ def validar_pesos_categoria(categoria_id: int, usuario=Depends(obtener_usuario_a
 def resumen_variables(usuario=Depends(obtener_usuario_actual)):
     with get_connection_context() as conn:
         with conn.cursor() as cur:
-            # categorías normales
             cur.execute("""
                 SELECT
                     c.id,
@@ -1287,10 +1329,8 @@ def resumen_variables(usuario=Depends(obtener_usuario_actual)):
 
             resumen = []
 
-            # categoría 0 primero
             resumen.append(obtener_resumen_categoria_variables(cur, 0))
 
-            # luego categorías reales
             for c in categorias:
                 resumen.append(obtener_resumen_categoria_variables(cur, c["id"]))
 
