@@ -1,4 +1,7 @@
 import os
+
+import cloudinary
+from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException, Depends
 import logging
 
@@ -1373,6 +1376,12 @@ logger = logging.getLogger(__name__)
 #     enviar_a_meta(payload, phone_id, token)
 
 
+# ------------------------------------------------
+# ------------------------------------------------
+# ------------REVISAR SI SE QUITAN LAS SIGUIENTES-
+# ------------------------------------------------
+
+
 def actualizar_info_phone(resultado_token: dict) -> bool:
     """Actualiza en la base de datos la información del número asociado al WABA."""
     try:
@@ -1440,6 +1449,43 @@ def obtener_phone_number_info(waba_id: str, access_token: str):
     return None
 
 
+# -------------------------------------------------------------------
+# AUDIOS (Meta -> Local -> Cloudinary)
+# -------------------------------------------------------------------
 
+# load_dotenv()
+
+GRAPH_API_VERSION = os.getenv("GRAPH_API_VERSION") or "v19.0"
+
+# ✅ Crear carpeta persistente de audios si no existe
+AUDIO_DIR = "audios"
+os.makedirs(AUDIO_DIR, exist_ok=True)
+
+# Configuración Cloudinary
+cloudinary.config(
+    cloud_name=os.environ.get("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.environ.get("CLOUDINARY_API_KEY"),
+    api_secret=os.environ.get("CLOUDINARY_API_SECRET"),
+    secure=True
+)
+
+
+
+
+def subir_audio_cloudinary(ruta_local, public_id=None, carpeta="audios_whatsapp"):
+    try:
+        response = cloudinary.uploader.upload(
+            ruta_local,
+            resource_type="video",  # Cloudinary usa 'video' para audio/ogg/webm
+            folder=carpeta,
+            public_id=public_id,
+            overwrite=True
+        )
+        url = response.get("secure_url")
+        print(f"✅ Audio subido a Cloudinary: {url}")
+        return url
+    except Exception as e:
+        print("❌ Error subiendo audio a Cloudinary:", e)
+        return None
 
 
