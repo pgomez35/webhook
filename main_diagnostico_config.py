@@ -15,6 +15,28 @@ MODELO_PERSONALIZADO_NOMBRE = "Modelo Personalizado"
 
 
 # =========================================================
+# HELPERS DE CONVERSIÓN DE FILAS
+# =========================================================
+
+def fetchone_as_dict(cur) -> Optional[Dict[str, Any]]:
+    row = cur.fetchone()
+    if row is None:
+        return None
+
+    columns = [desc[0] for desc in cur.description]
+    return dict(zip(columns, row))
+
+
+def fetchall_as_dict(cur) -> List[Dict[str, Any]]:
+    rows = cur.fetchall()
+    if not rows:
+        return []
+
+    columns = [desc[0] for desc in cur.description]
+    return [dict(zip(columns, row)) for row in rows]
+
+
+# =========================================================
 # SCHEMAS
 # =========================================================
 
@@ -25,6 +47,7 @@ class ActivarModeloRequest(BaseModel):
 class ModeloCategoriaPesoItem(BaseModel):
     categoria_id: int
     peso_categoria: Decimal = Field(..., ge=0, le=100)
+
 
 class ModeloCategoriaPesosUpdate(BaseModel):
     categorias: List[ModeloCategoriaPesoItem]
@@ -38,18 +61,8 @@ class ModeloCategoriaPesosUpdate(BaseModel):
 
 
 # =========================================================
-# HELPERS
+# HELPERS DE NEGOCIO
 # =========================================================
-
-def fetchone_as_dict(cur) -> Optional[Dict[str, Any]]:
-    row = cur.fetchone()
-    return dict(row) if row else None
-
-
-def fetchall_as_dict(cur) -> List[Dict[str, Any]]:
-    rows = cur.fetchall()
-    return [dict(r) for r in rows]
-
 
 def obtener_modelo(cur, modelo_id: int) -> Optional[Dict[str, Any]]:
     cur.execute("""
@@ -81,20 +94,20 @@ def obtener_modelo_por_nombre(cur, nombre: str) -> Optional[Dict[str, Any]]:
 
 def existe_modelo(cur, modelo_id: int) -> bool:
     cur.execute("""
-        SELECT 1
+        SELECT 1 AS existe
         FROM diagnostico_modelo
         WHERE id = %s
     """, (modelo_id,))
-    return cur.fetchone() is not None
+    return fetchone_as_dict(cur) is not None
 
 
 def existe_categoria(cur, categoria_id: int) -> bool:
     cur.execute("""
-        SELECT 1
+        SELECT 1 AS existe
         FROM diagnostico_categoria
         WHERE id = %s
     """, (categoria_id,))
-    return cur.fetchone() is not None
+    return fetchone_as_dict(cur) is not None
 
 
 def es_modelo_personalizado(modelo: Dict[str, Any]) -> bool:
@@ -108,7 +121,8 @@ def obtener_ids_categoria_modelo(cur, modelo_id: int) -> List[int]:
         WHERE modelo_id = %s
         ORDER BY categoria_id
     """, (modelo_id,))
-    return [row["categoria_id"] for row in cur.fetchall()]
+    rows = fetchall_as_dict(cur)
+    return [row["categoria_id"] for row in rows]
 
 
 def validar_suma_100(items: List[ModeloCategoriaPesoItem]):
@@ -131,12 +145,16 @@ def validar_categorias_duplicadas(items: List[ModeloCategoriaPesoItem]):
 
 def validar_todas_las_categorias_existen(cur, items: List[ModeloCategoriaPesoItem]):
     ids = [x.categoria_id for x in items]
+    if not ids:
+        raise HTTPException(status_code=400, detail="Debe enviar al menos una categoría")
+
     cur.execute("""
         SELECT id
         FROM diagnostico_categoria
         WHERE id = ANY(%s)
     """, (ids,))
-    existentes = {row["id"] for row in cur.fetchall()}
+    rows = fetchall_as_dict(cur)
+    existentes = {row["id"] for row in rows}
     faltantes = [x for x in ids if x not in existentes]
 
     if faltantes:
@@ -152,8 +170,10 @@ def validar_modelo_tiene_categorias(cur, modelo_id: int):
         FROM diagnostico_modelo_categoria
         WHERE modelo_id = %s
     """, (modelo_id,))
-    row = cur.fetchone()
-    if int(row["total"]) == 0:
+    row = fetchone_as_dict(cur)
+    total = int(row["total"] or 0)
+
+    if total == 0:
         raise HTTPException(
             status_code=400,
             detail="El modelo no tiene categorías configuradas"
@@ -166,7 +186,7 @@ def total_pesos_modelo(cur, modelo_id: int) -> Decimal:
         FROM diagnostico_modelo_categoria
         WHERE modelo_id = %s
     """, (modelo_id,))
-    row = cur.fetchone()
+    row = fetchone_as_dict(cur)
     return Decimal(str(row["total"] or 0))
 
 
@@ -290,7 +310,11 @@ def detalle_modelo(modelo_id: int, usuario=Depends(obtener_usuario_actual)):
 # =========================================================
 
 @router.patch("/api/diagnostico-config/modelos/{modelo_id}/activar")
-def activar_modelo(modelo_id: int, payload: ActivarModeloRequest = None, usuario=Depends(obtener_usuario_actual)):
+def activar_modelo(
+    modelo_id: int,
+    payload: Optional[ActivarModeloRequest] = None,
+    usuario=Depends(obtener_usuario_actual)
+):
     with get_connection_context() as conn:
         with conn.cursor() as cur:
             modelo = obtener_modelo(cur, modelo_id)
@@ -311,7 +335,6 @@ def activar_modelo(modelo_id: int, payload: ActivarModeloRequest = None, usuario
                 WHERE id = %s
                 RETURNING id, nombre, descripcion, activo, created_at
             """, (modelo_id,))
-
             activado = fetchone_as_dict(cur)
             activado["editable"] = es_modelo_personalizado(activado)
 
@@ -430,7 +453,6 @@ def actualizar_pesos_categorias_modelo_personalizado(
         with conn.cursor() as cur:
             validar_edicion_pesos_modelo_personalizado(cur, modelo_id, payload.categorias)
 
-            # Actualizar solo peso_categoria; no cambiar orden ni categorías
             for item in payload.categorias:
                 cur.execute("""
                     UPDATE diagnostico_modelo_categoria
@@ -495,7 +517,6 @@ def validar_pesos_modelo(modelo_id: int, usuario=Depends(obtener_usuario_actual)
 def resumen_configuracion(usuario=Depends(obtener_usuario_actual)):
     with get_connection_context() as conn:
         with conn.cursor() as cur:
-            # modelos
             cur.execute("""
                 SELECT
                     m.id,
@@ -517,7 +538,6 @@ def resumen_configuracion(usuario=Depends(obtener_usuario_actual)):
             for m in modelos:
                 m["editable"] = (m["nombre"] == MODELO_PERSONALIZADO_NOMBRE)
 
-            # categorías
             cur.execute("""
                 SELECT
                     c.id,
@@ -538,7 +558,6 @@ def resumen_configuracion(usuario=Depends(obtener_usuario_actual)):
             """)
             categorias = fetchall_as_dict(cur)
 
-            # relaciones modelo-categoría
             cur.execute("""
                 SELECT
                     mc.id,
@@ -559,7 +578,6 @@ def resumen_configuracion(usuario=Depends(obtener_usuario_actual)):
                     "modelo_categorias": modelo_categorias
                 }
             }
-
 
 
 
