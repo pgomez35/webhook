@@ -735,7 +735,9 @@ def obtener_config_publica_formulario():
     config = {
         "titulo_encuesta_aspirante": None,
         "mensaje_inicio_encuesta": None,
-        "logo_url": None
+        "logo_url": None,
+        "color_primario": None,
+        "color_secundario": None
     }
 
     with get_connection_context() as conn:
@@ -746,7 +748,9 @@ def obtener_config_publica_formulario():
                 WHERE clave IN (
                     'titulo_encuesta_aspirante',
                     'mensaje_inicio_encuesta',
-                    'logo_url'
+                    'logo_url',
+                    'color_primario',
+                    'color_secundario'
                 )
             """)
             rows = cur.fetchall()
@@ -757,10 +761,11 @@ def obtener_config_publica_formulario():
     return {
         "nombre": nombre,
         "logo": config["logo_url"],
+        "color_primario": config["color_primario"],
+        "color_secundario": config["color_secundario"],
         "titulo_encuesta_aspirante": config["titulo_encuesta_aspirante"],
         "mensaje_inicio_encuesta": config["mensaje_inicio_encuesta"]
     }
-
 
 # -----------------------------------------------------
 # -----------------------------------------------------
