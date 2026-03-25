@@ -4115,8 +4115,9 @@ async def whatsapp_webhook(request: Request):
 
         tenant_name = cuenta_info["tenant_name"]
         token_access = cuenta_info["access_token"]
+        business_name = cuenta_info["business_name"]
 
-        # 3. Statuses (SIN return)
+        # 3. Statuses
         statuses = value.get("statuses", [])
         if statuses:
             await _handle_statuses(
@@ -4124,6 +4125,7 @@ async def whatsapp_webhook(request: Request):
                 tenant_name=tenant_name,
                 phone_number_id=phone_number_id,
                 token_access=token_access,
+                business_name=business_name,
                 raw_payload=value
             )
 

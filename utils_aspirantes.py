@@ -1,17 +1,36 @@
 import os
 
 import cloudinary
+import cloudinary.uploader
 from dotenv import load_dotenv
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 import logging
 
 from DataBase import get_connection_context, guardar_mensaje_nuevo, paso_limite_24h, buscar_usuario_por_telefono, \
     actualizar_phone_info_db
 from enviar_msg_wp import enviar_mensaje_texto_simple, enviar_plantilla_generica
+from tenant import current_business_name
 
 logger = logging.getLogger("uvicorn.error")
 
 router = APIRouter()   # ← ESTE ES EL ROUTER QUE VAS A IMPORTAR EN main.py
+
+_cloudinary_configured = False
+
+
+def _ensure_cloudinary_config() -> None:
+    global _cloudinary_configured
+    if _cloudinary_configured:
+        return
+    load_dotenv()
+    cloudinary.config(
+        cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+        api_key=os.environ["CLOUDINARY_API_KEY"],
+        api_secret=os.environ["CLOUDINARY_API_SECRET"],
+        secure=True,
+    )
+    _cloudinary_configured = True
+
 
 import re
 import requests
@@ -857,15 +876,21 @@ import traceback
 # from services.aspirant_service import buscar_estado_creador, obtener_aspirante_id_por_telefono, enviar_plantilla_estado_evaluacion
 # from services.db_service import actualizar_mensaje_desde_status
 
-async def _handle_statuses(statuses, tenant_name, phone_number_id, token_access, raw_payload):
+async def _handle_statuses(
+    statuses,
+    tenant_name,
+    phone_number_id,
+    token_access,
+    business_name,
+    raw_payload
+):
     """
     Procesa la lista de estados (sent, delivered, read, failed).
     Detecta errores de ventana de 24h y dispara la recuperación con plantillas.
     """
     for status_obj in statuses:
         try:
-            # 1. ACTUALIZAR BD (Siempre se hace, sea éxito o error)
-            # Esta función actualiza el estado del mensaje en tu tabla de historial
+            # 1. Actualizar BD siempre
             actualizar_mensaje_desde_status(
                 tenant=tenant_name,
                 phone_number_id=phone_number_id,
@@ -874,9 +899,15 @@ async def _handle_statuses(statuses, tenant_name, phone_number_id, token_access,
                 raw_payload=raw_payload
             )
 
-            # 2. DETECCIÓN DE ERRORES CRÍTICOS
+            # 2. Detectar errores críticos
             if status_obj.get("status") == "failed":
-                await _procesar_error_envio(status_obj, tenant_name, phone_number_id, token_access)
+                await _procesar_error_envio(
+                    status_obj=status_obj,
+                    tenant=tenant_name,
+                    phone_id=phone_number_id,
+                    token=token_access,
+                    business_name=business_name
+                )
 
         except Exception as e:
             print(f"⚠️ Error procesando status individual: {e}")
@@ -926,23 +957,21 @@ def actualizar_mensaje_desde_status(
         print(f"❌ Error actualizando status {status_obj.get('id', 'unknown')}: {e}")
         traceback.print_exc()
 
-
-async def _procesar_error_envio(status_obj, tenant, phone_id, token):
+async def _procesar_error_envio(status_obj, tenant, phone_id, token, business_name):
     errors = status_obj.get("errors", [])
     recipient_id = status_obj.get("recipient_id")
-    message_id_meta = status_obj.get("id")  # El ID del mensaje que falló
+    message_id_meta = status_obj.get("id")
 
     for error in errors:
         code = error.get("code")
         message = error.get("message")
 
-        # 1. Registrar el error en la base de datos para el mensaje específico
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     UPDATE mensajes_whatsapp
-                    SET estado        = 'failed',
+                    SET estado = 'failed',
                         error_codigo  = %s,
                         error_mensaje = %s
                     WHERE message_id_meta = %s
@@ -950,21 +979,110 @@ async def _procesar_error_envio(status_obj, tenant, phone_id, token):
                     (code, message, message_id_meta)
                 )
 
-        # 2. Si el error es por ventana de 24h (Código 131047)
         if code == 131047:
-            print(f"🔄 Ventana cerrada para {recipient_id}. Enviando reconexion_general_corta")
+            print(f"🔄 Ventana cerrada para {recipient_id}. Enviando plantilla reconexion_general_corta")
 
-            # Buscamos el nombre del creador para personalizar la plantilla
             nombre_creador = buscar_usuario_por_telefono(recipient_id) or "Candidato"
 
-            # Enviamos la plantilla de reconexión
-            # await intentar_plantilla_reconexion_24h(
-            #     telefono=recipient_id,
-            #     nombre=nombre_creador,
-            #     token=token,
-            #     phone_number_id=phone_id,
-            #     plantilla="reconexion_general_corta"
-            # )
+            await enviar_plantilla_por_ventana_cerrada(
+                telefono=recipient_id,
+                nombre=nombre_creador,
+                token=token,
+                phone_number_id=phone_id,
+                agencia_nombre=business_name,
+                plantilla="reconexion_general_corta"
+            )
+
+async def enviar_plantilla_por_ventana_cerrada(
+    *,
+    telefono: str,
+    nombre: str = "",
+    token: str,
+    phone_number_id: str,
+    agencia_nombre: str = "",
+    plantilla: str = "reconexion_general_corta",
+    idioma: str = "es_CO",
+) -> Tuple[bool, Dict[str, Any]]:
+
+    if not telefono:
+        return False, {"status": "skip", "reason": "telefono_vacio"}
+
+    params = [
+        (nombre or "").strip() or "Candidato",
+        (agencia_nombre or "").strip() or "Nuestro equipo"
+    ]
+
+    codigo, respuesta_api = enviar_plantilla_generica(
+        token=token,
+        phone_number_id=phone_number_id,
+        numero_destino=telefono,
+        nombre_plantilla=plantilla,
+        codigo_idioma=idioma,
+        parametros=params
+    )
+
+    message_id_meta = None
+    if respuesta_api and isinstance(respuesta_api, dict) and "messages" in respuesta_api:
+        try:
+            message_id_meta = respuesta_api["messages"][0].get("id")
+        except Exception:
+            pass
+
+    guardar_mensaje_nuevo(
+        telefono=telefono,
+        contenido=f"Plantilla auto por ventana cerrada: {plantilla}",
+        direccion="enviado",
+        tipo="template",
+        message_id_meta=message_id_meta,
+        estado="sent" if codigo == 200 else "failed"
+    )
+
+    return True, {
+        "status": "plantilla_auto",
+        "mensaje": "Se envió plantilla por ventana cerrada detectada desde webhook.",
+        "plantilla": plantilla,
+        "codigo_api": codigo,
+        "respuesta_api": respuesta_api
+    }
+
+# async def _procesar_error_envio(status_obj, tenant, phone_id, token):
+#     errors = status_obj.get("errors", [])
+#     recipient_id = status_obj.get("recipient_id")
+#     message_id_meta = status_obj.get("id")  # El ID del mensaje que falló
+#
+#     for error in errors:
+#         code = error.get("code")
+#         message = error.get("message")
+#
+#         # 1. Registrar el error en la base de datos para el mensaje específico
+#         with get_connection_context() as conn:
+#             with conn.cursor() as cur:
+#                 cur.execute(
+#                     """
+#                     UPDATE mensajes_whatsapp
+#                     SET estado        = 'failed',
+#                         error_codigo  = %s,
+#                         error_mensaje = %s
+#                     WHERE message_id_meta = %s
+#                     """,
+#                     (code, message, message_id_meta)
+#                 )
+#
+#         # 2. Si el error es por ventana de 24h (Código 131047)
+#         if code == 131047:
+#             print(f"🔄 Ventana cerrada para {recipient_id}. Enviando reconexion_general_corta")
+#
+#             # Buscamos el nombre del creador para personalizar la plantilla
+#             nombre_creador = buscar_usuario_por_telefono(recipient_id) or "Candidato"
+#
+#             # Enviamos la plantilla de reconexión
+#             await intentar_plantilla_reconexion_24h(
+#                 telefono=recipient_id,
+#                 nombre=nombre_creador,
+#                 token=token,
+#                 phone_number_id=phone_id,
+#                 plantilla="reconexion_general_corta"
+#             )
 
 def intentar_plantilla_reconexion_24h(
     *,
@@ -1381,3 +1499,27 @@ logger = logging.getLogger(__name__)
 # ------------REVISAR SI SE QUITAN LAS SIGUIENTES-
 # ------------------------------------------------
 
+
+@router.post("/creadores_activos/{creador_activo_id}/foto")
+async def subir_foto_creador_activo(creador_activo_id: int, foto: UploadFile = File(...)):
+    try:
+        _ensure_cloudinary_config()
+        contents = await foto.read()
+        result = cloudinary.uploader.upload(
+            contents,
+            folder=f"creadores_activos/{creador_activo_id}",
+            public_id=f"foto_{creador_activo_id}",
+            overwrite=True,
+            resource_type="image",
+        )
+        url_foto = result["secure_url"]
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE creadores_activos SET foto = %s WHERE id = %s",
+                    (url_foto, creador_activo_id),
+                )
+                conn.commit()
+        return {"foto_url": url_foto}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al subir la foto: {e}")
