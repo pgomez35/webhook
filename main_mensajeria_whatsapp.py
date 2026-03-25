@@ -2862,18 +2862,21 @@ async def reenviar_ultimo_mensaje(telefono: str):
         # Esta consulta busca el último mensaje enviado.
         # El ORDER BY prioriza mensajes con el error 131047, y luego por fecha.
         cur.execute("""
-                    SELECT contenido, media_url, tipo, fecha, error_codigo
-                    FROM mensajes_whatsapp
-                    WHERE telefono = %s
-                      AND direccion = 'enviado'
-                      AND tipo IN ('text', 'document', 'audio', 'image', 'video')
-                    ORDER BY fecha DESC LIMIT 1
-                    """, (telefono,))
+            SELECT contenido, media_url, tipo, fecha, error_codigo, estado
+            FROM mensajes_whatsapp
+            WHERE telefono = %s
+              AND direccion = 'enviado'
+              AND tipo IN ('text', 'document', 'audio', 'image', 'video')
+              AND estado = 'failed'
+              AND error_codigo = 131047
+            ORDER BY fecha DESC
+            LIMIT 1
+        """, (telefono,))
         row = cur.fetchone()
 
     if not row:
-        logger.warning(f"⚠ No hay mensajes previos para {telefono}")
-        raise HTTPException(status_code=404, detail="No hay mensajes para este teléfono")
+        logger.warning(f"⚠ No hay mensaje fallido 131047 para {telefono}")
+        raise HTTPException(status_code=404, detail="No hay mensaje fallido por ventana 24h para reenviar")
 
     # Extraer datos (ahora como diccionario por RealDictCursor)
     contenido = row['contenido']

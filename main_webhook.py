@@ -3607,8 +3607,108 @@ def procesar_evento_webhook_anticuado(body, phone_id_cliente, token_cliente):
 
 # services/aspirant_flow.py
 
-
 async def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, payload_id):
+    """
+    Orquesta la prioridad de respuesta para aspirantes:
+    1. Interceptor de Datos Temporales (Redis)
+    2. Botones de Reconexión (Error 24h)
+    3. Menús dinámicos según el estado en Base de Datos (Postgres)
+    """
+
+    print(f"\n📨 [INICIO] Recibido de: {wa_id} | Tipo: {tipo} | Payload: {payload_id} | Texto: '{texto}'")
+
+    # 1. IDENTIFICACIÓN DEL ASPIRANTE
+    aspirante_id = obtener_aspirante_id_por_telefono(wa_id)
+    if not aspirante_id:
+        print(f"❌ [DEBUG] El teléfono {wa_id} no está registrado como aspirante. Ignorando flujo.")
+        return False
+
+    # Token del contexto actual
+    token_cliente = current_token.get()
+
+    # =================================================================
+    # ⚡ CAPA 1: INTERCEPTOR REDIS
+    # =================================================================
+    if manejar_input_link_tiktok(aspirante_id, wa_id, tipo, texto, payload_id, token_cliente, phone_number_id):
+        print("⚡ [DEBUG] Capturado por interceptor Redis.")
+        return True
+
+    # =================================================================
+    # ⚡ CAPA 2: BOTÓN DE RECONEXIÓN (ANTES DEL ESTADO)
+    # =================================================================
+    if payload_id:
+        payload_limpio = payload_id.strip()
+        print(f"🔘 [DEBUG] Payload recibido: '{payload_limpio}'")
+
+        if payload_limpio == "Continuar":
+            print(f"✅ [RECONEXIÓN] Usuario {wa_id} hizo clic en Continuar tras ventana cerrada.")
+            try:
+                await reenviar_ultimo_mensaje(wa_id)
+                print(f"🚀 [OK] Último mensaje reenviado exitosamente a {wa_id}")
+                return True
+            except Exception as e:
+                print(f"❌ [ERROR] Falló el reenvío tras reconexión: {e}")
+                return True
+
+    # =================================================================
+    # 🐢 CAPA 3: LÓGICA DE NEGOCIO POR ESTADO
+    # =================================================================
+    estado_creador = buscar_estado_creador(aspirante_id)
+    if not estado_creador or not estado_creador.get("codigo_estado"):
+        print(f"⚠️ [DEBUG] Creador {aspirante_id} existe pero no tiene un estado de evaluación asignado.")
+        return False
+
+    estado_actual = estado_creador["codigo_estado"]
+    msg_chat_bot = estado_creador.get("mensaje_chatbot_simple") or "Hola, selecciona una opción para continuar:"
+
+    print(f"💾 [DEBUG] Estado en BD: '{estado_actual}'")
+
+    # --- A. ACCIONES DE MENÚ ---
+    if payload_id:
+        payload_limpio = payload_id.strip()
+
+        if payload_limpio.startswith("MENU_"):
+            print(f"⚡ [DEBUG] Ejecutando acción de menú: {payload_limpio}")
+            accion_menu_estado_evaluacion(
+                aspirante_id,
+                payload_limpio,
+                phone_number_id,
+                token_cliente,
+                estado_actual,
+                wa_id
+            )
+            return True
+
+        if payload_limpio == "BTN_ABRIR_MENU_OPCIONES":
+            print(f"📋 [DEBUG] Solicitando menú de opciones para estado: {estado_actual}")
+            Enviar_menu_quickreply(
+                aspirante_id,
+                estado_actual,
+                msg_chat_bot,
+                phone_number_id,
+                token_cliente,
+                wa_id
+            )
+            return True
+
+    # --- B. TEXTO SUELTO / REENGANCHE ---
+    if tipo == "text" and estado_actual:
+        print(f"🔄 [DEBUG] Texto sin contexto temporal. Re-enviando guía de estado '{estado_actual}'.")
+        Enviar_menu_quickreply(
+            aspirante_id,
+            estado_actual,
+            msg_chat_bot,
+            phone_number_id,
+            token_cliente,
+            wa_id
+        )
+        return True
+
+    print("🔻 [DEBUG] El mensaje no coincidió con ninguna lógica de aspirante. Pasando a Bot General/IA.")
+    return False
+
+
+async def procesar_flujo_aspirante25_03_2026(tenant, phone_number_id, wa_id, tipo, texto, payload_id):
     """
     Orquesta la prioridad de respuesta para aspirantes:
     1. Interceptor de Datos Temporales (Redis)

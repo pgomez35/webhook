@@ -971,7 +971,7 @@ async def _procesar_error_envio(status_obj, tenant, phone_id, token, business_na
                 cur.execute(
                     """
                     UPDATE mensajes_whatsapp
-                    SET estado        = 'failed',
+                    SET estado  = 'failed',
                         error_codigo  = %s,
                         error_mensaje = %s
                     WHERE message_id_meta = %s
@@ -1001,7 +1001,7 @@ async def _procesar_error_envio(status_obj, tenant, phone_id, token, business_na
                 agencia_nombre=business_name,
                 plantilla="reconexion_general_corta"
             )
-            
+
 async def enviar_plantilla_por_ventana_cerrada(
     *,
     telefono: str,
