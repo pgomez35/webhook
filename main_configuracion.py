@@ -704,19 +704,61 @@ def obtener_config_formulario():
 
     nombre = current_business_name.get()
 
+    config = {
+        "logo_url": None,
+        "color_primario": None,
+        "color_secundario": None
+    }
+
     with get_connection_context() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT valor
+                SELECT clave, valor
                 FROM configuracion_agencia
-                WHERE clave = 'logo_url'
-                LIMIT 1
+                WHERE clave IN ('logo_url', 'color_primario', 'color_secundario')
             """)
-            row = cur.fetchone()
+            rows = cur.fetchall()
+
+            for clave, valor in rows:
+                config[clave] = valor
 
     return {
         "nombre_agencia": nombre,
-        "logo_url": row[0] if row else None
+        **config
+    }
+
+@router.get("/api/encuesta-aspirante-public-config")
+def obtener_config_publica_formulario():
+
+    nombre = current_business_name.get()
+
+    config = {
+        "titulo_encuesta_aspirante": None,
+        "mensaje_inicio_encuesta": None,
+        "logo_url": None
+    }
+
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT clave, valor
+                FROM configuracion_agencia
+                WHERE clave IN (
+                    'titulo_encuesta_aspirante',
+                    'mensaje_inicio_encuesta',
+                    'logo_url'
+                )
+            """)
+            rows = cur.fetchall()
+
+            for clave, valor in rows:
+                config[clave] = valor
+
+    return {
+        "nombre": nombre,
+        "logo": config["logo_url"],
+        "titulo_encuesta_aspirante": config["titulo_encuesta_aspirante"],
+        "mensaje_inicio_encuesta": config["mensaje_inicio_encuesta"]
     }
 
 

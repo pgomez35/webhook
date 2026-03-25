@@ -1752,7 +1752,7 @@ def resumen_valores(usuario=Depends(obtener_usuario_actual)):
                     c.nombre AS categoria_nombre,
                     COUNT(vv.id) AS total_valores
                 FROM diagnostico_variable v
-                LEFT JOIN diagnostico_categoria c
+                INNER JOIN diagnostico_categoria c
                     ON c.id = v.categoria_id
                 LEFT JOIN diagnostico_variable_valor vv
                     ON vv.variable_id = v.id
@@ -1765,3 +1765,7 @@ def resumen_valores(usuario=Depends(obtener_usuario_actual)):
                 "ok": True,
                 "data": variables
             }
+
+
+
+
