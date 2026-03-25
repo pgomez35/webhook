@@ -971,7 +971,7 @@ async def _procesar_error_envio(status_obj, tenant, phone_id, token, business_na
                 cur.execute(
                     """
                     UPDATE mensajes_whatsapp
-                    SET estado = 'failed',
+                    SET estado        = 'failed',
                         error_codigo  = %s,
                         error_mensaje = %s
                     WHERE message_id_meta = %s
@@ -982,7 +982,16 @@ async def _procesar_error_envio(status_obj, tenant, phone_id, token, business_na
         if code == 131047:
             print(f"🔄 Ventana cerrada para {recipient_id}. Enviando plantilla reconexion_general_corta")
 
-            nombre_creador = buscar_usuario_por_telefono(recipient_id) or "Candidato"
+            usuario = buscar_usuario_por_telefono(recipient_id)
+
+            if isinstance(usuario, dict):
+                nombre_creador = (
+                    usuario.get("nombre")
+                    or usuario.get("nickname")
+                    or "Candidato"
+                )
+            else:
+                nombre_creador = usuario or "Candidato"
 
             await enviar_plantilla_por_ventana_cerrada(
                 telefono=recipient_id,
@@ -992,7 +1001,7 @@ async def _procesar_error_envio(status_obj, tenant, phone_id, token, business_na
                 agencia_nombre=business_name,
                 plantilla="reconexion_general_corta"
             )
-
+            
 async def enviar_plantilla_por_ventana_cerrada(
     *,
     telefono: str,
