@@ -6151,7 +6151,7 @@ def consolidar_perfil_web(
             pais_id = datos_pais.get("id_pais")
 
             if pais_id is not None:
-                respuestas_dict[VARIABLE_PAIS_ID] = pais_id
+                respuestas_dict[VARIABLE_PAIS_ID] = str(pais_id)
 
         # -------------------------------
         # Obtener usuario
