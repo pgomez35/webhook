@@ -5864,7 +5864,7 @@ def obtener_datos_pais(telefono_webhook: str) -> dict:
         nombre_real = geocoder.country_name_for_number(parsed_number, "es")
 
         return {
-            "id_pais": 20,
+            "id_pais": 91,
             "nombre_pais": "Otro",
             "pais_real_detectado": nombre_real,
             "indicativo": indicativo,
