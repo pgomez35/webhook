@@ -6132,7 +6132,8 @@ def consolidar_perfil_web(
                 cur.execute("""
                     SELECT id, campo_db
                     FROM diagnostico_variable
-                    WHERE encuesta_id = 1
+                    WHERE migrado = true
+                      AND COALESCE(activa, true) = true
                 """)
 
                 variables = {row[0]: row[1] for row in cur.fetchall()}
