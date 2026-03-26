@@ -5822,44 +5822,99 @@ PAISES_SISTEMA = {
     'VE': {'id': 19, 'nombre': 'Venezuela'}
 }
 
-
 def obtener_datos_pais(telefono_webhook: str) -> dict:
     try:
-        # Asegurar el formato con '+'
-        numero_limpio = telefono_webhook if telefono_webhook.startswith('+') else f"+{telefono_webhook}"
-        parsed_number = phonenumbers.parse(numero_limpio)
+        # Normalizar número
+        numero_limpio = telefono_webhook.strip()
+        if not numero_limpio.startswith('+'):
+            numero_limpio = f"+{numero_limpio}"
 
+        # Parsear número
+        parsed_number = phonenumbers.parse(numero_limpio, None)
+
+        # Validar número
         if not phonenumbers.is_valid_number(parsed_number):
             return {"error": True, "mensaje": "Número inválido"}
 
+        # Obtener ISO (puede fallar)
         codigo_iso = region_code_for_number(parsed_number)
+
+        # Fallback si no detecta región
+        if not codigo_iso:
+            codigo_iso = phonenumbers.region_code_for_country_code(parsed_number.country_code)
+
+        if not codigo_iso:
+            return {"error": True, "mensaje": "No se pudo detectar el país"}
+
         indicativo = f"+{parsed_number.country_code}"
 
-        # 1. Si el país está en tu lista (IDs del 1 al 19)
+        # 1️⃣ País dentro de tu sistema
         if codigo_iso in PAISES_SISTEMA:
             pais = PAISES_SISTEMA[codigo_iso]
+
             return {
                 "id_pais": pais['id'],
                 "nombre_pais": pais['nombre'],
                 "indicativo": indicativo,
-                "iso": codigo_iso
+                "iso": codigo_iso,
+                "es_otro": False
             }
 
-        # 2. Si es de cualquier otro país del mundo (ID 20)
-        else:
-            # Extraemos el nombre real en español (Ej: "España", "Estados Unidos", "Brasil")
-            nombre_real = geocoder.country_name_for_number(parsed_number, "es")
+        # 2️⃣ País fuera de tu sistema
+        nombre_real = geocoder.country_name_for_number(parsed_number, "es")
 
-            return {
-                "id_pais": 20,
-                "nombre_pais": "Otro",
-                "pais_real_detectado": nombre_real,  # Dato extra útil para tu dashboard
-                "indicativo": indicativo,
-                "iso": codigo_iso
-            }
+        return {
+            "id_pais": 20,
+            "nombre_pais": "Otro",
+            "pais_real_detectado": nombre_real,
+            "indicativo": indicativo,
+            "iso": codigo_iso,
+            "es_otro": True
+        }
 
     except Exception as e:
-        return {"error": True, "mensaje": str(e)}
+        return {
+            "error": True,
+            "mensaje": f"Error procesando número: {str(e)}"
+        }
+
+# def obtener_datos_pais(telefono_webhook: str) -> dict:
+#     try:
+#         # Asegurar el formato con '+'
+#         numero_limpio = telefono_webhook if telefono_webhook.startswith('+') else f"+{telefono_webhook}"
+#         parsed_number = phonenumbers.parse(numero_limpio)
+#
+#         if not phonenumbers.is_valid_number(parsed_number):
+#             return {"error": True, "mensaje": "Número inválido"}
+#
+#         codigo_iso = region_code_for_number(parsed_number)
+#         indicativo = f"+{parsed_number.country_code}"
+#
+#         # 1. Si el país está en tu lista (IDs del 1 al 19)
+#         if codigo_iso in PAISES_SISTEMA:
+#             pais = PAISES_SISTEMA[codigo_iso]
+#             return {
+#                 "id_pais": pais['id'],
+#                 "nombre_pais": pais['nombre'],
+#                 "indicativo": indicativo,
+#                 "iso": codigo_iso
+#             }
+#
+#         # 2. Si es de cualquier otro país del mundo (ID 20)
+#         else:
+#             # Extraemos el nombre real en español (Ej: "España", "Estados Unidos", "Brasil")
+#             nombre_real = geocoder.country_name_for_number(parsed_number, "es")
+#
+#             return {
+#                 "id_pais": 20,
+#                 "nombre_pais": "Otro",
+#                 "pais_real_detectado": nombre_real,  # Dato extra útil para tu dashboard
+#                 "indicativo": indicativo,
+#                 "iso": codigo_iso
+#             }
+#
+#     except Exception as e:
+#         return {"error": True, "mensaje": str(e)}
 
 
 @router.post("/consolidarV0")
@@ -6095,8 +6150,8 @@ def consolidar_perfil_web(
 
             pais_id = datos_pais.get("id_pais")
 
-            if pais_id:
-                respuestas_dict[VARIABLE_PAIS_ID] = str(pais_id)
+            if pais_id is not None:
+                respuestas_dict[VARIABLE_PAIS_ID] = pais_id
 
         # -------------------------------
         # Obtener usuario
