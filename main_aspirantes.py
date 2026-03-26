@@ -9,7 +9,7 @@ from DataBase import (
     crear_invitacion_minima,
     obtener_aspirantes_db,
     obtener_aspirantes_perfil,
-    obtener_biografia_aspirantes_perfil,
+    obtener_biografia_aspirantes_perfil, get_connection_context,
 )
 from evaluaciones import (
     evaluar_cualitativa,
@@ -297,3 +297,88 @@ def actualizar_estado_creador_endpoint(
     if not res:
         raise HTTPException(status_code=404, detail="Creador no encontrado")
     return EstadoCreadorOut(**res, mensaje="Estado del creador actualizado correctamente")
+
+
+
+# ---------------------------------------
+# ---------------------------------------
+# ---------------------------------------
+
+
+import logging
+
+logger = logging.getLogger("uvicorn.error")
+
+CAMPOS_CATALOGO_PERFIL = (
+    "genero",
+    "actividad_actual",
+    "frecuencia_lives",
+    "tiempo_disponible",
+    "intencion_trabajo",
+    "pais",
+)
+
+
+@router.get("/api/aspirantes_perfil/catalogos", tags=["Perfil"])
+def obtener_catalogos_aspirante_perfil():
+    return cargar_catalogos_aspirante_perfil()
+
+
+def cargar_catalogos_aspirante_perfil():
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT
+                        a.campo_db,
+                        b.id AS valor_id,
+                        b.valor,
+                        b.nombre_mostrar,
+                        b.orden,
+                        b.score,
+                        b.nivel
+                    FROM diagnostico_variable a
+                    INNER JOIN diagnostico_variable_valor b
+                        ON a.id = b.variable_id
+                    WHERE a.campo_db IN %s
+                    ORDER BY a.campo_db, COALESCE(b.orden, 9999), b.id
+                """, (CAMPOS_CATALOGO_PERFIL,))
+
+                rows = cur.fetchall()
+
+                catalogos = {campo: [] for campo in CAMPOS_CATALOGO_PERFIL}
+
+                for row in rows:
+                    campo_db = row[0]
+                    valor_id = row[1]
+                    valor = row[2]
+                    nombre_mostrar = row[3]
+                    orden = row[4]
+                    score = row[5]
+                    nivel = row[6]
+
+                    if campo_db not in catalogos:
+                        continue
+
+                    label = nombre_mostrar or valor
+
+                    item = {
+                        "id": valor_id,
+                        "value": valor_id,
+                        "label": label,
+                        "orden": orden,
+                    }
+
+                    if score is not None:
+                        item["score"] = score
+
+                    if nivel:
+                        item["nivel"] = nivel
+
+                    catalogos[campo_db].append(item)
+
+                return catalogos
+
+    except Exception as e:
+        logger.exception(f"❌ Error al cargar catálogos de aspirantes_perfil: {e}")
+        return {}
