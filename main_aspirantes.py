@@ -310,11 +310,13 @@ import logging
 logger = logging.getLogger("uvicorn.error")
 
 CAMPOS_CATALOGO_PERFIL = (
+    "edad",
     "genero",
     "actividad_actual",
     "frecuencia_lives",
     "tiempo_disponible",
     "intencion_trabajo",
+    "experiencia_tiktok_live",
     "pais",
 )
 
