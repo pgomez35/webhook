@@ -74,6 +74,7 @@ from main_configuracion import router as bienvenida_router
 from main_mensajeria_whatsapp import router as main_mensajeria_whatsapp_router
 from main_invitacion import router as main_invitacion_router
 from main_diagnostico_config import router as diagnostico_config_router
+from main_aspirantes import router as main_aspirantes_router
 
 
 
@@ -117,6 +118,7 @@ app.include_router(bienvenida_router, tags=["bienvenida"])
 app.include_router(main_mensajeria_whatsapp_router, tags=["mensajeria whatsapp"])
 app.include_router(main_invitacion_router, tags=["invitacion"])
 app.include_router(diagnostico_config_router, tags=["diagnostico configuracion"])
+app.include_router(main_aspirantes_router, tags=["aspirantes"])
 
 
 
@@ -2106,53 +2108,11 @@ async def perfil(usuario: dict = Depends(obtener_usuario_actual)):
 #-------------------------
 #-------------------------
 
-from typing import Optional
-from fastapi import Query
-
-# === Listar todos los aspirantes (con filtro opcional por estado_id) ===
-@app.get("/api/aspirantes", tags=["Creadores"])
-def listar_creadores(estado_id: Optional[int] = Query(None, description="Filtrar por estado_id")):
-    try:
-        return   obtener_aspirantes_db(estado_id=estado_id)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# === Endpoint para estados 3, 4 y 5 ===
-@app.get("/api/aspirantes/en_proceso", tags=["Creadores"])
-def listar_creadores_en_proceso():
-    try:
-        return   obtener_aspirantes_db()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 # === Listar todos los usuarios ===
 @app.get("/api/TodosUsuarios", tags=["TodosUsuarios"])
 def listar_TodosUsuarios():
     try:
         return obtener_todos_usuarios_db()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# === Obtener el perfil de un creador por ID ===
-@app.get("/api/aspirantes_perfil/{aspirante_id}", tags=["Perfil"])
-def aspirantes_perfil(aspirante_id: int):
-    perfil = obtener_aspirantes_perfil(aspirante_id)
-    if not perfil:
-        raise HTTPException(status_code=404, detail="Perfil no encontrado")
-    return perfil
-
-# === Actualizar el perfil completo del creador ===
-@app.put("/api/aspirantes_perfil/{aspirante_id}", tags=["Perfil"])
-def actualizar_aspirantes_perfil_endpoint(aspirante_id: int, evaluacion: PerfilCreadorSchema):
-    try:
-        data_dict = evaluacion.dict(exclude_unset=True)
-        if not data_dict:
-            raise HTTPException(status_code=400, detail="No se enviaron datos para actualizar.")
-
-        actualizar_datos_aspirantes_perfil(aspirante_id, data_dict)
-        return {"status": "ok", "mensaje": "Perfil actualizado correctamente"}
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -2164,175 +2124,6 @@ def estadisticas_evaluacion():
     try:
         return obtener_estadisticas_evaluacion()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# === Actualizar datos personales del perfil ===
-@app.put("/api/aspirantes_perfil/{aspirante_id}/datos_personales",
-         tags=["Perfil"],
-         response_model=DatosPersonalesOutput)
-def actualizar_datos_personales(aspirante_id: int, datos: DatosPersonalesInput):
-    try:
-        data_dict = datos.dict(exclude_unset=True)
-
-        # ✅ Calcular score con evaluar_datos_generales
-        score = evaluar_datos_generales(
-            edad=data_dict.get("edad"),
-            genero=data_dict.get("genero"),
-            idiomas=data_dict.get("idioma"),
-            estudios=data_dict.get("estudios"),
-            pais=data_dict.get("pais"),
-            actividad_actual=data_dict.get("actividad_actual")
-        )
-
-        # Guardar puntaje general y categoría
-        data_dict["puntaje_general"] = score.get("puntaje_general")
-        data_dict["puntaje_general_categoria"] = score.get("puntaje_general_categoria")
-
-        # Actualizar en BD
-        actualizar_datos_aspirantes_perfil(aspirante_id, data_dict)
-
-        return DatosPersonalesOutput(
-            status="ok",
-            mensaje="Evaluación datos Generales actualizada",
-            puntaje_general=score.get("puntaje_general"),
-            puntaje_general_categoria=score.get("puntaje_general_categoria"),
-        )
-
-    except Exception as e:
-        logging.error(f"Error en PUT /api/aspirantes_perfil/{aspirante_id}/datos_personales: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail="Error al actualizar datos personales"
-        )
-
-from main_auth import obtener_usuario_actual  # o el nombre correcto del archivo
-
-@app.put(
-    "/api/aspirantes_perfil/{aspirante_id}/evaluacion_cualitativa",
-    response_model=EvaluacionCualitativaOutput,
-    tags=["Evaluación"]
-)
-def actualizar_eval_cualitativa(
-    aspirante_id: int,
-    datos: EvaluacionCualitativaInput,
-    usuario_actual: dict = Depends(obtener_usuario_actual)
-):
-    try:
-        # Convertir datos a dict y asignar usuario que evalúa
-        data_dict = datos.dict(exclude_unset=True)
-        data_dict["usuario_evalua"] = usuario_actual["nombre"]
-
-        # Calcular puntaje cualitativo
-        resultado = evaluar_cualitativa(
-            apariencia=data_dict.get("apariencia", 0),
-            engagement=data_dict.get("engagement", 0),
-            calidad_contenido=data_dict.get("calidad_contenido", 0),
-            foto=data_dict.get("eval_foto", 0),
-            biografia=data_dict.get("eval_biografia", 0),
-            metadata_videos=data_dict.get("metadata_videos", 0)
-        )
-
-        data_dict["puntaje_manual"] = resultado["puntaje_cualitativo"]
-        data_dict["puntaje_manual_categoria"] = resultado["puntaje_cualitativo_categoria"]
-
-        potencial_creador = evaluar_potencial_creador(
-            aspirante_id,
-            resultado["puntaje_cualitativo"]
-        )
-        nivel_estimado = potencial_creador.get("nivel")
-
-        actualizar_datos_aspirantes_perfil(aspirante_id, data_dict)
-
-        # === respuesta final ===
-        return EvaluacionCualitativaOutput(
-            status="ok",
-            mensaje="Evaluación cualitativa actualizada",
-            puntaje_manual=resultado["puntaje_cualitativo"],
-            puntaje_manual_categoria=resultado["puntaje_cualitativo_categoria"],
-            potencial_estimado=nivel_estimado
-        )
-
-    except Exception as e:
-        logging.error(f"Error en PUT /api/aspirantes_perfil/{aspirante_id}/evaluacion_cualitativa: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail="Ocurrió un error interno en el servidor al procesar la evaluación. Por favor inténtalo nuevamente o contacta al administrador."
-        )
-
-
-# === Actualizar estadísticas del perfil ===
-@app.put(
-    "/api/aspirantes_perfil/{aspirante_id}/estadisticas",
-    tags=["Estadísticas"],
-    response_model=EstadisticasPerfilOutput
-)
-def actualizar_estadisticas(aspirante_id: int, datos: EstadisticasPerfilInput):
-    try:
-        data_dict = datos.dict(exclude_unset=True)
-
-        # ✅ Calcular score de estadísticas
-        score = evaluar_estadisticas(
-            seguidores=data_dict.get("seguidores"),
-            siguiendo=data_dict.get("siguiendo"),
-            videos=data_dict.get("videos"),
-            likes=data_dict.get("likes"),
-            duracion=data_dict.get("duracion_emisiones")
-        )
-
-        # Guardar score en el mismo registro
-        data_dict["puntaje_estadistica"] = score["puntaje_estadistica"]
-        data_dict["puntaje_estadistica_categoria"] = score["puntaje_estadistica_categoria"]
-
-        # Actualizar en BD
-        actualizar_datos_aspirantes_perfil(aspirante_id, data_dict)
-
-        return EstadisticasPerfilOutput(
-            status="ok",
-            mensaje="Estadisticas actualizadas",
-            puntaje_estadistica=score["puntaje_estadistica"],
-            puntaje_estadistica_categoria=score["puntaje_estadistica_categoria"]
-        )
-
-    except Exception as e:
-        logging.error(f"Error en PUT /api/aspirantes_perfil/{aspirante_id}/estadisticas: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Error al actualizar estadísticas")
-
-
-# === Actualizar preferencias y hábitos ===
-@app.put(
-    "/api/aspirantes_perfil/{aspirante_id}/preferencias",
-    tags=["Preferencias"],
-    response_model=PreferenciasHabitosOutput
-)
-def actualizar_preferencias(aspirante_id: int, datos: PreferenciasHabitosInput):
-    try:
-        data_dict = datos.dict(exclude_unset=True)
-
-        # Calcular score de preferencias y hábitos
-        score = evaluar_preferencias_habitos(
-            exp_otras=data_dict.get("experiencia_otras_plataformas") or {},
-            intereses=data_dict.get("intereses") or {},
-            tipo_contenido=data_dict.get("tipo_contenido") or {},
-            tiempo=data_dict.get("tiempo_disponible"),
-            freq_lives=data_dict.get("frecuencia_lives"),
-            intencion=data_dict.get("intencion_trabajo")
-        )
-
-        # Guardar score en el registro
-        data_dict["puntaje_habitos"] = score["puntaje_habitos"]
-        data_dict["puntaje_habitos_categoria"] = score["puntaje_habitos_categoria"]
-
-        # Actualizar en BD
-        actualizar_datos_aspirantes_perfil(aspirante_id, data_dict)
-
-        return PreferenciasHabitosOutput(
-            status="ok",
-            mensaje="Preferencias actualizadas",
-            puntaje_habitos=score["puntaje_habitos"],
-            puntaje_habitos_categoria=score["puntaje_habitos_categoria"]
-        )
-    except Exception as e:
-        print("❌ Error al actualizar preferencias:", str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -2386,60 +2177,6 @@ def actualizar_preferencias(aspirante_id: int, datos: PreferenciasHabitosInput):
 #         diagnostico=observaciones_totales,  # 👈 Se devuelve el texto armado
 #         mejoras_sugeridas=mejoras
 #     )
-
-ESTADO_MAP = {
-    "Evaluación": 3,
-    "Entrevista": 4,
-    "Invitación": 5,
-    "Rechazado": 7,
-}
-ESTADO_DEFAULT = 99  # si no coincide
-
-@app.put("/api/aspirantes_perfil/{aspirante_id}/resumen")
-def guardar_resumen_final(aspirante_id: int, datos: GuardarResumenInput):
-    try:
-        # 1) Actualiza aspirantes_perfil
-        payload = {
-            "diagnostico": datos.diagnostico,
-            "mejoras_sugeridas": datos.mejoras_sugeridas,
-            "observaciones_finales": datos.observaciones_finales,
-            "usuario_evalua": datos.usuario_evalua,
-            "estado_evaluacion": datos.estado_evaluacion,
-        }
-        actualizar_datos_aspirantes_perfil(aspirante_id, payload)
-
-        entrevista_creada = None
-
-        # 2) Si viene un estado, actualiza también aspirantes.estado_id
-        if datos.estado_evaluacion:
-            estado_id = ESTADO_MAP.get(datos.estado_evaluacion, ESTADO_DEFAULT)
-            actualizar_estado_creador(aspirante_id, estado_id)
-
-            # 3) Si el estado es "Entrevista" (4), insertamos entrevista mínima
-            if estado_id == 4:
-                # Crear entrevista mínima
-                entrevista_payload = {
-                    "aspirante_id": aspirante_id,
-                    # Campos mínimos
-                }
-                # entrevista_creada = insertar_entrevista(entrevista_payload)
-
-            elif estado_id == 5:
-                # Crear invitación mínima
-                invitacion_creada = crear_invitacion_minima(aspirante_id, estado="pendiente_tiktok")
-
-                if invitacion_creada:
-                    print(f"✅ Invitación creada correctamente para creador {aspirante_id}: {invitacion_creada}")
-                else:
-                    print(f"⚠️ No se pudo crear la invitación para el creador {aspirante_id}")
-
-        return {
-            "status": "ok",
-            "mensaje": "Resumen actualizado correctamente",
-            "entrevista_creada": entrevista_creada,  # {"id": ..., "creado_en": ...} o None
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 # @app.put("/api/aspirantes_perfil/{aspirante_id}/resumen")
 # def guardar_resumen_final(aspirante_id: int, datos: GuardarResumenInput):
@@ -2624,47 +2361,6 @@ def guardar_resumen_final(aspirante_id: int, datos: GuardarResumenInput):
 #     except Exception as e:
 #         print("Error al guardar el perfil:", e)
 #         raise HTTPException(status_code=500, detail=str(e))
-
-@app.put("/api/aspirantes_perfil/{aspirante_id}/biografia_ia",
-         tags=["Biografía IA"])
-def actualizar_biografia_ia(aspirante_id: int):
-    try:
-        # 1. Validar que existe el perfil
-        bio_texto = obtener_biografia_aspirantes_perfil(aspirante_id)
-        if not bio_texto:
-            raise HTTPException(status_code=404, detail="No existe biografía previa para este perfil.")
-        # 2. Generar la biografía con IA
-        try:
-            biografia_sugerida = evaluar_y_mejorar_biografia(bio_texto)
-
-        except Exception as e:
-            print(f"Error generando biografía IA: {e}")
-            raise HTTPException(status_code=500, detail="Error generando la biografía con IA.")
-
-        # 3. (Opcional) Recortar si tu campo biografía tiene un máximo de caracteres
-        MAX_BIO_LEN = 500
-        biografia_sugerida = biografia_sugerida[:MAX_BIO_LEN]
-        biografia_sugerida =limpiar_biografia_ia(biografia_sugerida)
-
-        # 4. Guardar en base de datos
-        try:
-            actualizar_datos_aspirantes_perfil(aspirante_id, {"biografia_sugerida": biografia_sugerida})
-        except Exception as e:
-            print(f"Error guardando biografía en base: {e}")
-            raise HTTPException(status_code=500, detail="Error guardando la biografía en la base de datos.")
-
-        # 5. Responder
-        return {
-            "status": "ok",
-            "mensaje": "Biografía IA generada y guardada exitosamente",
-            "biografia": biografia_sugerida
-        }
-
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        print("Error general en biografía IA:", e)
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # filtrar responsables Agendas
@@ -3370,45 +3066,6 @@ from fastapi import Depends, HTTPException
 
 # PUT actualizar invitación (por aspirante_id)
 
-
-
-@app.put("/api/aspirantes/{aspirante_id}/estado",
-         tags=["Creadores"],
-         response_model=EstadoCreadorOut)
-def actualizar_estado_creador_endpoint(
-    aspirante_id: int,
-    datos: EstadoCreadorIn = Body(...),
-    usuario_actual: dict = Depends(obtener_usuario_actual)
-):
-    # Auth básica
-    if not usuario_actual or not usuario_actual.get("id"):
-        raise HTTPException(status_code=401, detail="Usuario no autorizado")
-
-    # Resolver estado_id
-    estado_id: Optional[int] = None
-
-    if datos.estado_id is not None:
-        estado_id = int(datos.estado_id)
-
-    elif datos.estado_evaluacion:
-        estado_id = ESTADO_MAP.get(datos.estado_evaluacion, ESTADO_DEFAULT)
-
-    else:
-        # nada enviado
-        raise HTTPException(
-            status_code=400,
-            detail="Debes enviar 'estado_id' o 'estado_evaluacion'."
-        )
-
-    # Actualizar en DB
-    res = actualizar_estado_creador(aspirante_id, estado_id)
-    if not res:
-        raise HTTPException(status_code=404, detail="Creador no encontrado")
-
-    return EstadoCreadorOut(
-        **res,
-        mensaje="Estado del creador actualizado correctamente"
-    )
 
 
 from fastapi.responses import StreamingResponse
