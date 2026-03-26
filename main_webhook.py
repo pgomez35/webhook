@@ -5801,25 +5801,25 @@ from phonenumbers import geocoder, region_code_for_number
 
 # Tu diccionario exacto mapeado a los IDs que necesitas
 PAISES_SISTEMA = {
-    'AR': {'id': 1, 'nombre': 'Argentina'},
-    'BO': {'id': 2, 'nombre': 'Bolivia'},
-    'CL': {'id': 3, 'nombre': 'Chile'},
-    'CO': {'id': 4, 'nombre': 'Colombia'},
-    'CR': {'id': 5, 'nombre': 'Costa Rica'},
-    'CU': {'id': 6, 'nombre': 'Cuba'},
-    'EC': {'id': 7, 'nombre': 'Ecuador'},
-    'SV': {'id': 8, 'nombre': 'El Salvador'},
-    'GT': {'id': 9, 'nombre': 'Guatemala'},
-    'HN': {'id': 10, 'nombre': 'Honduras'},
-    'MX': {'id': 11, 'nombre': 'México'},
-    'NI': {'id': 12, 'nombre': 'Nicaragua'},
-    'PA': {'id': 13, 'nombre': 'Panamá'},
-    'PY': {'id': 14, 'nombre': 'Paraguay'},
-    'PE': {'id': 15, 'nombre': 'Perú'},
-    'PR': {'id': 16, 'nombre': 'Puerto Rico'},
-    'DO': {'id': 17, 'nombre': 'República Dominicana'},
-    'UY': {'id': 18, 'nombre': 'Uruguay'},
-    'VE': {'id': 19, 'nombre': 'Venezuela'}
+    'AR': {'id': 119, 'nombre': 'Argentina'},
+    'BO': {'id': 120, 'nombre': 'Bolivia'},
+    'CL': {'id': 121, 'nombre': 'Chile'},
+    'CO': {'id': 122, 'nombre': 'Colombia'},
+    'CR': {'id': 123, 'nombre': 'Costa Rica'},
+    'CU': {'id': 124, 'nombre': 'Cuba'},
+    'EC': {'id': 125, 'nombre': 'Ecuador'},
+    'SV': {'id': 126, 'nombre': 'El Salvador'},
+    'GT': {'id': 127, 'nombre': 'Guatemala'},
+    'HN': {'id': 128, 'nombre': 'Honduras'},
+    'MX': {'id': 82,  'nombre': 'México'},
+    'NI': {'id': 83,  'nombre': 'Nicaragua'},
+    'PA': {'id': 84,  'nombre': 'Panamá'},
+    'PY': {'id': 85,  'nombre': 'Paraguay'},
+    'PE': {'id': 86,  'nombre': 'Perú'},
+    'PR': {'id': 87,  'nombre': 'Puerto Rico'},
+    'DO': {'id': 88,  'nombre': 'República Dominicana'},
+    'UY': {'id': 89,  'nombre': 'Uruguay'},
+    'VE': {'id': 90,  'nombre': 'Venezuela'}
 }
 
 def obtener_datos_pais(telefono_webhook: str) -> dict:
