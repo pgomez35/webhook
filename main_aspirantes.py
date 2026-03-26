@@ -321,7 +321,7 @@ CAMPOS_CATALOGO_PERFIL = (
 )
 
 
-@router.get("/api/aspirantes_perfil/catalogos", tags=["Perfil"])
+@router.get("/api/aspirantes_perfil/catalogos/lista")
 def obtener_catalogos_aspirante_perfil():
     return cargar_catalogos_aspirante_perfil()
 
