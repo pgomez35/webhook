@@ -332,8 +332,7 @@ def cargar_catalogos_aspirante_perfil():
                     SELECT
                         a.campo_db,
                         b.id AS valor_id,
-                        b.valor,
-                        b.nombre_mostrar,
+                        b.label,
                         b.orden,
                         b.score,
                         b.nivel
@@ -341,26 +340,16 @@ def cargar_catalogos_aspirante_perfil():
                     INNER JOIN diagnostico_variable_valor b
                         ON a.id = b.variable_id
                     WHERE a.campo_db IN %s
+                      AND COALESCE(a.activa, true) = true
                     ORDER BY a.campo_db, COALESCE(b.orden, 9999), b.id
                 """, (CAMPOS_CATALOGO_PERFIL,))
 
                 rows = cur.fetchall()
-
                 catalogos = {campo: [] for campo in CAMPOS_CATALOGO_PERFIL}
 
-                for row in rows:
-                    campo_db = row[0]
-                    valor_id = row[1]
-                    valor = row[2]
-                    nombre_mostrar = row[3]
-                    orden = row[4]
-                    score = row[5]
-                    nivel = row[6]
-
+                for campo_db, valor_id, label, orden, score, nivel in rows:
                     if campo_db not in catalogos:
                         continue
-
-                    label = nombre_mostrar or valor
 
                     item = {
                         "id": valor_id,
