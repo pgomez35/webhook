@@ -3083,6 +3083,23 @@ def registrar_envio_mensaje(
     except Exception as e:
         print(f"❌ Error al guardar mensaje {message_id}: {e}")
 
+def obtener_configuracion_agencia(clave: str) -> str | None:
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT valor
+                    FROM configuracion_agencia
+                    WHERE clave = %s
+                """, (clave,))
+
+                row = cur.fetchone()
+                return row[0] if row else None
+
+    except Exception as e:
+        print(f"⚠️ Error obteniendo configuración '{clave}': {e}")
+        return None
+
 
 #
 # def actualizar_mensaje_desde_status(conn, tenant: str, value: dict):

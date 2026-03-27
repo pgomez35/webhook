@@ -747,7 +747,7 @@ def obtener_config_publica_formulario():
                 FROM configuracion_agencia
                 WHERE clave IN (
                     'titulo_encuesta_aspirante',
-                    'mensaje_inicio_encuesta',
+                    'mensaje_inicio_encuesta_form',
                     'logo_url',
                     'color_primario',
                     'color_secundario'

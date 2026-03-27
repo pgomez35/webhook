@@ -2426,10 +2426,16 @@ def _process_single_message(mensaje: dict, tenant_name: str, datos_normalizados:
     return {"status": "ok_fallback"}
 
 
-
-
 def mensaje_inicio_encuesta() -> str:
     nombre_agencia = current_business_name.get()
+
+    mensaje_db = obtener_configuracion_agencia("mensaje_inicio_encuesta_chat")
+
+    if mensaje_db:
+        # opcional: permitir usar {nombre_agencia} dinámico
+        return mensaje_db.replace("{nombre_agencia}", nombre_agencia or "")
+
+    # 🔥 fallback si no existe en DB
     return (
         f"🔒 *Preguntas básicas*\n\n"
         f"Antes de continuar, se te harán *preguntas personales básicas* para evaluar tu perfil como aspirante a creador de contenido en *{nombre_agencia}*.\n\n"
@@ -2437,9 +2443,7 @@ def mensaje_inicio_encuesta() -> str:
     )
 
 def enviar_inicio_encuesta(numero: str):
-    tenant_name = current_tenant.get()  # ✅ Obtenemos el tenant actual
-    if not tenant_name:
-        tenant_name = "default"  # Valor por defecto si no hay tenant activo
+    tenant_name = current_tenant.get() or "default"
 
     url_web = construir_url_actualizar_perfil(numero, tenant_name=tenant_name)
 
@@ -2450,6 +2454,7 @@ def enviar_inicio_encuesta(numero: str):
     )
 
     enviar_mensaje(numero, mensaje)
+
     print(f"🔗 Enviado mensaje de inicio de encuesta a {numero}: {url_web}")
 
 
