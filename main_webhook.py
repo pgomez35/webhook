@@ -5799,7 +5799,16 @@ def poblar_categoria_1(aspirante_id: int):
 import phonenumbers
 from phonenumbers import geocoder, region_code_for_number
 
-# Tu diccionario exacto mapeado a los IDs que necesitas
+
+VARIABLE_PAIS_ID = 20   # id de la variable pais en diagnostico_variable
+
+
+class ConsolidarInput(BaseModel):
+    numero: str
+    respuestas: Optional[dict] = None
+    meta: Optional[dict] = None
+
+
 PAISES_SISTEMA = {
     'AR': {'id': 119, 'nombre': 'Argentina'},
     'BO': {'id': 120, 'nombre': 'Bolivia'},
@@ -5822,24 +5831,20 @@ PAISES_SISTEMA = {
     'VE': {'id': 90,  'nombre': 'Venezuela'}
 }
 
+
 def obtener_datos_pais(telefono_webhook: str) -> dict:
     try:
-        # Normalizar número
         numero_limpio = telefono_webhook.strip()
         if not numero_limpio.startswith('+'):
             numero_limpio = f"+{numero_limpio}"
 
-        # Parsear número
         parsed_number = phonenumbers.parse(numero_limpio, None)
 
-        # Validar número
         if not phonenumbers.is_valid_number(parsed_number):
             return {"error": True, "mensaje": "Número inválido"}
 
-        # Obtener ISO (puede fallar)
         codigo_iso = region_code_for_number(parsed_number)
 
-        # Fallback si no detecta región
         if not codigo_iso:
             codigo_iso = phonenumbers.region_code_for_country_code(parsed_number.country_code)
 
@@ -5848,19 +5853,16 @@ def obtener_datos_pais(telefono_webhook: str) -> dict:
 
         indicativo = f"+{parsed_number.country_code}"
 
-        # 1️⃣ País dentro de tu sistema
         if codigo_iso in PAISES_SISTEMA:
             pais = PAISES_SISTEMA[codigo_iso]
-
             return {
-                "id_pais": pais['id'],
-                "nombre_pais": pais['nombre'],
+                "id_pais": pais["id"],
+                "nombre_pais": pais["nombre"],
                 "indicativo": indicativo,
                 "iso": codigo_iso,
                 "es_otro": False
             }
 
-        # 2️⃣ País fuera de tu sistema
         nombre_real = geocoder.country_name_for_number(parsed_number, "es")
 
         return {
@@ -5878,43 +5880,202 @@ def obtener_datos_pais(telefono_webhook: str) -> dict:
             "mensaje": f"Error procesando número: {str(e)}"
         }
 
-# def obtener_datos_pais(telefono_webhook: str) -> dict:
-#     try:
-#         # Asegurar el formato con '+'
-#         numero_limpio = telefono_webhook if telefono_webhook.startswith('+') else f"+{telefono_webhook}"
-#         parsed_number = phonenumbers.parse(numero_limpio)
-#
-#         if not phonenumbers.is_valid_number(parsed_number):
-#             return {"error": True, "mensaje": "Número inválido"}
-#
-#         codigo_iso = region_code_for_number(parsed_number)
-#         indicativo = f"+{parsed_number.country_code}"
-#
-#         # 1. Si el país está en tu lista (IDs del 1 al 19)
-#         if codigo_iso in PAISES_SISTEMA:
-#             pais = PAISES_SISTEMA[codigo_iso]
-#             return {
-#                 "id_pais": pais['id'],
-#                 "nombre_pais": pais['nombre'],
-#                 "indicativo": indicativo,
-#                 "iso": codigo_iso
-#             }
-#
-#         # 2. Si es de cualquier otro país del mundo (ID 20)
-#         else:
-#             # Extraemos el nombre real en español (Ej: "España", "Estados Unidos", "Brasil")
-#             nombre_real = geocoder.country_name_for_number(parsed_number, "es")
-#
-#             return {
-#                 "id_pais": 20,
-#                 "nombre_pais": "Otro",
-#                 "pais_real_detectado": nombre_real,  # Dato extra útil para tu dashboard
-#                 "indicativo": indicativo,
-#                 "iso": codigo_iso
-#             }
-#
-#     except Exception as e:
-#         return {"error": True, "mensaje": str(e)}
+
+@router.post("/consolidar")
+def consolidar_perfil_web(
+    data: ConsolidarInput,
+    background_tasks: BackgroundTasks
+):
+    try:
+        subdominio = current_tenant.get()
+
+        cuenta = obtener_cuenta_por_subdominio(subdominio)
+        if not cuenta:
+            return JSONResponse(
+                {"error": f"No se encontraron credenciales para {subdominio}"},
+                status_code=404
+            )
+
+        token_cliente = cuenta["access_token"]
+        phone_id_cliente = cuenta["phone_number_id"]
+        business_name = cuenta.get("business_name", "la agencia")
+
+        current_token.set(token_cliente)
+        current_phone_id.set(phone_id_cliente)
+        current_business_name.set(business_name)
+
+        # -------------------------------
+        # Procesar respuestas
+        # -------------------------------
+        respuestas_dict = {}
+
+        if data.respuestas:
+            for key, valor in data.respuestas.items():
+                if isinstance(key, str) and key.isdigit():
+                    key = int(key)
+
+                respuestas_dict[key] = str(valor).strip() if valor is not None else ""
+
+        # -------------------------------
+        # Detectar país
+        # -------------------------------
+        datos_pais = obtener_datos_pais(data.numero)
+
+        pais_id = None
+        pais_texto = None
+
+        if not datos_pais.get("error"):
+            pais_id = datos_pais.get("id_pais")
+
+            if datos_pais.get("es_otro"):
+                pais_texto = datos_pais.get("pais_real_detectado") or datos_pais.get("nombre_pais")
+            else:
+                pais_texto = datos_pais.get("nombre_pais")
+
+            if pais_id is not None:
+                respuestas_dict[VARIABLE_PAIS_ID] = str(pais_id)
+
+        # -------------------------------
+        # Obtener usuario
+        # -------------------------------
+        try:
+            usuario_bd = buscar_usuario_por_telefono(data.numero)
+
+            nombre_usuario = usuario_bd.get("nombre") if usuario_bd else None
+            aspirante_id = usuario_bd.get("id") if usuario_bd else None
+
+        except Exception as e:
+            print(f"⚠️ Error obteniendo usuario {data.numero}: {e}")
+            nombre_usuario = None
+            aspirante_id = None
+
+        # -------------------------------
+        # Marcar encuesta completada
+        # -------------------------------
+        marcar_encuesta_completada(data.numero)
+
+        # -------------------------------
+        # Guardar diagnóstico
+        # -------------------------------
+        if aspirante_id and respuestas_dict:
+            with get_connection_context() as conn:
+                cur = conn.cursor()
+
+                cur.execute("""
+                    SELECT id, campo_db
+                    FROM diagnostico_variable
+                    WHERE migrado = true
+                      AND COALESCE(activa, true) = true
+                """)
+
+                variables = {row[0]: row[1] for row in cur.fetchall()}
+
+                for pregunta_id, valor in respuestas_dict.items():
+                    campo_db = variables.get(pregunta_id)
+
+                    # Guardar score solo si es número
+                    if valor.isdigit():
+                        valor_int = int(valor)
+
+                        cur.execute("""
+                            INSERT INTO diagnostico_score_variable
+                                (aspirante_id, variable_id, valor_id)
+                            VALUES (%s, %s, %s)
+                            ON CONFLICT (aspirante_id, variable_id)
+                            DO UPDATE SET
+                                valor_id = EXCLUDED.valor_id
+                        """, (
+                            aspirante_id,
+                            pregunta_id,
+                            valor_int
+                        ))
+
+                    # Actualizar aspirantes_perfil según campo_db
+                    if campo_db:
+                        if not campo_db.replace("_", "").isalnum():
+                            continue
+
+                        query = f"""
+                            UPDATE aspirantes_perfil
+                            SET {campo_db} = %s
+                            WHERE aspirante_id = %s
+                        """
+
+                        cur.execute(query, (valor, aspirante_id))
+
+                        if campo_db == "nombre":
+                            nombre_usuario = valor
+
+                # Guardar pais_texto
+                if pais_texto:
+                    cur.execute("""
+                        UPDATE aspirantes_perfil
+                        SET pais_texto = %s
+                        WHERE aspirante_id = %s
+                    """, (pais_texto, aspirante_id))
+
+                # Guardar zona_horaria
+                zona_horaria = None
+                if data.meta and isinstance(data.meta, dict):
+                    zona_horaria = data.meta.get("zona_horaria")
+
+                if zona_horaria:
+                    cur.execute("""
+                        UPDATE aspirantes_perfil
+                        SET zona_horaria = %s
+                        WHERE aspirante_id = %s
+                    """, (zona_horaria, aspirante_id))
+
+                conn.commit()
+
+        # -------------------------------
+        # URL informativa
+        # -------------------------------
+        tenant_key = subdominio if subdominio != "public" else "test"
+
+        url_info = None
+
+        if aspirante_id:
+            url_info = (
+                f"https://{tenant_key}.talentum-manager.com/"
+                f"info-incorporacion?cid={aspirante_id}"
+            )
+
+        # -------------------------------
+        # Mensaje final
+        # -------------------------------
+        mensaje_final = mensaje_encuesta_final(
+            nombre=nombre_usuario,
+            url_info=url_info
+        )
+
+        background_tasks.add_task(
+            enviar_mensaje_con_credenciales,
+            data.numero,
+            mensaje_final,
+            token_cliente,
+            phone_id_cliente,
+            business_name,
+            nombre_usuario
+        )
+
+        print(f"✅ Perfil consolidado y mensaje enviado a {data.numero}")
+
+        return {
+            "ok": True,
+            "msg": "Perfil consolidado correctamente",
+            "pais_texto": pais_texto,
+            "zona_horaria": data.meta.get("zona_horaria") if data.meta else None
+        }
+
+    except Exception as e:
+        print(f"❌ Error en consolidar_perfil_web: {e}")
+
+        return JSONResponse(
+            {"error": "Error al consolidar el perfil"},
+            status_code=500
+        )
+
 
 
 @router.post("/consolidarV0")
@@ -6100,188 +6261,7 @@ def consolidar_perfil_webV1(
         )
 
 
-VARIABLE_PAIS_ID = 20   # id de la variable pais en diagnostico_variable
 
-
-@router.post("/consolidar")
-def consolidar_perfil_web(
-    data: ConsolidarInput,
-    background_tasks: BackgroundTasks
-):
-
-    try:
-
-        subdominio = current_tenant.get()
-
-        cuenta = obtener_cuenta_por_subdominio(subdominio)
-        if not cuenta:
-            return JSONResponse(
-                {"error": f"No se encontraron credenciales para {subdominio}"},
-                status_code=404
-            )
-
-        token_cliente = cuenta["access_token"]
-        phone_id_cliente = cuenta["phone_number_id"]
-        business_name = cuenta.get("business_name", "la agencia")
-
-        current_token.set(token_cliente)
-        current_phone_id.set(phone_id_cliente)
-        current_business_name.set(business_name)
-
-        # -------------------------------
-        # Procesar respuestas
-        # -------------------------------
-        respuestas_dict = {}
-
-        if data.respuestas:
-            for key, valor in data.respuestas.items():
-
-                if isinstance(key, str) and key.isdigit():
-                    key = int(key)
-
-                respuestas_dict[key] = str(valor).strip() if valor else ""
-
-        # -------------------------------
-        # Detectar país
-        # -------------------------------
-        datos_pais = obtener_datos_pais(data.numero)
-
-        if not datos_pais.get("error"):
-
-            pais_id = datos_pais.get("id_pais")
-
-            if pais_id is not None:
-                respuestas_dict[VARIABLE_PAIS_ID] = str(pais_id)
-
-        # -------------------------------
-        # Obtener usuario
-        # -------------------------------
-        try:
-
-            usuario_bd = buscar_usuario_por_telefono(data.numero)
-
-            nombre_usuario = usuario_bd.get("nombre") if usuario_bd else None
-            aspirante_id = usuario_bd.get("id") if usuario_bd else None
-
-        except Exception as e:
-
-            print(f"⚠️ Error obteniendo usuario {data.numero}: {e}")
-            nombre_usuario = None
-            aspirante_id = None
-
-        # -------------------------------
-        # Marcar encuesta completada
-        # -------------------------------
-        marcar_encuesta_completada(data.numero)
-
-        # -------------------------------
-        # Guardar diagnóstico
-        # -------------------------------
-        if aspirante_id and respuestas_dict:
-
-            with get_connection_context() as conn:
-
-                cur = conn.cursor()
-
-                # Obtener variables de encuesta
-                cur.execute("""
-                    SELECT id, campo_db
-                    FROM diagnostico_variable
-                    WHERE migrado = true
-                      AND COALESCE(activa, true) = true
-                """)
-
-                variables = {row[0]: row[1] for row in cur.fetchall()}
-
-                # -------------------------------
-                # Procesar respuestas
-                # -------------------------------
-                for pregunta_id, valor in respuestas_dict.items():
-
-                    campo_db = variables.get(pregunta_id)
-
-                    # Guardar score solo si es número
-                    if valor.isdigit():
-                        valor_int = int(valor)
-
-                        cur.execute("""
-                                    INSERT INTO diagnostico_score_variable
-                                        (aspirante_id, variable_id, valor_id)
-                                    VALUES (%s, %s, %s) ON CONFLICT (aspirante_id, variable_id)
-                            DO
-                                    UPDATE SET
-                                        valor_id = EXCLUDED.valor_id
-                                    """, (
-                                        aspirante_id,
-                                        pregunta_id,
-                                        valor_int
-                                    ))
-
-                    # -------------------------------
-                    # Actualizar aspirantes_perfil
-                    # -------------------------------
-                    if campo_db:
-
-                        if not campo_db.replace("_", "").isalnum():
-                            continue
-
-                        query = f"""
-                            UPDATE aspirantes_perfil
-                            SET {campo_db} = %s
-                            WHERE aspirante_id = %s
-                        """
-
-                        cur.execute(query, (valor, aspirante_id))
-
-                        if campo_db == "nombre":
-                            nombre_usuario = valor
-
-                conn.commit()
-
-        # -------------------------------
-        # URL informativa
-        # -------------------------------
-        tenant_key = subdominio if subdominio != "public" else "test"
-
-        url_info = None
-
-        if aspirante_id:
-
-            url_info = (
-                f"https://{tenant_key}.talentum-manager.com/"
-                f"info-incorporacion?cid={aspirante_id}"
-            )
-
-        # -------------------------------
-        # Mensaje final
-        # -------------------------------
-        mensaje_final = mensaje_encuesta_final(
-            nombre=nombre_usuario,
-            url_info=url_info
-        )
-
-        background_tasks.add_task(
-            enviar_mensaje_con_credenciales,
-            data.numero,
-            mensaje_final,
-            token_cliente,
-            phone_id_cliente,
-            business_name,
-            nombre_usuario
-        )
-
-        print(f"✅ Perfil consolidado y mensaje enviado a {data.numero}")
-
-        return {"ok": True, "msg": "Perfil consolidado correctamente"}
-
-    except Exception as e:
-
-        print(f"❌ Error en consolidar_perfil_web: {e}")
-
-        return JSONResponse(
-            {"error": "Error al consolidar el perfil"},
-            status_code=500
-        )
 
 
 @router.post("/consolidarV0")
