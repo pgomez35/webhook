@@ -2427,29 +2427,28 @@ def _process_single_message(mensaje: dict, tenant_name: str, datos_normalizados:
 
 
 def mensaje_inicio_encuesta() -> str:
-    nombre_agencia = current_business_name.get()
+    nombre_agencia = current_business_name.get() or "nuestra agencia"
 
     mensaje_db = obtener_configuracion_agencia("mensaje_inicio_encuesta_chat")
 
     if mensaje_db:
-        # opcional: permitir usar {nombre_agencia} dinámico
-        return mensaje_db.replace("{nombre_agencia}", nombre_agencia or "")
+        return mensaje_db.replace("{nombre_agencia}", nombre_agencia)
 
-    # 🔥 fallback si no existe en DB
     return (
-        f"🔒 *Preguntas básicas*\n\n"
-        f"Antes de continuar, se te harán *preguntas personales básicas* para evaluar tu perfil como aspirante a creador de contenido en *{nombre_agencia}*.\n\n"
-        "Si aceptas y deseas iniciar la encuesta, haz clic en el siguiente enlace 👇"
+        f"🔐 *Perfil de creador – {nombre_agencia}*\n\n"
+        f"Queremos conocerte mejor para identificar tu potencial como creador LIVE en TikTok.\n\n"
+        f"⏱️ Te tomará menos de 1 minuto.\n"
+        f"🔒 Tu información será tratada de forma privada y segura.\n\n"
+        "Ingresa aquí para comenzar 👇"
     )
 
 def enviar_inicio_encuesta(numero: str):
     tenant_name = current_tenant.get() or "default"
-
     url_web = construir_url_actualizar_perfil(numero, tenant_name=tenant_name)
 
     mensaje = (
         f"{mensaje_inicio_encuesta()}\n\n"
-        f"✏️ *Enlace para continuar:*\n{url_web}\n\n"
+        f"🔗 *Enlace para continuar:*\n{url_web}\n\n"
         "Puedes hacerlo desde tu celular o computadora."
     )
 
