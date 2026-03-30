@@ -368,14 +368,14 @@ def listar_tipos_agendamiento(
             if solo_activos:
                 cur.execute("""
                     SELECT id, nombre, color, icono, activo, creado_en
-                    FROM tipos_agendamiento
+                    FROM agendamientos_tipo
                     WHERE activo = TRUE
                     ORDER BY id ASC
                 """)
             else:
                 cur.execute("""
                     SELECT id, nombre, color, icono, activo, creado_en
-                    FROM tipos_agendamiento
+                    FROM agendamientos_tipo
                     ORDER BY id ASC
                 """)
             rows = cur.fetchall()
@@ -398,7 +398,7 @@ def crear_tipo_agendamiento(payload: TipoAgendamientoIn):
         with conn.cursor() as cur:
             # opcional: evitar duplicados por nombre (case-insensitive)
             cur.execute("""
-                SELECT 1 FROM tipos_agendamiento
+                SELECT 1 FROM agendamientos_tipo
                 WHERE LOWER(nombre) = LOWER(%s)
                 LIMIT 1
             """, (nombre,))
@@ -406,7 +406,7 @@ def crear_tipo_agendamiento(payload: TipoAgendamientoIn):
                 raise HTTPException(status_code=409, detail="Ya existe un tipo con ese nombre.")
 
             cur.execute("""
-                INSERT INTO tipos_agendamiento (nombre, color, icono, activo)
+                INSERT INTO agendamientos_tipo (nombre, color, icono, activo)
                 VALUES (%s, %s, %s, %s)
                 RETURNING id, nombre, color, icono, activo, creado_en
             """, (nombre, payload.color, payload.icono, payload.activo if payload.activo is not None else True))
@@ -434,7 +434,7 @@ def actualizar_tipo_agendamiento(tipo_id: int, payload: TipoAgendamientoUpdate):
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT id, nombre, color, icono, activo, creado_en
-                FROM tipos_agendamiento
+                FROM agendamientos_tipo
                 WHERE id = %s
                 LIMIT 1
             """, (tipo_id,))
@@ -455,7 +455,7 @@ def actualizar_tipo_agendamiento(tipo_id: int, payload: TipoAgendamientoUpdate):
             # opcional: validar duplicados si cambia nombre
             if payload.nombre is not None:
                 cur.execute("""
-                    SELECT 1 FROM tipos_agendamiento
+                    SELECT 1 FROM agendamientos_tipo
                     WHERE LOWER(nombre) = LOWER(%s) AND id <> %s
                     LIMIT 1
                 """, (nombre, tipo_id))
@@ -463,7 +463,7 @@ def actualizar_tipo_agendamiento(tipo_id: int, payload: TipoAgendamientoUpdate):
                     raise HTTPException(status_code=409, detail="Ya existe otro tipo con ese nombre.")
 
             cur.execute("""
-                UPDATE tipos_agendamiento
+                UPDATE agendamientos_tipo
                 SET nombre = %s,
                     color = %s,
                     icono = %s,
@@ -484,7 +484,7 @@ def cambiar_activo_tipo_agendamiento(tipo_id: int, payload: ToggleActivoIn):
     with get_connection_context() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                UPDATE tipos_agendamiento
+                UPDATE agendamientos_tipo
                 SET activo = %s
                 WHERE id = %s
                 RETURNING id, nombre, color, icono, activo, creado_en
@@ -503,7 +503,7 @@ def eliminar_tipo_agendamiento(tipo_id: int):
     with get_connection_context() as conn:
         with conn.cursor() as cur:
             # seguridad: si está en uso, mejor bloquear (opcional)
-            cur.execute("DELETE FROM tipos_agendamiento WHERE id = %s RETURNING id", (tipo_id,))
+            cur.execute("DELETE FROM agendamientos_tipo WHERE id = %s RETURNING id", (tipo_id,))
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="Tipo de agendamiento no encontrado.")

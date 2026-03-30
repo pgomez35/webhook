@@ -4142,6 +4142,9 @@ def enviar_link_agendamiento_aspirante(
     Si Meta rechaza por ventana 24h, el webhook maneja el flujo de reenvío.
     """
 
+    logger.error("🔥 ESTOY EN EL ENDPOINT NUEVO enviar_link_agendamiento_aspirante")
+    logger.error(f"🔥 Schema recibido: {data.model_dump()}")
+
     with get_connection_context() as conn:
         cur = conn.cursor()
 
