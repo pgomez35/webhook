@@ -1566,7 +1566,7 @@ def crear_link_agendamiento_token(
         cur.execute(
             """
             SELECT 1
-            FROM link_agendamiento_tokens
+            FROM agendamientos_link_tokens
             WHERE token = %s
             """,
             (token,)
@@ -1578,7 +1578,7 @@ def crear_link_agendamiento_token(
 
         cur.execute(
             """
-            INSERT INTO link_agendamiento_tokens (
+            INSERT INTO agendamientos_link_tokens (
                 token,
                 aspirante_id,
                 responsable_id,
