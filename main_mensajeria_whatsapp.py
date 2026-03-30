@@ -30,7 +30,7 @@ from starlette.responses import StreamingResponse
 
 import cloudinary
 
-from utils_aspirantes import obtener_status_24hrs
+from utils_aspirantes import obtener_status_24hrs, crear_link_agendamiento_token
 
 cloudinary.config(
     cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
@@ -3583,9 +3583,6 @@ def enviar_mensaje(numero: str, texto: str):
 # SCHEMAS
 # ======================================================
 
-class EnviarNoAptoIn(BaseModel):
-    aspirante_id: int
-
 
 # ======================================================
 # HELPERS
@@ -4005,6 +4002,135 @@ class CrearLinkAgendamientoIn(BaseModel):
         description="Tipo de cita: 'LIVE' para prueba TikTok LIVE o 'ENTREVISTA' con asesor."
     )
 
+# @router.post("/api/agendamientos/aspirante/enviar", response_model=LinkAgendamientoOut)
+# def enviar_link_agendamiento_aspirante(
+#     data: CrearLinkAgendamientoIn,
+#     usuario_actual: dict = Depends(obtener_usuario_actual),
+# ):
+#     """
+#     Envía un link de agendamiento al aspirante.
+#     Siempre intenta mensaje simple.
+#     Si Meta rechaza por ventana 24h, el webhook maneja el flujo de reenvío.
+#     """
+#
+#     with get_connection_context() as conn:
+#         cur = conn.cursor()
+#
+#         # 1️⃣ Obtener datos del aspirante
+#         cur.execute(
+#             """
+#             SELECT COALESCE(nickname, nombre_real) AS nombre, telefono
+#             FROM aspirantes
+#             WHERE id = %s
+#             """,
+#             (data.aspirante_id,)
+#         )
+#         row = cur.fetchone()
+#         if not row:
+#             raise HTTPException(404, "El aspirante no existe.")
+#
+#         nombre_creador, telefono = row
+#         if not telefono:
+#             raise HTTPException(400, "El aspirante no tiene teléfono registrado.")
+#
+#         # 2️⃣ Actualizar estado según tipo_agendamiento
+#         nuevo_estado_id = None
+#         if data.tipo_agendamiento == "ENTREVISTA":
+#             nuevo_estado_id = 8
+#         elif data.tipo_agendamiento == "LIVE":
+#             nuevo_estado_id = 5
+#
+#         if nuevo_estado_id:
+#             cur.execute(
+#                 """
+#                 UPDATE aspirantes_perfil
+#                 SET id_chatbot_estado = %s,
+#                     actualizado_en = NOW()
+#                 WHERE aspirante_id = %s
+#                 """,
+#                 (nuevo_estado_id, data.aspirante_id)
+#             )
+#
+#         conn.commit()
+#
+#     # 3️⃣ Construir URL del agendador
+#     tenant_key = current_tenant.get() or "test"
+#     subdominio = tenant_key if tenant_key != "public" else "test"
+#
+#     url = (
+#         f"https://{subdominio}.talentum-manager.com/agendar"
+#         f"?aspirante_id={data.aspirante_id}"
+#         f"&tipo={data.tipo_agendamiento}"
+#         f"&duracion={data.duracion_minutos}"
+#         f"&responsable_id={data.responsable_id}"
+#     )
+#
+#     # 4️⃣ Obtener credenciales WABA
+#     cuenta = obtener_cuenta_por_subdominio(tenant_key)
+#     if not cuenta:
+#         raise HTTPException(500, f"No hay credenciales WABA para '{tenant_key}'.")
+#
+#     business_name = cuenta.get("business_name", "la agencia")
+#
+#     titulo_cita = (
+#         "tu prueba TikTok LIVE"
+#         if data.tipo_agendamiento == "LIVE"
+#         else "tu entrevista con un asesor"
+#     )
+#
+#     # 5️⃣ Construir mensaje simple
+#     mensaje = (
+#         f"Hola {nombre_creador or 'creador(a)'} 👋\n\n"
+#         f"Queremos continuar tu proceso con *{business_name}*.\n\n"
+#         f"📅 Agenda {titulo_cita} aquí:\n"
+#         f"{url}\n\n"
+#         f"⏱️ Duración estimada: {data.duracion_minutos} minutos.\n"
+#         "Selecciona el horario que prefieras. Si necesitas cambiar la cita, contáctanos."
+#     )
+#
+#     # 6️⃣ Enviar WhatsApp siempre como mensaje simple
+#     try:
+#         codigo, respuesta = enviar_mensaje_texto_simple(
+#             token=cuenta["access_token"],
+#             numero_id=cuenta["phone_number_id"],
+#             telefono_destino=telefono,
+#             texto=mensaje
+#         )
+#
+#         message_id_meta = None
+#         if isinstance(respuesta, dict) and respuesta.get("messages"):
+#             try:
+#                 message_id_meta = respuesta["messages"][0].get("id")
+#             except Exception:
+#                 message_id_meta = None
+#
+#         guardar_mensaje_nuevo(
+#             telefono=telefono,
+#             contenido=mensaje,
+#             direccion="enviado",
+#             tipo="text",
+#             message_id_meta=message_id_meta,
+#             estado="sent" if codigo and codigo < 300 else "error"
+#         )
+#
+#     except Exception as e:
+#         logger.exception(
+#             "❌ Error enviando link de agendamiento (aspirante_id=%s): %s",
+#             data.aspirante_id, e
+#         )
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error enviando link de agendamiento: {str(e)}"
+#         )
+#
+#     # 7️⃣ Respuesta API
+#     return LinkAgendamientoOut(
+#         token=None,
+#         url=url,
+#         expiracion=None,
+#     )
+
+
 @router.post("/api/agendamientos/aspirante/enviar", response_model=LinkAgendamientoOut)
 def enviar_link_agendamiento_aspirante(
     data: CrearLinkAgendamientoIn,
@@ -4029,12 +4155,14 @@ def enviar_link_agendamiento_aspirante(
             (data.aspirante_id,)
         )
         row = cur.fetchone()
+
         if not row:
-            raise HTTPException(404, "El aspirante no existe.")
+            raise HTTPException(status_code=404, detail="El aspirante no existe.")
 
         nombre_creador, telefono = row
+
         if not telefono:
-            raise HTTPException(400, "El aspirante no tiene teléfono registrado.")
+            raise HTTPException(status_code=400, detail="El aspirante no tiene teléfono registrado.")
 
         # 2️⃣ Actualizar estado según tipo_agendamiento
         nuevo_estado_id = None
@@ -4054,24 +4182,35 @@ def enviar_link_agendamiento_aspirante(
                 (nuevo_estado_id, data.aspirante_id)
             )
 
+        # 3️⃣ Crear token de agendamiento
+        token_data = crear_link_agendamiento_token(
+            cur=cur,
+            aspirante_id=data.aspirante_id,
+            responsable_id=data.responsable_id,
+            duracion_minutos=data.duracion_minutos,
+            tipo_agendamiento=data.tipo_agendamiento,
+            horas_expiracion=48,   # ajustable
+            longitud_token=10      # ajustable
+        )
+
+        token = token_data["token"]
+        expiracion = token_data["expiracion"]
+
         conn.commit()
 
-    # 3️⃣ Construir URL del agendador
+    # 4️⃣ Construir URL del agendador con token
     tenant_key = current_tenant.get() or "test"
     subdominio = tenant_key if tenant_key != "public" else "test"
 
-    url = (
-        f"https://{subdominio}.talentum-manager.com/agendar"
-        f"?aspirante_id={data.aspirante_id}"
-        f"&tipo={data.tipo_agendamiento}"
-        f"&duracion={data.duracion_minutos}"
-        f"&responsable_id={data.responsable_id}"
-    )
+    url = f"https://{subdominio}.talentum-manager.com/agendar?t={token}"
 
-    # 4️⃣ Obtener credenciales WABA
+    # 5️⃣ Obtener credenciales WABA
     cuenta = obtener_cuenta_por_subdominio(tenant_key)
     if not cuenta:
-        raise HTTPException(500, f"No hay credenciales WABA para '{tenant_key}'.")
+        raise HTTPException(
+            status_code=500,
+            detail=f"No hay credenciales WABA para '{tenant_key}'."
+        )
 
     business_name = cuenta.get("business_name", "la agencia")
 
@@ -4081,17 +4220,18 @@ def enviar_link_agendamiento_aspirante(
         else "tu entrevista con un asesor"
     )
 
-    # 5️⃣ Construir mensaje simple
+    # 6️⃣ Construir mensaje simple
     mensaje = (
         f"Hola {nombre_creador or 'creador(a)'} 👋\n\n"
         f"Queremos continuar tu proceso con *{business_name}*.\n\n"
         f"📅 Agenda {titulo_cita} aquí:\n"
         f"{url}\n\n"
         f"⏱️ Duración estimada: {data.duracion_minutos} minutos.\n"
+        f"🕒 Este enlace estará disponible hasta: {expiracion.strftime('%Y-%m-%d %H:%M')}.\n\n"
         "Selecciona el horario que prefieras. Si necesitas cambiar la cita, contáctanos."
     )
 
-    # 6️⃣ Enviar WhatsApp siempre como mensaje simple
+    # 7️⃣ Enviar WhatsApp siempre como mensaje simple
     try:
         codigo, respuesta = enviar_mensaje_texto_simple(
             token=cuenta["access_token"],
@@ -4126,13 +4266,12 @@ def enviar_link_agendamiento_aspirante(
             detail=f"Error enviando link de agendamiento: {str(e)}"
         )
 
-    # 7️⃣ Respuesta API
+    # 8️⃣ Respuesta API
     return LinkAgendamientoOut(
-        token=None,
+        token=token,
         url=url,
-        expiracion=None,
+        expiracion=expiracion,
     )
-
 
 @router.post("/api/aspirantes/no_apto/enviar")
 def enviar_mensaje_no_apto(

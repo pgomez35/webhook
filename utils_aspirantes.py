@@ -1532,3 +1532,79 @@ async def subir_foto_creador_activo(creador_activo_id: int, foto: UploadFile = F
         return {"foto_url": url_foto}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al subir la foto: {e}")
+
+
+import secrets
+import string
+
+ALFABETO_TOKEN = string.ascii_letters + string.digits
+
+
+def generar_token_aleatorio(longitud: int = 10) -> str:
+    return ''.join(secrets.choice(ALFABETO_TOKEN) for _ in range(longitud))
+
+
+def crear_link_agendamiento_token(
+    cur,
+    aspirante_id: int,
+    responsable_id: int,
+    duracion_minutos: int = 60,
+    tipo_agendamiento: str = "ENTREVISTA",
+    horas_expiracion: int = 48,
+    longitud_token: int = 10,
+    max_intentos: int = 5,
+):
+    """
+    Genera un token único, lo guarda en la tabla link_agendamiento_tokens
+    y retorna token + expiración.
+    """
+    expiracion = datetime.now() + timedelta(hours=horas_expiracion)
+
+    for _ in range(max_intentos):
+        token = generar_token_aleatorio(longitud_token)
+
+        cur.execute(
+            """
+            SELECT 1
+            FROM link_agendamiento_tokens
+            WHERE token = %s
+            """,
+            (token,)
+        )
+        existe = cur.fetchone()
+
+        if existe:
+            continue
+
+        cur.execute(
+            """
+            INSERT INTO link_agendamiento_tokens (
+                token,
+                aspirante_id,
+                responsable_id,
+                expiracion,
+                usado,
+                duracion_minutos,
+                tipo_agendamiento
+            )
+            VALUES (%s, %s, %s, %s, false, %s, %s)
+            """,
+            (
+                token,
+                aspirante_id,
+                responsable_id,
+                expiracion,
+                duracion_minutos,
+                tipo_agendamiento,
+            )
+        )
+
+        return {
+            "token": token,
+            "expiracion": expiracion,
+        }
+
+    raise HTTPException(
+        status_code=500,
+        detail="No fue posible generar un token único de agendamiento."
+    )
