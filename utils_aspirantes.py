@@ -1555,7 +1555,7 @@ def crear_link_agendamiento_token(
     max_intentos: int = 5,
 ):
     """
-    Genera un token único, lo guarda en la tabla link_agendamiento_tokens
+    Genera un token único, lo guarda en la tabla agendamientos_link_tokens
     y retorna token + expiración.
     """
     expiracion = datetime.now() + timedelta(hours=horas_expiracion)
