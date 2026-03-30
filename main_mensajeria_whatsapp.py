@@ -12,7 +12,7 @@ from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, AnyUrl, Field
 from starlette.staticfiles import StaticFiles
 
-from DataBase import obtener_usuario_id_por_telefono, paso_limite_24h, guardar_mensaje, guardar_mensaje_nuevo, \
+from DataBase import obtener_usuario_id_por_telefono, guardar_mensaje, guardar_mensaje_nuevo, \
     obtener_mensajes, obtener_contactos_db, obtener_contactos_db_nueva, get_connection_context, \
     obtener_cuenta_por_subdominio
 from enviar_msg_wp import enviar_plantilla_generica, enviar_mensaje_texto_simple, enviar_audio_base64, \
@@ -30,7 +30,7 @@ from starlette.responses import StreamingResponse
 
 import cloudinary
 
-from utils_aspirantes import obtener_status_24hrs, intentar_plantilla_reconexion_24h
+from utils_aspirantes import obtener_status_24hrs
 
 cloudinary.config(
     cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
@@ -1316,15 +1316,7 @@ async def api_enviar_imagen0(
     if not TOKEN or not PHONE_NUMBER_ID:
         return {"status": "error", "mensaje": "Credenciales no disponibles"}
 
-    enviada, payload = intentar_plantilla_reconexion_24h(
-        telefono=telefono,
-        nombre=nombre,  # si no tienes, manda ""
-        token=TOKEN,
-        phone_number_id=PHONE_NUMBER_ID,
-        agencia_nombre=current_business_name.get() or ""
-    )
-    if enviada:
-        return payload
+    # Reconexión / plantilla por ventana 24h: se maneja en el webhook, no aquí.
 
     # --------------------------------------------------
     # 1️⃣ Validar tipo
@@ -1835,16 +1827,7 @@ async def api_enviar_documento0(
     if not TENANT:
         return {"status": "error", "mensaje": "Tenant no disponible"}
 
-
-    enviada, payload = intentar_plantilla_reconexion_24h(
-        telefono=telefono,
-        nombre=nombre,  # si no tienes, manda ""
-        token=TOKEN,
-        phone_number_id=PHONE_NUMBER_ID,
-        agencia_nombre=current_business_name.get() or ""
-    )
-    if enviada:
-        return payload
+    # Reconexión / plantilla por ventana 24h: se maneja en el webhook, no aquí.
 
     # --------------------------------------------------
     # 1️⃣ Validar tipo permitido
@@ -2631,15 +2614,7 @@ async def api_enviar_video0(
     if not TOKEN or not PHONE_NUMBER_ID:
         return {"status": "error", "mensaje": "Credenciales no disponibles"}
 
-    enviada, payload = intentar_plantilla_reconexion_24h(
-        telefono=telefono,
-        nombre=nombre,  # si no tienes, manda ""
-        token=TOKEN,
-        phone_number_id=PHONE_NUMBER_ID,
-        agencia_nombre=current_business_name.get() or ""
-    )
-    if enviada:
-        return payload
+    # Reconexión / plantilla por ventana 24h: se maneja en el webhook, no aquí.
 
     # --------------------------------------------------
     # 1️⃣ Validar tipo permitido
@@ -3602,6 +3577,33 @@ def enviar_mensaje(numero: str, texto: str):
         traceback.print_exc()
         raise
 
+
+
+# ======================================================
+# SCHEMAS
+# ======================================================
+
+class EnviarNoAptoIn(BaseModel):
+    aspirante_id: int
+
+
+# ======================================================
+# HELPERS
+# ======================================================
+
+# def mensaje_invitacion_simple(nombre: Optional[str], business_name: str) -> str:
+#     nombre_final = nombre or "Creador(a)"
+#     return (
+#         f"Hola {nombre_final}, te escribimos de {business_name}. "
+#         f"Queremos invitarte a continuar tu proceso con nosotros. "
+#         f"Por favor responde este mensaje para seguir con los siguientes pasos."
+#     )
+
+
+# ======================================================
+# ENDPOINT
+# ======================================================
+
 @router.post("/api/aspirantes/invitacion/enviar")
 def enviar_mensaje_invitacion(
     data: EnviarNoAptoIn,
@@ -3610,7 +3612,7 @@ def enviar_mensaje_invitacion(
     telefono = None
     nombre = None
     aspirante_id = None
-    tipo_envio = None
+    tipo_envio = "mensaje_simple"
     contenido_guardado = None
     codigo = None
     respuesta = None
@@ -3647,7 +3649,7 @@ def enviar_mensaje_invitacion(
                     )
 
                 # ======================================================
-                # 2️⃣ Buscar última invitación del creador
+                # 2️⃣ Buscar última invitación del aspirante
                 # ======================================================
                 cur.execute("""
                     SELECT id, estado_invitacion
@@ -3661,7 +3663,6 @@ def enviar_mensaje_invitacion(
                 if invitacion_row:
                     invitacion_id = invitacion_row[0]
                 else:
-                    # Crear invitación si no existe
                     cur.execute("""
                         INSERT INTO invitaciones (
                             aspirante_id,
@@ -3716,37 +3717,17 @@ def enviar_mensaje_invitacion(
         )
 
         # ======================================================
-        # 4️⃣ Validar ventana 24h
+        # 4️⃣ Enviar SIEMPRE mensaje simple
+        #    El webhook manejará errores de ventana 24h
         # ======================================================
-        ventana_abierta = obtener_status_24hrs(telefono)
+        contenido_guardado = mensaje_invitacion_simple(nombre, business_name)
 
-        if ventana_abierta:
-            tipo_envio = "mensaje_simple"
-            contenido_guardado = mensaje_invitacion_simple(nombre, business_name)
-
-            codigo, respuesta = enviar_mensaje_texto_simple(
-                token=token,
-                numero_id=phone_id,
-                telefono_destino=telefono,
-                texto=contenido_guardado
-            )
-        else:
-            tipo_envio = "plantilla"
-            parametros = [nombre or "amigo(a)", business_name, "t/ZMAqjPPCK/"]
-
-            codigo, respuesta = enviar_plantilla_generica_parametros(
-                token=token,
-                phone_number_id=phone_id,
-                numero_destino=telefono,
-                nombre_plantilla="invitacion_unirse_agencia",
-                codigo_idioma="es_CO",
-                parametros=parametros,
-                body_vars_count=2
-            )
-
-            contenido_guardado = (
-                f"PLANTILLA: invitacion_unirse_agencia | parametros={parametros}"
-            )
+        codigo, respuesta = enviar_mensaje_texto_simple(
+            token=token,
+            numero_id=phone_id,
+            telefono_destino=telefono,
+            texto=contenido_guardado
+        )
 
         # ======================================================
         # 5️⃣ Extraer message_id_meta
@@ -3764,13 +3745,13 @@ def enviar_mensaje_invitacion(
             telefono=telefono,
             contenido=contenido_guardado,
             direccion="enviado",
-            tipo="template" if tipo_envio == "plantilla" else "text",
+            tipo="text",
             message_id_meta=message_id_meta,
             estado="sent" if codigo and codigo < 300 else "error"
         )
 
         # ======================================================
-        # 7️⃣ Actualizar invitación si el envío fue exitoso
+        # 7️⃣ Actualizar invitación
         # ======================================================
         with get_connection_context() as conn:
             with conn.cursor() as cur:
@@ -3784,7 +3765,11 @@ def enviar_mensaje_invitacion(
                             usuario_invita = COALESCE(usuario_invita, %s),
                             actualizado_en = now()
                         WHERE id = %s
-                    """, ("enviada", usuario_actual["id"], invitacion_id))
+                    """, (
+                        "enviada",
+                        usuario_actual["id"],
+                        invitacion_id
+                    ))
                 else:
                     cur.execute("""
                         UPDATE invitaciones
@@ -3793,7 +3778,10 @@ def enviar_mensaje_invitacion(
                             usuario_invita = COALESCE(usuario_invita, %s),
                             actualizado_en = now()
                         WHERE id = %s
-                    """, (usuario_actual["id"], invitacion_id))
+                    """, (
+                        usuario_actual["id"],
+                        invitacion_id
+                    ))
 
                 conn.commit()
 
@@ -3807,7 +3795,6 @@ def enviar_mensaje_invitacion(
             "respuesta_api": respuesta if not (codigo and codigo < 300) else None,
             "telefono": telefono,
             "message_id_meta": message_id_meta,
-            "ventana_24h_abierta": ventana_abierta,
             "invitacion_id": invitacion_id
         }
 
@@ -3821,7 +3808,7 @@ def enviar_mensaje_invitacion(
                     telefono=telefono,
                     contenido=contenido_guardado or f"ERROR EN ENVÍO DE INVITACIÓN: {str(e)}",
                     direccion="enviado",
-                    tipo="template" if tipo_envio == "plantilla" else "text",
+                    tipo="text",
                     message_id_meta=None,
                     estado="error"
                 )
@@ -3832,7 +3819,6 @@ def enviar_mensaje_invitacion(
             status_code=500,
             detail=f"Error enviando mensaje de invitación: {str(e)}"
         )
-
 
 # @router.post("/api/aspirantes/invitacion/enviar")
 # def enviar_mensaje_invitacion(
@@ -4026,8 +4012,8 @@ def enviar_link_agendamiento_aspirante(
 ):
     """
     Envía un link de agendamiento al aspirante.
-    - Mensaje simple si ventana 24h abierta
-    - Template si ventana cerrada
+    Siempre intenta mensaje simple.
+    Si Meta rechaza por ventana 24h, el webhook maneja el flujo de reenvío.
     """
 
     with get_connection_context() as conn:
@@ -4082,8 +4068,11 @@ def enviar_link_agendamiento_aspirante(
         f"&responsable_id={data.responsable_id}"
     )
 
-    # 4️⃣ Datos comunes
+    # 4️⃣ Obtener credenciales WABA
     cuenta = obtener_cuenta_por_subdominio(tenant_key)
+    if not cuenta:
+        raise HTTPException(500, f"No hay credenciales WABA para '{tenant_key}'.")
+
     business_name = cuenta.get("business_name", "la agencia")
 
     titulo_cita = (
@@ -4092,44 +4081,49 @@ def enviar_link_agendamiento_aspirante(
         else "tu entrevista con un asesor"
     )
 
-    # 5️⃣ Detectar ventana 24h
-    ventana_abierta = obtener_status_24hrs(telefono)
+    # 5️⃣ Construir mensaje simple
+    mensaje = (
+        f"Hola {nombre_creador or 'creador(a)'} 👋\n\n"
+        f"Queremos continuar tu proceso con *{business_name}*.\n\n"
+        f"📅 Agenda {titulo_cita} aquí:\n"
+        f"{url}\n\n"
+        f"⏱️ Duración estimada: {data.duracion_minutos} minutos.\n"
+        "Selecciona el horario que prefieras. Si necesitas cambiar la cita, contáctanos."
+    )
 
-    # 6️⃣ Enviar WhatsApp
+    # 6️⃣ Enviar WhatsApp siempre como mensaje simple
     try:
-        if not ventana_abierta:
-            mensaje = (
-                f"Hola {nombre_creador} 👋\n\n"
-                f"Queremos continuar tu proceso con *{business_name}*.\n\n"
-                f"📅 Agenda {titulo_cita} aquí:\n"
-                f"{url}\n\n"
-                f"⏱️ Duración estimada: {data.duracion_minutos} minutos.\n"
-                "Selecciona el horario que prefieras. Si necesitas cambiar la cita, contáctanos."
-            )
+        codigo, respuesta = enviar_mensaje_texto_simple(
+            token=cuenta["access_token"],
+            numero_id=cuenta["phone_number_id"],
+            telefono_destino=telefono,
+            texto=mensaje
+        )
 
-            enviar_mensaje(telefono, mensaje)
+        message_id_meta = None
+        if isinstance(respuesta, dict) and respuesta.get("messages"):
+            try:
+                message_id_meta = respuesta["messages"][0].get("id")
+            except Exception:
+                message_id_meta = None
 
-        else:
-            enviar_plantilla_generica_parametros(
-                token=cuenta["access_token"],
-                phone_number_id=cuenta["phone_number_id"],
-                numero_destino=telefono,
-                nombre_plantilla="agendar_cita_general",
-                codigo_idioma="es_CO",
-                parametros=[
-                    nombre_creador or "creador",
-                    business_name,
-                    titulo_cita,
-                    url,
-                    str(data.duracion_minutos),
-                ],
-                body_vars_count=5
-            )
+        guardar_mensaje_nuevo(
+            telefono=telefono,
+            contenido=mensaje,
+            direccion="enviado",
+            tipo="text",
+            message_id_meta=message_id_meta,
+            estado="sent" if codigo and codigo < 300 else "error"
+        )
 
     except Exception as e:
         logger.exception(
             "❌ Error enviando link de agendamiento (aspirante_id=%s): %s",
             data.aspirante_id, e
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error enviando link de agendamiento: {str(e)}"
         )
 
     # 7️⃣ Respuesta API
@@ -4169,17 +4163,18 @@ def enviar_mensaje_no_apto(
         # 2️⃣ Marcar estado NO APTO
         cur.execute("""
             UPDATE aspirantes_perfil
-            SET id_chatbot_estado = 4
+            SET id_chatbot_estado = 4,
+                actualizado_en = NOW()
             WHERE aspirante_id = %s;
         """, (aspirante_id,))
         conn.commit()
 
     # 3️⃣ Obtener credenciales WABA
-    subdominio = current_tenant.get()
-    cuenta = obtener_cuenta_por_subdominio(subdominio)
+    tenant_key = current_tenant.get()
+    cuenta = obtener_cuenta_por_subdominio(tenant_key)
 
     if not cuenta:
-        raise HTTPException(500, f"No hay credenciales WABA para '{subdominio}'.")
+        raise HTTPException(500, f"No hay credenciales WABA para '{tenant_key}'.")
 
     token = cuenta["access_token"]
     phone_id = cuenta["phone_number_id"]
@@ -4189,53 +4184,148 @@ def enviar_mensaje_no_apto(
         or "nuestra agencia"
     )
 
-    # 4️⃣ Verificar ventana de 24h
-    ventana_abierta = obtener_status_24hrs(telefono)
+    # 4️⃣ Construir mensaje simple
+    mensaje = mensaje_no_apto_simple(nombre, business_name)
 
     # ==============================
-    # 5️⃣ ENVÍO CONDICIONAL
+    # 5️⃣ ENVIAR MENSAJE SIMPLE
     # ==============================
     try:
-        if not ventana_abierta:
-            # 👉 MENSAJE SIMPLE
-            mensaje = mensaje_no_apto_simple(nombre, business_name)
-            codigo, respuesta = enviar_mensaje(telefono, mensaje)
+        codigo, respuesta = enviar_mensaje_texto_simple(
+            token=token,
+            numero_id=phone_id,
+            telefono_destino=telefono,
+            texto=mensaje
+        )
 
-            return {
-                "status": "ok" if codigo < 300 else "error",
-                "tipo_envio": "mensaje_simple",
-                "codigo_meta": codigo,
-                "respuesta_api": respuesta,
-                "telefono": telefono
-            }
+        # 6️⃣ Extraer message_id de Meta
+        message_id_meta = None
+        if isinstance(respuesta, dict) and respuesta.get("messages"):
+            try:
+                message_id_meta = respuesta["messages"][0].get("id")
+            except Exception:
+                message_id_meta = None
 
-        else:
-            # 👉 PLANTILLA
-            parametros = [
-                nombre or "creador",
-                business_name
-            ]
+        # 7️⃣ Guardar en DB (CLAVE 🔥)
+        guardar_mensaje_nuevo(
+            telefono=telefono,
+            contenido=mensaje,
+            direccion="enviado",
+            tipo="text",
+            message_id_meta=message_id_meta,
+            estado="sent" if codigo and codigo < 300 else "failed"
+        )
 
-            codigo, respuesta = enviar_plantilla_generica_parametros(
-                token=token,
-                phone_number_id=phone_id,
-                numero_destino=telefono,
-                nombre_plantilla="no_apto_proceso_v3",
-                codigo_idioma="es_CO",
-                parametros=parametros,
-                body_vars_count=2
-            )
-
-            return {
-                "status": "ok" if codigo < 300 else "error",
-                "tipo_envio": "plantilla",
-                "codigo_meta": codigo,
-                "respuesta_api": respuesta,
-                "telefono": telefono
-            }
+        return {
+            "status": "ok" if codigo < 300 else "error",
+            "tipo_envio": "mensaje_simple",
+            "codigo_meta": codigo,
+            "respuesta_api": respuesta,
+            "telefono": telefono
+        }
 
     except Exception as e:
         raise HTTPException(
             status_code=500,
             detail=f"Error enviando mensaje NO APTO: {str(e)}"
         )
+
+# @router.post("/api/aspirantes/no_apto/enviar")
+# def enviar_mensaje_no_apto(
+#     data: EnviarNoAptoIn,
+#     usuario_actual: dict = Depends(obtener_usuario_actual)
+# ):
+#     with get_connection_context() as conn:
+#         cur = conn.cursor()
+#
+#         # 1️⃣ Obtener aspirante
+#         cur.execute("""
+#             SELECT id,
+#                    COALESCE(nickname, nombre_real) AS nombre,
+#                    telefono
+#             FROM aspirantes
+#             WHERE id = %s;
+#         """, (data.aspirante_id,))
+#         row = cur.fetchone()
+#
+#         if not row:
+#             raise HTTPException(status_code=404, detail="Aspirante no encontrado.")
+#
+#         aspirante_id, nombre, telefono = row
+#
+#         if not telefono:
+#             raise HTTPException(status_code=400, detail="El aspirante no tiene número registrado.")
+#
+#         # 2️⃣ Marcar estado NO APTO
+#         cur.execute("""
+#             UPDATE aspirantes_perfil
+#             SET id_chatbot_estado = 4
+#             WHERE aspirante_id = %s;
+#         """, (aspirante_id,))
+#         conn.commit()
+#
+#     # 3️⃣ Obtener credenciales WABA
+#     subdominio = current_tenant.get()
+#     cuenta = obtener_cuenta_por_subdominio(subdominio)
+#
+#     if not cuenta:
+#         raise HTTPException(500, f"No hay credenciales WABA para '{subdominio}'.")
+#
+#     token = cuenta["access_token"]
+#     phone_id = cuenta["phone_number_id"]
+#     business_name = (
+#         cuenta.get("business_name")
+#         or cuenta.get("nombre")
+#         or "nuestra agencia"
+#     )
+#
+#     # 4️⃣ Verificar ventana de 24h
+#     ventana_abierta = obtener_status_24hrs(telefono)
+#
+#     # ==============================
+#     # 5️⃣ ENVÍO CONDICIONAL
+#     # ==============================
+#     try:
+#         if not ventana_abierta:
+#             # 👉 MENSAJE SIMPLE
+#             mensaje = mensaje_no_apto_simple(nombre, business_name)
+#             codigo, respuesta = enviar_mensaje(telefono, mensaje)
+#
+#             return {
+#                 "status": "ok" if codigo < 300 else "error",
+#                 "tipo_envio": "mensaje_simple",
+#                 "codigo_meta": codigo,
+#                 "respuesta_api": respuesta,
+#                 "telefono": telefono
+#             }
+#
+#         else:
+#             # 👉 PLANTILLA
+#             parametros = [
+#                 nombre or "creador",
+#                 business_name
+#             ]
+#
+#             codigo, respuesta = enviar_plantilla_generica_parametros(
+#                 token=token,
+#                 phone_number_id=phone_id,
+#                 numero_destino=telefono,
+#                 nombre_plantilla="no_apto_proceso_v3",
+#                 codigo_idioma="es_CO",
+#                 parametros=parametros,
+#                 body_vars_count=2
+#             )
+#
+#             return {
+#                 "status": "ok" if codigo < 300 else "error",
+#                 "tipo_envio": "plantilla",
+#                 "codigo_meta": codigo,
+#                 "respuesta_api": respuesta,
+#                 "telefono": telefono
+#             }
+#
+#     except Exception as e:
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error enviando mensaje NO APTO: {str(e)}"
+#         )
