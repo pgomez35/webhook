@@ -2695,6 +2695,196 @@ from types import SimpleNamespace
 #                 "Error interno al crear agendamiento de aspirante."
 #             )
 
+# @router.post("/api/agendamientos/aspirante/{token}", response_model=EventoOut)
+# def crear_agendamiento_aspirante(
+#     token: str,
+#     data: AgendamientoAspiranteIn,
+# ):
+#     """
+#     Guarda una cita desde el link de agendamiento usando token en la URL:
+#     → Valida token
+#     → Crea agendamiento
+#     → Marca token como usado
+#     → Si es ENTREVISTA, crea evento en Google Calendar con Meet
+#     """
+#
+#     with get_connection_context() as conn:
+#         cur = conn.cursor()
+#
+#         try:
+#             # 1️⃣ Validar token
+#             cur.execute(
+#                 """
+#                 SELECT
+#                     token,
+#                     aspirante_id,
+#                     responsable_id,
+#                     expiracion,
+#                     usado,
+#                     duracion_minutos,
+#                     tipo_agendamiento
+#                 FROM agendamientos_link_tokens
+#                 WHERE token = %s
+#                 """,
+#                 (token,)
+#             )
+#             token_row = cur.fetchone()
+#
+#             if not token_row:
+#                 raise HTTPException(404, "Link inválido.")
+#
+#             (
+#                 token_db,
+#                 aspirante_id,
+#                 responsable_id,
+#                 expiracion,
+#                 usado,
+#                 duracion_minutos,
+#                 tipo_agendamiento_db
+#             ) = token_row
+#
+#             if usado:
+#                 raise HTTPException(400, "Este link ya fue utilizado.")
+#
+#             if expiracion < datetime.now():
+#                 raise HTTPException(400, "Este link ya expiró.")
+#
+#             # 2️⃣ Obtener aspirante
+#             cur.execute(
+#                 """
+#                 SELECT
+#                     id,
+#                     COALESCE(NULLIF(nombre_real, ''), nickname) AS nombre,
+#                     nickname
+#                 FROM aspirantes
+#                 WHERE id = %s
+#                 """,
+#                 (aspirante_id,)
+#             )
+#             row = cur.fetchone()
+#
+#             if not row:
+#                 raise HTTPException(404, "El aspirante no existe.")
+#
+#             aspirante_id, aspirante_nombre_db, aspirante_nickname = row
+#
+#             # 3️⃣ Guardar timezone
+#             if data.timezone:
+#                 cur.execute(
+#                     """
+#                     UPDATE aspirantes_perfil
+#                     SET zona_horaria = %s
+#                     WHERE aspirante_id = %s
+#                     """,
+#                     (data.timezone, aspirante_id)
+#                 )
+#
+#             # 4️⃣ Fechas
+#             fecha_inicio = data.inicio
+#             tz = None
+#
+#             if data.timezone:
+#                 tz = ZoneInfo(data.timezone)
+#                 if fecha_inicio.tzinfo is None:
+#                     fecha_inicio = fecha_inicio.replace(tzinfo=tz)
+#                 fecha_inicio = fecha_inicio.astimezone(ZoneInfo("UTC"))
+#             elif fecha_inicio.tzinfo is not None:
+#                 fecha_inicio = fecha_inicio.astimezone(ZoneInfo("UTC"))
+#
+#             fecha_fin = fecha_inicio + timedelta(minutes=duracion_minutos)
+#
+#             tipo_agendamiento = tipo_agendamiento_db.upper()
+#
+#             # 5️⃣ Google Calendar
+#             link_meet = None
+#             google_event_id = None
+#
+#             if tipo_agendamiento == "ENTREVISTA":
+#                 try:
+#                     google_event = crear_evento_google(
+#                         resumen=data.titulo,
+#                         descripcion=data.descripcion or "",
+#                         fecha_inicio=fecha_inicio,
+#                         fecha_fin=fecha_fin,
+#                         requiere_meet=True,
+#                     )
+#                     link_meet = google_event.get("hangoutLink")
+#                     google_event_id = google_event.get("id")
+#                 except Exception as e:
+#                     logger.error(f"⚠️ Error creando evento Google Calendar: {e}")
+#
+#             # 6️⃣ Crear agendamiento
+#             agendamiento_id = crear_agendamiento_aspirante_DB(
+#                 data=SimpleNamespace(
+#                     titulo=data.titulo,
+#                     descripcion=data.descripcion,
+#                     fecha_inicio=fecha_inicio,
+#                     fecha_fin=fecha_fin,
+#                     tipo_agendamiento=tipo_agendamiento,
+#                     link_meet=link_meet,
+#                     google_event_id=google_event_id,
+#                 ),
+#                 aspirante_id=aspirante_id,
+#                 responsable_id=responsable_id
+#             )
+#
+#             if not agendamiento_id:
+#                 raise HTTPException(500, "No se pudo crear el agendamiento.")
+#
+#             # 7️⃣ 🔥 Marcar token como usado
+#             cur.execute(
+#                 """
+#                 UPDATE agendamientos_link_tokens
+#                 SET usado = true,
+#                     usado_en = NOW()
+#                 WHERE token = %s
+#                 """,
+#                 (token,)
+#             )
+#
+#             conn.commit()
+#
+#             # 8️⃣ Respuesta
+#             participante = {
+#                 "id": aspirante_id,
+#                 "nombre": aspirante_nombre_db,
+#                 "nickname": aspirante_nickname,
+#             }
+#
+#             return EventoOut(
+#                 id=str(agendamiento_id),
+#                 titulo=data.titulo,
+#                 descripcion=data.descripcion,
+#                 inicio=fecha_inicio,
+#                 fin=fecha_fin,
+#                 aspirante_id=aspirante_id,
+#                 participantes_ids=[aspirante_id],
+#                 participantes=[participante],
+#                 responsable_id=responsable_id,
+#                 estado="programado",
+#                 link_meet=link_meet,
+#                 origen="interno",
+#                 google_event_id=google_event_id,
+#             )
+#
+#         except HTTPException:
+#             raise
+#         except Exception as e:
+#             logger.error(f"❌ Error creando agendamiento de aspirante: {e}")
+#             logger.error(traceback.format_exc())
+#             raise HTTPException(
+#                 500,
+#                 "Error interno al crear agendamiento de aspirante."
+#             )
+
+
+# from typing import Optional
+
+ESTADO_AGENDAMIENTO_PROGRAMADO = 1
+TIPO_AGENDAMIENTO_LIVE = 1
+TIPO_AGENDAMIENTO_ENTREVISTA = 2
+TIPO_AGENDAMIENTO_OTRO = 4
+
 @router.post("/api/agendamientos/aspirante/{token}", response_model=EventoOut)
 def crear_agendamiento_aspirante(
     token: str,
@@ -2793,7 +2983,7 @@ def crear_agendamiento_aspirante(
 
             fecha_fin = fecha_inicio + timedelta(minutes=duracion_minutos)
 
-            tipo_agendamiento = tipo_agendamiento_db.upper()
+            tipo_agendamiento = (tipo_agendamiento_db or "").upper()
 
             # 5️⃣ Google Calendar
             link_meet = None
@@ -2813,8 +3003,9 @@ def crear_agendamiento_aspirante(
                 except Exception as e:
                     logger.error(f"⚠️ Error creando evento Google Calendar: {e}")
 
-            # 6️⃣ Crear agendamiento
-            agendamiento_id = crear_agendamiento_aspirante_DB(
+            # 6️⃣ Crear agendamiento en la MISMA transacción
+            agendamiento_id = crear_agendamiento_aspirante_DB_V1(
+                cur=cur,
                 data=SimpleNamespace(
                     titulo=data.titulo,
                     descripcion=data.descripcion,
@@ -2831,7 +3022,7 @@ def crear_agendamiento_aspirante(
             if not agendamiento_id:
                 raise HTTPException(500, "No se pudo crear el agendamiento.")
 
-            # 7️⃣ 🔥 Marcar token como usado
+            # 7️⃣ Marcar token como usado
             cur.execute(
                 """
                 UPDATE agendamientos_link_tokens
@@ -2844,7 +3035,6 @@ def crear_agendamiento_aspirante(
 
             conn.commit()
 
-            # 8️⃣ Respuesta
             participante = {
                 "id": aspirante_id,
                 "nombre": aspirante_nombre_db,
@@ -2876,6 +3066,111 @@ def crear_agendamiento_aspirante(
                 500,
                 "Error interno al crear agendamiento de aspirante."
             )
+
+def crear_agendamiento_aspirante_DB_V1(
+    cur,
+    data,
+    aspirante_id: int,
+    responsable_id: int
+) -> Optional[int]:
+    """
+    Crea un agendamiento, obtiene/crea la entrevista y registra la relación
+    en entrevista_agendamiento. Devuelve agendamiento_id o None si falla.
+
+    Se espera que `data` tenga:
+      - titulo
+      - descripcion
+      - fecha_inicio (UTC)
+      - fecha_fin (UTC)
+      - tipo_agendamiento (LIVE / ENTREVISTA)
+      - link_meet (opcional)
+      - google_event_id (opcional)
+    """
+
+    tipo_agendamiento = (getattr(data, "tipo_agendamiento", None) or "").upper()
+
+    mapa_tipos = {
+        "ENTREVISTA": TIPO_AGENDAMIENTO_ENTREVISTA,
+        "LIVE": TIPO_AGENDAMIENTO_LIVE,
+    }
+
+    tipo_agendamiento_id = mapa_tipos.get(tipo_agendamiento, TIPO_AGENDAMIENTO_OTRO)
+
+    link_meet = getattr(data, "link_meet", None)
+    google_event_id = getattr(data, "google_event_id", None)
+
+    # Si es LIVE, construir link automáticamente
+    if tipo_agendamiento == "LIVE" and not link_meet:
+        link_meet = obtener_link_live_por_creador(aspirante_id)
+
+    # 1️⃣ Insertar agendamiento
+    cur.execute(
+        """
+        INSERT INTO agendamientos (
+            titulo,
+            descripcion,
+            fecha_inicio,
+            fecha_fin,
+            aspirante_id,
+            responsable_id,
+            estado,
+            tipo_agendamiento,
+            link_meet,
+            google_event_id
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (
+            data.titulo,
+            data.descripcion,
+            data.fecha_inicio,
+            data.fecha_fin,
+            aspirante_id,
+            responsable_id,
+            ESTADO_AGENDAMIENTO_PROGRAMADO,
+            tipo_agendamiento_id,
+            link_meet,
+            google_event_id,
+        )
+    )
+
+    agendamiento_id = cur.fetchone()[0]
+
+    # 2️⃣ Obtener o crear entrevista
+    entrevista = obtener_entrevista_id(aspirante_id, responsable_id)
+    if not entrevista:
+        raise Exception("No se pudo obtener o crear la entrevista.")
+
+    entrevista_id = entrevista["id"]
+
+    # 3️⃣ Relacionar entrevista con agendamiento
+    cur.execute(
+        """
+        INSERT INTO entrevista_agendamiento (
+            agendamiento_id,
+            entrevista_id,
+            creado_en
+        )
+        VALUES (%s, %s, NOW() AT TIME ZONE 'UTC')
+        """,
+        (agendamiento_id, entrevista_id)
+    )
+
+    # 4️⃣ Insertar participante
+    cur.execute(
+        """
+        INSERT INTO agendamientos_participantes (
+            agendamiento_id,
+            aspirante_id
+        )
+        VALUES (%s, %s)
+        """,
+        (agendamiento_id, aspirante_id)
+    )
+
+    return agendamiento_id
+
 
 @router.post("/api/agendamientos/aspiranteTokenV1", response_model=EventoOut)
 def crear_agendamiento_aspiranteTokenV1(
@@ -3152,6 +3447,8 @@ def crear_agendamiento_aspirante_DB(
         link_meet = getattr(data, "link_meet", None)
         google_event_id = getattr(data, "google_event_id", None)
 
+        ESTADO_AGENDAMIENTO_PROGRAMADO = 1
+
         # 🔥 Si es LIVE → construir link automáticamente
         if tipo_agendamiento_id == 4:
             link_meet = obtener_link_live_por_creador(aspirante_id)
@@ -3162,20 +3459,17 @@ def crear_agendamiento_aspirante_DB(
                 # 1️⃣ INSERTAR AGENDAMIENTO
                 cur.execute(
                     """
-                    INSERT INTO agendamientos (
-                        titulo,
-                        descripcion,
-                        fecha_inicio,
-                        fecha_fin,
-                        aspirante_id,
-                        responsable_id,
-                        estado,
-                        tipo_agendamiento,
-                        link_meet,
-                        google_event_id
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, 'programado', %s, %s, %s)
-                    RETURNING id
+                    INSERT INTO agendamientos (titulo,
+                                               descripcion,
+                                               fecha_inicio,
+                                               fecha_fin,
+                                               aspirante_id,
+                                               responsable_id,
+                                               estado,
+                                               tipo_agendamiento,
+                                               link_meet,
+                                               google_event_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
                     """,
                     (
                         data.titulo,
@@ -3184,6 +3478,7 @@ def crear_agendamiento_aspirante_DB(
                         data.fecha_fin,
                         aspirante_id,
                         responsable_id,
+                        ESTADO_AGENDAMIENTO_PROGRAMADO,
                         tipo_agendamiento_id,
                         link_meet,
                         google_event_id,
