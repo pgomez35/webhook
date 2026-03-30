@@ -2545,340 +2545,6 @@ def enviar_mensaje_no_aptoV1(
 # ===================================================
 from types import SimpleNamespace
 
-# @router.post("/api/agendamientos/aspirante", response_model=EventoOut)
-# def crear_agendamiento_aspirante(
-#     data: AgendamientoAspiranteIn,
-# ):
-#     """
-#     Guarda una cita desde el link de agendamiento usando aspirante_id:
-#     → Crea agendamiento
-#     → Si es ENTREVISTA, crea evento en Google Calendar con Meet
-#     """
-#
-#     with get_connection_context() as conn:
-#         cur = conn.cursor()
-#
-#         try:
-#             # 1️⃣ Verificar aspirante
-#             cur.execute(
-#                 """
-#                 SELECT
-#                     id,
-#                     COALESCE(NULLIF(nombre_real, ''), nickname) AS nombre,
-#                     nickname
-#                 FROM aspirantes
-#                 WHERE id = %s
-#                 """,
-#                 (data.aspirante_id,)
-#             )
-#             row = cur.fetchone()
-#
-#             if not row:
-#                 raise HTTPException(404, "El aspirante no existe.")
-#
-#             aspirante_id, aspirante_nombre_db, aspirante_nickname = row
-#
-#             # 2️⃣ Guardar timezone opcional
-#             if data.timezone:
-#                 cur.execute(
-#                     """
-#                     UPDATE aspirantes_perfil
-#                     SET zona_horaria = %s
-#                     WHERE aspirante_id = %s
-#                     """,
-#                     (data.timezone, aspirante_id)
-#                 )
-#
-#             # 3️⃣ Calcular fecha_inicio / fecha_fin (UTC)
-#             fecha_inicio = data.inicio
-#             tz = None
-#
-#             if data.timezone:
-#                 tz = ZoneInfo(data.timezone)
-#                 if fecha_inicio.tzinfo is None:
-#                     fecha_inicio = fecha_inicio.replace(tzinfo=tz)
-#                 fecha_inicio = fecha_inicio.astimezone(ZoneInfo("UTC"))
-#             elif fecha_inicio.tzinfo is not None:
-#                 fecha_inicio = fecha_inicio.astimezone(ZoneInfo("UTC"))
-#
-#             if data.duracion_minutos:
-#                 fecha_fin = fecha_inicio + timedelta(minutes=data.duracion_minutos)
-#             else:
-#                 if not data.fin:
-#                     raise HTTPException(
-#                         400,
-#                         "Debe enviar duracion_minutos o fecha fin."
-#                     )
-#                 fecha_fin = data.fin
-#                 if fecha_fin <= data.inicio:
-#                     raise HTTPException(
-#                         400,
-#                         "La fecha de fin debe ser posterior a la fecha de inicio."
-#                     )
-#                 if data.timezone:
-#                     if fecha_fin.tzinfo is None:
-#                         fecha_fin = fecha_fin.replace(tzinfo=tz)
-#                     fecha_fin = fecha_fin.astimezone(ZoneInfo("UTC"))
-#                 elif fecha_fin.tzinfo is not None:
-#                     fecha_fin = fecha_fin.astimezone(ZoneInfo("UTC"))
-#
-#             tipo_agendamiento = data.tipo_agendamiento.upper()
-#
-#             # 4️⃣ Crear evento Google Calendar si es ENTREVISTA
-#             link_meet = None
-#             google_event_id = None
-#
-#             if tipo_agendamiento == "ENTREVISTA":
-#                 try:
-#                     google_event = crear_evento_google(
-#                         resumen=data.titulo,
-#                         descripcion=data.descripcion or "",
-#                         fecha_inicio=fecha_inicio,
-#                         fecha_fin=fecha_fin,
-#                         requiere_meet=True,
-#                     )
-#                     link_meet = google_event.get("hangoutLink")
-#                     google_event_id = google_event.get("id")
-#                 except Exception as e:
-#                     logger.error(f"⚠️ Error creando evento Google Calendar: {e}")
-#
-#             # 5️⃣ Crear agendamiento en DB
-#             agendamiento_id = crear_agendamiento_aspirante_DB(
-#                 data=SimpleNamespace(
-#                     titulo=data.titulo,
-#                     descripcion=data.descripcion,
-#                     fecha_inicio=fecha_inicio,
-#                     fecha_fin=fecha_fin,
-#                     tipo_agendamiento=tipo_agendamiento,
-#                     link_meet=link_meet,
-#                     google_event_id=google_event_id,
-#                 ),
-#                 aspirante_id=aspirante_id,
-#                 responsable_id=data.responsable_id
-#             )
-#
-#             if not agendamiento_id:
-#                 raise HTTPException(500, "No se pudo crear el agendamiento.")
-#
-#             conn.commit()
-#
-#             # 6️⃣ Respuesta
-#             participante = {
-#                 "id": aspirante_id,
-#                 "nombre": aspirante_nombre_db,
-#                 "nickname": aspirante_nickname,
-#             }
-#
-#             return EventoOut(
-#                 id=str(agendamiento_id),
-#                 titulo=data.titulo,
-#                 descripcion=data.descripcion,
-#                 inicio=fecha_inicio,
-#                 fin=fecha_fin,
-#                 aspirante_id=aspirante_id,
-#                 participantes_ids=[aspirante_id],
-#                 participantes=[participante],
-#                 responsable_id=data.responsable_id,
-#                 estado="programado",
-#                 link_meet=link_meet,
-#                 origen="interno",
-#                 google_event_id=google_event_id,
-#             )
-#
-#         except HTTPException:
-#             raise
-#         except Exception as e:
-#             logger.error(f"❌ Error creando agendamiento de aspirante: {e}")
-#             logger.error(traceback.format_exc())
-#             raise HTTPException(
-#                 500,
-#                 "Error interno al crear agendamiento de aspirante."
-#             )
-
-# @router.post("/api/agendamientos/aspirante/{token}", response_model=EventoOut)
-# def crear_agendamiento_aspirante(
-#     token: str,
-#     data: AgendamientoAspiranteIn,
-# ):
-#     """
-#     Guarda una cita desde el link de agendamiento usando token en la URL:
-#     → Valida token
-#     → Crea agendamiento
-#     → Marca token como usado
-#     → Si es ENTREVISTA, crea evento en Google Calendar con Meet
-#     """
-#
-#     with get_connection_context() as conn:
-#         cur = conn.cursor()
-#
-#         try:
-#             # 1️⃣ Validar token
-#             cur.execute(
-#                 """
-#                 SELECT
-#                     token,
-#                     aspirante_id,
-#                     responsable_id,
-#                     expiracion,
-#                     usado,
-#                     duracion_minutos,
-#                     tipo_agendamiento
-#                 FROM agendamientos_link_tokens
-#                 WHERE token = %s
-#                 """,
-#                 (token,)
-#             )
-#             token_row = cur.fetchone()
-#
-#             if not token_row:
-#                 raise HTTPException(404, "Link inválido.")
-#
-#             (
-#                 token_db,
-#                 aspirante_id,
-#                 responsable_id,
-#                 expiracion,
-#                 usado,
-#                 duracion_minutos,
-#                 tipo_agendamiento_db
-#             ) = token_row
-#
-#             if usado:
-#                 raise HTTPException(400, "Este link ya fue utilizado.")
-#
-#             if expiracion < datetime.now():
-#                 raise HTTPException(400, "Este link ya expiró.")
-#
-#             # 2️⃣ Obtener aspirante
-#             cur.execute(
-#                 """
-#                 SELECT
-#                     id,
-#                     COALESCE(NULLIF(nombre_real, ''), nickname) AS nombre,
-#                     nickname
-#                 FROM aspirantes
-#                 WHERE id = %s
-#                 """,
-#                 (aspirante_id,)
-#             )
-#             row = cur.fetchone()
-#
-#             if not row:
-#                 raise HTTPException(404, "El aspirante no existe.")
-#
-#             aspirante_id, aspirante_nombre_db, aspirante_nickname = row
-#
-#             # 3️⃣ Guardar timezone
-#             if data.timezone:
-#                 cur.execute(
-#                     """
-#                     UPDATE aspirantes_perfil
-#                     SET zona_horaria = %s
-#                     WHERE aspirante_id = %s
-#                     """,
-#                     (data.timezone, aspirante_id)
-#                 )
-#
-#             # 4️⃣ Fechas
-#             fecha_inicio = data.inicio
-#             tz = None
-#
-#             if data.timezone:
-#                 tz = ZoneInfo(data.timezone)
-#                 if fecha_inicio.tzinfo is None:
-#                     fecha_inicio = fecha_inicio.replace(tzinfo=tz)
-#                 fecha_inicio = fecha_inicio.astimezone(ZoneInfo("UTC"))
-#             elif fecha_inicio.tzinfo is not None:
-#                 fecha_inicio = fecha_inicio.astimezone(ZoneInfo("UTC"))
-#
-#             fecha_fin = fecha_inicio + timedelta(minutes=duracion_minutos)
-#
-#             tipo_agendamiento = tipo_agendamiento_db.upper()
-#
-#             # 5️⃣ Google Calendar
-#             link_meet = None
-#             google_event_id = None
-#
-#             if tipo_agendamiento == "ENTREVISTA":
-#                 try:
-#                     google_event = crear_evento_google(
-#                         resumen=data.titulo,
-#                         descripcion=data.descripcion or "",
-#                         fecha_inicio=fecha_inicio,
-#                         fecha_fin=fecha_fin,
-#                         requiere_meet=True,
-#                     )
-#                     link_meet = google_event.get("hangoutLink")
-#                     google_event_id = google_event.get("id")
-#                 except Exception as e:
-#                     logger.error(f"⚠️ Error creando evento Google Calendar: {e}")
-#
-#             # 6️⃣ Crear agendamiento
-#             agendamiento_id = crear_agendamiento_aspirante_DB(
-#                 data=SimpleNamespace(
-#                     titulo=data.titulo,
-#                     descripcion=data.descripcion,
-#                     fecha_inicio=fecha_inicio,
-#                     fecha_fin=fecha_fin,
-#                     tipo_agendamiento=tipo_agendamiento,
-#                     link_meet=link_meet,
-#                     google_event_id=google_event_id,
-#                 ),
-#                 aspirante_id=aspirante_id,
-#                 responsable_id=responsable_id
-#             )
-#
-#             if not agendamiento_id:
-#                 raise HTTPException(500, "No se pudo crear el agendamiento.")
-#
-#             # 7️⃣ 🔥 Marcar token como usado
-#             cur.execute(
-#                 """
-#                 UPDATE agendamientos_link_tokens
-#                 SET usado = true,
-#                     usado_en = NOW()
-#                 WHERE token = %s
-#                 """,
-#                 (token,)
-#             )
-#
-#             conn.commit()
-#
-#             # 8️⃣ Respuesta
-#             participante = {
-#                 "id": aspirante_id,
-#                 "nombre": aspirante_nombre_db,
-#                 "nickname": aspirante_nickname,
-#             }
-#
-#             return EventoOut(
-#                 id=str(agendamiento_id),
-#                 titulo=data.titulo,
-#                 descripcion=data.descripcion,
-#                 inicio=fecha_inicio,
-#                 fin=fecha_fin,
-#                 aspirante_id=aspirante_id,
-#                 participantes_ids=[aspirante_id],
-#                 participantes=[participante],
-#                 responsable_id=responsable_id,
-#                 estado="programado",
-#                 link_meet=link_meet,
-#                 origen="interno",
-#                 google_event_id=google_event_id,
-#             )
-#
-#         except HTTPException:
-#             raise
-#         except Exception as e:
-#             logger.error(f"❌ Error creando agendamiento de aspirante: {e}")
-#             logger.error(traceback.format_exc())
-#             raise HTTPException(
-#                 500,
-#                 "Error interno al crear agendamiento de aspirante."
-#             )
-
-from typing import Optional
-
 ESTADO_AGENDAMIENTO_PROGRAMADO = 1
 TIPO_AGENDAMIENTO_LIVE = 1
 TIPO_AGENDAMIENTO_ENTREVISTA = 2
@@ -2887,6 +2553,210 @@ TIPO_AGENDAMIENTO_OTRO = 4
 ENTREVISTA_TIPO_LIVE = 1
 ENTREVISTA_TIPO_ENTREVISTA = 2
 ESTADO_ENTREVISTA_PROGRAMADA = 1
+
+
+@router.post("/api/agendamientos/aspirante/{token}", response_model=EventoOut)
+def crear_agendamiento_aspirante(
+    token: str,
+    data: AgendamientoAspiranteIn,
+):
+    """
+    Guarda una cita desde el link de agendamiento usando token en la URL:
+    → Valida token
+    → Crea agendamiento
+    → Marca token como usado
+    → Si es ENTREVISTA, crea evento en Google Calendar con Meet
+    """
+
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+
+        try:
+            # 1️⃣ Validar token
+            cur.execute(
+                """
+                SELECT
+                    token,
+                    aspirante_id,
+                    responsable_id,
+                    expiracion,
+                    usado,
+                    duracion_minutos,
+                    tipo_agendamiento
+                FROM agendamientos_link_tokens
+                WHERE token = %s
+                """,
+                (token,)
+            )
+            token_row = cur.fetchone()
+
+            if not token_row:
+                raise HTTPException(status_code=404, detail="Link inválido.")
+
+            (
+                token_db,
+                aspirante_id,
+                responsable_id,
+                expiracion,
+                usado,
+                duracion_minutos,
+                tipo_agendamiento_db
+            ) = token_row
+
+            if usado:
+                raise HTTPException(status_code=400, detail="Este link ya fue utilizado.")
+
+            if expiracion < datetime.now():
+                raise HTTPException(status_code=400, detail="Este link ya expiró.")
+
+            # 2️⃣ Obtener aspirante
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    COALESCE(NULLIF(nombre_real, ''), nickname) AS nombre,
+                    nickname
+                FROM aspirantes
+                WHERE id = %s
+                """,
+                (aspirante_id,)
+            )
+            row = cur.fetchone()
+
+            if not row:
+                raise HTTPException(status_code=404, detail="El aspirante no existe.")
+
+            aspirante_id, aspirante_nombre_db, aspirante_nickname = row
+
+            # 3️⃣ Guardar timezone si viene
+            if data.timezone:
+                cur.execute(
+                    """
+                    UPDATE aspirantes_perfil
+                    SET zona_horaria = %s
+                    WHERE aspirante_id = %s
+                    """,
+                    (data.timezone, aspirante_id)
+                )
+
+            # 4️⃣ Calcular fechas
+            fecha_inicio = data.inicio
+            tz = None
+
+            if data.timezone:
+                tz = ZoneInfo(data.timezone)
+                if fecha_inicio.tzinfo is None:
+                    fecha_inicio = fecha_inicio.replace(tzinfo=tz)
+                fecha_inicio = fecha_inicio.astimezone(ZoneInfo("UTC"))
+            elif fecha_inicio.tzinfo is not None:
+                fecha_inicio = fecha_inicio.astimezone(ZoneInfo("UTC"))
+
+            if duracion_minutos:
+                fecha_fin = fecha_inicio + timedelta(minutes=duracion_minutos)
+            else:
+                if not data.fin:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="El link no tiene duración y no se recibió fecha fin."
+                    )
+
+                fecha_fin = data.fin
+                if data.timezone and fecha_fin.tzinfo is None:
+                    fecha_fin = fecha_fin.replace(tzinfo=tz)
+                if fecha_fin.tzinfo is not None:
+                    fecha_fin = fecha_fin.astimezone(ZoneInfo("UTC"))
+
+                if fecha_fin <= fecha_inicio:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="La fecha fin debe ser posterior a la fecha inicio."
+                    )
+
+            tipo_agendamiento = (tipo_agendamiento_db or "").upper()
+
+            # 5️⃣ Crear evento Google Calendar si aplica
+            link_meet = None
+            google_event_id = None
+
+            if tipo_agendamiento == "ENTREVISTA":
+                try:
+                    google_event = crear_evento_google(
+                        resumen=data.titulo,
+                        descripcion=data.descripcion or "",
+                        fecha_inicio=fecha_inicio,
+                        fecha_fin=fecha_fin,
+                        requiere_meet=True,
+                    )
+                    link_meet = google_event.get("hangoutLink")
+                    google_event_id = google_event.get("id")
+                except Exception as e:
+                    logger.error(f"⚠️ Error creando evento Google Calendar: {e}")
+
+            # 6️⃣ Crear agendamiento + entrevista en la misma transacción
+            agendamiento_id = crear_agendamiento_aspirante_DB_V1(
+                cur=cur,
+                data=SimpleNamespace(
+                    titulo=data.titulo,
+                    descripcion=data.descripcion,
+                    fecha_inicio=fecha_inicio,
+                    fecha_fin=fecha_fin,
+                    tipo_agendamiento=tipo_agendamiento,
+                    link_meet=link_meet,
+                    google_event_id=google_event_id,
+                ),
+                aspirante_id=aspirante_id,
+                responsable_id=responsable_id
+            )
+
+            if not agendamiento_id:
+                raise HTTPException(status_code=500, detail="No se pudo crear el agendamiento.")
+
+            # 7️⃣ Marcar token como usado
+            cur.execute(
+                """
+                UPDATE agendamientos_link_tokens
+                SET usado = true,
+                    usado_en = NOW()
+                WHERE token = %s
+                """,
+                (token,)
+            )
+
+            conn.commit()
+
+            participante = {
+                "id": aspirante_id,
+                "nombre": aspirante_nombre_db,
+                "nickname": aspirante_nickname,
+            }
+
+            # 8️⃣ Respuesta correcta según EventoOut
+            return EventoOut(
+                agendamiento_id=str(agendamiento_id),
+                titulo=data.titulo,
+                descripcion=data.descripcion,
+                inicio=fecha_inicio,
+                fin=fecha_fin,
+                participantes_ids=[aspirante_id],
+                aspirante_id=aspirante_id,
+                responsable_id=responsable_id,
+                participantes=[participante],
+                estado="programado",
+                link_meet=link_meet,
+                origen="interno",
+                google_event_id=google_event_id,
+            )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"❌ Error creando agendamiento de aspirante: {e}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(
+                status_code=500,
+                detail="Error interno al crear agendamiento de aspirante."
+            )
+
 
 
 def crear_agendamiento_aspirante_DB_V1(
@@ -3036,8 +2906,6 @@ def crear_agendamiento_aspirante_DB_V1(
     except Exception as e:
         print("❌ Error en crear_agendamiento_aspirante_DB_V1:", e)
         return None
-
-
 
 @router.post("/api/agendamientos/aspiranteTokenV1", response_model=EventoOut)
 def crear_agendamiento_aspiranteTokenV1(
