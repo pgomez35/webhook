@@ -3859,7 +3859,7 @@ def listar_tipos_agendamiento(
             cur.execute(
                 """
                 SELECT id, nombre, color, icono, activo
-                FROM tipos_agendamiento
+                FROM agendamientos_tipo
                 WHERE activo = TRUE
                 ORDER BY id ASC
                 """
@@ -3868,7 +3868,7 @@ def listar_tipos_agendamiento(
             cur.execute(
                 """
                 SELECT id, nombre, color, icono, activo
-                FROM tipos_agendamiento
+                FROM agendamientos_tipo
                 ORDER BY nombre ASC
                 """
             )
@@ -4168,7 +4168,7 @@ def actualizar_estado_agendamiento(
 #         # =========================================================
 #         # 1. Obtener datos de la cita, creador y TIPO DE AGENDAMIENTO
 #         # =========================================================
-#         # Agregamos el LEFT JOIN con tipos_agendamiento
+#         # Agregamos el LEFT JOIN con agendamientos_tipo
 #         cur.execute("""
 #                     SELECT a.id,
 #                            a.fecha_inicio,
@@ -4181,7 +4181,7 @@ def actualizar_estado_agendamiento(
 #                     FROM agendamientos a
 #                              JOIN agendamientos_participantes ap ON a.id = ap.agendamiento_id
 #                              JOIN aspirantes c ON ap.aspirante_id = c.id
-#                              LEFT JOIN tipos_agendamiento ta ON a.tipo_agendamiento = ta.id
+#                              LEFT JOIN agendamientos_tipo ta ON a.tipo_agendamiento = ta.id
 #                     WHERE a.id = %s LIMIT 1
 #                     """, (agendamiento_id,))
 #
@@ -4352,7 +4352,7 @@ def enviar_recordatorio_manual(
                     FROM agendamientos a
                              JOIN agendamientos_participantes ap ON a.id = ap.agendamiento_id
                              JOIN aspirantes c ON ap.aspirante_id = c.id
-                             LEFT JOIN tipos_agendamiento ta ON a.tipo_agendamiento = ta.id
+                             LEFT JOIN agendamientos_tipo ta ON a.tipo_agendamiento = ta.id
                     WHERE a.id = %s LIMIT 1
                     """, (agendamiento_id,))
 

@@ -4273,6 +4273,57 @@ def enviar_link_agendamiento_aspirante(
         expiracion=expiracion,
     )
 
+
+@router.get("/api/agendamientos/link/{token}")
+def validar_link_agendamiento(token: str):
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT token,
+                   aspirante_id,
+                   responsable_id,
+                   expiracion,
+                   usado,
+                   duracion_minutos,
+                   tipo_agendamiento
+            FROM agendamientos_link_tokens
+            WHERE token = %s
+            """,
+            (token,)
+        )
+        row = cur.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Link no encontrado.")
+
+        (
+            token_db,
+            aspirante_id,
+            responsable_id,
+            expiracion,
+            usado,
+            duracion_minutos,
+            tipo_agendamiento
+        ) = row
+
+        if usado:
+            raise HTTPException(status_code=400, detail="Este link ya fue utilizado.")
+
+        if expiracion < datetime.now():
+            raise HTTPException(status_code=400, detail="Este link ya expiró.")
+
+        return {
+            "valido": True,
+            "token": token_db,
+            "aspirante_id": aspirante_id,
+            "responsable_id": responsable_id,
+            "duracion_minutos": duracion_minutos,
+            "tipo_agendamiento": tipo_agendamiento,
+            "expiracion": expiracion,
+        }
+
+
 @router.post("/api/aspirantes/no_apto/enviar")
 def enviar_mensaje_no_apto(
     data: EnviarNoAptoIn,

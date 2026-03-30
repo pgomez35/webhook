@@ -1039,7 +1039,7 @@ def obtener_pantalla_evaluacion_entrevistas(aspirante_id: int):
                 FROM agendamientos a
                 JOIN agendamientos_participantes ap
                   ON ap.agendamiento_id = a.id
-                LEFT JOIN tipos_agendamiento ta
+                LEFT JOIN agendamientos_tipo ta
                   ON ta.id = a.tipo_agendamiento
                 LEFT JOIN entrevistas e
                   ON e.agendamiento_id = a.id
@@ -1139,7 +1139,7 @@ def obtener_detalle_entrevista_por_agendamiento(
                 FROM agendamientos a
                 JOIN agendamientos_participantes ap
                   ON ap.agendamiento_id = a.id
-                LEFT JOIN tipos_agendamiento ta
+                LEFT JOIN agendamientos_tipo ta
                   ON ta.id = a.tipo_agendamiento
                 LEFT JOIN entrevistas e
                   ON e.agendamiento_id = a.id
@@ -1226,7 +1226,7 @@ def obtener_entrevista_por_id(entrevista_id: int, aspirante_id: int):
                   ON a.id = e.agendamiento_id
                 JOIN agendamientos_participantes ap
                   ON ap.agendamiento_id = a.id
-                LEFT JOIN tipos_agendamiento ta
+                LEFT JOIN agendamientos_tipo ta
                   ON ta.id = a.tipo_agendamiento
                 LEFT JOIN entrevista_tipo et
                   ON et.id = e.entrevista_tipo_id
