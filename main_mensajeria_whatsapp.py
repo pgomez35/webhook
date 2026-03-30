@@ -4131,8 +4131,8 @@ class CrearLinkAgendamientoIn(BaseModel):
 #     )
 
 
-@router.post("/api/agendamientos/aspirante/enviar", response_model=LinkAgendamientoOut)
-def enviar_link_agendamiento_aspirante(
+@router.post("/api/auto_agendamientos/aspirante/enviar", response_model=LinkAgendamientoOut)
+def enviar_link_auto_agendamiento_aspirante(
     data: CrearLinkAgendamientoIn,
     usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
