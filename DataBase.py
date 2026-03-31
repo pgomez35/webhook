@@ -442,7 +442,7 @@ def obtener_contactos_db_nueva(estado=None):
                            a.whatsapp AS telefono,
                            b.nombre AS estado
                     FROM aspirantes a
-                    INNER JOIN estados_creador b ON a.estado_id = b.id
+                    INNER JOIN aspirantes_estados b ON a.estado_id = b.id
                     WHERE a.whatsapp IS NOT NULL
                       AND a.whatsapp != ''
                       AND a.estado_id IN (1,2,3,4,5)
@@ -488,7 +488,7 @@ def obtener_contactos_db(estado: Optional[str] = None):
                     cur.execute("""
                         SELECT a.usuario, a.nickname, a.nombre_real AS nombre, a.whatsapp as telefono, b.nombre AS estado
                         FROM aspirantes a
-                        INNER JOIN estados_creador b ON a.estado_id = b.id
+                        INNER JOIN aspirantes_estados b ON a.estado_id = b.id
                         WHERE whatsapp IS NOT NULL
                           AND whatsapp != ''
                           AND UPPER(b.nombre) = %s
@@ -498,7 +498,7 @@ def obtener_contactos_db(estado: Optional[str] = None):
                     cur.execute("""
                         SELECT a.usuario, a.nickname, a.nombre_real AS nombre, a.whatsapp as telefono, b.nombre AS estado
                         FROM aspirantes a
-                        INNER JOIN estados_creador b ON a.estado_id = b.id
+                        INNER JOIN aspirantes_estados b ON a.estado_id = b.id
                         WHERE whatsapp IS NOT NULL
                           AND whatsapp != ''
                         ORDER BY a.usuario ASC
@@ -1500,7 +1500,7 @@ def obtener_aspirantes_db():
                         ec.nombre AS estado_nombre,
                         COALESCE(c.fecha_solicitud, c.creado_en) AS creado_en
                     FROM aspirantes c
-                    INNER JOIN estados_creador ec ON c.estado_id = ec.id
+                    INNER JOIN aspirantes_estados ec ON c.estado_id = ec.id
                     WHERE c.activo = TRUE
                       AND c.estado_id IN (3,4,5,7)
                     ORDER BY creado_en ASC;
@@ -1534,7 +1534,7 @@ def obtener_aspirantes_invitacion():
                         c.creado_en,
                         d.puntaje_total_categoria
                     FROM aspirantes c
-                    INNER JOIN estados_creador ec ON c.estado_id = ec.id
+                    INNER JOIN aspirantes_estados ec ON c.estado_id = ec.id
                     INNER JOIN aspirantes_perfil d ON d.aspirante_id=c.id
                     WHERE c.activo = TRUE AND c.estado_id IN (4,5)
                     ORDER BY c.usuario ASC;
@@ -1571,7 +1571,7 @@ def obtener_todos_usuarios_db():
                 'creador' AS tipo_usuario,
                 NULL AS rol
                 FROM aspirantes c
-                LEFT JOIN estados_creador ec ON c.estado_id = ec.id
+                LEFT JOIN aspirantes_estados ec ON c.estado_id = ec.id
                 WHERE c.activo = TRUE
                 
                 UNION ALL

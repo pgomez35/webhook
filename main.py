@@ -75,7 +75,7 @@ from main_mensajeria_whatsapp import router as main_mensajeria_whatsapp_router
 from main_invitacion import router as main_invitacion_router
 from main_diagnostico_config import router as diagnostico_config_router
 from main_aspirantes import router as main_aspirantes_router
-
+from main_portal_aspirantes import router as main_portal_aspirantes_router
 
 
 
@@ -119,6 +119,7 @@ app.include_router(main_mensajeria_whatsapp_router, tags=["mensajeria whatsapp"]
 app.include_router(main_invitacion_router, tags=["invitacion"])
 app.include_router(diagnostico_config_router, tags=["diagnostico configuracion"])
 app.include_router(main_aspirantes_router, tags=["aspirantes"])
+app.include_router(main_portal_aspirantes_router, tags=["portal aspirantes"])
 
 
 

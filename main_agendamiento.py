@@ -1524,7 +1524,6 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import List, Optional
 
-
 class CitaAspiranteOut(BaseModel):
     id: int
     fecha_inicio: str
@@ -1532,6 +1531,7 @@ class CitaAspiranteOut(BaseModel):
     duracion_minutos: int
     tipo_agendamiento: str
     realizada: bool
+    estado: str
     link_meet: Optional[str] = None
     url_reagendar: Optional[str] = None
 
@@ -1548,12 +1548,16 @@ def listar_citas_creador(aspirante_id: int):
                     a.id,
                     a.fecha_inicio,
                     a.fecha_fin,
-                    a.estado,
-                    COALESCE(a.tipo_agendamiento, 'ENTREVISTA') AS tipo_agendamiento,
+                    ae.nombre AS estado_nombre,
+                    COALESCE(at.nombre, 'ENTREVISTA') AS tipo_nombre,
                     a.link_meet
                 FROM agendamientos a
                 JOIN agendamientos_participantes ap
-                  ON ap.agendamiento_id = a.id
+                    ON ap.agendamiento_id = a.id
+                LEFT JOIN agendamientos_estados ae
+                    ON ae.id = a.estado
+                LEFT JOIN agendamientos_tipo at
+                    ON at.id = a.tipo_agendamiento
                 WHERE ap.aspirante_id = %s
                 ORDER BY a.fecha_inicio ASC
                 """,
@@ -1561,9 +1565,11 @@ def listar_citas_creador(aspirante_id: int):
             )
             rows = cur.fetchall()
 
-    for a_id, f_ini, f_fin, estado, tipo_agendamiento, link_meet in rows:
+    for a_id, f_ini, f_fin, estado_nombre, tipo_nombre, link_meet in rows:
         duracion_min = int((f_fin - f_ini).total_seconds() // 60)
-        realizada = (estado == "realizada")
+
+        # lógica nueva
+        realizada = (estado_nombre == "cumplido")
 
         citas.append(
             CitaAspiranteOut(
@@ -1571,14 +1577,16 @@ def listar_citas_creador(aspirante_id: int):
                 fecha_inicio=f_ini.isoformat(),
                 fecha_fin=f_fin.isoformat(),
                 duracion_minutos=duracion_min,
-                tipo_agendamiento=tipo_agendamiento.upper(),
+                tipo_agendamiento=tipo_nombre.upper(),
                 realizada=realizada,
+                estado=estado_nombre,
                 link_meet=link_meet,
                 url_reagendar=None,
             )
         )
 
     return citas
+
 
 
 
