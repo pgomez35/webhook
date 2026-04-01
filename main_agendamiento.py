@@ -1548,17 +1548,18 @@ def listar_citas_creador(aspirante_id: int):
                     a.id,
                     a.fecha_inicio,
                     a.fecha_fin,
-                    ae.nombre AS estado_nombre,
-                    COALESCE(at.nombre, 'ENTREVISTA') AS tipo_nombre,
+                    COALESCE(ae.nombre, 'programado') AS estado_nombre,
+                    at.nombre AS tipo_nombre,
                     a.link_meet
                 FROM agendamientos a
                 JOIN agendamientos_participantes ap
                     ON ap.agendamiento_id = a.id
                 LEFT JOIN agendamientos_estados ae
                     ON ae.id = a.estado
-                LEFT JOIN agendamientos_tipo at
+                INNER JOIN agendamientos_tipo at
                     ON at.id = a.tipo_agendamiento
-                WHERE ap.aspirante_id = %s
+                WHERE ap.aspirante_id = %s  
+                     AND at.es_aspirante = true
                 ORDER BY a.fecha_inicio ASC
                 """,
                 (aspirante_id,)
@@ -1579,7 +1580,7 @@ def listar_citas_creador(aspirante_id: int):
                 duracion_minutos=duracion_min,
                 tipo_agendamiento=tipo_nombre.upper(),
                 realizada=realizada,
-                estado=estado_nombre,
+                estado=estado_nombre or "programado",
                 link_meet=link_meet,
                 url_reagendar=None,
             )
