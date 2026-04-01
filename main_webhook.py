@@ -35,7 +35,7 @@ from evaluaciones import evaluar_y_actualizar_perfil_pre_encuesta, diagnostico_a
 
 # from main_EvaluacionAspirante import poblar_scores_creador
 from main_mensajeria_whatsapp import reenviar_ultimo_mensaje, enviar_mensaje_con_credenciales
-from main_portal_aspirantes import generar_url_portal_para_aspirante
+from main_portal_aspirantes import generar_url_portal
 from tenant import (
     current_business_name,
     current_phone_id,
@@ -6037,7 +6037,7 @@ def consolidar_perfil_web(
         # URL del portal con token
         # -------------------------------
 
-        url_info = generar_url_portal_para_aspirante(
+        url_info = generar_url_portal(
             aspirante_id,
             origen="encuesta"
         ) if aspirante_id else None
