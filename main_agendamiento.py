@@ -491,9 +491,208 @@ def obtener_evento(evento_id: str):
             logger.error(traceback.format_exc())
             raise HTTPException(status_code=500, detail="Error interno al obtener el evento.")
 
+@router.get("/api/eventos/{evento_id}", response_model=EventoOut)
+def obtener_evento(evento_id: str):
+    """
+    Obtiene un evento desde la BD interna.
 
-@router.get("/api/eventos", response_model=List[EventoOut])
-def listar_eventos(
+    - Si evento_id es numérico: busca por agendamientos.id
+    - Si es texto: busca por google_event_id
+    """
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+
+        try:
+            # ---------------------------------------------------------
+            # 1️⃣ Buscar evento
+            # ---------------------------------------------------------
+            if evento_id.isdigit():
+                cur.execute("""
+                    SELECT
+                        id,
+                        titulo,
+                        descripcion,
+                        fecha_inicio,
+                        fecha_fin,
+                        responsable_id,
+                        estado,
+                        link_meet,
+                        google_event_id,
+                        creado_en,
+                        actualizado_en,
+                        tipo_agendamiento
+                    FROM agendamientos
+                    WHERE id = %s
+                """, (int(evento_id),))
+            else:
+                cur.execute("""
+                    SELECT
+                        id,
+                        titulo,
+                        descripcion,
+                        fecha_inicio,
+                        fecha_fin,
+                        responsable_id,
+                        estado,
+                        link_meet,
+                        google_event_id,
+                        creado_en,
+                        actualizado_en,
+                        tipo_agendamiento
+                    FROM agendamientos
+                    WHERE google_event_id = %s
+                """, (evento_id,))
+
+            ag = cur.fetchone()
+
+            if not ag:
+                raise HTTPException(status_code=404, detail="Evento no encontrado.")
+
+            (
+                ag_id,
+                titulo,
+                descripcion,
+                fecha_inicio,
+                fecha_fin,
+                responsable_id,
+                estado,
+                link_meet,
+                google_event_id,
+                creado_en,
+                actualizado_en,
+                tipo_agendamiento
+            ) = ag
+
+            # ---------------------------------------------------------
+            # 2️⃣ Cargar participantes según la columna que esté llena
+            # ---------------------------------------------------------
+            participantes_out = []
+            participantes_ids = []
+            participante_tipo = None
+
+            # Aspirantes
+            cur.execute("""
+                SELECT
+                    a.id,
+                    COALESCE(NULLIF(a.nombre_real, ''), a.nickname, a.usuario, a.telefono) AS nombre,
+                    a.nickname
+                FROM agendamientos_participantes ap
+                JOIN aspirantes a
+                    ON a.id = ap.aspirante_id
+                WHERE ap.agendamiento_id = %s
+                  AND ap.aspirante_id IS NOT NULL
+            """, (ag_id,))
+            rows_asp = cur.fetchall()
+
+            if rows_asp:
+                participante_tipo = "aspirante"
+                participantes_ids = [row[0] for row in rows_asp]
+                participantes_out = [
+                    {
+                        "id": row[0],
+                        "nombre": row[1],
+                        "nickname": row[2]
+                    }
+                    for row in rows_asp
+                ]
+
+            else:
+                # Creadores
+                cur.execute("""
+                    SELECT
+                        c.id,
+                        COALESCE(NULLIF(c.nombre_real, ''), c.nickname, c.telefono) AS nombre,
+                        c.nickname
+                    FROM agendamientos_participantes ap
+                    JOIN creadores c
+                        ON c.id = ap.creador_id
+                    WHERE ap.agendamiento_id = %s
+                      AND ap.creador_id IS NOT NULL
+                """, (ag_id,))
+                rows_cre = cur.fetchall()
+
+                if rows_cre:
+                    participante_tipo = "creador"
+                    participantes_ids = [row[0] for row in rows_cre]
+                    participantes_out = [
+                        {
+                            "id": row[0],
+                            "nombre": row[1],
+                            "nickname": row[2]
+                        }
+                        for row in rows_cre
+                    ]
+
+                else:
+                    # Usuarios
+                    cur.execute("""
+                        SELECT
+                            u.id,
+                            COALESCE(NULLIF(u.nombre_completo, ''), u.username, u.email, u.telefono) AS nombre,
+                            NULL AS nickname
+                        FROM agendamientos_participantes ap
+                        JOIN usuarios u
+                            ON u.id = ap.usuario_id
+                        WHERE ap.agendamiento_id = %s
+                          AND ap.usuario_id IS NOT NULL
+                    """, (ag_id,))
+                    rows_usr = cur.fetchall()
+
+                    if rows_usr:
+                        participante_tipo = "usuario"
+                        participantes_ids = [row[0] for row in rows_usr]
+                        participantes_out = [
+                            {
+                                "id": row[0],
+                                "nombre": row[1],
+                                "nickname": row[2]
+                            }
+                            for row in rows_usr
+                        ]
+
+            # ---------------------------------------------------------
+            # 3️⃣ ID público
+            # ---------------------------------------------------------
+            public_id = google_event_id if google_event_id else str(ag_id)
+
+            # ---------------------------------------------------------
+            # 4️⃣ Origen
+            # ---------------------------------------------------------
+            origen = "google_calendar" if google_event_id else "interno"
+
+            # ---------------------------------------------------------
+            # 5️⃣ Respuesta
+            # ---------------------------------------------------------
+            return EventoOut(
+                agendamiento_id=str(ag_id),
+                titulo=titulo or "Sin título",
+                descripcion=descripcion or "",
+                inicio=fecha_inicio,
+                fin=fecha_fin,
+                participantes=participantes_out,
+                participantes_ids=participantes_ids,
+                participante_tipo=participante_tipo,
+                link_meet=link_meet,
+                responsable_id=responsable_id,
+                origen=origen,
+                tipo_agendamiento=tipo_agendamiento,
+                google_event_id=google_event_id,
+            )
+
+        except HTTPException:
+            raise
+
+        except Exception as e:
+            logger.error(f"❌ Error al obtener evento {evento_id}: {e}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(
+                status_code=500,
+                detail="Error interno al obtener el evento."
+            )
+
+
+@router.get("/api/eventosV01", response_model=List[EventoOut])
+def listar_eventosV01(
     time_min: Optional[datetime] = None,
     time_max: Optional[datetime] = None,
     max_results: Optional[int] = 100
