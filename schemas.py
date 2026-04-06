@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field,field_validator
-from typing import Optional, Union, Dict,List
+from typing import Optional, Union, Dict, List, Literal
 from datetime import datetime, date
 
 
@@ -21,10 +21,11 @@ class EventoIn(BaseModel):
     descripcion: Optional[str] = None
     inicio: datetime
     fin: datetime
-    participantes_ids: List[int] = []  # << agregar esta línea
-    link_meet: Optional[str] = None  # ← agregar esto si quieres permitir edición manual
-    requiere_meet: Optional[bool] = True  # ✅ nuevo flag
-    tipo_agendamiento: Optional[int] = 1  # ✅ CORRECTO
+    participantes_ids: List[int] = []
+    participante_tipo: Literal["aspirante", "creador", "usuario"]  # ✅ nuevo
+    link_meet: Optional[str] = None
+    requiere_meet: Optional[bool] = True
+    tipo_agendamiento: Optional[int] = 1
 
 
 class EventoOut(EventoIn):

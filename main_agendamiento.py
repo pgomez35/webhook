@@ -508,8 +508,262 @@ def listar_eventos(
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.put("/api/eventos/{evento_id}", response_model=EventoOut)
 def editar_evento(evento_id: str, evento: EventoIn):
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+        try:
+            # 1️⃣ Validación básica de fechas
+            if evento.fin <= evento.inicio:
+                raise HTTPException(
+                    status_code=400,
+                    detail="La fecha de fin debe ser posterior a la fecha de inicio."
+                )
+
+            if evento.participante_tipo not in ("aspirante", "creador", "usuario"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="participante_tipo inválido. Use: aspirante, creador o usuario."
+                )
+
+            # 2️⃣ Buscar el agendamiento en BD
+            #    - Si evento_id es numérico → buscar por id interno
+            #    - Si no → buscar por google_event_id
+            if evento_id.isdigit():
+                cur.execute(
+                    """
+                    SELECT id,
+                           titulo,
+                           descripcion,
+                           fecha_inicio,
+                           fecha_fin,
+                           responsable_id,
+                           estado,
+                           link_meet,
+                           google_event_id,
+                           tipo_agendamiento
+                    FROM agendamientos
+                    WHERE id = %s
+                    """,
+                    (int(evento_id),)
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id,
+                           titulo,
+                           descripcion,
+                           fecha_inicio,
+                           fecha_fin,
+                           responsable_id,
+                           estado,
+                           link_meet,
+                           google_event_id,
+                           tipo_agendamiento
+                    FROM agendamientos
+                    WHERE google_event_id = %s
+                    """,
+                    (evento_id,)
+                )
+
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Evento no encontrado.")
+
+            (
+                ag_id,
+                _titulo_actual,
+                _descripcion_actual,
+                _inicio_actual,
+                _fin_actual,
+                responsable_id,
+                estado,
+                link_meet_actual,
+                google_event_id,
+                tipo_agendamiento_actual
+            ) = row
+
+            # 3️⃣ Determinar nuevo link_meet
+            nuevo_link_meet = getattr(evento, "link_meet", link_meet_actual)
+
+            # 4️⃣ Si es LIVE / prueba TikTok, recalcular link según creador
+            if evento.tipo_agendamiento in (1, 5):
+                if not evento.participantes_ids:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Se requiere al menos un participante para generar el link."
+                    )
+
+                if evento.participante_tipo != "creador":
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Para este tipo de agendamiento el participante debe ser de tipo creador."
+                    )
+
+                creador_principal_id = evento.participantes_ids[0]
+                link_tiktok = obtener_link_live_por_creador(creador_principal_id)
+                if link_tiktok:
+                    nuevo_link_meet = link_tiktok
+                else:
+                    logger.warning(
+                        f"No se pudo generar link LIVE para el creador {creador_principal_id}"
+                    )
+
+            # 5️⃣ Actualizar el agendamiento en BD
+            cur.execute(
+                """
+                UPDATE agendamientos
+                SET fecha_inicio = %s,
+                    fecha_fin = %s,
+                    titulo = %s,
+                    descripcion = %s,
+                    link_meet = %s,
+                    tipo_agendamiento = %s,
+                    actualizado_en = NOW()
+                WHERE id = %s
+                """,
+                (
+                    evento.inicio,
+                    evento.fin,
+                    evento.titulo,
+                    evento.descripcion,
+                    nuevo_link_meet,
+                    evento.tipo_agendamiento,
+                    ag_id,
+                )
+            )
+
+            # 6️⃣ Reemplazar participantes
+            cur.execute(
+                "DELETE FROM agendamientos_participantes WHERE agendamiento_id = %s",
+                (ag_id,)
+            )
+
+            for participante_id in evento.participantes_ids:
+                if evento.participante_tipo == "aspirante":
+                    cur.execute(
+                        """
+                        INSERT INTO agendamientos_participantes (
+                            agendamiento_id,
+                            aspirante_id,
+                            estado
+                        )
+                        VALUES (%s, %s, %s)
+                        """,
+                        (ag_id, participante_id, "pendiente")
+                    )
+
+                elif evento.participante_tipo == "creador":
+                    cur.execute(
+                        """
+                        INSERT INTO agendamientos_participantes (
+                            agendamiento_id,
+                            creador_id,
+                            estado
+                        )
+                        VALUES (%s, %s, %s)
+                        """,
+                        (ag_id, participante_id, "pendiente")
+                    )
+
+                elif evento.participante_tipo == "usuario":
+                    cur.execute(
+                        """
+                        INSERT INTO agendamientos_participantes (
+                            agendamiento_id,
+                            usuario_id,
+                            estado
+                        )
+                        VALUES (%s, %s, %s)
+                        """,
+                        (ag_id, participante_id, "pendiente")
+                    )
+
+            # 7️⃣ Consultar datos de participantes para la respuesta
+            participantes = []
+            if evento.participantes_ids:
+                if evento.participante_tipo == "aspirante":
+                    cur.execute(
+                        """
+                        SELECT
+                            id,
+                            COALESCE(NULLIF(nombre_real, ''), nickname, usuario, telefono) AS nombre,
+                            nickname
+                        FROM aspirantes
+                        WHERE id = ANY(%s)
+                        """,
+                        (evento.participantes_ids,)
+                    )
+
+                elif evento.participante_tipo == "creador":
+                    cur.execute(
+                        """
+                        SELECT
+                            id,
+                            COALESCE(NULLIF(nombre_real, ''), nickname, telefono) AS nombre,
+                            nickname
+                        FROM creadores
+                        WHERE id = ANY(%s)
+                        """,
+                        (evento.participantes_ids,)
+                    )
+
+                elif evento.participante_tipo == "usuario":
+                    cur.execute(
+                        """
+                        SELECT
+                            id,
+                            COALESCE(NULLIF(nombre_completo, ''), username, email, telefono) AS nombre,
+                            NULL AS nickname
+                        FROM usuarios
+                        WHERE id = ANY(%s)
+                        """,
+                        (evento.participantes_ids,)
+                    )
+
+                participantes = [
+                    {"id": row[0], "nombre": row[1], "nickname": row[2]}
+                    for row in cur.fetchall()
+                ]
+
+            conn.commit()
+
+            # 8️⃣ Determinar ID público y origen
+            public_id = google_event_id if google_event_id else str(ag_id)
+            origen = "google_calendar" if google_event_id else "interno"
+
+            # 9️⃣ Respuesta final
+            return EventoOut(
+                agendamiento_id=str(ag_id),
+                titulo=evento.titulo,
+                descripcion=evento.descripcion,
+                inicio=evento.inicio,
+                fin=evento.fin,
+                participantes_ids=evento.participantes_ids,
+                participantes=participantes,
+                link_meet=nuevo_link_meet,
+                responsable_id=responsable_id,
+                origen=origen,
+                tipo_agendamiento=evento.tipo_agendamiento,
+                google_event_id=google_event_id,
+            )
+
+        except HTTPException:
+            conn.rollback()
+            raise
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"❌ Error al editar evento {evento_id}: {e}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(
+                status_code=500,
+                detail="Error interno al editar el evento."
+            )
+
+
+@router.put("/api/eventosV01/{evento_id}", response_model=EventoOut)
+def editar_eventov01(evento_id: str, evento: EventoIn):
     with get_connection_context() as conn:
         cur = conn.cursor()
         try:
@@ -688,6 +942,208 @@ def eliminar_evento(evento_id: str):
 
 @router.post("/api/eventos", response_model=EventoOut)
 def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario_actual)):
+    # 1) Validación básica
+    if evento.fin <= evento.inicio:
+        raise HTTPException(
+            status_code=400,
+            detail="La fecha de fin debe ser posterior a la fecha de inicio."
+        )
+
+    if evento.participante_tipo not in ("aspirante", "creador", "usuario"):
+        raise HTTPException(
+            status_code=400,
+            detail="participante_tipo inválido. Use: aspirante, creador o usuario."
+        )
+
+    # 2) Obtener config
+    google_meet_enabled_str = get_config("google_meet_enabled")
+    google_meet_enabled = str(google_meet_enabled_str).lower() in ['true', '1', 't', 'y', 'yes']
+
+    debe_crear_meet = google_meet_enabled and evento.requiere_meet
+
+    link_reunion = evento.link_meet
+    google_event_id = None
+
+    # 3) Intentar crear evento en Google si aplica
+    if evento.tipo_agendamiento not in (1, 5) and google_meet_enabled:
+        try:
+            google_event = crear_evento_google(
+                resumen=evento.titulo,
+                descripcion=evento.descripcion or "",
+                fecha_inicio=evento.inicio,
+                fecha_fin=evento.fin,
+                requiere_meet=debe_crear_meet,
+            )
+
+            google_event_id = google_event.get("id")
+            link_reunion = google_event.get("hangoutLink")
+
+        except Exception as e:
+            logger.error(f"⚠️ Error creando evento Google Calendar: {e}")
+            logger.error(traceback.format_exc())
+            google_event_id = None
+
+    # 4) Si tipo_agendamiento == 1 o 5 → generar link TikTok
+    if evento.tipo_agendamiento in (1, 5):
+
+        if not evento.participantes_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="Se requiere al menos un participante para generar el link."
+            )
+
+        # Para LIVE / prueba TikTok, el participante principal debe ser creador
+        if evento.participante_tipo != "creador":
+            raise HTTPException(
+                status_code=400,
+                detail="Para este tipo de agendamiento el participante debe ser de tipo creador."
+            )
+
+        creador_principal_id = evento.participantes_ids[0]
+
+        link_tiktok = obtener_link_live_por_creador(creador_principal_id)
+        if link_tiktok:
+            link_reunion = link_tiktok
+        else:
+            logger.warning(f"No se pudo generar link LIVE para el creador {creador_principal_id}")
+
+    # 5) Abrimos transacción principal para guardar en BD
+    with get_connection_context() as conn:
+        try:
+            cur = conn.cursor()
+
+            cur.execute("""
+                INSERT INTO agendamientos (
+                    titulo,
+                    descripcion,
+                    fecha_inicio,
+                    fecha_fin,
+                    tipo_agendamiento,
+                    link_meet,
+                    estado,
+                    responsable_id,
+                    google_event_id
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                evento.titulo,
+                evento.descripcion,
+                evento.inicio,
+                evento.fin,
+                evento.tipo_agendamiento,
+                link_reunion,
+                1,
+                usuario_actual["id"],
+                google_event_id
+            ))
+
+            agendamiento_id = cur.fetchone()[0]
+
+            # 6) Insertar participantes según tipo
+            if evento.participantes_ids:
+                for participante_id in evento.participantes_ids:
+                    if evento.participante_tipo == "aspirante":
+                        cur.execute("""
+                            INSERT INTO agendamientos_participantes (
+                                agendamiento_id,
+                                aspirante_id,
+                                estado
+                            )
+                            VALUES (%s, %s, %s)
+                        """, (agendamiento_id, participante_id, "pendiente"))
+
+                    elif evento.participante_tipo == "creador":
+                        cur.execute("""
+                            INSERT INTO agendamientos_participantes (
+                                agendamiento_id,
+                                creador_id,
+                                estado
+                            )
+                            VALUES (%s, %s, %s)
+                        """, (agendamiento_id, participante_id, "pendiente"))
+
+                    elif evento.participante_tipo == "usuario":
+                        cur.execute("""
+                            INSERT INTO agendamientos_participantes (
+                                agendamiento_id,
+                                usuario_id,
+                                estado
+                            )
+                            VALUES (%s, %s, %s)
+                        """, (agendamiento_id, participante_id, "pendiente"))
+
+            # 7) Consultar datos de participantes según tipo
+            participantes = []
+
+            if evento.participantes_ids:
+                if evento.participante_tipo == "aspirante":
+                    cur.execute("""
+                        SELECT
+                            id,
+                            COALESCE(NULLIF(nombre_real, ''), nickname, usuario, telefono) AS nombre,
+                            nickname
+                        FROM aspirantes
+                        WHERE id = ANY(%s)
+                    """, (evento.participantes_ids,))
+
+                elif evento.participante_tipo == "creador":
+                    cur.execute("""
+                        SELECT
+                            id,
+                            COALESCE(NULLIF(nombre_real, ''), nickname, telefono) AS nombre,
+                            nickname
+                        FROM creadores
+                        WHERE id = ANY(%s)
+                    """, (evento.participantes_ids,))
+
+                elif evento.participante_tipo == "usuario":
+                    cur.execute("""
+                        SELECT
+                            id,
+                            COALESCE(NULLIF(nombre_completo, ''), username, email, telefono) AS nombre,
+                            NULL AS nickname
+                        FROM usuarios
+                        WHERE id = ANY(%s)
+                    """, (evento.participantes_ids,))
+
+                participantes = [
+                    {"id": row[0], "nombre": row[1], "nickname": row[2]}
+                    for row in cur.fetchall()
+                ]
+
+            conn.commit()
+
+            # 8) Respuesta
+            return EventoOut(
+                agendamiento_id=str(agendamiento_id),
+                titulo=evento.titulo,
+                descripcion=evento.descripcion,
+                inicio=evento.inicio,
+                fin=evento.fin,
+                participantes_ids=evento.participantes_ids,
+                participantes=participantes,
+                link_meet=link_reunion,
+                responsable_id=usuario_actual["id"],
+                origen="interno",
+                tipo_agendamiento=evento.tipo_agendamiento,
+                google_event_id=google_event_id,
+            )
+
+        except HTTPException:
+            conn.rollback()
+            raise
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"❌ Error creando evento BD: {e}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(
+                status_code=500,
+                detail="Error guardando el evento en la base de datos."
+            )
+
+@router.post("/api/eventosV01", response_model=EventoOut)
+def crear_eventov01(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario_actual)):
     # 1) Validación básica
     if evento.fin <= evento.inicio:
         raise HTTPException(
@@ -4055,21 +4511,31 @@ from zoneinfo import ZoneInfo
 # from pydantic import BaseModel
 # from typing import List, Optional
 
+# class TipoAgendamientoOut(BaseModel):
+#     id: int
+#     nombre: str
+#     color: Optional[str] = None
+#     icono: Optional[str] = None
+#     activo: bool
+
+class ParticipanteTipoOut(BaseModel):
+    id: int
+    codigo: str
+    nombre: str
+
+
 class TipoAgendamientoOut(BaseModel):
     id: int
     nombre: str
     color: Optional[str] = None
     icono: Optional[str] = None
     activo: bool
-
+    participante_tipo: Optional[ParticipanteTipoOut] = None
 
 @router.get("/api/agendamientos/tipos", response_model=List[TipoAgendamientoOut])
 def listar_tipos_agendamiento(
     solo_activos: bool = Query(True, description="Si True, trae solo tipos activos")
 ):
-    TENANT = current_tenant.get()
-    if not TENANT:
-        raise HTTPException(status_code=400, detail="Tenant no disponible")
 
     with get_connection_context() as conn:
         cur = conn.cursor()
@@ -4077,18 +4543,38 @@ def listar_tipos_agendamiento(
         if solo_activos:
             cur.execute(
                 """
-                SELECT id, nombre, color, icono, activo
-                FROM agendamientos_tipo
-                WHERE activo = TRUE
-                ORDER BY id ASC
+                SELECT 
+                    at.id, 
+                    at.nombre, 
+                    at.color, 
+                    at.icono, 
+                    at.activo,
+                    pt.id,
+                    pt.codigo,
+                    pt.nombre
+                FROM agendamientos_tipo at
+                LEFT JOIN participante_tipo pt
+                    ON pt.id = at.participante_tipo_id
+                WHERE at.activo = TRUE
+                ORDER BY at.id ASC
                 """
             )
         else:
             cur.execute(
                 """
-                SELECT id, nombre, color, icono, activo
-                FROM agendamientos_tipo
-                ORDER BY nombre ASC
+                SELECT 
+                    at.id, 
+                    at.nombre, 
+                    at.color, 
+                    at.icono, 
+                    at.activo,
+                    pt.id,
+                    pt.codigo,
+                    pt.nombre
+                FROM agendamientos_tipo at
+                LEFT JOIN participante_tipo pt
+                    ON pt.id = at.participante_tipo_id
+                ORDER BY at.nombre ASC
                 """
             )
 
@@ -4100,7 +4586,12 @@ def listar_tipos_agendamiento(
             nombre=r[1],
             color=r[2],
             icono=r[3],
-            activo=r[4]
+            activo=r[4],
+            participante_tipo=ParticipanteTipoOut(
+                id=r[5],
+                codigo=r[6],
+                nombre=r[7]
+            ) if r[5] else None
         )
         for r in rows
     ]

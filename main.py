@@ -2109,11 +2109,20 @@ async def perfil(usuario: dict = Depends(obtener_usuario_actual)):
 #-------------------------
 #-------------------------
 
+@app.get("/api/participantes", tags=["Participantes"])
+def listar_participantes(tipo: str):
+    try:
+        return obtener_participantes_por_tipo_db(tipo)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # === Listar todos los usuarios ===
 @app.get("/api/TodosUsuarios", tags=["TodosUsuarios"])
 def listar_TodosUsuarios():
     try:
-        return obtener_todos_usuarios_db()
+        return obtener_todos_los_participantes_db()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

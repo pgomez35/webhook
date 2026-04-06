@@ -1549,57 +1549,81 @@ def obtener_aspirantes_invitacion():
 
 
 
-def obtener_todos_usuarios_db():
+def obtener_todos_los_participantes_db():
     try:
         with get_connection_context() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
-                SELECT 
-                c.id, 
-                c.usuario AS username, 
-                c.nickname, 
-                c.nombre_real, 
-                c.email,
-                c.telefono,
-                c.whatsapp,
-                c.foto_url,
-                c.verificado,
-                c.activo,
-                ec.nombre AS estado_nombre,
-                c.creado_en,
-                c.actualizado_en,
-                'creador' AS tipo_usuario,
-                NULL AS rol
-                FROM aspirantes c
-                LEFT JOIN aspirantes_estados ec ON c.estado_id = ec.id
-                WHERE c.activo = TRUE
-                
-                UNION ALL
-                
-                SELECT
-                a.id,
-                a.username,
-                NULL AS nickname,
-                a.nombre_completo AS nombre_real, 
-                a.email,
-                a.telefono,
-                NULL AS whatsapp,
-                NULL AS foto_url,
-                NULL AS verificado,
-                a.activo,
-                NULL AS estado_nombre,
-                a.creado_en,
-                NULL AS actualizado_en,
-                'administrativo' AS tipo_usuario,
-                a.rol AS rol
-                FROM usuarios a
-                WHERE a.activo = TRUE
-                ORDER BY actualizado_en DESC NULLS LAST, creado_en DESC;
+                    SELECT 
+                        a.id,
+                        a.usuario AS username,
+                        a.nickname,
+                        a.nombre_real,
+                        a.email,
+                        a.telefono,
+                        a.whatsapp,
+                        a.foto_url,
+                        a.foto_url_mini,
+                        a.verificado,
+                        a.activo,
+                        ae.nombre AS estado_nombre,
+                        a.creado_en,
+                        a.actualizado_en,
+                        'aspirante' AS tipo_usuario,
+                        NULL AS rol
+                    FROM aspirantes a
+                    LEFT JOIN aspirantes_estados ae ON a.estado_id = ae.id
+                    WHERE a.activo = TRUE
+
+                    UNION ALL
+
+                    SELECT
+                        c.id,
+                        NULL AS username,
+                        c.nickname,
+                        c.nombre_real,
+                        c.email,
+                        c.telefono,
+                        c.whatsapp,
+                        c.foto_url,
+                        NULL AS foto_url_mini,
+                        NULL AS verificado,
+                        c.activo,
+                        c.estado_operativo AS estado_nombre,
+                        c.creado_en,
+                        c.actualizado_en,
+                        'creador' AS tipo_usuario,
+                        NULL AS rol
+                    FROM creadores c
+                    WHERE c.activo = TRUE
+
+                    UNION ALL
+
+                    SELECT
+                        u.id,
+                        u.username,
+                        NULL AS nickname,
+                        u.nombre_completo AS nombre_real,
+                        u.email,
+                        u.telefono,
+                        NULL AS whatsapp,
+                        NULL AS foto_url,
+                        NULL AS foto_url_mini,
+                        NULL AS verificado,
+                        u.activo,
+                        u.grupo AS estado_nombre,
+                        u.creado_en,
+                        u.actualizado_en,
+                        'usuario' AS tipo_usuario,
+                        u.rol AS rol
+                    FROM usuarios u
+                    WHERE u.activo = TRUE
+
+                    ORDER BY actualizado_en DESC NULLS LAST, creado_en DESC;
                 """)
-                resultados = cur.fetchall()
-                return resultados
+                return cur.fetchall()
     except Exception as e:
-        print("❌ Error al obtener usuarios:", e)
+        print("❌ Error al obtener todos los participantes:", e)
         return []
 
 def obtener_aspirantes_perfil(aspirante_id):
@@ -3100,6 +3124,98 @@ def obtener_configuracion_agencia(clave: str) -> str | None:
         print(f"⚠️ Error obteniendo configuración '{clave}': {e}")
         return None
 
+
+def obtener_participantes_por_tipo_db(tipo: str):
+    tipo = (tipo or "").strip().lower()
+
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+
+                if tipo == "aspirante":
+                    cur.execute("""
+                        SELECT 
+                            a.id,
+                            a.usuario AS username,
+                            a.nickname,
+                            a.nombre_real,
+                            COALESCE(a.nickname, a.nombre_real, a.usuario, a.telefono) AS display_name,
+                            a.email,
+                            a.telefono,
+                            a.whatsapp,
+                            a.activo,
+                            ae.nombre AS estado_nombre,
+                            a.creado_en,
+                            a.actualizado_en,
+                            'aspirante' AS tipo_usuario,
+                            NULL AS rol
+                        FROM aspirantes a
+                        LEFT JOIN aspirantes_estados ae 
+                            ON a.estado_id = ae.id
+                        WHERE a.activo = TRUE
+                        ORDER BY a.actualizado_en DESC NULLS LAST, a.creado_en DESC;
+                    """)
+
+                elif tipo == "creador":
+                    cur.execute("""
+                        SELECT
+                            c.id,
+                            NULL AS username,
+                            c.nickname,
+                            c.nombre_real,
+                            COALESCE(c.nickname, c.nombre_real, c.telefono) AS display_name,
+                            c.email,
+                            c.telefono,
+                            c.whatsapp,
+                            c.activo,
+                            c.estado_operativo AS estado_nombre,
+                            c.creado_en,
+                            c.actualizado_en,
+                            'creador' AS tipo_usuario,
+                            NULL AS rol
+                        FROM creadores c
+                        WHERE c.activo = TRUE
+                        ORDER BY c.actualizado_en DESC NULLS LAST, c.creado_en DESC;
+                    """)
+
+                elif tipo == "usuario":
+                    cur.execute("""
+                        SELECT
+                            u.id,
+                            u.username,
+                            NULL AS nickname,
+                            u.nombre_completo AS nombre_real,
+                            COALESCE(u.nombre_completo, u.username, u.email) AS display_name,
+                            u.email,
+                            u.telefono,
+                            NULL AS whatsapp,
+                            u.activo,
+                            u.grupo AS estado_nombre,
+                            u.creado_en,
+                            u.actualizado_en,
+                            'usuario' AS tipo_usuario,
+                            ur.nombre AS rol
+                        FROM usuarios u
+                        LEFT JOIN usuarios_roles ur
+                            ON ur.id = u.usuarios_roles_id
+                        WHERE u.activo = TRUE
+                        ORDER BY u.actualizado_en DESC NULLS LAST, u.creado_en DESC;
+                    """)
+
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Tipo inválido. Use: aspirante, creador o usuario."
+                    )
+
+                resultados = cur.fetchall()
+                return resultados
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print("❌ Error al obtener participantes por tipo:", e)
+        raise
 
 #
 # def actualizar_mensaje_desde_status(conn, tenant: str, value: dict):
