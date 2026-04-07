@@ -16,7 +16,8 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, EmailStr
 from psycopg2.extras import RealDictCursor
 
-from DataBase import get_connection_context, obtener_cuenta_por_subdominio
+from DataBase import get_connection_context, obtener_cuenta_por_subdominio, obtener_todos_los_participantes_db, \
+    obtener_participantes_por_tipo_db
 from enviar_msg_wp import enviar_plantilla_generica_parametros
 from main_configuracion import get_config
 from main_webhook import validar_link_tiktok, enviar_mensaje
@@ -1567,6 +1568,24 @@ def crear_eventoV00(evento: EventoIn, usuario_actual: Any = Depends(obtener_usua
             logger.error(traceback.format_exc())
             raise HTTPException(status_code=500, detail="Error creando evento.")
 
+
+# # === Listar todos los usuarios ===
+# @router.get("/api/TodosUsuarios", tags=["TodosUsuarios"])
+# def listar_TodosUsuarios():
+#     try:
+#         return obtener_todos_los_participantes_db()
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/api/participantes", tags=["Participantes"])
+def listar_participantes(tipo: str):
+    try:
+        return obtener_participantes_por_tipo_db(tipo)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/api/agendamientos")
 def listar_agendamientos():
     try:
@@ -1653,7 +1672,7 @@ def obtener_eventos(
                     WHEN ap.aspirante_id IS NOT NULL THEN 'aspirante'
                     WHEN ap.creador_id IS NOT NULL THEN 'creador'
                     WHEN ap.usuario_id IS NOT NULL THEN 'usuario'
-                    ELSE NULL
+                    ELSE 'usuario'
                 END AS participante_tipo,
 
                 COALESCE(
@@ -1672,7 +1691,7 @@ def obtener_eventos(
                 COALESCE(asp.nickname, cre.nickname, NULL) AS nickname
 
             FROM agendamientos a
-            LEFT JOIN agendamientos_participantes ap
+            INNER JOIN agendamientos_participantes ap
                    ON ap.agendamiento_id = a.id
             LEFT JOIN aspirantes asp
                    ON asp.id = ap.aspirante_id
@@ -1682,6 +1701,11 @@ def obtener_eventos(
                    ON usr.id = ap.usuario_id
             WHERE a.fecha_inicio >= %s
               AND a.fecha_inicio <= %s
+              AND (
+                ap.aspirante_id IS NOT NULL
+                OR ap.creador_id IS NOT NULL
+                OR ap.usuario_id IS NOT NULL
+            )  
             ORDER BY a.fecha_inicio ASC, a.id ASC
             LIMIT %s
             """
