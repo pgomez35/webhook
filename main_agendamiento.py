@@ -389,8 +389,8 @@ class AgendamientoAspiranteInTokenV1(BaseModel):
 #             )
 
 
-@router.get("/api/eventos/{evento_id}", response_model=EventoOut)
-def obtener_evento(evento_id: str):
+@router.get("/api/eventosV01/{evento_id}", response_model=EventoOut)
+def obtener_eventoV01(evento_id: str):
     """
     Obtiene un evento desde la BD interna.
 
@@ -691,8 +691,8 @@ def obtener_evento(evento_id: str):
             )
 
 
-@router.get("/api/eventosV01", response_model=List[EventoOut])
-def listar_eventosV01(
+@router.get("/api/eventos", response_model=List[EventoOut])
+def listar_eventos(
     time_min: Optional[datetime] = None,
     time_max: Optional[datetime] = None,
     max_results: Optional[int] = 100
@@ -1607,7 +1607,183 @@ def listar_agendamientos():
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Error consultando agendamientos")
 
+
+
+
 def obtener_eventos(
+    time_min: Optional[datetime] = None,
+    time_max: Optional[datetime] = None,
+    max_results: int = 100
+) -> List[EventoOut]:
+    """
+    Obtiene eventos desde la base de datos usando:
+      - agendamientos
+      - agendamientos_participantes
+      - aspirantes / creadores / usuarios
+    """
+
+    if time_min is None:
+        time_min = datetime.utcnow() - timedelta(days=60)
+    if time_max is None:
+        time_max = datetime.utcnow() + timedelta(days=60)
+
+    try:
+        with get_connection_context() as conn:
+            cur = conn.cursor()
+
+            sql = """
+            SELECT
+                a.id AS ag_id,
+                a.titulo,
+                a.descripcion,
+                a.fecha_inicio,
+                a.fecha_fin,
+                a.responsable_id,
+                a.estado,
+                a.link_meet,
+                a.tipo_agendamiento,
+                a.google_event_id,
+                a.timezone,
+
+                ap.estado AS estado_participante,
+
+                COALESCE(ap.aspirante_id, ap.creador_id, ap.usuario_id) AS participante_id,
+
+                CASE
+                    WHEN ap.aspirante_id IS NOT NULL THEN 'aspirante'
+                    WHEN ap.creador_id IS NOT NULL THEN 'creador'
+                    WHEN ap.usuario_id IS NOT NULL THEN 'usuario'
+                    ELSE NULL
+                END AS participante_tipo,
+
+                COALESCE(
+                    NULLIF(asp.nombre_real, ''),
+                    NULLIF(asp.nickname, ''),
+                    NULLIF(asp.usuario, ''),
+                    NULLIF(cre.nombre_real, ''),
+                    NULLIF(cre.nickname, ''),
+                    NULLIF(usr.nombre_completo, ''),
+                    NULLIF(usr.username, ''),
+                    asp.telefono,
+                    cre.telefono,
+                    usr.telefono
+                ) AS nombre,
+
+                COALESCE(asp.nickname, cre.nickname, NULL) AS nickname
+
+            FROM agendamientos a
+            LEFT JOIN agendamientos_participantes ap
+                   ON ap.agendamiento_id = a.id
+            LEFT JOIN aspirantes asp
+                   ON asp.id = ap.aspirante_id
+            LEFT JOIN creadores cre
+                   ON cre.id = ap.creador_id
+            LEFT JOIN usuarios usr
+                   ON usr.id = ap.usuario_id
+            WHERE a.fecha_inicio >= %s
+              AND a.fecha_inicio <= %s
+            ORDER BY a.fecha_inicio ASC, a.id ASC
+            LIMIT %s
+            """
+
+            cur.execute(sql, (time_min, time_max, max_results))
+            rows = cur.fetchall()
+
+            if not rows:
+                logger.info("✅ No hay agendamientos en el rango solicitado")
+                return []
+
+            eventos_map: Dict[int, Dict] = {}
+
+            for (
+                ag_id,
+                titulo,
+                descripcion,
+                fecha_inicio,
+                fecha_fin,
+                responsable_id,
+                estado,
+                link_meet,
+                tipo_agendamiento,
+                google_event_id,
+                timezone,
+                estado_participante,
+                participante_id,
+                participante_tipo,
+                nombre,
+                nickname,
+            ) in rows:
+
+                if ag_id not in eventos_map:
+                    eventos_map[ag_id] = {
+                        "agendamiento_id": str(ag_id),
+                        "titulo": titulo or "Sin título",
+                        "descripcion": descripcion or "",
+                        "inicio": fecha_inicio,
+                        "fin": fecha_fin,
+                        "responsable_id": responsable_id,
+                        "estado": estado,
+                        "link_meet": link_meet,
+                        "tipo_agendamiento": tipo_agendamiento,
+                        "google_event_id": google_event_id,
+                        "timezone": timezone,
+                        "origen": "google_calendar" if google_event_id else "interno",
+                        "participantes": [],
+                        "participantes_ids": set(),
+                        "participante_tipo": None,
+                    }
+
+                if participante_id is not None:
+                    ev = eventos_map[ag_id]
+
+                    if participante_id not in ev["participantes_ids"]:
+                        ev["participantes_ids"].add(participante_id)
+
+                        ev["participantes"].append(
+                            {
+                                "id": participante_id,
+                                "nombre": nombre,
+                                "nickname": nickname,
+                                "tipo": participante_tipo,
+                                "estado": estado_participante,
+                            }
+                        )
+
+                    # Si todos los participantes del evento son del mismo tipo,
+                    # dejamos ese valor. Si luego quieres manejar mixtos,
+                    # esto se puede volver una lista/set.
+                    if ev["participante_tipo"] is None:
+                        ev["participante_tipo"] = participante_tipo
+
+            resultado: List[EventoOut] = []
+            for _, ev in eventos_map.items():
+                resultado.append(
+                    EventoOut(
+                        agendamiento_id=ev["agendamiento_id"],
+                        titulo=ev["titulo"],
+                        descripcion=ev["descripcion"],
+                        inicio=ev["inicio"],
+                        fin=ev["fin"],
+                        participantes_ids=list(ev["participantes_ids"]),
+                        participantes=ev["participantes"],
+                        link_meet=ev["link_meet"],
+                        tipo_agendamiento=ev["tipo_agendamiento"],
+                        responsable_id=ev["responsable_id"],
+                        origen=ev["origen"],
+                        google_event_id=ev["google_event_id"],
+                        participante_tipo=ev["participante_tipo"],
+                    )
+                )
+
+            logger.info(f"✅ Se obtuvieron {len(resultado)} agendamientos desde BD")
+            return resultado
+
+    except Exception as e:
+        logger.error(f"❌ Error al obtener eventos desde BD: {e}")
+        logger.error(traceback.format_exc())
+        raise
+
+def obtener_eventosV011(
     time_min: Optional[datetime] = None,
     time_max: Optional[datetime] = None,
     max_results: int = 100
@@ -5240,6 +5416,188 @@ def actualizar_estado_agendamiento(
 
 @router.post("/api/agendamientos/{agendamiento_id}/recordatorio")
 def enviar_recordatorio_manual(
+    agendamiento_id: int,
+    usuario_actual: dict = Depends(obtener_usuario_actual)
+):
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+
+        # =========================================================
+        # 1. Obtener datos de la cita
+        # =========================================================
+        cur.execute("""
+            SELECT
+                a.id,
+                a.fecha_inicio,
+                a.fecha_fin,
+                a.link_meet,
+                ta.nombre AS tipo_cita_nombre
+            FROM agendamientos a
+            LEFT JOIN agendamientos_tipo ta
+                ON a.tipo_agendamiento = ta.id
+            WHERE a.id = %s
+            LIMIT 1
+        """, (agendamiento_id,))
+
+        cita = cur.fetchone()
+        if not cita:
+            raise HTTPException(status_code=404, detail="Cita no encontrada.")
+
+        cita_id, fecha_inicio, fecha_fin, link_meet, tipo_cita_nombre = cita
+
+        # =========================================================
+        # 2. Obtener participante principal según la columna llena
+        # =========================================================
+        telefono = None
+        nombre = None
+        participante_id = None
+        participante_tipo = None
+
+        # Aspirante
+        cur.execute("""
+            SELECT
+                a.id,
+                COALESCE(NULLIF(a.whatsapp, ''), a.telefono) AS telefono_final,
+                COALESCE(a.nickname, a.nombre_real, a.usuario) AS nombre
+            FROM agendamientos_participantes ap
+            JOIN aspirantes a
+                ON ap.aspirante_id = a.id
+            WHERE ap.agendamiento_id = %s
+              AND ap.aspirante_id IS NOT NULL
+            LIMIT 1
+        """, (agendamiento_id,))
+        row = cur.fetchone()
+
+        if row:
+            participante_id, telefono, nombre = row
+            participante_tipo = "aspirante"
+        else:
+            # Creador
+            cur.execute("""
+                SELECT
+                    c.id,
+                    COALESCE(NULLIF(c.whatsapp, ''), c.telefono) AS telefono_final,
+                    COALESCE(c.nickname, c.nombre_real) AS nombre
+                FROM agendamientos_participantes ap
+                JOIN creadores c
+                    ON ap.creador_id = c.id
+                WHERE ap.agendamiento_id = %s
+                  AND ap.creador_id IS NOT NULL
+                LIMIT 1
+            """, (agendamiento_id,))
+            row = cur.fetchone()
+
+            if row:
+                participante_id, telefono, nombre = row
+                participante_tipo = "creador"
+            else:
+                # Usuario interno
+                cur.execute("""
+                    SELECT
+                        u.id,
+                        u.telefono AS telefono_final,
+                        COALESCE(u.nombre_completo, u.username) AS nombre
+                    FROM agendamientos_participantes ap
+                    JOIN usuarios u
+                        ON ap.usuario_id = u.id
+                    WHERE ap.agendamiento_id = %s
+                      AND ap.usuario_id IS NOT NULL
+                    LIMIT 1
+                """, (agendamiento_id,))
+                row = cur.fetchone()
+
+                if row:
+                    participante_id, telefono, nombre = row
+                    participante_tipo = "usuario"
+
+        if not participante_id:
+            raise HTTPException(status_code=404, detail="Participante no encontrado para la cita.")
+
+        if not telefono:
+            raise HTTPException(status_code=400, detail="El participante no tiene teléfono registrado.")
+
+    # =========================================================
+    # 3. Formatear mensaje
+    # =========================================================
+    nombre_agencia = current_business_name.get() or "nuestra agencia"
+    nombre_evento = tipo_cita_nombre.lower() if tipo_cita_nombre else "cita"
+
+    fecha_str = fecha_inicio.strftime("%d de %B")
+    hora_inicio_str = fecha_inicio.strftime("%I:%M %p").lower()
+
+    if link_meet and "tiktok" not in link_meet.lower():
+        link_final = link_meet
+    else:
+        link_final = "Ingresa a tu perfil de TikTok LIVE"
+
+    # =========================================================
+    # 4. Credenciales WABA
+    # =========================================================
+    tenant_key = current_tenant.get() or "test"
+    cuenta = obtener_cuenta_por_subdominio(tenant_key)
+    if not cuenta:
+        raise HTTPException(status_code=500, detail=f"No hay credenciales WABA para '{tenant_key}'.")
+
+    token = cuenta.get("access_token")
+    phone_id = cuenta.get("phone_number_id")
+
+    # =========================================================
+    # 5. Enviar SIEMPRE mensaje simple
+    #    Si Meta rechaza por ventana 24h, el webhook maneja el reenvío
+    # =========================================================
+    texto_mensaje = (
+        f"Hola {nombre} 😊\n"
+        f"{nombre_agencia} te recuerda tu {nombre_evento} el día {fecha_str} a las {hora_inicio_str}.\n"
+        f"🔗 Enlace: {link_final}\n"
+        "Por favor confirma tu asistencia respondiendo este mensaje."
+    )
+
+    try:
+        codigo, respuesta = enviar_mensaje_texto_simple(
+            token=token,
+            numero_id=phone_id,
+            telefono_destino=telefono,
+            texto=texto_mensaje
+        )
+
+        message_id_meta = None
+        if isinstance(respuesta, dict) and respuesta.get("messages"):
+            try:
+                message_id_meta = respuesta["messages"][0].get("id")
+            except Exception:
+                message_id_meta = None
+
+        guardar_mensaje_nuevo(
+            telefono=telefono,
+            contenido=texto_mensaje,
+            direccion="enviado",
+            tipo="text",
+            message_id_meta=message_id_meta,
+            estado="sent" if codigo and codigo < 300 else "error"
+        )
+
+        return {
+            "status": "ok" if codigo and codigo < 300 else "error",
+            "enviado_por": "mensaje_simple",
+            "telefono": telefono,
+            "cita_id": cita_id,
+            "participante_tipo": participante_tipo,
+            "message_id_meta": message_id_meta,
+            "codigo_meta": codigo,
+            "respuesta_api": respuesta if not (codigo and codigo < 300) else None
+        }
+
+    except Exception as e:
+        logger.error(f"Error enviando recordatorio manual: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail="Error interno enviando el recordatorio."
+        )
+
+
+@router.post("/api/agendamientosV01/{agendamiento_id}/recordatorio")
+def enviar_recordatorio_manualV01(
         agendamiento_id: int,
         usuario_actual: dict = Depends(obtener_usuario_actual)
 ):

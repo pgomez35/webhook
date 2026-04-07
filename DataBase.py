@@ -1559,6 +1559,7 @@ def obtener_todos_los_participantes_db():
                         a.usuario AS username,
                         a.nickname,
                         a.nombre_real,
+                        COALESCE(a.nickname, a.nombre_real, a.usuario, a.telefono) AS display_name,
                         a.email,
                         a.telefono,
                         a.whatsapp,
@@ -1572,7 +1573,8 @@ def obtener_todos_los_participantes_db():
                         'aspirante' AS tipo_usuario,
                         NULL AS rol
                     FROM aspirantes a
-                    LEFT JOIN aspirantes_estados ae ON a.estado_id = ae.id
+                    LEFT JOIN aspirantes_estados ae
+                        ON a.estado_id = ae.id
                     WHERE a.activo = TRUE
 
                     UNION ALL
@@ -1582,6 +1584,7 @@ def obtener_todos_los_participantes_db():
                         NULL AS username,
                         c.nickname,
                         c.nombre_real,
+                        COALESCE(c.nickname, c.nombre_real, c.telefono) AS display_name,
                         c.email,
                         c.telefono,
                         c.whatsapp,
@@ -1604,6 +1607,7 @@ def obtener_todos_los_participantes_db():
                         u.username,
                         NULL AS nickname,
                         u.nombre_completo AS nombre_real,
+                        COALESCE(u.nombre_completo, u.username, u.email, u.telefono) AS display_name,
                         u.email,
                         u.telefono,
                         NULL AS whatsapp,
@@ -1615,13 +1619,16 @@ def obtener_todos_los_participantes_db():
                         u.creado_en,
                         u.actualizado_en,
                         'usuario' AS tipo_usuario,
-                        u.rol AS rol
+                        ur.nombre AS rol
                     FROM usuarios u
+                    LEFT JOIN usuarios_roles ur
+                        ON ur.id = u.usuarios_roles_id
                     WHERE u.activo = TRUE
 
                     ORDER BY actualizado_en DESC NULLS LAST, creado_en DESC;
                 """)
-                return cur.fetchall()
+                resultados = cur.fetchall()
+                return resultados
     except Exception as e:
         print("❌ Error al obtener todos los participantes:", e)
         return []
@@ -3143,6 +3150,9 @@ def obtener_participantes_por_tipo_db(tipo: str):
                             a.email,
                             a.telefono,
                             a.whatsapp,
+                            a.foto_url,
+                            a.foto_url_mini,
+                            a.verificado,
                             a.activo,
                             ae.nombre AS estado_nombre,
                             a.creado_en,
@@ -3167,6 +3177,9 @@ def obtener_participantes_por_tipo_db(tipo: str):
                             c.email,
                             c.telefono,
                             c.whatsapp,
+                            c.foto_url,
+                            NULL AS foto_url_mini,
+                            NULL AS verificado,
                             c.activo,
                             c.estado_operativo AS estado_nombre,
                             c.creado_en,
@@ -3185,10 +3198,13 @@ def obtener_participantes_por_tipo_db(tipo: str):
                             u.username,
                             NULL AS nickname,
                             u.nombre_completo AS nombre_real,
-                            COALESCE(u.nombre_completo, u.username, u.email) AS display_name,
+                            COALESCE(u.nombre_completo, u.username, u.email, u.telefono) AS display_name,
                             u.email,
                             u.telefono,
                             NULL AS whatsapp,
+                            NULL AS foto_url,
+                            NULL AS foto_url_mini,
+                            NULL AS verificado,
                             u.activo,
                             u.grupo AS estado_nombre,
                             u.creado_en,
@@ -3208,14 +3224,14 @@ def obtener_participantes_por_tipo_db(tipo: str):
                         detail="Tipo inválido. Use: aspirante, creador o usuario."
                     )
 
-                resultados = cur.fetchall()
-                return resultados
+                return cur.fetchall()
 
     except HTTPException:
         raise
     except Exception as e:
         print("❌ Error al obtener participantes por tipo:", e)
         raise
+
 
 #
 # def actualizar_mensaje_desde_status(conn, tenant: str, value: dict):
