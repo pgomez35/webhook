@@ -3156,7 +3156,7 @@ def obtener_participantes_por_tipo_db(tipo: str):
 
                 if tipo == "aspirante":
                     cur.execute("""
-                        SELECT 
+                        SELECT
                             a.id,
                             a.usuario AS username,
                             a.nickname,
@@ -3175,38 +3175,35 @@ def obtener_participantes_por_tipo_db(tipo: str):
                             'aspirante' AS tipo_usuario,
                             NULL AS rol
                         FROM aspirantes a
-                        LEFT JOIN aspirantes_estados ae 
-                            ON a.estado_id = ae.id
-                        WHERE a.activo = TRUE
-                        ORDER BY a.actualizado_en DESC NULLS LAST, a.creado_en DESC;
-                    """)
-
-                elif tipo == "creador":
-                    # Misma fuente que aspirantes (tabla creadores unificada en aspirantes)
-                    cur.execute("""
-                        SELECT
-                            a.id,
-                            a.usuario AS username,
-                            a.nickname,
-                            a.nombre_real,
-                            COALESCE(a.nickname, a.nombre_real, a.usuario, a.telefono) AS display_name,
-                            a.email,
-                            a.telefono,
-                            a.whatsapp,
-                            a.foto_url,
-                            a.foto_url_mini,
-                            a.verificado,
-                            a.activo,
-                            ae.nombre AS estado_nombre,
-                            a.creado_en,
-                            a.actualizado_en,
-                            'creador' AS tipo_usuario,
-                            NULL AS rol
-                        FROM aspirantes a
                         LEFT JOIN aspirantes_estados ae
                             ON a.estado_id = ae.id
                         WHERE a.activo = TRUE
-                        ORDER BY a.actualizado_en DESC NULLS LAST, a.creado_en DESC;
+                        ORDER BY a.actualizado_en DESC NULLS LAST, a.creado_en DESC
+                    """)
+
+                elif tipo == "creador":
+                    cur.execute("""
+                        SELECT
+                            c.id,
+                            c.nickname AS username,
+                            c.nickname,
+                            c.nombre_real,
+                            COALESCE(c.nickname, c.nombre_real, c.telefono) AS display_name,
+                            c.email,
+                            c.telefono,
+                            c.whatsapp,
+                            c.foto_url,
+                            NULL AS foto_url_mini,
+                            NULL AS verificado,
+                            c.activo,
+                            c.estado_operativo AS estado_nombre,
+                            c.creado_en,
+                            c.actualizado_en,
+                            'creador' AS tipo_usuario,
+                            NULL AS rol
+                        FROM creadores c
+                        WHERE c.activo = TRUE
+                        ORDER BY c.actualizado_en DESC NULLS LAST, c.creado_en DESC
                     """)
 
                 elif tipo == "administrador":
@@ -3233,13 +3230,13 @@ def obtener_participantes_por_tipo_db(tipo: str):
                         LEFT JOIN administradores_roles ur
                             ON ur.id = u.administradores_roles_id
                         WHERE u.activo = TRUE
-                        ORDER BY u.actualizado_en DESC NULLS LAST, u.creado_en DESC;
+                        ORDER BY u.actualizado_en DESC NULLS LAST, u.creado_en DESC
                     """)
 
                 else:
                     raise HTTPException(
                         status_code=400,
-                        detail="Tipo inválido. Use: aspirante, creador o usuario."
+                        detail="Tipo inválido. Use: aspirante, creador o administrador."
                     )
 
                 return cur.fetchall()
@@ -3248,7 +3245,10 @@ def obtener_participantes_por_tipo_db(tipo: str):
         raise
     except Exception as e:
         print("❌ Error al obtener participantes por tipo:", e)
-        raise
+        raise HTTPException(
+            status_code=500,
+            detail="Error interno al obtener participantes."
+        )
 
 
 #
