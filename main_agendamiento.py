@@ -2625,14 +2625,14 @@ def listar_citas_creador(aspirante_id: int):
                     at.nombre AS tipo_nombre,
                     a.link_meet
                 FROM agendamientos a
-                JOIN agendamientos_participantes ap
+                INNER JOIN agendamientos_participantes ap
                     ON ap.agendamiento_id = a.id
                 LEFT JOIN agendamientos_estados ae
                     ON ae.id = a.estado
                 INNER JOIN agendamientos_tipo at
                     ON at.id = a.tipo_agendamiento
                 WHERE ap.aspirante_id = %s  
-                     AND at.es_aspirante = true
+                     AND at.participante_tipo_id=1
                 ORDER BY a.fecha_inicio ASC
                 """,
                 (aspirante_id,)
