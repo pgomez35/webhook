@@ -202,19 +202,20 @@ def validar_creador_existe(cur, aspirante_id: int) -> Dict[str, Any]:
 def validar_usuario_existe(cur, usuario_id: int) -> Dict[str, Any]:
     cur.execute("""
         SELECT
-            id,
-            username,
-            password_hash,
-            rol,
-            nombre_completo,
-            email,
-            telefono,
-            grupo,
-            activo,
-            creado_en,
-            actualizado_en
-        FROM administradores
-        WHERE id = %s
+            a.id,
+            a.username,
+            a.password_hash,
+            ur.nombre AS rol,
+            a.nombre_completo,
+            a.email,
+            a.telefono,
+            a.grupo,
+            a.activo,
+            a.creado_en,
+            a.actualizado_en
+        FROM administradores a
+        LEFT JOIN administradores_roles ur ON ur.id = a.administradores_roles_id
+        WHERE a.id = %s
         LIMIT 1
     """, (usuario_id,))
     row = cur.fetchone()
@@ -233,21 +234,22 @@ def validar_usuario_existe(cur, usuario_id: int) -> Dict[str, Any]:
 def validar_manager_existe(cur, manager_id: int) -> Dict[str, Any]:
     cur.execute("""
         SELECT
-            id,
-            username,
-            password_hash,
-            rol,
-            nombre_completo,
-            email,
-            telefono,
-            grupo,
-            activo,
-            creado_en,
-            actualizado_en
-        FROM administradores
-        WHERE id = %s
-          AND rol = %s
-          AND activo = true
+            a.id,
+            a.username,
+            a.password_hash,
+            ur.nombre AS rol,
+            a.nombre_completo,
+            a.email,
+            a.telefono,
+            a.grupo,
+            a.activo,
+            a.creado_en,
+            a.actualizado_en
+        FROM administradores a
+        INNER JOIN administradores_roles ur ON ur.id = a.administradores_roles_id
+        WHERE a.id = %s
+          AND ur.nombre = %s
+          AND a.activo = true
         LIMIT 1
     """, (manager_id, ROL_MANAGER))
     row = cur.fetchone()
@@ -334,7 +336,7 @@ def obtener_invitacion_por_id(cur, invitacion_id: int) -> Dict[str, Any]:
             c.encuesta_terminada AS creador_encuesta_terminada,
 
             ui.username AS username_usuario_invita,
-            ui.rol AS rol_usuario_invita,
+            uir.nombre AS rol_usuario_invita,
             ui.nombre_completo AS nombre_usuario_invita,
             ui.email AS email_usuario_invita,
             ui.telefono AS telefono_usuario_invita,
@@ -344,7 +346,7 @@ def obtener_invitacion_por_id(cur, invitacion_id: int) -> Dict[str, Any]:
             ui.actualizado_en AS actualizado_en_usuario_invita,
 
             um.username AS username_manager,
-            um.rol AS rol_manager,
+            umr.nombre AS rol_manager,
             um.nombre_completo AS nombre_manager,
             um.email AS email_manager,
             um.telefono AS telefono_manager,
@@ -357,8 +359,10 @@ def obtener_invitacion_por_id(cur, invitacion_id: int) -> Dict[str, Any]:
             ON c.id = i.aspirante_id
         LEFT JOIN administradores ui
             ON ui.id = i.usuario_invita
+        LEFT JOIN administradores_roles uir ON uir.id = ui.administradores_roles_id
         LEFT JOIN administradores um
             ON um.id = i.manager_id
+        LEFT JOIN administradores_roles umr ON umr.id = um.administradores_roles_id
         WHERE i.id = %s
         LIMIT 1
     """, (invitacion_id,))
@@ -408,7 +412,7 @@ def obtener_ultima_invitacion_por_creador(cur, aspirante_id: int) -> Optional[Di
             c.encuesta_terminada AS creador_encuesta_terminada,
 
             ui.username AS username_usuario_invita,
-            ui.rol AS rol_usuario_invita,
+            uir.nombre AS rol_usuario_invita,
             ui.nombre_completo AS nombre_usuario_invita,
             ui.email AS email_usuario_invita,
             ui.telefono AS telefono_usuario_invita,
@@ -418,7 +422,7 @@ def obtener_ultima_invitacion_por_creador(cur, aspirante_id: int) -> Optional[Di
             ui.actualizado_en AS actualizado_en_usuario_invita,
 
             um.username AS username_manager,
-            um.rol AS rol_manager,
+            umr.nombre AS rol_manager,
             um.nombre_completo AS nombre_manager,
             um.email AS email_manager,
             um.telefono AS telefono_manager,
@@ -431,8 +435,10 @@ def obtener_ultima_invitacion_por_creador(cur, aspirante_id: int) -> Optional[Di
             ON c.id = i.aspirante_id
         LEFT JOIN administradores ui
             ON ui.id = i.usuario_invita
+        LEFT JOIN administradores_roles uir ON uir.id = ui.administradores_roles_id
         LEFT JOIN administradores um
             ON um.id = i.manager_id
+        LEFT JOIN administradores_roles umr ON umr.id = um.administradores_roles_id
         WHERE i.aspirante_id = %s
         ORDER BY i.id DESC
         LIMIT 1
@@ -469,21 +475,22 @@ def listar_managers():
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT
-                    id,
-                    username,
-                    password_hash,
-                    rol,
-                    nombre_completo,
-                    email,
-                    telefono,
-                    grupo,
-                    activo,
-                    creado_en,
-                    actualizado_en
-                FROM administradores
-                WHERE rol = %s
-                  AND activo = true
-                ORDER BY nombre_completo ASC, id ASC
+                    a.id,
+                    a.username,
+                    a.password_hash,
+                    ur.nombre AS rol,
+                    a.nombre_completo,
+                    a.email,
+                    a.telefono,
+                    a.grupo,
+                    a.activo,
+                    a.creado_en,
+                    a.actualizado_en
+                FROM administradores a
+                INNER JOIN administradores_roles ur ON ur.id = a.administradores_roles_id
+                WHERE ur.nombre = %s
+                  AND a.activo = true
+                ORDER BY a.nombre_completo ASC, a.id ASC
             """, (ROL_MANAGER,))
 
             rows = cur.fetchall()
@@ -670,7 +677,7 @@ def listar_invitaciones(
                     c.encuesta_terminada AS creador_encuesta_terminada,
 
                     ui.username AS username_usuario_invita,
-                    ui.rol AS rol_usuario_invita,
+                    uir.nombre AS rol_usuario_invita,
                     ui.nombre_completo AS nombre_usuario_invita,
                     ui.email AS email_usuario_invita,
                     ui.telefono AS telefono_usuario_invita,
@@ -680,7 +687,7 @@ def listar_invitaciones(
                     ui.actualizado_en AS actualizado_en_usuario_invita,
 
                     um.username AS username_manager,
-                    um.rol AS rol_manager,
+                    umr.nombre AS rol_manager,
                     um.nombre_completo AS nombre_manager,
                     um.email AS email_manager,
                     um.telefono AS telefono_manager,
@@ -693,8 +700,10 @@ def listar_invitaciones(
                     ON c.id = i.aspirante_id
                 LEFT JOIN administradores ui
                     ON ui.id = i.usuario_invita
+                LEFT JOIN administradores_roles uir ON uir.id = ui.administradores_roles_id
                 LEFT JOIN administradores um
                     ON um.id = i.manager_id
+                LEFT JOIN administradores_roles umr ON umr.id = um.administradores_roles_id
                 {where_sql}
                 ORDER BY i.id DESC
             """, params)

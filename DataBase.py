@@ -893,16 +893,30 @@ def verify_password(password: str, hashed_password: str) -> bool:
 # FUNCIONES PARA administradores
 # ===============================
 
+def _administradores_roles_id_por_nombre(cur, nombre_rol: str):
+    """Resuelve el id en administradores_roles a partir del nombre (ej. 'Manager', 'admin')."""
+    if not nombre_rol or not str(nombre_rol).strip():
+        return None
+    cur.execute(
+        "SELECT id FROM administradores_roles WHERE nombre = %s",
+        (str(nombre_rol).strip(),),
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
 def obtener_todos_usuarioss():
     """Obtiene todos los administradores administradores"""
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT id, username, nombre_completo, email, telefono, rol, grupo, activo, 
-                           creado_en, actualizado_en
-                    FROM administradores
-                    ORDER BY creado_en DESC
+                    SELECT a.id, a.username, a.nombre_completo, a.email, a.telefono,
+                           ur.nombre AS rol, a.grupo, a.activo,
+                           a.creado_en, a.actualizado_en
+                    FROM administradores a
+                    LEFT JOIN administradores_roles ur ON ur.id = a.administradores_roles_id
+                    ORDER BY a.creado_en DESC
                 """)
                 
                 usuarios = []
@@ -938,10 +952,12 @@ def obtener_todos_responsables_agendas():
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT id, username, nombre_completo, email, telefono, rol, grupo, activo, 
-                           creado_en, actualizado_en
-                    FROM administradores
-                    ORDER BY creado_en DESC
+                    SELECT a.id, a.username, a.nombre_completo, a.email, a.telefono,
+                           ur.nombre AS rol, a.grupo, a.activo,
+                           a.creado_en, a.actualizado_en
+                    FROM administradores a
+                    LEFT JOIN administradores_roles ur ON ur.id = a.administradores_roles_id
+                    ORDER BY a.creado_en DESC
                 """)
 
                 usuarios = []
@@ -1010,17 +1026,23 @@ def crear_usuarios(datos):
         with get_connection_context() as conn:
             with conn.cursor() as cur:
 
-                # 🔥 INSERT directo (la DB maneja duplicados)
+                administradores_roles_id = _administradores_roles_id_por_nombre(cur, rol)
+                if administradores_roles_id is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Rol no válido o no existe en administradores_roles: {rol!r}",
+                    )
+
                 cur.execute("""
                     INSERT INTO administradores (
-                        username, nombre_completo, email, telefono, rol, grupo, activo,
-                        password_hash, creado_en, actualizado_en
+                        username, nombre_completo, email, telefono, grupo, activo,
+                        password_hash, administradores_roles_id, creado_en, actualizado_en
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
-                    RETURNING id, username, nombre_completo, email, telefono, rol, grupo, activo,
+                    RETURNING id, username, nombre_completo, email, telefono, grupo, activo,
                               creado_en, actualizado_en
                 """, (
                     username, nombre_completo, email, telefono,
-                    rol, grupo, activo, password_hash
+                    grupo, activo, password_hash, administradores_roles_id,
                 ))
 
                 row = cur.fetchone()
@@ -1032,11 +1054,11 @@ def crear_usuarios(datos):
                     "nombre_completo": row[2],
                     "email": row[3],
                     "telefono": row[4],
-                    "rol": row[5],
-                    "grupo": row[6],
-                    "activo": row[7],
-                    "creado_en": row[8].isoformat() if row[8] else None,
-                    "actualizado_en": row[9].isoformat() if row[9] else None,
+                    "rol": rol,
+                    "grupo": row[5],
+                    "activo": row[6],
+                    "creado_en": row[7].isoformat() if row[7] else None,
+                    "actualizado_en": row[8].isoformat() if row[8] else None,
                     "password_inicial": password  # 👈 solo para admin
                 }
 
@@ -1061,10 +1083,12 @@ def obtener_usuarios_por_id(administrador_id):
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT id, username, nombre_completo, email, telefono, rol, grupo, activo,
-                           creado_en, actualizado_en
-                    FROM administradores
-                    WHERE id = %s
+                    SELECT a.id, a.username, a.nombre_completo, a.email, a.telefono,
+                           ur.nombre AS rol, a.grupo, a.activo,
+                           a.creado_en, a.actualizado_en
+                    FROM administradores a
+                    LEFT JOIN administradores_roles ur ON ur.id = a.administradores_roles_id
+                    WHERE a.id = %s
                 """, (administrador_id,))
                 
                 row = cur.fetchone()
@@ -1121,11 +1145,18 @@ def actualizar_usuarios(administrador_id, datos):
                 updates = []
                 valores = []
 
-                campos_permitidos = ["username", "nombre_completo", "email", "telefono", "rol", "grupo", "activo"]
+                campos_permitidos = ["username", "nombre_completo", "email", "telefono", "grupo", "activo"]
                 for campo in campos_permitidos:
                     if campo in datos:
                         updates.append(f"{campo} = %s")
                         valores.append(datos[campo])
+
+                if "rol" in datos and datos["rol"] is not None:
+                    rid = _administradores_roles_id_por_nombre(cur, datos["rol"])
+                    if rid is None:
+                        raise ValueError(f"Rol no válido: {datos['rol']!r}")
+                    updates.append("administradores_roles_id = %s")
+                    valores.append(rid)
 
                 if not updates:
                     raise ValueError("No se proporcionaron campos para actualizar")
@@ -1138,10 +1169,12 @@ def actualizar_usuarios(administrador_id, datos):
                 conn.commit()
 
                 # Obtener los datos actualizados
-                cur.execute(
-                    "SELECT id, username, rol, nombre_completo, email, telefono, grupo, activo FROM administradores WHERE id = %s",
-                    (administrador_id,)
-                )
+                cur.execute("""
+                    SELECT a.id, a.username, ur.nombre AS rol, a.nombre_completo, a.email, a.telefono, a.grupo, a.activo
+                    FROM administradores a
+                    LEFT JOIN administradores_roles ur ON ur.id = a.administradores_roles_id
+                    WHERE a.id = %s
+                """, (administrador_id,))
                 row = cur.fetchone()
 
                 if not row:
@@ -1219,10 +1252,12 @@ def obtener_usuarios_por_username(username):
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT id, username, nombre_completo AS nombre, email, telefono, rol, grupo, activo,
-                           password_hash, creado_en, actualizado_en
-                    FROM administradores
-                    WHERE username = %s
+                    SELECT a.id, a.username, a.nombre_completo AS nombre, a.email, a.telefono,
+                           ur.nombre AS rol, a.grupo, a.activo,
+                           a.password_hash, a.creado_en, a.actualizado_en
+                    FROM administradores a
+                    LEFT JOIN administradores_roles ur ON ur.id = a.administradores_roles_id
+                    WHERE a.username = %s
                 """, (username,))
                 
                 row = cur.fetchone()
@@ -2015,9 +2050,11 @@ def obtener_todos_manager():
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT id, username, nombre_completo, rol, grupo, activo
-                    FROM administradores WHERE rol='Manager'
-                    ORDER BY nombre_completo DESC
+                    SELECT a.id, a.username, a.nombre_completo, ur.nombre AS rol, a.grupo, a.activo
+                    FROM administradores a
+                    INNER JOIN administradores_roles ur ON ur.id = a.administradores_roles_id
+                    WHERE ur.nombre = 'Manager'
+                    ORDER BY a.nombre_completo DESC
                 """)
                 usuarios = []
                 for row in cur.fetchall():
@@ -2459,11 +2496,12 @@ def buscar_usuario_por_telefono(numero: str):
 
                 # Buscar en administradores
                 cur.execute("""
-                    SELECT id, username AS nickname,
-                           nombre_completo AS nombre,
-                           'admin' AS rol
-                    FROM administradores
-                    WHERE telefono = %s
+                    SELECT a.id, a.username AS nickname,
+                           a.nombre_completo AS nombre,
+                           COALESCE(ur.nombre, 'admin') AS rol
+                    FROM administradores a
+                    LEFT JOIN administradores_roles ur ON ur.id = a.administradores_roles_id
+                    WHERE a.telefono = %s
                     LIMIT 1;
                 """, (numero,))
                 row = cur.fetchone()

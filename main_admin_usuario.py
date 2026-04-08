@@ -142,9 +142,10 @@ async def refresh_token(request: Request, data: dict = Body(...)):
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT id, nombre_completo AS nombre, rol, activo 
-                FROM administradores 
-                WHERE id = %s
+                SELECT a.id, a.nombre_completo AS nombre, ur.nombre AS rol, a.activo
+                FROM administradores a
+                LEFT JOIN administradores_roles ur ON ur.id = a.administradores_roles_id
+                WHERE a.id = %s
                 """,
                 (user_id,)  # 👈 importante: debe ser tupla
             )

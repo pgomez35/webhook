@@ -82,9 +82,10 @@ def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
         with get_connection_context() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT id, nombre_completo, rol, activo
-                FROM administradores
-                WHERE id = %s
+                SELECT a.id, a.nombre_completo, ur.nombre AS rol, a.activo
+                FROM administradores a
+                LEFT JOIN administradores_roles ur ON ur.id = a.administradores_roles_id
+                WHERE a.id = %s
             """, (administrador_id,))
             row = cursor.fetchone()
 
@@ -165,10 +166,12 @@ async def refresh_token(data: dict = Body(...)):
         # Buscar administrador
         with get_connection_context() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT id, nombre_completo, rol, activo FROM administradores WHERE id = %s",
-                (administrador_id,)
-            )
+            cursor.execute("""
+                SELECT a.id, a.nombre_completo, ur.nombre AS rol, a.activo
+                FROM administradores a
+                LEFT JOIN administradores_roles ur ON ur.id = a.administradores_roles_id
+                WHERE a.id = %s
+            """, (administrador_id,))
             row = cursor.fetchone()
 
         if not row or not row[3]:

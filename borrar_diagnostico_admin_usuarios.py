@@ -118,8 +118,13 @@ def crear_usuario_prueba(db_url):
         
         # Crear usuario de prueba
         cur.execute("""
-            INSERT INTO administradores (username, nombre_completo, email, telefono, rol, grupo, password_hash) 
-            VALUES ('test_user', 'Usuario de Prueba', 'test@test.com', '+1111111111', 'USUARIO', 'PRUEBA', 'test123')
+            INSERT INTO administradores (
+                username, nombre_completo, email, telefono, grupo, password_hash, administradores_roles_id
+            )
+            VALUES (
+                'test_user', 'Usuario de Prueba', 'test@test.com', '+1111111111', 'PRUEBA', 'test123',
+                (SELECT id FROM administradores_roles WHERE nombre = 'USUARIO' LIMIT 1)
+            )
         """)
         
         conn.commit()
