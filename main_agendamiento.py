@@ -17,8 +17,8 @@ from pydantic import BaseModel, EmailStr
 from psycopg2.extras import RealDictCursor
 
 from DataBase import get_connection_context, obtener_cuenta_por_subdominio, obtener_todos_los_participantes_db, \
-    obtener_participantes_por_tipo_db
-from enviar_msg_wp import enviar_plantilla_generica_parametros
+    obtener_participantes_por_tipo_db, guardar_mensaje_nuevo
+from enviar_msg_wp import enviar_plantilla_generica_parametros, enviar_mensaje_texto_simple
 from main_configuracion import get_config
 from main_webhook import validar_link_tiktok, enviar_mensaje
 from schemas import *
@@ -505,6 +505,224 @@ def obtener_evento(evento_id: str):
 
         try:
             # ---------------------------------------------------------
+            # 1️⃣ Un solo query: evento + participantes
+            # ---------------------------------------------------------
+            if evento_id.isdigit():
+                sql = """
+                    SELECT
+                        a.id,
+                        a.titulo,
+                        a.descripcion,
+                        a.fecha_inicio,
+                        a.fecha_fin,
+                        a.responsable_id,
+                        a.estado,
+                        a.link_meet,
+                        a.google_event_id,
+                        a.creado_en,
+                        a.actualizado_en,
+                        a.tipo_agendamiento,
+
+                        COALESCE(ap.aspirante_id, ap.creador_id, ap.administrador_id) AS participante_id,
+
+                        COALESCE(
+                            NULLIF(asp.nombre_real, ''),
+                            NULLIF(asp.nickname, ''),
+                            NULLIF(asp.usuario, ''),
+                            NULLIF(cre.nombre_real, ''),
+                            NULLIF(cre.nickname, ''),
+                            NULLIF(usr.nombre_completo, ''),
+                            NULLIF(usr.username, ''),
+                            asp.telefono,
+                            cre.telefono,
+                            usr.telefono
+                        ) AS participante_nombre,
+
+                        COALESCE(asp.nickname, cre.nickname, NULL) AS participante_nickname,
+
+                        CASE
+                            WHEN ap.aspirante_id IS NOT NULL THEN 'aspirante'
+                            WHEN ap.creador_id IS NOT NULL THEN 'creador'
+                            WHEN ap.administrador_id IS NOT NULL THEN 'usuario'
+                            ELSE NULL
+                        END AS participante_tipo
+
+                    FROM agendamientos a
+                    INNER JOIN agendamientos_participantes ap
+                        ON ap.agendamiento_id = a.id
+                    LEFT JOIN aspirantes asp
+                        ON asp.id = ap.aspirante_id
+                    LEFT JOIN aspirantes cre
+                        ON cre.id = ap.creador_id
+                    LEFT JOIN administradores usr
+                        ON usr.id = ap.administrador_id
+                    WHERE a.id = %s
+                    ORDER BY ap.id ASC
+                """
+                cur.execute(sql, (int(evento_id),))
+            else:
+                sql = """
+                    SELECT
+                        a.id,
+                        a.titulo,
+                        a.descripcion,
+                        a.fecha_inicio,
+                        a.fecha_fin,
+                        a.responsable_id,
+                        a.estado,
+                        a.link_meet,
+                        a.google_event_id,
+                        a.creado_en,
+                        a.actualizado_en,
+                        a.tipo_agendamiento,
+
+                        COALESCE(ap.aspirante_id, ap.creador_id, ap.administrador_id) AS participante_id,
+
+                        COALESCE(
+                            NULLIF(asp.nombre_real, ''),
+                            NULLIF(asp.nickname, ''),
+                            NULLIF(asp.usuario, ''),
+                            NULLIF(cre.nombre_real, ''),
+                            NULLIF(cre.nickname, ''),
+                            NULLIF(usr.nombre_completo, ''),
+                            NULLIF(usr.username, ''),
+                            asp.telefono,
+                            cre.telefono,
+                            usr.telefono
+                        ) AS participante_nombre,
+
+                        COALESCE(asp.nickname, cre.nickname, NULL) AS participante_nickname,
+
+                        CASE
+                            WHEN ap.aspirante_id IS NOT NULL THEN 'aspirante'
+                            WHEN ap.creador_id IS NOT NULL THEN 'creador'
+                            WHEN ap.administrador_id IS NOT NULL THEN 'usuario'
+                            ELSE NULL
+                        END AS participante_tipo
+
+                    FROM agendamientos a
+                    INNER JOIN agendamientos_participantes ap
+                        ON ap.agendamiento_id = a.id
+                    LEFT JOIN aspirantes asp
+                        ON asp.id = ap.aspirante_id
+                    LEFT JOIN aspirantes cre
+                        ON cre.id = ap.creador_id
+                    LEFT JOIN administradores usr
+                        ON usr.id = ap.administrador_id
+                    WHERE a.google_event_id = %s
+                    ORDER BY ap.id ASC
+                """
+                cur.execute(sql, (evento_id,))
+
+            rows = cur.fetchall()
+
+            if not rows:
+                raise HTTPException(status_code=404, detail="Evento no encontrado.")
+
+            # ---------------------------------------------------------
+            # 2️⃣ Datos del evento salen de la primera fila
+            # ---------------------------------------------------------
+            (
+                ag_id,
+                titulo,
+                descripcion,
+                fecha_inicio,
+                fecha_fin,
+                responsable_id,
+                estado,
+                link_meet,
+                google_event_id,
+                creado_en,
+                actualizado_en,
+                tipo_agendamiento,
+                _participante_id,
+                _participante_nombre,
+                _participante_nickname,
+                _participante_tipo,
+            ) = rows[0]
+
+            # ---------------------------------------------------------
+            # 3️⃣ Construir participantes desde las filas
+            # ---------------------------------------------------------
+            participantes_out = []
+            participantes_ids = []
+            participante_tipo = None
+            vistos = set()
+
+            for row in rows:
+                participante_id = row[12]
+                participante_nombre = row[13]
+                participante_nickname = row[14]
+                participante_tipo_row = row[15]
+
+                if participante_id is None:
+                    continue
+
+                clave = f"{participante_tipo_row}:{participante_id}"
+                if clave in vistos:
+                    continue
+
+                vistos.add(clave)
+                participantes_ids.append(participante_id)
+                participantes_out.append(
+                    {
+                        "id": participante_id,
+                        "nombre": participante_nombre,
+                        "nickname": participante_nickname
+                    }
+                )
+
+                if participante_tipo is None:
+                    participante_tipo = participante_tipo_row
+
+            # ---------------------------------------------------------
+            # 4️⃣ Origen
+            # ---------------------------------------------------------
+            origen = "google_calendar" if google_event_id else "interno"
+
+            # ---------------------------------------------------------
+            # 5️⃣ Respuesta
+            # ---------------------------------------------------------
+            return EventoOut(
+                agendamiento_id=str(ag_id),
+                titulo=titulo or "Sin título",
+                descripcion=descripcion or "",
+                inicio=fecha_inicio,
+                fin=fecha_fin,
+                participantes=participantes_out,
+                participantes_ids=participantes_ids,
+                participante_tipo=participante_tipo,
+                link_meet=link_meet,
+                responsable_id=responsable_id,
+                origen=origen,
+                tipo_agendamiento=tipo_agendamiento,
+                google_event_id=google_event_id,
+            )
+
+        except HTTPException:
+            raise
+
+        except Exception as e:
+            logger.error(f"❌ Error al obtener evento {evento_id}: {e}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(
+                status_code=500,
+                detail="Error interno al obtener el evento."
+            )
+
+@router.get("/api/eventosV01/{evento_id}", response_model=EventoOut)
+def obtener_eventoV01(evento_id: str):
+    """
+    Obtiene un evento desde la BD interna.
+
+    - Si evento_id es numérico: busca por agendamientos.id
+    - Si es texto: busca por google_event_id
+    """
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+
+        try:
+            # ---------------------------------------------------------
             # 1️⃣ Buscar evento
             # ---------------------------------------------------------
             if evento_id.isdigit():
@@ -605,7 +823,7 @@ def obtener_evento(evento_id: str):
                         COALESCE(NULLIF(c.nombre_real, ''), c.nickname, c.telefono) AS nombre,
                         c.nickname
                     FROM agendamientos_participantes ap
-                    JOIN creadores c
+                    JOIN aspirantes c
                         ON c.id = ap.creador_id
                     WHERE ap.agendamiento_id = %s
                       AND ap.creador_id IS NOT NULL
@@ -632,10 +850,10 @@ def obtener_evento(evento_id: str):
                             COALESCE(NULLIF(u.nombre_completo, ''), u.username, u.email, u.telefono) AS nombre,
                             NULL AS nickname
                         FROM agendamientos_participantes ap
-                        JOIN usuarios u
-                            ON u.id = ap.usuario_id
+                        JOIN administradores u
+                            ON u.id = ap.administrador_id
                         WHERE ap.agendamiento_id = %s
-                          AND ap.usuario_id IS NOT NULL
+                          AND ap.administrador_id IS NOT NULL
                     """, (ag_id,))
                     rows_usr = cur.fetchall()
 
@@ -851,7 +1069,7 @@ def editar_evento(evento_id: str, evento: EventoIn):
                         )
                         VALUES (%s, %s, %s)
                         """,
-                        (ag_id, participante_id, "pendiente")
+                        (ag_id, participante_id, "programado")
                     )
 
                 elif evento.participante_tipo == "creador":
@@ -864,7 +1082,7 @@ def editar_evento(evento_id: str, evento: EventoIn):
                         )
                         VALUES (%s, %s, %s)
                         """,
-                        (ag_id, participante_id, "pendiente")
+                        (ag_id, participante_id, "programado")
                     )
 
                 elif evento.participante_tipo == "usuario":
@@ -872,12 +1090,12 @@ def editar_evento(evento_id: str, evento: EventoIn):
                         """
                         INSERT INTO agendamientos_participantes (
                             agendamiento_id,
-                            usuario_id,
+                            administrador_id,
                             estado
                         )
                         VALUES (%s, %s, %s)
                         """,
-                        (ag_id, participante_id, "pendiente")
+                        (ag_id, participante_id, "programado")
                     )
 
             # 7️⃣ Consultar datos de participantes para la respuesta
@@ -903,7 +1121,7 @@ def editar_evento(evento_id: str, evento: EventoIn):
                             id,
                             COALESCE(NULLIF(nombre_real, ''), nickname, telefono) AS nombre,
                             nickname
-                        FROM creadores
+                        FROM aspirantes
                         WHERE id = ANY(%s)
                         """,
                         (evento.participantes_ids,)
@@ -916,7 +1134,7 @@ def editar_evento(evento_id: str, evento: EventoIn):
                             id,
                             COALESCE(NULLIF(nombre_completo, ''), username, email, telefono) AS nombre,
                             NULL AS nickname
-                        FROM usuarios
+                        FROM administradores
                         WHERE id = ANY(%s)
                         """,
                         (evento.participantes_ids,)
@@ -1251,7 +1469,7 @@ def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario
                                 estado
                             )
                             VALUES (%s, %s, %s)
-                        """, (agendamiento_id, participante_id, "pendiente"))
+                        """, (agendamiento_id, participante_id, "programado"))
 
                     elif evento.participante_tipo == "creador":
                         cur.execute("""
@@ -1261,17 +1479,17 @@ def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario
                                 estado
                             )
                             VALUES (%s, %s, %s)
-                        """, (agendamiento_id, participante_id, "pendiente"))
+                        """, (agendamiento_id, participante_id, "programado"))
 
                     elif evento.participante_tipo == "usuario":
                         cur.execute("""
                             INSERT INTO agendamientos_participantes (
                                 agendamiento_id,
-                                usuario_id,
+                                administrador_id,
                                 estado
                             )
                             VALUES (%s, %s, %s)
-                        """, (agendamiento_id, participante_id, "pendiente"))
+                        """, (agendamiento_id, participante_id, "programado"))
 
             # 7) Consultar datos de participantes según tipo
             participantes = []
@@ -1293,7 +1511,7 @@ def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario
                             id,
                             COALESCE(NULLIF(nombre_real, ''), nickname, telefono) AS nombre,
                             nickname
-                        FROM creadores
+                        FROM aspirantes
                         WHERE id = ANY(%s)
                     """, (evento.participantes_ids,))
 
@@ -1303,7 +1521,7 @@ def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario
                             id,
                             COALESCE(NULLIF(nombre_completo, ''), username, email, telefono) AS nombre,
                             NULL AS nickname
-                        FROM usuarios
+                        FROM administradores
                         WHERE id = ANY(%s)
                     """, (evento.participantes_ids,))
 
@@ -1569,7 +1787,7 @@ def crear_eventoV00(evento: EventoIn, usuario_actual: Any = Depends(obtener_usua
             raise HTTPException(status_code=500, detail="Error creando evento.")
 
 
-# # === Listar todos los usuarios ===
+# # === Listar todos los administradores ===
 # @router.get("/api/TodosUsuarios", tags=["TodosUsuarios"])
 # def listar_TodosUsuarios():
 #     try:
@@ -1599,7 +1817,7 @@ def listar_agendamientos():
                 a.estado, a.link_meet,
                 u.nombre_completo AS responsable
             FROM agendamientos a
-            LEFT JOIN usuarios u ON u.id = a.responsable_id
+            LEFT JOIN administradores u ON u.id = a.responsable_id
                 ORDER BY a.fecha_inicio DESC;
             """)
             agendamientos = cur.fetchall()
@@ -1638,7 +1856,7 @@ def obtener_eventos(
     Obtiene eventos desde la base de datos usando:
       - agendamientos
       - agendamientos_participantes
-      - aspirantes / creadores / usuarios
+      - aspirantes / administradores (participante_tipo "creador" usa tabla aspirantes y creador_id)
     """
 
     if time_min is None:
@@ -1666,12 +1884,12 @@ def obtener_eventos(
 
                 ap.estado AS estado_participante,
 
-                COALESCE(ap.aspirante_id, ap.creador_id, ap.usuario_id) AS participante_id,
+                COALESCE(ap.aspirante_id, ap.creador_id, ap.administrador_id) AS participante_id,
 
                 CASE
                     WHEN ap.aspirante_id IS NOT NULL THEN 'aspirante'
                     WHEN ap.creador_id IS NOT NULL THEN 'creador'
-                    WHEN ap.usuario_id IS NOT NULL THEN 'usuario'
+                    WHEN ap.administrador_id IS NOT NULL THEN 'usuario'
                     ELSE 'usuario'
                 END AS participante_tipo,
 
@@ -1695,16 +1913,16 @@ def obtener_eventos(
                    ON ap.agendamiento_id = a.id
             LEFT JOIN aspirantes asp
                    ON asp.id = ap.aspirante_id
-            LEFT JOIN creadores cre
+            LEFT JOIN aspirantes cre
                    ON cre.id = ap.creador_id
-            LEFT JOIN usuarios usr
-                   ON usr.id = ap.usuario_id
+            LEFT JOIN administradores usr
+                   ON usr.id = ap.administrador_id
             WHERE a.fecha_inicio >= %s
               AND a.fecha_inicio <= %s
               AND (
                 ap.aspirante_id IS NOT NULL
                 OR ap.creador_id IS NOT NULL
-                OR ap.usuario_id IS NOT NULL
+                OR ap.administrador_id IS NOT NULL
             )  
             ORDER BY a.fecha_inicio ASC, a.id ASC
             LIMIT %s
@@ -5437,9 +5655,170 @@ def actualizar_estado_agendamiento(
 # from auth import obtener_usuario_actual
 # from config import obtener_cuenta_por_subdominio
 
-
 @router.post("/api/agendamientos/{agendamiento_id}/recordatorio")
 def enviar_recordatorio_manual(
+    agendamiento_id: int,
+    usuario_actual: dict = Depends(obtener_usuario_actual)
+):
+    with get_connection_context() as conn:
+        cur = conn.cursor()
+
+        # =========================================================
+        # 1. Obtener cita + participante principal en un solo query
+        # =========================================================
+        cur.execute("""
+            SELECT
+                a.id,
+                a.fecha_inicio,
+                a.fecha_fin,
+                a.link_meet,
+                ta.nombre AS tipo_cita_nombre,
+
+                COALESCE(ap.aspirante_id, ap.creador_id, ap.administrador_id) AS participante_id,
+
+                CASE
+                    WHEN ap.aspirante_id IS NOT NULL THEN 'aspirante'
+                    WHEN ap.creador_id IS NOT NULL THEN 'creador'
+                    WHEN ap.administrador_id IS NOT NULL THEN 'usuario'
+                    ELSE NULL
+                END AS participante_tipo,
+
+                COALESCE(
+                    NULLIF(asp.whatsapp, ''),
+                    asp.telefono,
+                    NULLIF(cre.whatsapp, ''),
+                    cre.telefono,
+                    usr.telefono
+                ) AS telefono_final,
+
+                COALESCE(
+                    NULLIF(asp.nickname, ''),
+                    NULLIF(asp.nombre_real, ''),
+                    NULLIF(asp.usuario, ''),
+                    NULLIF(cre.nickname, ''),
+                    NULLIF(cre.nombre_real, ''),
+                    NULLIF(usr.nombre_completo, ''),
+                    NULLIF(usr.username, '')
+                ) AS nombre
+
+            FROM agendamientos a
+            INNER JOIN agendamientos_tipo ta
+                ON a.tipo_agendamiento = ta.id
+            INNER JOIN agendamientos_participantes ap
+                ON ap.agendamiento_id = a.id
+            LEFT JOIN aspirantes asp
+                ON asp.id = ap.aspirante_id
+            LEFT JOIN aspirantes cre
+                ON cre.id = ap.creador_id
+            LEFT JOIN administradores usr
+                ON usr.id = ap.administrador_id
+            WHERE a.id = %s
+            ORDER BY ap.id ASC
+            LIMIT 1
+        """, (agendamiento_id,))
+
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Cita no encontrada.")
+
+        (
+            cita_id,
+            fecha_inicio,
+            fecha_fin,
+            link_meet,
+            tipo_cita_nombre,
+            participante_id,
+            participante_tipo,
+            telefono,
+            nombre
+        ) = row
+
+        if not participante_id:
+            raise HTTPException(status_code=404, detail="Participante no encontrado para la cita.")
+
+        if not telefono:
+            raise HTTPException(status_code=400, detail="El participante no tiene teléfono registrado.")
+
+    # =========================================================
+    # 2. Formatear mensaje
+    # =========================================================
+    nombre_agencia = current_business_name.get() or "nuestra agencia"
+    nombre_evento = tipo_cita_nombre.lower() if tipo_cita_nombre else "cita"
+
+    fecha_str = fecha_inicio.strftime("%d de %B")
+    hora_inicio_str = fecha_inicio.strftime("%I:%M %p").lower()
+
+    if link_meet and "tiktok" not in link_meet.lower():
+        link_final = link_meet
+    else:
+        link_final = "Ingresa a tu perfil de TikTok LIVE"
+
+    # =========================================================
+    # 3. Credenciales WABA
+    # =========================================================
+    tenant_key = current_tenant.get() or "test"
+    cuenta = obtener_cuenta_por_subdominio(tenant_key)
+    if not cuenta:
+        raise HTTPException(status_code=500, detail=f"No hay credenciales WABA para '{tenant_key}'.")
+
+    token = cuenta.get("access_token")
+    phone_id = cuenta.get("phone_number_id")
+
+    # =========================================================
+    # 4. Enviar SIEMPRE mensaje simple
+    # =========================================================
+    texto_mensaje = (
+        f"Hola {nombre} 😊\n"
+        f"{nombre_agencia} te recuerda tu {nombre_evento} el día {fecha_str} a las {hora_inicio_str}.\n"
+        f"🔗 Enlace: {link_final}\n"
+        "Por favor confirma tu asistencia respondiendo este mensaje."
+    )
+
+    try:
+        codigo, respuesta = enviar_mensaje_texto_simple(
+            token=token,
+            numero_id=phone_id,
+            telefono_destino=telefono,
+            texto=texto_mensaje
+        )
+
+        message_id_meta = None
+        if isinstance(respuesta, dict) and respuesta.get("messages"):
+            try:
+                message_id_meta = respuesta["messages"][0].get("id")
+            except Exception:
+                message_id_meta = None
+
+        guardar_mensaje_nuevo(
+            telefono=telefono,
+            contenido=texto_mensaje,
+            direccion="enviado",
+            tipo="text",
+            message_id_meta=message_id_meta,
+            estado="sent" if codigo and codigo < 300 else "error"
+        )
+
+        return {
+            "status": "ok" if codigo and codigo < 300 else "error",
+            "enviado_por": "mensaje_simple",
+            "telefono": telefono,
+            "cita_id": cita_id,
+            "participante_tipo": participante_tipo,
+            "message_id_meta": message_id_meta,
+            "codigo_meta": codigo,
+            "respuesta_api": respuesta if not (codigo and codigo < 300) else None
+        }
+
+    except Exception as e:
+        logger.error(f"Error enviando recordatorio manual: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail="Error interno enviando el recordatorio."
+        )
+
+@router.post("/api/agendamientosV01/{agendamiento_id}/recordatorio")
+def enviar_recordatorio_manualV01(
     agendamiento_id: int,
     usuario_actual: dict = Depends(obtener_usuario_actual)
 ):
@@ -5503,7 +5882,7 @@ def enviar_recordatorio_manual(
                     COALESCE(NULLIF(c.whatsapp, ''), c.telefono) AS telefono_final,
                     COALESCE(c.nickname, c.nombre_real) AS nombre
                 FROM agendamientos_participantes ap
-                JOIN creadores c
+                JOIN aspirantes c
                     ON ap.creador_id = c.id
                 WHERE ap.agendamiento_id = %s
                   AND ap.creador_id IS NOT NULL
@@ -5522,10 +5901,10 @@ def enviar_recordatorio_manual(
                         u.telefono AS telefono_final,
                         COALESCE(u.nombre_completo, u.username) AS nombre
                     FROM agendamientos_participantes ap
-                    JOIN usuarios u
-                        ON ap.usuario_id = u.id
+                    JOIN administradores u
+                        ON ap.administrador_id = u.id
                     WHERE ap.agendamiento_id = %s
-                      AND ap.usuario_id IS NOT NULL
+                      AND ap.administrador_id IS NOT NULL
                     LIMIT 1
                 """, (agendamiento_id,))
                 row = cur.fetchone()

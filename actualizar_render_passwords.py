@@ -83,7 +83,7 @@ def actualizar_contraseñas_render():
         cur.execute("""
             SELECT username, LENGTH(password_hash) as hash_length, 
                    CASE WHEN LENGTH(password_hash) > 50 THEN 'Hasheada' ELSE 'Texto plano' END as estado
-            FROM usuarios
+            FROM administradores
             ORDER BY username
         """)
         
@@ -93,7 +93,7 @@ def actualizar_contraseñas_render():
             print(f"   👤 {username:<15} | Longitud: {length:<3} | Estado: {estado}")
         
         # 2. Buscar contraseñas en texto plano
-        cur.execute("SELECT id, username, password_hash FROM usuarios WHERE LENGTH(password_hash) < 50")
+        cur.execute("SELECT id, username, password_hash FROM administradores WHERE LENGTH(password_hash) < 50")
         usuarios_actualizar = cur.fetchall()
         
         if not usuarios_actualizar:
@@ -124,7 +124,7 @@ def actualizar_contraseñas_render():
             
             # Actualizar en la base de datos
             cur.execute(
-                "UPDATE usuarios SET password_hash = %s, actualizado_en = NOW() WHERE id = %s",
+                "UPDATE administradores SET password_hash = %s, actualizado_en = NOW() WHERE id = %s",
                 (nuevo_hash, user_id)
             )
             actualizadas += 1
@@ -139,7 +139,7 @@ def actualizar_contraseñas_render():
         cur.execute("""
             SELECT username, LENGTH(password_hash) as hash_length, 
                    CASE WHEN LENGTH(password_hash) > 50 THEN 'Hasheada' ELSE 'Texto plano' END as estado
-            FROM usuarios
+            FROM administradores
             ORDER BY username
         """)
         

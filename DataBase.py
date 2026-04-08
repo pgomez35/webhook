@@ -341,11 +341,11 @@ def obtener_usuario_id_por_telefono(telefono: str):
 
                 return resultado[0] if resultado else None
     except (OperationalError, DatabaseError) as e:
-        print(f"❌ Error de base de datos al obtener usuario_id: {e}")
+        print(f"❌ Error de base de datos al obtener aspirante_id: {e}")
         traceback.print_exc()
         return None
     except Exception as e:
-        print(f"❌ Error inesperado al obtener usuario_id: {e}")
+        print(f"❌ Error inesperado al obtener aspirante_id: {e}")
         traceback.print_exc()
         return None
 
@@ -540,7 +540,7 @@ def guardar_mensaje_nuevo(
         with get_connection_context() as conn:
             with conn.cursor() as cur:
 
-                usuario_id = None
+                aspirante_id = None
 
                 # Buscar aspirante existente
                 cur.execute(
@@ -550,16 +550,16 @@ def guardar_mensaje_nuevo(
                 usuario = cur.fetchone()
 
                 if usuario:
-                    usuario_id = usuario[0]
+                    aspirante_id = usuario[0]
 
                 # Insertar mensaje sin crear aspirante automáticamente
                 cur.execute("""
                     INSERT INTO mensajes_whatsapp
-                    (usuario_id, telefono, direccion, tipo, contenido,
+                    (aspirante_id, telefono, direccion, tipo, contenido,
                      media_url, message_id_meta, estado)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
-                    usuario_id,
+                    aspirante_id,
                     telefono,
                     direccion,
                     tipo,
@@ -603,18 +603,18 @@ def guardar_mensaje_nuevo20260325(
                         "INSERT INTO aspirantes (telefono) VALUES (%s) RETURNING id",
                         (telefono,)
                     )
-                    usuario_id = cur.fetchone()[0]
+                    aspirante_id = cur.fetchone()[0]
                 else:
-                    usuario_id = usuario[0]
+                    aspirante_id = usuario[0]
 
                 # Insertar mensaje en NUEVA tabla
                 cur.execute("""
                     INSERT INTO mensajes_whatsapp
-                    (usuario_id, telefono, direccion, tipo, contenido,
+                    (aspirante_id, telefono, direccion, tipo, contenido,
                      media_url, message_id_meta, estado)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
-                    usuario_id,
+                    aspirante_id,
                     telefono,
                     direccion,
                     tipo,
@@ -657,19 +657,19 @@ def guardar_mensaje(telefono, texto, tipo="recibido", es_audio=False):
                 row = cur.fetchone()
 
                 if row:
-                    usuario_id = row[0]
+                    aspirante_id = row[0]
                 else:
                     cur.execute(
                         "INSERT INTO aspirantes (telefono) VALUES (%s) RETURNING id",
                         (telefono,)
                     )
-                    usuario_id = cur.fetchone()[0]
+                    aspirante_id = cur.fetchone()[0]
 
                 # Insertar mensaje
                 cur.execute("""
-                    INSERT INTO mensajes (usuario_id, contenido, tipo, es_audio, fecha)
+                    INSERT INTO mensajes (aspirante_id, contenido, tipo, es_audio, fecha)
                     VALUES (%s, %s, %s, %s, %s)
-                """, (usuario_id, texto, tipo, es_audio, datetime.now()))
+                """, (aspirante_id, texto, tipo, es_audio, datetime.now()))
 
             conn.commit()
 
@@ -717,7 +717,7 @@ def eliminar_mensajes(telefono):
                 cur.execute("""
                     DELETE FROM mensajes
                     USING aspirantes
-                    WHERE mensajes.usuario_id = aspirantes.id
+                    WHERE mensajes.aspirante_id = aspirantes.id
                     AND aspirantes.telefono = %s
                 """, (telefono,))
                 conn.commit()
@@ -818,7 +818,7 @@ def obtener_mensajesV0(telefono):
                 cur.execute("""
                     SELECT m.contenido, m.tipo, m.fecha, m.es_audio
                     FROM mensajes m
-                    INNER JOIN aspirantes u ON m.usuario_id = u.id
+                    INNER JOIN aspirantes u ON m.aspirante_id = u.id
                     WHERE u.telefono = %s
                     ORDER BY m.fecha ASC
                 """, (telefono,))
@@ -849,7 +849,7 @@ def obtener_ultimos_mensajes(limit=10):
                 cur.execute("""
                     SELECT m.contenido, m.tipo, m.fecha, m.es_audio
                     FROM mensajes m
-                    JOIN aspirantes u ON m.usuario_id = u.id
+                    JOIN aspirantes u ON m.aspirante_id = u.id
                     ORDER BY m.fecha ASC
                     LIMIT %s;
                     """, (limit,))
@@ -890,18 +890,18 @@ def verify_password(password: str, hashed_password: str) -> bool:
     return bcrypt.checkpw(password_bytes, hashed_password_bytes)
 
 # ===============================
-# FUNCIONES PARA usuarios
+# FUNCIONES PARA administradores
 # ===============================
 
 def obtener_todos_usuarioss():
-    """Obtiene todos los usuarios administradores"""
+    """Obtiene todos los administradores administradores"""
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT id, username, nombre_completo, email, telefono, rol, grupo, activo, 
                            creado_en, actualizado_en
-                    FROM usuarios
+                    FROM administradores
                     ORDER BY creado_en DESC
                 """)
                 
@@ -927,20 +927,20 @@ def obtener_todos_usuarioss():
         traceback.print_exc()
         return []
     except Exception as e:
-        print(f"❌ Error inesperado al obtener usuarios administradores: {e}")
+        print(f"❌ Error inesperado al obtener administradores administradores: {e}")
         traceback.print_exc()
         return []
 
 
 def obtener_todos_responsables_agendas():
-    """Obtiene todos los usuarios responsables de agendas"""
+    """Obtiene todos los administradores responsables de agendas"""
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT id, username, nombre_completo, email, telefono, rol, grupo, activo, 
                            creado_en, actualizado_en
-                    FROM usuarios
+                    FROM administradores
                     ORDER BY creado_en DESC
                 """)
 
@@ -1012,7 +1012,7 @@ def crear_usuarios(datos):
 
                 # 🔥 INSERT directo (la DB maneja duplicados)
                 cur.execute("""
-                    INSERT INTO usuarios (
+                    INSERT INTO administradores (
                         username, nombre_completo, email, telefono, rol, grupo, activo,
                         password_hash, creado_en, actualizado_en
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
@@ -1055,7 +1055,7 @@ def crear_usuarios(datos):
 
 
 
-def obtener_usuarios_por_id(usuario_id):
+def obtener_usuarios_por_id(administrador_id):
     """Obtiene un usuario administrador por ID"""
     try:
         with get_connection_context() as conn:
@@ -1063,9 +1063,9 @@ def obtener_usuarios_por_id(usuario_id):
                 cur.execute("""
                     SELECT id, username, nombre_completo, email, telefono, rol, grupo, activo,
                            creado_en, actualizado_en
-                    FROM usuarios
+                    FROM administradores
                     WHERE id = %s
-                """, (usuario_id,))
+                """, (administrador_id,))
                 
                 row = cur.fetchone()
                 
@@ -1088,13 +1088,13 @@ def obtener_usuarios_por_id(usuario_id):
         print("❌ Error al obtener usuario administrador:", e)
         return None
 
-def actualizar_usuarios(usuario_id, datos):
+def actualizar_usuarios(administrador_id, datos):
     """Actualiza un usuario administrador y retorna los datos actualizados"""
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 # Verificar si el usuario existe
-                cur.execute("SELECT id FROM usuarios WHERE id = %s", (usuario_id,))
+                cur.execute("SELECT id FROM administradores WHERE id = %s", (administrador_id,))
                 if not cur.fetchone():
                     # En vez de devolver dict, lanza excepción en el endpoint
                     return None
@@ -1102,8 +1102,8 @@ def actualizar_usuarios(usuario_id, datos):
                 # Verificar username único (excluyendo el usuario actual)
                 if datos.get("username"):
                     cur.execute(
-                        "SELECT id FROM usuarios WHERE username = %s AND id != %s",
-                        (datos.get("username"), usuario_id)
+                        "SELECT id FROM administradores WHERE username = %s AND id != %s",
+                        (datos.get("username"), administrador_id)
                     )
                     if cur.fetchone():
                         raise ValueError("El username ya existe")
@@ -1111,8 +1111,8 @@ def actualizar_usuarios(usuario_id, datos):
                 # Verificar email único (excluyendo el usuario actual)
                 if datos.get("email"):
                     cur.execute(
-                        "SELECT id FROM usuarios WHERE email = %s AND id != %s",
-                        (datos.get("email"), usuario_id)
+                        "SELECT id FROM administradores WHERE email = %s AND id != %s",
+                        (datos.get("email"), administrador_id)
                     )
                     if cur.fetchone():
                         raise ValueError("El email ya existe")
@@ -1131,16 +1131,16 @@ def actualizar_usuarios(usuario_id, datos):
                     raise ValueError("No se proporcionaron campos para actualizar")
 
                 updates.append("actualizado_en = NOW()")
-                valores.append(usuario_id)
+                valores.append(administrador_id)
 
-                query = f"UPDATE usuarios SET {', '.join(updates)} WHERE id = %s"
+                query = f"UPDATE administradores SET {', '.join(updates)} WHERE id = %s"
                 cur.execute(query, tuple(valores))
                 conn.commit()
 
                 # Obtener los datos actualizados
                 cur.execute(
-                    "SELECT id, username, rol, nombre_completo, email, telefono, grupo, activo FROM usuarios WHERE id = %s",
-                    (usuario_id,)
+                    "SELECT id, username, rol, nombre_completo, email, telefono, grupo, activo FROM administradores WHERE id = %s",
+                    (administrador_id,)
                 )
                 row = cur.fetchone()
 
@@ -1167,17 +1167,17 @@ def actualizar_usuarios(usuario_id, datos):
         raise e
 
 
-def eliminar_usuarios(usuario_id):
+def eliminar_usuarios(administrador_id):
     """Elimina un usuario administrador"""
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 # Verificar si el usuario existe
-                cur.execute("SELECT id FROM usuarios WHERE id = %s", (usuario_id,))
+                cur.execute("SELECT id FROM administradores WHERE id = %s", (administrador_id,))
                 if not cur.fetchone():
                     return {"status": "error", "mensaje": "Usuario no encontrado"}
                 
-                cur.execute("DELETE FROM usuarios WHERE id = %s", (usuario_id,))
+                cur.execute("DELETE FROM administradores WHERE id = %s", (administrador_id,))
                 conn.commit()
                 
                 return {"status": "ok", "mensaje": "Usuario eliminado correctamente"}
@@ -1187,21 +1187,21 @@ def eliminar_usuarios(usuario_id):
         return {"status": "error", "mensaje": str(e)}
 
 
-def cambiar_estado_usuarios(usuario_id, activo):
+def cambiar_estado_usuarios(administrador_id, activo):
     """Cambia el estado activo/inactivo de un usuario administrador"""
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 # Verificar si el usuario existe
-                cur.execute("SELECT id FROM usuarios WHERE id = %s", (usuario_id,))
+                cur.execute("SELECT id FROM administradores WHERE id = %s", (administrador_id,))
                 if not cur.fetchone():
                     return {"status": "error", "mensaje": "Usuario no encontrado"}
                 
                 cur.execute("""
-                    UPDATE usuarios 
+                    UPDATE administradores 
                     SET activo = %s, actualizado_en = NOW() 
                     WHERE id = %s
-                """, (activo, usuario_id))
+                """, (activo, administrador_id))
                 
                 conn.commit()
                 
@@ -1221,7 +1221,7 @@ def obtener_usuarios_por_username(username):
                 cur.execute("""
                     SELECT id, username, nombre_completo AS nombre, email, telefono, rol, grupo, activo,
                            password_hash, creado_en, actualizado_en
-                    FROM usuarios
+                    FROM administradores
                     WHERE username = %s
                 """, (username,))
                 
@@ -1257,7 +1257,7 @@ def actualiza_password_usuario(user_id: int, nuevo_hash: str):
             with conn.cursor() as cur:
                 # Siempre usa parámetros para evitar SQL Injection
                 cur.execute(
-                    "UPDATE usuarios SET password_hash = %s WHERE id = %s",
+                    "UPDATE administradores SET password_hash = %s WHERE id = %s",
                     (nuevo_hash, user_id)
                 )
                 conn.commit()
@@ -1580,29 +1580,6 @@ def obtener_todos_los_participantes_db():
                     UNION ALL
 
                     SELECT
-                        c.id,
-                        NULL AS username,
-                        c.nickname,
-                        c.nombre_real,
-                        COALESCE(c.nickname, c.nombre_real, c.telefono) AS display_name,
-                        c.email,
-                        c.telefono,
-                        c.whatsapp,
-                        c.foto_url,
-                        NULL AS foto_url_mini,
-                        NULL AS verificado,
-                        c.activo,
-                        c.estado_operativo AS estado_nombre,
-                        c.creado_en,
-                        c.actualizado_en,
-                        'creador' AS tipo_usuario,
-                        NULL AS rol
-                    FROM creadores c
-                    WHERE c.activo = TRUE
-
-                    UNION ALL
-
-                    SELECT
                         u.id,
                         u.username,
                         NULL AS nickname,
@@ -1618,11 +1595,11 @@ def obtener_todos_los_participantes_db():
                         u.grupo AS estado_nombre,
                         u.creado_en,
                         u.actualizado_en,
-                        'usuario' AS tipo_usuario,
+                        'administrador' AS tipo_usuario,
                         ur.nombre AS rol
-                    FROM usuarios u
-                    LEFT JOIN usuarios_roles ur
-                        ON ur.id = u.usuarios_roles_id
+                    FROM administradores u
+                    LEFT JOIN administradores_roles ur
+                        ON ur.id = u.administradores_roles_id
                     WHERE u.activo = TRUE
 
                     ORDER BY actualizado_en DESC NULLS LAST, creado_en DESC;
@@ -2039,7 +2016,7 @@ def obtener_todos_manager():
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT id, username, nombre_completo, rol, grupo, activo
-                    FROM usuarios WHERE rol='Manager'
+                    FROM administradores WHERE rol='Manager'
                     ORDER BY nombre_completo DESC
                 """)
                 usuarios = []
@@ -2480,12 +2457,12 @@ def buscar_usuario_por_telefono(numero: str):
                 if row:
                     return dict(zip([desc[0] for desc in cur.description], row))
 
-                # Buscar en usuarios
+                # Buscar en administradores
                 cur.execute("""
                     SELECT id, username AS nickname,
                            nombre_completo AS nombre,
                            'admin' AS rol
-                    FROM usuarios
+                    FROM administradores
                     WHERE telefono = %s
                     LIMIT 1;
                 """, (numero,))
@@ -3167,31 +3144,34 @@ def obtener_participantes_por_tipo_db(tipo: str):
                     """)
 
                 elif tipo == "creador":
+                    # Misma fuente que aspirantes (tabla creadores unificada en aspirantes)
                     cur.execute("""
                         SELECT
-                            c.id,
-                            NULL AS username,
-                            c.nickname,
-                            c.nombre_real,
-                            COALESCE(c.nickname, c.nombre_real, c.telefono) AS display_name,
-                            c.email,
-                            c.telefono,
-                            c.whatsapp,
-                            c.foto_url,
-                            NULL AS foto_url_mini,
-                            NULL AS verificado,
-                            c.activo,
-                            c.estado_operativo AS estado_nombre,
-                            c.creado_en,
-                            c.actualizado_en,
+                            a.id,
+                            a.usuario AS username,
+                            a.nickname,
+                            a.nombre_real,
+                            COALESCE(a.nickname, a.nombre_real, a.usuario, a.telefono) AS display_name,
+                            a.email,
+                            a.telefono,
+                            a.whatsapp,
+                            a.foto_url,
+                            a.foto_url_mini,
+                            a.verificado,
+                            a.activo,
+                            ae.nombre AS estado_nombre,
+                            a.creado_en,
+                            a.actualizado_en,
                             'creador' AS tipo_usuario,
                             NULL AS rol
-                        FROM creadores c
-                        WHERE c.activo = TRUE
-                        ORDER BY c.actualizado_en DESC NULLS LAST, c.creado_en DESC;
+                        FROM aspirantes a
+                        LEFT JOIN aspirantes_estados ae
+                            ON a.estado_id = ae.id
+                        WHERE a.activo = TRUE
+                        ORDER BY a.actualizado_en DESC NULLS LAST, a.creado_en DESC;
                     """)
 
-                elif tipo == "usuario":
+                elif tipo == "administrador":
                     cur.execute("""
                         SELECT
                             u.id,
@@ -3209,11 +3189,11 @@ def obtener_participantes_por_tipo_db(tipo: str):
                             u.grupo AS estado_nombre,
                             u.creado_en,
                             u.actualizado_en,
-                            'usuario' AS tipo_usuario,
+                            'administrador' AS tipo_usuario,
                             ur.nombre AS rol
-                        FROM usuarios u
-                        LEFT JOIN usuarios_roles ur
-                            ON ur.id = u.usuarios_roles_id
+                        FROM administradores u
+                        LEFT JOIN administradores_roles ur
+                            ON ur.id = u.administradores_roles_id
                         WHERE u.activo = TRUE
                         ORDER BY u.actualizado_en DESC NULLS LAST, u.creado_en DESC;
                     """)

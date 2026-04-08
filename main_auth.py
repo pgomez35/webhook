@@ -74,18 +74,18 @@ def verificar_password(password_plano: str, password_hash: str) -> bool:
 def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = payload.get("sub")
+        administrador_id = payload.get("sub")
 
-        if not user_id:
+        if not administrador_id:
             raise HTTPException(status_code=401, detail="Token inválido")
 
         with get_connection_context() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT id, nombre_completo, rol, activo
-                FROM usuarios
+                FROM administradores
                 WHERE id = %s
-            """, (user_id,))
+            """, (administrador_id,))
             row = cursor.fetchone()
 
         if not row or not row[3]:
@@ -158,16 +158,16 @@ async def refresh_token(data: dict = Body(...)):
         if payload.get("tipo") != "refresh":
             raise HTTPException(status_code=401, detail="Token inválido")
 
-        user_id = payload.get("sub")
-        if not user_id:
+        administrador_id = payload.get("sub")
+        if not administrador_id:
             raise HTTPException(status_code=401, detail="Token inválido")
 
-        # Buscar usuario
+        # Buscar administrador
         with get_connection_context() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, nombre_completo, rol, activo FROM usuarios WHERE id = %s",
-                (user_id,)
+                "SELECT id, nombre_completo, rol, activo FROM administradores WHERE id = %s",
+                (administrador_id,)
             )
             row = cursor.fetchone()
 

@@ -2680,12 +2680,12 @@ def registrar_mensaje_recibido(
                 )
                 row = cur.fetchone()
 
-                usuario_id = row[0] if row else None
+                aspirante_id = row[0] if row else None
 
-                if usuario_id:
-                    print(f"🧾 Mensaje asociado a aspirante_id={usuario_id}")
+                if aspirante_id:
+                    print(f"🧾 Mensaje asociado a aspirante_id={aspirante_id}")
                 else:
-                    print(f"🆕 Mensaje sin creador (usuario_id=NULL)")
+                    print(f"🆕 Mensaje sin creador (aspirante_id=NULL)")
 
                 # ----------------------------------------
                 # 2️⃣ Insert mensaje
@@ -2694,7 +2694,7 @@ def registrar_mensaje_recibido(
                     """
                     INSERT INTO mensajes_whatsapp
                     (
-                        usuario_id,
+                        aspirante_id,
                         telefono,
                         direccion,
                         tipo,
@@ -2707,7 +2707,7 @@ def registrar_mensaje_recibido(
                     ON CONFLICT (message_id_meta) DO NOTHING;
                     """,
                     (
-                        usuario_id,        # Puede ser NULL
+                        aspirante_id,        # Puede ser NULL
                         telefono,
                         "recibido",
                         tipo,

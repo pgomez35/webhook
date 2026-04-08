@@ -47,33 +47,33 @@ async def crear_usuario(usuario: AdminUsuarioCreate, request: Request):
     usuario_creado = crear_usuarios(usuario)
     return usuario_creado
 
-@router.get("/api/admin-usuario/{usuario_id}", response_model=AdminUsuarioResponse)
-async def obtener_usuario(usuario_id: int, request: Request):
+@router.get("/api/admin-usuario/{administrador_id}", response_model=AdminUsuarioResponse)
+async def obtener_usuario(administrador_id: int, request: Request):
     """Obtiene un usuario administrador por ID dentro del tenant actual."""
 
-    usuario = obtener_usuarios_por_id(usuario_id)
+    usuario = obtener_usuarios_por_id(administrador_id)
 
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     return usuario
 
 
-@router.delete("/api/admin-usuario/{usuario_id}")
-async def eliminar_usuario(usuario_id: int, request: Request):
+@router.delete("/api/admin-usuario/{administrador_id}")
+async def eliminar_usuario(administrador_id: int, request: Request):
     """Elimina un usuario administrador dentro del tenant actual."""
 
-    resultado = eliminar_usuarios(usuario_id)
+    resultado = eliminar_usuarios(administrador_id)
 
     if resultado.get("status") == "error":
         raise HTTPException(status_code=404, detail=resultado.get("mensaje"))
 
     return {"mensaje": resultado.get("mensaje", "Usuario eliminado exitosamente")}
 
-@router.patch("/api/admin-usuario/{usuario_id}/activo")
-async def cambiar_estado_usuario(usuario_id: int, request: Request, activo: bool = Body(...)):
+@router.patch("/api/admin-usuario/{administrador_id}/activo")
+async def cambiar_estado_usuario(administrador_id: int, request: Request, activo: bool = Body(...)):
     """Cambia el estado activo/inactivo de un usuario administrador dentro del tenant actual."""
 
-    resultado = cambiar_estado_usuarios(usuario_id, activo)
+    resultado = cambiar_estado_usuarios(administrador_id, activo)
 
     if resultado.get("status") == "error":
         raise HTTPException(status_code=404, detail=resultado.get("mensaje"))
@@ -143,7 +143,7 @@ async def refresh_token(request: Request, data: dict = Body(...)):
             cursor.execute(
                 """
                 SELECT id, nombre_completo AS nombre, rol, activo 
-                FROM usuarios 
+                FROM administradores 
                 WHERE id = %s
                 """,
                 (user_id,)  # 👈 importante: debe ser tupla
@@ -221,10 +221,10 @@ async def cambiar_password_admin(
     return {"mensaje": "Contraseña actualizada correctamente."}
 
 
-@router.put("/api/admin-usuario/{usuario_id:int}", response_model=AdminUsuarioResponse)
-async def actualizar_usuario(usuario_id: int, usuario: AdminUsuarioUpdate):
+@router.put("/api/admin-usuario/{administrador_id:int}", response_model=AdminUsuarioResponse)
+async def actualizar_usuario(administrador_id: int, usuario: AdminUsuarioUpdate):
     try:
-        usuario_actualizado = actualizar_usuarios(usuario_id, usuario.dict())
+        usuario_actualizado = actualizar_usuarios(administrador_id, usuario.dict())
         if not usuario_actualizado:
             raise HTTPException(status_code=404, detail="Usuario no encontrado")
         return usuario_actualizado

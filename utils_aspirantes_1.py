@@ -90,26 +90,26 @@ def guardar_mensaje_old(telefono, texto, tipo="recibido", es_audio=False):
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 # Buscar si ya existe el usuario
-                cur.execute("SELECT id FROM creadores WHERE telefono = %s", (telefono,))
+                cur.execute("SELECT id FROM aspirantes WHERE telefono = %s", (telefono,))
                 usuario = cur.fetchone()
 
-                # Insertar usuario si no existe
+                # Insertar aspirante si no existe
                 if not usuario:
                     cur.execute(
-                        "INSERT INTO creadores (telefono) VALUES (%s) RETURNING id",
+                        "INSERT INTO aspirantes (telefono) VALUES (%s) RETURNING id",
                         (telefono,)
                     )
-                    usuario_id = cur.fetchone()[0]
+                    aspirante_id = cur.fetchone()[0]
                 else:
-                    usuario_id = usuario[0]
+                    aspirante_id = usuario[0]
 
                 # Insertar mensaje
                 cur.execute(
                     """
-                    INSERT INTO mensajes (usuario_id, contenido, tipo, es_audio, fecha)
+                    INSERT INTO mensajes (aspirante_id, contenido, tipo, es_audio, fecha)
                     VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (usuario_id, texto, tipo, es_audio, datetime.now())
+                    (aspirante_id, texto, tipo, es_audio, datetime.now())
                 )
 
                 conn.commit()

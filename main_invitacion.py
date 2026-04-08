@@ -213,7 +213,7 @@ def validar_usuario_existe(cur, usuario_id: int) -> Dict[str, Any]:
             activo,
             creado_en,
             actualizado_en
-        FROM usuarios
+        FROM administradores
         WHERE id = %s
         LIMIT 1
     """, (usuario_id,))
@@ -244,7 +244,7 @@ def validar_manager_existe(cur, manager_id: int) -> Dict[str, Any]:
             activo,
             creado_en,
             actualizado_en
-        FROM usuarios
+        FROM administradores
         WHERE id = %s
           AND rol = %s
           AND activo = true
@@ -355,9 +355,9 @@ def obtener_invitacion_por_id(cur, invitacion_id: int) -> Dict[str, Any]:
         FROM invitaciones i
         JOIN aspirantes c
             ON c.id = i.aspirante_id
-        LEFT JOIN usuarios ui
+        LEFT JOIN administradores ui
             ON ui.id = i.usuario_invita
-        LEFT JOIN usuarios um
+        LEFT JOIN administradores um
             ON um.id = i.manager_id
         WHERE i.id = %s
         LIMIT 1
@@ -429,9 +429,9 @@ def obtener_ultima_invitacion_por_creador(cur, aspirante_id: int) -> Optional[Di
         FROM invitaciones i
         JOIN aspirantes c
             ON c.id = i.aspirante_id
-        LEFT JOIN usuarios ui
+        LEFT JOIN administradores ui
             ON ui.id = i.usuario_invita
-        LEFT JOIN usuarios um
+        LEFT JOIN administradores um
             ON um.id = i.manager_id
         WHERE i.aspirante_id = %s
         ORDER BY i.id DESC
@@ -480,7 +480,7 @@ def listar_managers():
                     activo,
                     creado_en,
                     actualizado_en
-                FROM usuarios
+                FROM administradores
                 WHERE rol = %s
                   AND activo = true
                 ORDER BY nombre_completo ASC, id ASC
@@ -691,9 +691,9 @@ def listar_invitaciones(
                 FROM invitaciones i
                 JOIN aspirantes c
                     ON c.id = i.aspirante_id
-                LEFT JOIN usuarios ui
+                LEFT JOIN administradores ui
                     ON ui.id = i.usuario_invita
-                LEFT JOIN usuarios um
+                LEFT JOIN administradores um
                     ON um.id = i.manager_id
                 {where_sql}
                 ORDER BY i.id DESC

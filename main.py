@@ -1733,14 +1733,14 @@ async def test_conexion():
         cur.execute("""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables 
-                WHERE table_name = 'usuarios'
+                WHERE table_name = 'administradores'
             )
         """)
         table_exists = cur.fetchone()[0]
 
         if table_exists:
             # Contar registros
-            cur.execute("SELECT COUNT(*) FROM usuarios")
+            cur.execute("SELECT COUNT(*) FROM administradores")
             count = cur.fetchone()[0]
 
             cur.close()
@@ -2397,7 +2397,7 @@ def obtener_creador_activo(id: int):
                 cur.execute("""
                     SELECT ca.*, au.nombre_completo AS manager_nombre
                     FROM creadores_activos ca
-                    LEFT JOIN usuarios au ON ca.manager_id = au.id
+                    LEFT JOIN administradores au ON ca.manager_id = au.id
                     WHERE ca.id = %s
                 """, (id,))
                 row = cur.fetchone()
@@ -2598,7 +2598,7 @@ def listar_seguimientos_por_creador_activo(creador_activo_id: int):
                 cur.execute("""
                     SELECT sc.*, au.nombre_completo AS manager_nombre
                     FROM seguimiento_creadores sc
-                    LEFT JOIN usuarios au ON sc.manager_id = au.id
+                    LEFT JOIN administradores au ON sc.manager_id = au.id
                     WHERE sc.creador_activo_id = %s
                     ORDER BY sc.fecha_seguimiento DESC
                 """, (creador_activo_id,))
