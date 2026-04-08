@@ -3147,6 +3147,7 @@ def obtener_configuracion_agencia(clave: str) -> str | None:
         return None
 
 
+
 def obtener_participantes_por_tipo_db(tipo: str):
     tipo = (tipo or "").strip().lower()
 
@@ -3173,9 +3174,9 @@ def obtener_participantes_por_tipo_db(tipo: str):
                             a.creado_en,
                             a.actualizado_en,
                             'aspirante' AS tipo_usuario,
-                            NULL AS rol
+                             NULL AS AS rol
                         FROM aspirantes a
-                        LEFT JOIN aspirantes_estados ae
+                        INNER JOIN aspirantes_estados ae
                             ON a.estado_id = ae.id
                         WHERE a.activo = TRUE
                         ORDER BY a.actualizado_en DESC NULLS LAST, a.creado_en DESC
@@ -3185,10 +3186,10 @@ def obtener_participantes_por_tipo_db(tipo: str):
                     cur.execute("""
                         SELECT
                             c.id,
-                            c.nickname AS username,
+                            c.usuario AS username,
                             c.nickname,
                             c.nombre_real,
-                            COALESCE(c.nickname, c.nombre_real, c.telefono) AS display_name,
+                            COALESCE(c.nickname, c.nombre_real, c.usuario, c.telefono) AS display_name,
                             c.email,
                             c.telefono,
                             c.whatsapp,
@@ -3227,7 +3228,7 @@ def obtener_participantes_por_tipo_db(tipo: str):
                             'administrador' AS tipo_usuario,
                             ur.nombre AS rol
                         FROM administradores u
-                        LEFT JOIN administradores_roles ur
+                        INNER JOIN administradores_roles ur
                             ON ur.id = u.administradores_roles_id
                         WHERE u.activo = TRUE
                         ORDER BY u.actualizado_en DESC NULLS LAST, u.creado_en DESC
