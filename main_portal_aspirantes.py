@@ -285,6 +285,357 @@ def resumen_portal(token: str = Query(..., min_length=10)):
         "expiracion_token": info["expiracion"]
     }
 
+
+
+
+
+# -------------------------------------------
+# -------------------------------------------
+# -------------------------------------------
+# -------------------------------------------
+
+from pydantic import BaseModel
+from typing import List
+
+# =========================
+# SCHEMAS
+# =========================
+
+class CitaPortalOut(BaseModel):
+    id: int
+    titulo: str
+    fecha_inicio: str
+    fecha_fin: str
+    duracion_minutos: int
+    tipo_agendamiento: str
+    tipo_color: Optional[str] = None
+    tipo_icono: Optional[str] = None
+    estado: str
+    realizada: bool
+    cancelada: bool
+    puede_unirse: bool
+    permite_modificar: bool
+    es_proxima: bool
+    link_meet: Optional[str] = None
+    url_modificar: Optional[str] = None
+    tiempo_restante_texto: Optional[str] = None
+
+
+class PortalCitasOut(BaseModel):
+    proxima_cita: Optional[CitaPortalOut] = None
+    otras_citas: List[CitaPortalOut] = []
+    total_citas: int
+    tiene_citas: bool
+
+
+# =========================
+# HELPERS
+# =========================
+
+def calcular_duracion_minutos(fecha_inicio: Optional[datetime], fecha_fin: Optional[datetime]) -> int:
+    if not fecha_inicio or not fecha_fin:
+        return 0
+    return int((fecha_fin - fecha_inicio).total_seconds() // 60)
+
+
+def construir_tiempo_restante_texto(ahora: datetime, fecha_inicio: Optional[datetime], fecha_fin: Optional[datetime]) -> Optional[str]:
+    if not fecha_inicio or not fecha_fin:
+        return None
+
+    if fecha_fin < ahora:
+        return "Cita finalizada"
+
+    if fecha_inicio <= ahora <= fecha_fin:
+        return "Disponible ahora"
+
+    diferencia = fecha_inicio - ahora
+    total_min = int(diferencia.total_seconds() // 60)
+
+    if total_min < 1:
+        return "Disponible ahora"
+
+    if total_min < 60:
+        return f"Empieza en {total_min} min"
+
+    horas = total_min // 60
+    minutos = total_min % 60
+
+    if minutos == 0:
+        return f"Empieza en {horas} h"
+
+    return f"Empieza en {horas} h {minutos} min"
+
+
+def calcular_puede_unirse(
+    ahora: datetime,
+    fecha_inicio: Optional[datetime],
+    fecha_fin: Optional[datetime],
+    estado: str,
+    link_meet: Optional[str],
+) -> bool:
+    if not fecha_inicio or not fecha_fin or not link_meet:
+        return False
+
+    estado_norm = (estado or "").strip().lower()
+
+    if estado_norm in ("cancelado", "cumplido"):
+        return False
+
+    ventana_inicio = fecha_inicio - timedelta(minutes=15)
+    ventana_fin = fecha_fin + timedelta(hours=4)
+
+    return ventana_inicio <= ahora <= ventana_fin
+
+
+def construir_titulo_cita(tipo_icono: Optional[str], tipo_nombre: str) -> str:
+    if tipo_icono:
+        return f"{tipo_icono} {tipo_nombre}"
+    return tipo_nombre
+
+
+def mapear_cita_portal(
+    row,
+    ahora: datetime,
+    es_proxima: bool = False,
+) -> CitaPortalOut:
+    (
+        a_id,
+        titulo_db,
+        fecha_inicio,
+        fecha_fin,
+        estado_nombre,
+        tipo_nombre,
+        tipo_color,
+        tipo_icono,
+        link_meet,
+    ) = row
+
+    estado = estado_nombre or "programado"
+    estado_norm = estado.strip().lower()
+
+    realizada = estado_norm == "cumplido"
+    cancelada = estado_norm == "cancelado"
+    permite_modificar = not realizada and not cancelada
+    puede_unirse = calcular_puede_unirse(
+        ahora=ahora,
+        fecha_inicio=fecha_inicio,
+        fecha_fin=fecha_fin,
+        estado=estado,
+        link_meet=link_meet,
+    )
+
+    duracion_minutos = calcular_duracion_minutos(fecha_inicio, fecha_fin)
+
+    titulo = titulo_db or construir_titulo_cita(tipo_icono, tipo_nombre)
+
+    return CitaPortalOut(
+        id=a_id,
+        titulo=titulo,
+        fecha_inicio=fecha_inicio.isoformat() if fecha_inicio else "",
+        fecha_fin=fecha_fin.isoformat() if fecha_fin else "",
+        duracion_minutos=duracion_minutos,
+        tipo_agendamiento=tipo_nombre,
+        tipo_color=tipo_color,
+        tipo_icono=tipo_icono,
+        estado=estado,
+        realizada=realizada,
+        cancelada=cancelada,
+        puede_unirse=puede_unirse,
+        permite_modificar=permite_modificar,
+        es_proxima=es_proxima,
+        link_meet=link_meet,
+        url_modificar=f"/portal/citas/{a_id}/modificar" if permite_modificar else None,
+        tiempo_restante_texto=construir_tiempo_restante_texto(
+            ahora=ahora,
+            fecha_inicio=fecha_inicio,
+            fecha_fin=fecha_fin,
+        ),
+    )
+
+
+# =========================
+# ENDPOINT PRINCIPAL PORTAL
+# =========================
+
+@router.get("/api/portal/aspirantes/{aspirante_id}/citas", response_model=PortalCitasOut)
+def obtener_citas_portal_aspirante(aspirante_id: int):
+    """
+    Devuelve las citas del aspirante separadas en:
+    - proxima_cita
+    - otras_citas
+
+    Reglas:
+    - solo participante_tipo_id = 1 (aspirante)
+    - excluye canceladas
+    - excluye cumplidas
+    - excluye citas ya terminadas
+    """
+
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    a.id,
+                    a.titulo,
+                    a.fecha_inicio,
+                    a.fecha_fin,
+                    COALESCE(ae.nombre, 'programado') AS estado_nombre,
+                    at.nombre AS tipo_nombre,
+                    at.color AS tipo_color,
+                    at.icono AS tipo_icono,
+                    a.link_meet
+                FROM agendamientos a
+                INNER JOIN agendamientos_participantes ap
+                    ON ap.agendamiento_id = a.id
+                INNER JOIN agendamientos_tipo at
+                    ON at.id = a.tipo_agendamiento
+                LEFT JOIN agendamientos_estados ae
+                    ON ae.id = a.estado
+                WHERE ap.aspirante_id = %s
+                  AND at.participante_tipo_id = 1
+                ORDER BY a.fecha_inicio ASC
+                """,
+                (aspirante_id,)
+            )
+            rows = cur.fetchall()
+
+    ahora = datetime.now()
+    citas_validas = []
+
+    for row in rows:
+        (
+            a_id,
+            titulo_db,
+            fecha_inicio,
+            fecha_fin,
+            estado_nombre,
+            tipo_nombre,
+            tipo_color,
+            tipo_icono,
+            link_meet,
+        ) = row
+
+        estado_norm = (estado_nombre or "programado").strip().lower()
+
+        # Excluir canceladas y cumplidas
+        if estado_norm in ("cancelado", "cumplido"):
+            continue
+
+        # Excluir citas que ya terminaron
+        if fecha_fin and fecha_fin < ahora:
+            continue
+
+        citas_validas.append(
+            (
+                a_id,
+                titulo_db,
+                fecha_inicio,
+                fecha_fin,
+                estado_nombre,
+                tipo_nombre,
+                tipo_color,
+                tipo_icono,
+                link_meet,
+            )
+        )
+
+    if not citas_validas:
+        return PortalCitasOut(
+            proxima_cita=None,
+            otras_citas=[],
+            total_citas=0,
+            tiene_citas=False,
+        )
+
+    proxima_row = citas_validas[0]
+    otras_rows = citas_validas[1:]
+
+    proxima_cita = mapear_cita_portal(
+        row=proxima_row,
+        ahora=ahora,
+        es_proxima=True,
+    )
+
+    otras_citas = [
+        mapear_cita_portal(row=row, ahora=ahora, es_proxima=False)
+        for row in otras_rows
+    ]
+
+    return PortalCitasOut(
+        proxima_cita=proxima_cita,
+        otras_citas=otras_citas,
+        total_citas=len(citas_validas),
+        tiene_citas=True,
+    )
+
+
+# =========================
+# ENDPOINT COMPATIBLE CON LISTADO SIMPLE
+# =========================
+
+class CitaAspiranteOut(BaseModel):
+    id: int
+    fecha_inicio: str
+    fecha_fin: str
+    duracion_minutos: int
+    tipo_agendamiento: str
+    realizada: bool
+    estado: str
+    link_meet: Optional[str] = None
+    url_reagendar: Optional[str] = None
+
+
+@router.get("/api/aspirantes/{aspirante_id}/citas", response_model=List[CitaAspiranteOut])
+def listar_citas_aspirante(aspirante_id: int):
+    citas: List[CitaAspiranteOut] = []
+
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    a.id,
+                    a.fecha_inicio,
+                    a.fecha_fin,
+                    COALESCE(ae.nombre, 'programado') AS estado_nombre,
+                    at.nombre AS tipo_nombre,
+                    a.link_meet
+                FROM agendamientos a
+                INNER JOIN agendamientos_participantes ap
+                    ON ap.agendamiento_id = a.id
+                LEFT JOIN agendamientos_estados ae
+                    ON ae.id = a.estado
+                INNER JOIN agendamientos_tipo at
+                    ON at.id = a.tipo_agendamiento
+                WHERE ap.aspirante_id = %s
+                  AND at.participante_tipo_id = 1
+                ORDER BY a.fecha_inicio ASC
+                """,
+                (aspirante_id,)
+            )
+            rows = cur.fetchall()
+
+    for a_id, f_ini, f_fin, estado_nombre, tipo_nombre, link_meet in rows:
+        duracion_min = calcular_duracion_minutos(f_ini, f_fin)
+        realizada = (estado_nombre or "").strip().lower() == "cumplido"
+
+        citas.append(
+            CitaAspiranteOut(
+                id=a_id,
+                fecha_inicio=f_ini.isoformat() if f_ini else "",
+                fecha_fin=f_fin.isoformat() if f_fin else "",
+                duracion_minutos=duracion_min,
+                tipo_agendamiento=tipo_nombre,
+                realizada=realizada,
+                estado=estado_nombre or "programado",
+                link_meet=link_meet,
+                url_reagendar=None,
+            )
+        )
+
+    return citas
+
 # def generar_url_portal_para_aspirante(aspirante_id: int, origen="encuesta") -> str:
 #     with get_connection_context() as conn:
 #         cur = conn.cursor()
