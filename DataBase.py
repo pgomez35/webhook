@@ -3174,7 +3174,7 @@ def obtener_participantes_por_tipo_db(tipo: str):
                             a.creado_en,
                             a.actualizado_en,
                             'aspirante' AS tipo_usuario,
-                             NULL AS AS rol
+                             NULL AS rol
                         FROM aspirantes a
                         INNER JOIN aspirantes_estados ae
                             ON a.estado_id = ae.id
