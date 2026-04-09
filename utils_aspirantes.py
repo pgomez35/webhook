@@ -191,8 +191,13 @@ def guardar_link_tiktok_live(aspirante_id, url_tiktok):
 
                     # Opcional: Registrar también en la tabla de participantes para mantener consistencia
                     query_participante = """
-                                         INSERT INTO agendamientos_participantes (agendamiento_id, aspirante_id, estado)
-                                         VALUES (%s, %s, 'pendiente') \
+                                         INSERT INTO agendamientos_participantes (
+                                             agendamiento_id,
+                                             participante_tipo_id,
+                                             participante_id,
+                                             estado
+                                         )
+                                         VALUES (%s, 1, %s, 'pendiente')
                                          """
                     cur.execute(query_participante, (nuevo_id, aspirante_id))
 

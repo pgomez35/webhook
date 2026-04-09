@@ -492,7 +492,8 @@ def obtener_citas_portal_aspirante(aspirante_id: int):
                     ON at.id = a.tipo_agendamiento
                 LEFT JOIN agendamientos_estados ae
                     ON ae.id = a.estado
-                WHERE ap.aspirante_id = %s
+                WHERE ap.participante_tipo_id = 1
+                  AND ap.participante_id = %s
                   AND at.participante_tipo_id = 1
                 ORDER BY a.fecha_inicio ASC
                 """,
@@ -608,7 +609,8 @@ def listar_citas_aspirante(aspirante_id: int):
                     ON ae.id = a.estado
                 INNER JOIN agendamientos_tipo at
                     ON at.id = a.tipo_agendamiento
-                WHERE ap.aspirante_id = %s
+                WHERE ap.participante_tipo_id = 1
+                  AND ap.participante_id = %s
                   AND at.participante_tipo_id = 1
                 ORDER BY a.fecha_inicio ASC
                 """,

@@ -350,6 +350,8 @@ class TipoAgendamientoIn(BaseModel):
     color: Optional[str] = Field(None, max_length=20)   # ej: "#4F46E5"
     icono: Optional[str] = Field(None, max_length=50)   # ej: "🎉" o "calendar"
     activo: Optional[bool] = True
+    participante_tipo_id: Optional[int] = None
+    medio_reunion_id: Optional[int] = None
 
 class TipoAgendamientoOut(BaseModel):
     id: int
@@ -358,6 +360,43 @@ class TipoAgendamientoOut(BaseModel):
     icono: Optional[str] = None
     activo: bool = True
     creado_en: Optional[datetime] = None
+    participante_tipo_id: Optional[int] = None
+    medio_reunion_id: Optional[int] = None
+
+
+class AgendamientoMedioOut(BaseModel):
+    id: int
+    codigo: str
+    nombre: str
+    requiere_link: bool = False
+    activo: bool = True
+
+
+@router.get("/agendamientos/medios", response_model=List[AgendamientoMedioOut])
+def listar_medios_reunion(solo_activos: bool = Query(True)):
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            if solo_activos:
+                cur.execute("""
+                    SELECT id, codigo, nombre, requiere_link, activo
+                    FROM agendamientos_medio
+                    WHERE activo = TRUE
+                    ORDER BY id ASC
+                """)
+            else:
+                cur.execute("""
+                    SELECT id, codigo, nombre, requiere_link, activo
+                    FROM agendamientos_medio
+                    ORDER BY id ASC
+                """)
+            rows = cur.fetchall()
+    return [
+        AgendamientoMedioOut(
+            id=r[0], codigo=r[1], nombre=r[2], requiere_link=bool(r[3]), activo=bool(r[4])
+        )
+        for r in rows
+    ]
+
 
 @router.get("/agendamientos/tipos", response_model=List[TipoAgendamientoOut])
 def listar_tipos_agendamiento(
@@ -367,14 +406,16 @@ def listar_tipos_agendamiento(
         with conn.cursor() as cur:
             if solo_activos:
                 cur.execute("""
-                    SELECT id, nombre, color, icono, activo, creado_en
+                    SELECT id, nombre, color, icono, activo, creado_en,
+                           participante_tipo_id, medio_reunion_id
                     FROM agendamientos_tipo
                     WHERE activo = TRUE
                     ORDER BY id ASC
                 """)
             else:
                 cur.execute("""
-                    SELECT id, nombre, color, icono, activo, creado_en
+                    SELECT id, nombre, color, icono, activo, creado_en,
+                           participante_tipo_id, medio_reunion_id
                     FROM agendamientos_tipo
                     ORDER BY id ASC
                 """)
@@ -382,7 +423,14 @@ def listar_tipos_agendamiento(
 
     return [
         TipoAgendamientoOut(
-            id=r[0], nombre=r[1], color=r[2], icono=r[3], activo=r[4], creado_en=r[5]
+            id=r[0],
+            nombre=r[1],
+            color=r[2],
+            icono=r[3],
+            activo=r[4],
+            creado_en=r[5],
+            participante_tipo_id=r[6],
+            medio_reunion_id=r[7],
         )
         for r in rows
     ]
@@ -406,16 +454,34 @@ def crear_tipo_agendamiento(payload: TipoAgendamientoIn):
                 raise HTTPException(status_code=409, detail="Ya existe un tipo con ese nombre.")
 
             cur.execute("""
-                INSERT INTO agendamientos_tipo (nombre, color, icono, activo)
-                VALUES (%s, %s, %s, %s)
-                RETURNING id, nombre, color, icono, activo, creado_en
-            """, (nombre, payload.color, payload.icono, payload.activo if payload.activo is not None else True))
+                INSERT INTO agendamientos_tipo (
+                    nombre, color, icono, activo,
+                    participante_tipo_id, medio_reunion_id
+                )
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id, nombre, color, icono, activo, creado_en,
+                          participante_tipo_id, medio_reunion_id
+            """, (
+                nombre,
+                payload.color,
+                payload.icono,
+                payload.activo if payload.activo is not None else True,
+                payload.participante_tipo_id,
+                payload.medio_reunion_id,
+            ))
 
             row = cur.fetchone()
         conn.commit()
 
     return TipoAgendamientoOut(
-        id=row[0], nombre=row[1], color=row[2], icono=row[3], activo=row[4], creado_en=row[5]
+        id=row[0],
+        nombre=row[1],
+        color=row[2],
+        icono=row[3],
+        activo=row[4],
+        creado_en=row[5],
+        participante_tipo_id=row[6],
+        medio_reunion_id=row[7],
     )
 
 
@@ -427,13 +493,16 @@ class TipoAgendamientoUpdate(BaseModel):
     color: Optional[str] = Field(None, max_length=20)
     icono: Optional[str] = Field(None, max_length=50)
     activo: Optional[bool] = None
+    participante_tipo_id: Optional[int] = None
+    medio_reunion_id: Optional[int] = None
 
 @router.put("/agendamientos/tipos/{tipo_id}", response_model=TipoAgendamientoOut)
 def actualizar_tipo_agendamiento(tipo_id: int, payload: TipoAgendamientoUpdate):
     with get_connection_context() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, nombre, color, icono, activo, creado_en
+                SELECT id, nombre, color, icono, activo, creado_en,
+                       participante_tipo_id, medio_reunion_id
                 FROM agendamientos_tipo
                 WHERE id = %s
                 LIMIT 1
@@ -451,6 +520,16 @@ def actualizar_tipo_agendamiento(tipo_id: int, payload: TipoAgendamientoUpdate):
             color = payload.color if payload.color is not None else row[2]
             icono = payload.icono if payload.icono is not None else row[3]
             activo = payload.activo if payload.activo is not None else row[4]
+            participante_tipo_id = (
+                payload.participante_tipo_id
+                if payload.participante_tipo_id is not None
+                else row[6]
+            )
+            medio_reunion_id = (
+                payload.medio_reunion_id
+                if payload.medio_reunion_id is not None
+                else row[7]
+            )
 
             # opcional: validar duplicados si cambia nombre
             if payload.nombre is not None:
@@ -467,16 +546,26 @@ def actualizar_tipo_agendamiento(tipo_id: int, payload: TipoAgendamientoUpdate):
                 SET nombre = %s,
                     color = %s,
                     icono = %s,
-                    activo = %s
+                    activo = %s,
+                    participante_tipo_id = %s,
+                    medio_reunion_id = %s
                 WHERE id = %s
-                RETURNING id, nombre, color, icono, activo, creado_en
-            """, (nombre, color, icono, activo, tipo_id))
+                RETURNING id, nombre, color, icono, activo, creado_en,
+                          participante_tipo_id, medio_reunion_id
+            """, (nombre, color, icono, activo, participante_tipo_id, medio_reunion_id, tipo_id))
 
             updated = cur.fetchone()
         conn.commit()
 
     return TipoAgendamientoOut(
-        id=updated[0], nombre=updated[1], color=updated[2], icono=updated[3], activo=updated[4], creado_en=updated[5]
+        id=updated[0],
+        nombre=updated[1],
+        color=updated[2],
+        icono=updated[3],
+        activo=updated[4],
+        creado_en=updated[5],
+        participante_tipo_id=updated[6],
+        medio_reunion_id=updated[7],
     )
 
 @router.patch("/agendamientos/tipos/{tipo_id}/activo", response_model=TipoAgendamientoOut)
@@ -487,7 +576,8 @@ def cambiar_activo_tipo_agendamiento(tipo_id: int, payload: ToggleActivoIn):
                 UPDATE agendamientos_tipo
                 SET activo = %s
                 WHERE id = %s
-                RETURNING id, nombre, color, icono, activo, creado_en
+                RETURNING id, nombre, color, icono, activo, creado_en,
+                          participante_tipo_id, medio_reunion_id
             """, (payload.activo, tipo_id))
             row = cur.fetchone()
             if not row:
@@ -495,7 +585,14 @@ def cambiar_activo_tipo_agendamiento(tipo_id: int, payload: ToggleActivoIn):
         conn.commit()
 
     return TipoAgendamientoOut(
-        id=row[0], nombre=row[1], color=row[2], icono=row[3], activo=row[4], creado_en=row[5]
+        id=row[0],
+        nombre=row[1],
+        color=row[2],
+        icono=row[3],
+        activo=row[4],
+        creado_en=row[5],
+        participante_tipo_id=row[6],
+        medio_reunion_id=row[7],
     )
 
 @router.delete("/agendamientos/tipos/{tipo_id}")

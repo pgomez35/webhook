@@ -1608,7 +1608,7 @@ def obtener_todos_los_participantes_db():
                         'aspirante' AS tipo_usuario,
                         NULL AS rol
                     FROM aspirantes a
-                    LEFT JOIN aspirantes_estados ae
+                    INNER JOIN aspirantes_estados ae
                         ON a.estado_id = ae.id
                     WHERE a.activo = TRUE
 
@@ -1633,7 +1633,7 @@ def obtener_todos_los_participantes_db():
                         'administrador' AS tipo_usuario,
                         ur.nombre AS rol
                     FROM administradores u
-                    LEFT JOIN administradores_roles ur
+                    INNER JOIN administradores_roles ur
                         ON ur.id = u.administradores_roles_id
                     WHERE u.activo = TRUE
 

@@ -3002,7 +3002,8 @@ def enviar_citas_agendadas(numero: str) -> None:
                     FROM agendamientos a
                     JOIN agendamientos_participantes ap
                       ON ap.agendamiento_id = a.id
-                    WHERE ap.aspirante_id = %s
+                    WHERE ap.participante_tipo_id = 1
+                      AND ap.participante_id = %s
                     ORDER BY a.fecha_inicio ASC
                     """,
                     (aspirante_id,)

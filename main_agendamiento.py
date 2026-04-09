@@ -33,6 +33,109 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()   # ← ESTE ES EL ROUTER QUE VAS A IMPORTAR EN main.py
 
+# participante_tipo.id (FK agendamientos_participantes.participante_tipo_id)
+PARTICIPANTE_TIPO_ASPIRANTE_ID = 1
+PARTICIPANTE_TIPO_CREADOR_ID = 2
+PARTICIPANTE_TIPO_ADMINISTRADOR_ID = 3
+
+_PARTICIPANTE_TIPO_STR_A_ID = {
+    "aspirante": PARTICIPANTE_TIPO_ASPIRANTE_ID,
+    "creador": PARTICIPANTE_TIPO_CREADOR_ID,
+    "administrador": PARTICIPANTE_TIPO_ADMINISTRADOR_ID,
+}
+
+_PARTICIPANTE_TIPO_ID_A_STR: Dict[int, str] = {
+    PARTICIPANTE_TIPO_ASPIRANTE_ID: "aspirante",
+    PARTICIPANTE_TIPO_CREADOR_ID: "creador",
+    PARTICIPANTE_TIPO_ADMINISTRADOR_ID: "administrador",
+}
+
+# agendamientos_medio.id (semillas estándar)
+MEDIO_REUNION_GOOGLE_MEET = 1
+MEDIO_REUNION_TIKTOK_LIVE = 2
+
+
+def _fetch_medio_reunion_id_por_tipo(cur, tipo_agendamiento_id: Optional[int]) -> Optional[int]:
+    if tipo_agendamiento_id is None:
+        return None
+    cur.execute(
+        "SELECT medio_reunion_id FROM agendamientos_tipo WHERE id = %s",
+        (tipo_agendamiento_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    return row[0]
+
+
+def _resolver_medio_reunion_id(
+    cur, tipo_agendamiento_id: Optional[int], explicit: Optional[int]
+) -> Optional[int]:
+    if explicit is not None:
+        return explicit
+    return _fetch_medio_reunion_id_por_tipo(cur, tipo_agendamiento_id)
+
+
+def _resolver_participante_tipo_id(cur, evento: EventoIn) -> Optional[int]:
+    if evento.participante_tipo:
+        return _PARTICIPANTE_TIPO_STR_A_ID.get(evento.participante_tipo)
+    tid = evento.tipo_agendamiento
+    if tid is None:
+        return PARTICIPANTE_TIPO_ASPIRANTE_ID
+    cur.execute(
+        "SELECT participante_tipo_id FROM agendamientos_tipo WHERE id = %s",
+        (tid,),
+    )
+    row = cur.fetchone()
+    if row and row[0] is not None:
+        return int(row[0])
+    return PARTICIPANTE_TIPO_ASPIRANTE_ID
+
+
+def _cargar_participantes_por_tipo_pid(cur, participante_ids: List[int], tipo_pid: int) -> List[dict]:
+    if not participante_ids:
+        return []
+    if tipo_pid == PARTICIPANTE_TIPO_ASPIRANTE_ID:
+        cur.execute(
+            """
+            SELECT
+                id,
+                COALESCE(NULLIF(nombre_real, ''), nickname, usuario, telefono) AS nombre,
+                nickname
+            FROM aspirantes
+            WHERE id = ANY(%s)
+            """,
+            (participante_ids,),
+        )
+    elif tipo_pid == PARTICIPANTE_TIPO_CREADOR_ID:
+        cur.execute(
+            """
+            SELECT
+                id,
+                COALESCE(NULLIF(nombre_real, ''), nickname, usuario, telefono) AS nombre,
+                nickname
+            FROM creadores
+            WHERE id = ANY(%s)
+            """,
+            (participante_ids,),
+        )
+    elif tipo_pid == PARTICIPANTE_TIPO_ADMINISTRADOR_ID:
+        cur.execute(
+            """
+            SELECT
+                id,
+                COALESCE(NULLIF(nombre_completo, ''), username, email, telefono) AS nombre,
+                NULL AS nickname
+            FROM administradores
+            WHERE id = ANY(%s)
+            """,
+            (participante_ids,),
+        )
+    else:
+        return []
+    return [{"id": r[0], "nombre": r[1], "nickname": r[2]} for r in cur.fetchall()]
+
+
 # router_agendamientos_aspirante = APIRouter()
 
 class AgendamientoAspiranteIn(BaseModel):
@@ -390,108 +493,6 @@ class AgendamientoAspiranteInTokenV1(BaseModel):
 #             )
 
 
-@router.get("/api/eventosV01/{evento_id}", response_model=EventoOut)
-def obtener_eventoV01(evento_id: str):
-    """
-    Obtiene un evento desde la BD interna.
-
-    - Si evento_id es numérico: busca por agendamientos.id
-    - Si es texto (UUID, hash): busca por google_event_id
-    """
-    with get_connection_context() as conn:
-        cur = conn.cursor()
-
-        try:
-            # ---------------------------------------------------------
-            # 1️⃣ Identificar si el evento_id es interno o de Google
-            # ---------------------------------------------------------
-            if evento_id.isdigit():
-                # Buscar por ID interno
-                cur.execute("SELECT * FROM agendamientos WHERE id = %s", (int(evento_id),))
-            else:
-                # Buscar por google_event_id
-                cur.execute("SELECT * FROM agendamientos WHERE google_event_id = %s", (evento_id,))
-
-            ag = cur.fetchone()
-
-            if not ag:
-                raise HTTPException(status_code=404, detail="Evento no encontrado.")
-
-            (
-                ag_id,
-                titulo,
-                descripcion,
-                fecha_inicio,
-                fecha_fin,
-                aspirante_id,
-                responsable_id,
-                estado,
-                link_meet,
-                google_event_id,
-                creado_en,
-                actualizado_en
-            ) = ag
-
-            # ---------------------------------------------------------
-            # 2️⃣ Cargar participantes desde agendamientos_participantes
-            # ---------------------------------------------------------
-            cur.execute("""
-                SELECT c.id, 
-                       COALESCE(NULLIF(c.nombre_real, ''), c.nickname) AS nombre,
-                       c.nickname
-                FROM agendamientos_participantes ap
-                JOIN aspirantes c ON c.id = ap.aspirante_id
-                WHERE ap.agendamiento_id = %s
-            """, (ag_id,))
-
-            participantes = cur.fetchall()
-
-            participantes_ids = [row[0] for row in participantes]
-            participantes_out = [
-                {
-                    "id": row[0],
-                    "nombre": row[1],
-                    "nickname": row[2]
-                }
-                for row in participantes
-            ]
-
-            # ---------------------------------------------------------
-            # 3️⃣ Crear ID expuesto al usuario
-            # ---------------------------------------------------------
-            # Si tiene google_event_id → ese es el ID usado antes
-            # Si no, se usa el ID interno como string
-            public_id = google_event_id if google_event_id else str(ag_id)
-
-            # ---------------------------------------------------------
-            # 4️⃣ Origen del evento (solo informativo)
-            # ---------------------------------------------------------
-            origen = "google_calendar" if google_event_id else "interno"
-
-            # ---------------------------------------------------------
-            # 5️⃣ Construir respuesta
-            # ---------------------------------------------------------
-            return EventoOut(
-                id=public_id,
-                titulo=titulo or "Sin título",
-                descripcion=descripcion or "",
-                inicio=fecha_inicio,
-                fin=fecha_fin,
-                participantes=participantes_out,
-                participantes_ids=participantes_ids,
-                link_meet=link_meet,
-                responsable_id=responsable_id,
-                origen=origen
-            )
-
-        except HTTPException:
-            raise
-
-        except Exception as e:
-            logger.error(f"❌ Error al obtener evento {evento_id}: {e}")
-            logger.error(traceback.format_exc())
-            raise HTTPException(status_code=500, detail="Error interno al obtener el evento.")
-
 @router.get("/api/eventos/{evento_id}", response_model=EventoOut)
 def obtener_evento(evento_id: str):
     """
@@ -522,8 +523,9 @@ def obtener_evento(evento_id: str):
                         a.creado_en,
                         a.actualizado_en,
                         a.tipo_agendamiento,
+                        a.medio_reunion_id,
 
-                        COALESCE(ap.aspirante_id, ap.creador_id, ap.administrador_id) AS participante_id,
+                        ap.participante_id AS participante_id,
 
                         COALESCE(
                             NULLIF(asp.nombre_real, ''),
@@ -540,10 +542,10 @@ def obtener_evento(evento_id: str):
 
                         COALESCE(asp.nickname, cre.nickname, NULL) AS participante_nickname,
 
-                        CASE
-                            WHEN ap.aspirante_id IS NOT NULL THEN 'aspirante'
-                            WHEN ap.creador_id IS NOT NULL THEN 'creador'
-                            WHEN ap.administrador_id IS NOT NULL THEN 'usuario'
+                        CASE ap.participante_tipo_id
+                            WHEN 1 THEN 'aspirante'
+                            WHEN 2 THEN 'creador'
+                            WHEN 3 THEN 'usuario'
                             ELSE NULL
                         END AS participante_tipo
 
@@ -551,11 +553,11 @@ def obtener_evento(evento_id: str):
                     INNER JOIN agendamientos_participantes ap
                         ON ap.agendamiento_id = a.id
                     LEFT JOIN aspirantes asp
-                        ON asp.id = ap.aspirante_id
+                        ON asp.id = ap.participante_id AND ap.participante_tipo_id = 1
                     LEFT JOIN aspirantes cre
-                        ON cre.id = ap.creador_id
+                        ON cre.id = ap.participante_id AND ap.participante_tipo_id = 2
                     LEFT JOIN administradores usr
-                        ON usr.id = ap.administrador_id
+                        ON usr.id = ap.participante_id AND ap.participante_tipo_id = 3
                     WHERE a.id = %s
                     ORDER BY ap.id ASC
                 """
@@ -575,8 +577,9 @@ def obtener_evento(evento_id: str):
                         a.creado_en,
                         a.actualizado_en,
                         a.tipo_agendamiento,
+                        a.medio_reunion_id,
 
-                        COALESCE(ap.aspirante_id, ap.creador_id, ap.administrador_id) AS participante_id,
+                        ap.participante_id AS participante_id,
 
                         COALESCE(
                             NULLIF(asp.nombre_real, ''),
@@ -593,10 +596,10 @@ def obtener_evento(evento_id: str):
 
                         COALESCE(asp.nickname, cre.nickname, NULL) AS participante_nickname,
 
-                        CASE
-                            WHEN ap.aspirante_id IS NOT NULL THEN 'aspirante'
-                            WHEN ap.creador_id IS NOT NULL THEN 'creador'
-                            WHEN ap.administrador_id IS NOT NULL THEN 'usuario'
+                        CASE ap.participante_tipo_id
+                            WHEN 1 THEN 'aspirante'
+                            WHEN 2 THEN 'creador'
+                            WHEN 3 THEN 'usuario'
                             ELSE NULL
                         END AS participante_tipo
 
@@ -604,11 +607,11 @@ def obtener_evento(evento_id: str):
                     INNER JOIN agendamientos_participantes ap
                         ON ap.agendamiento_id = a.id
                     LEFT JOIN aspirantes asp
-                        ON asp.id = ap.aspirante_id
+                        ON asp.id = ap.participante_id AND ap.participante_tipo_id = 1
                     LEFT JOIN aspirantes cre
-                        ON cre.id = ap.creador_id
+                        ON cre.id = ap.participante_id AND ap.participante_tipo_id = 2
                     LEFT JOIN administradores usr
-                        ON usr.id = ap.administrador_id
+                        ON usr.id = ap.participante_id AND ap.participante_tipo_id = 3
                     WHERE a.google_event_id = %s
                     ORDER BY ap.id ASC
                 """
@@ -635,6 +638,7 @@ def obtener_evento(evento_id: str):
                 creado_en,
                 actualizado_en,
                 tipo_agendamiento,
+                medio_reunion_id,
                 _participante_id,
                 _participante_nombre,
                 _participante_nickname,
@@ -650,10 +654,10 @@ def obtener_evento(evento_id: str):
             vistos = set()
 
             for row in rows:
-                participante_id = row[12]
-                participante_nombre = row[13]
-                participante_nickname = row[14]
-                participante_tipo_row = row[15]
+                participante_id = row[13]
+                participante_nombre = row[14]
+                participante_nickname = row[15]
+                participante_tipo_row = row[16]
 
                 if participante_id is None:
                     continue
@@ -697,6 +701,7 @@ def obtener_evento(evento_id: str):
                 origen=origen,
                 tipo_agendamiento=tipo_agendamiento,
                 google_event_id=google_event_id,
+                medio_reunion_id=medio_reunion_id,
             )
 
         except HTTPException:
@@ -739,7 +744,9 @@ def obtener_eventoV01(evento_id: str):
                         google_event_id,
                         creado_en,
                         actualizado_en,
-                        tipo_agendamiento
+                        timezone,
+                        tipo_agendamiento,
+                        medio_reunion_id
                     FROM agendamientos
                     WHERE id = %s
                 """, (int(evento_id),))
@@ -757,7 +764,9 @@ def obtener_eventoV01(evento_id: str):
                         google_event_id,
                         creado_en,
                         actualizado_en,
-                        tipo_agendamiento
+                        timezone,
+                        tipo_agendamiento,
+                        medio_reunion_id
                     FROM agendamientos
                     WHERE google_event_id = %s
                 """, (evento_id,))
@@ -779,95 +788,47 @@ def obtener_eventoV01(evento_id: str):
                 google_event_id,
                 creado_en,
                 actualizado_en,
-                tipo_agendamiento
+                timezone,
+                tipo_agendamiento,
+                medio_reunion_id,
             ) = ag
 
             # ---------------------------------------------------------
-            # 2️⃣ Cargar participantes según la columna que esté llena
+            # 2️⃣ Cargar participantes (participante_tipo_id + participante_id)
             # ---------------------------------------------------------
-            participantes_out = []
-            participantes_ids = []
-            participante_tipo = None
-
-            # Aspirantes
             cur.execute("""
                 SELECT
-                    a.id,
-                    COALESCE(NULLIF(a.nombre_real, ''), a.nickname, a.usuario, a.telefono) AS nombre,
-                    a.nickname
+                    ap.participante_id,
+                    CASE ap.participante_tipo_id
+                        WHEN 1 THEN 'aspirante'
+                        WHEN 2 THEN 'creador'
+                        WHEN 3 THEN 'usuario'
+                    END AS tipo_str,
+                    COALESCE(
+                        COALESCE(NULLIF(asp.nombre_real, ''), asp.nickname, asp.usuario, asp.telefono),
+                        COALESCE(NULLIF(cre.nombre_real, ''), cre.nickname, cre.telefono),
+                        COALESCE(NULLIF(usr.nombre_completo, ''), usr.username, usr.email, usr.telefono)
+                    ) AS nombre,
+                    COALESCE(asp.nickname, cre.nickname, NULL) AS nickname
                 FROM agendamientos_participantes ap
-                JOIN aspirantes a
-                    ON a.id = ap.aspirante_id
+                LEFT JOIN aspirantes asp
+                    ON ap.participante_tipo_id = 1 AND asp.id = ap.participante_id
+                LEFT JOIN aspirantes cre
+                    ON ap.participante_tipo_id = 2 AND cre.id = ap.participante_id
+                LEFT JOIN administradores usr
+                    ON ap.participante_tipo_id = 3 AND usr.id = ap.participante_id
                 WHERE ap.agendamiento_id = %s
-                  AND ap.aspirante_id IS NOT NULL
+                ORDER BY ap.id ASC
             """, (ag_id,))
-            rows_asp = cur.fetchall()
+            rows_part = cur.fetchall()
 
-            if rows_asp:
-                participante_tipo = "aspirante"
-                participantes_ids = [row[0] for row in rows_asp]
-                participantes_out = [
-                    {
-                        "id": row[0],
-                        "nombre": row[1],
-                        "nickname": row[2]
-                    }
-                    for row in rows_asp
-                ]
-
-            else:
-                # Creadores
-                cur.execute("""
-                    SELECT
-                        c.id,
-                        COALESCE(NULLIF(c.nombre_real, ''), c.nickname, c.telefono) AS nombre,
-                        c.nickname
-                    FROM agendamientos_participantes ap
-                    JOIN aspirantes c
-                        ON c.id = ap.creador_id
-                    WHERE ap.agendamiento_id = %s
-                      AND ap.creador_id IS NOT NULL
-                """, (ag_id,))
-                rows_cre = cur.fetchall()
-
-                if rows_cre:
-                    participante_tipo = "creador"
-                    participantes_ids = [row[0] for row in rows_cre]
-                    participantes_out = [
-                        {
-                            "id": row[0],
-                            "nombre": row[1],
-                            "nickname": row[2]
-                        }
-                        for row in rows_cre
-                    ]
-
-                else:
-                    # Usuarios
-                    cur.execute("""
-                        SELECT
-                            u.id,
-                            COALESCE(NULLIF(u.nombre_completo, ''), u.username, u.email, u.telefono) AS nombre,
-                            NULL AS nickname
-                        FROM agendamientos_participantes ap
-                        JOIN administradores u
-                            ON u.id = ap.administrador_id
-                        WHERE ap.agendamiento_id = %s
-                          AND ap.administrador_id IS NOT NULL
-                    """, (ag_id,))
-                    rows_usr = cur.fetchall()
-
-                    if rows_usr:
-                        participante_tipo = "usuario"
-                        participantes_ids = [row[0] for row in rows_usr]
-                        participantes_out = [
-                            {
-                                "id": row[0],
-                                "nombre": row[1],
-                                "nickname": row[2]
-                            }
-                            for row in rows_usr
-                        ]
+            participantes_ids = [row[0] for row in rows_part]
+            participantes_out = [
+                {"id": row[0], "nombre": row[2], "nickname": row[3]}
+                for row in rows_part
+            ]
+            tipos_distintos = {row[1] for row in rows_part if row[1] is not None}
+            participante_tipo = next(iter(tipos_distintos), None) if len(tipos_distintos) == 1 else None
 
             # ---------------------------------------------------------
             # 3️⃣ ID público
@@ -896,6 +857,7 @@ def obtener_eventoV01(evento_id: str):
                 origen=origen,
                 tipo_agendamiento=tipo_agendamiento,
                 google_event_id=google_event_id,
+                medio_reunion_id=medio_reunion_id,
             )
 
         except HTTPException:
@@ -939,15 +901,17 @@ def editar_evento(evento_id: str, evento: EventoIn):
                     detail="La fecha de fin debe ser posterior a la fecha de inicio."
                 )
 
-            if evento.participante_tipo not in ("aspirante", "creador", "usuario"):
+            if evento.participante_tipo is not None and evento.participante_tipo not in (
+                "aspirante",
+                "creador",
+                "administrador",
+            ):
                 raise HTTPException(
                     status_code=400,
-                    detail="participante_tipo inválido. Use: aspirante, creador o usuario."
+                    detail="participante_tipo inválido. Use: aspirante, creador o administrador."
                 )
 
             # 2️⃣ Buscar el agendamiento en BD
-            #    - Si evento_id es numérico → buscar por id interno
-            #    - Si no → buscar por google_event_id
             if evento_id.isdigit():
                 cur.execute(
                     """
@@ -960,7 +924,8 @@ def editar_evento(evento_id: str, evento: EventoIn):
                            estado,
                            link_meet,
                            google_event_id,
-                           tipo_agendamiento
+                           tipo_agendamiento,
+                           medio_reunion_id
                     FROM agendamientos
                     WHERE id = %s
                     """,
@@ -978,7 +943,8 @@ def editar_evento(evento_id: str, evento: EventoIn):
                            estado,
                            link_meet,
                            google_event_id,
-                           tipo_agendamiento
+                           tipo_agendamiento,
+                           medio_reunion_id
                     FROM agendamientos
                     WHERE google_event_id = %s
                     """,
@@ -999,33 +965,36 @@ def editar_evento(evento_id: str, evento: EventoIn):
                 estado,
                 link_meet_actual,
                 google_event_id,
-                tipo_agendamiento_actual
+                tipo_agendamiento_actual,
+                medio_actual,
             ) = row
 
-            # 3️⃣ Determinar nuevo link_meet
-            nuevo_link_meet = getattr(evento, "link_meet", link_meet_actual)
+            medio_resuelto = _resolver_medio_reunion_id(
+                cur, evento.tipo_agendamiento, evento.medio_reunion_id
+            )
+            if medio_resuelto is None and medio_actual is not None:
+                medio_resuelto = medio_actual
 
-            # 4️⃣ Si es LIVE / prueba TikTok, recalcular link según creador
-            if evento.tipo_agendamiento in (1, 5):
+            # 3️⃣ Determinar nuevo link_meet
+            nuevo_link_meet = getattr(evento, "link_meet", None)
+            if nuevo_link_meet is None:
+                nuevo_link_meet = link_meet_actual
+
+            # 4️⃣ TikTok LIVE según medio de reunión (primer participante = usuario TikTok en aspirantes)
+            if medio_resuelto == MEDIO_REUNION_TIKTOK_LIVE:
                 if not evento.participantes_ids:
                     raise HTTPException(
                         status_code=400,
-                        detail="Se requiere al menos un participante para generar el link."
+                        detail="Se requiere al menos un participante para generar el enlace TikTok LIVE.",
                     )
-
-                if evento.participante_tipo != "creador":
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Para este tipo de agendamiento el participante debe ser de tipo creador."
-                    )
-
-                creador_principal_id = evento.participantes_ids[0]
-                link_tiktok = obtener_link_live_por_creador(creador_principal_id)
+                tik_uid = evento.participantes_ids[0]
+                link_tiktok = obtener_link_live_por_creador(tik_uid)
                 if link_tiktok:
                     nuevo_link_meet = link_tiktok
                 else:
                     logger.warning(
-                        f"No se pudo generar link LIVE para el creador {creador_principal_id}"
+                        "No se pudo generar link TikTok LIVE para participante_id=%s",
+                        tik_uid,
                     )
 
             # 5️⃣ Actualizar el agendamiento en BD
@@ -1038,6 +1007,7 @@ def editar_evento(evento_id: str, evento: EventoIn):
                     descripcion = %s,
                     link_meet = %s,
                     tipo_agendamiento = %s,
+                    medio_reunion_id = %s,
                     actualizado_en = NOW()
                 WHERE id = %s
                 """,
@@ -1048,6 +1018,7 @@ def editar_evento(evento_id: str, evento: EventoIn):
                     evento.descripcion,
                     nuevo_link_meet,
                     evento.tipo_agendamiento,
+                    medio_resuelto,
                     ag_id,
                 )
             )
@@ -1058,98 +1029,40 @@ def editar_evento(evento_id: str, evento: EventoIn):
                 (ag_id,)
             )
 
+            tipo_pid = _resolver_participante_tipo_id(cur, evento)
+            if evento.participantes_ids and tipo_pid is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="participante_tipo no válido o no se pudo resolver desde agendamientos_tipo.",
+                )
+
             for participante_id in evento.participantes_ids:
-                if evento.participante_tipo == "aspirante":
-                    cur.execute(
-                        """
-                        INSERT INTO agendamientos_participantes (
-                            agendamiento_id,
-                            aspirante_id,
-                            estado
-                        )
-                        VALUES (%s, %s, %s)
-                        """,
-                        (ag_id, participante_id, "programado")
+                cur.execute(
+                    """
+                    INSERT INTO agendamientos_participantes (
+                        agendamiento_id,
+                        participante_tipo_id,
+                        participante_id,
+                        estado
                     )
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (ag_id, tipo_pid, participante_id, "programado"),
+                )
 
-                elif evento.participante_tipo == "creador":
-                    cur.execute(
-                        """
-                        INSERT INTO agendamientos_participantes (
-                            agendamiento_id,
-                            creador_id,
-                            estado
-                        )
-                        VALUES (%s, %s, %s)
-                        """,
-                        (ag_id, participante_id, "programado")
-                    )
-
-                elif evento.participante_tipo == "usuario":
-                    cur.execute(
-                        """
-                        INSERT INTO agendamientos_participantes (
-                            agendamiento_id,
-                            administrador_id,
-                            estado
-                        )
-                        VALUES (%s, %s, %s)
-                        """,
-                        (ag_id, participante_id, "programado")
-                    )
-
-            # 7️⃣ Consultar datos de participantes para la respuesta
-            participantes = []
-            if evento.participantes_ids:
-                if evento.participante_tipo == "aspirante":
-                    cur.execute(
-                        """
-                        SELECT
-                            id,
-                            COALESCE(NULLIF(nombre_real, ''), nickname, usuario, telefono) AS nombre,
-                            nickname
-                        FROM aspirantes
-                        WHERE id = ANY(%s)
-                        """,
-                        (evento.participantes_ids,)
-                    )
-
-                elif evento.participante_tipo == "creador":
-                    cur.execute(
-                        """
-                        SELECT
-                            id,
-                            COALESCE(NULLIF(nombre_real, ''), nickname, telefono) AS nombre,
-                            nickname
-                        FROM aspirantes
-                        WHERE id = ANY(%s)
-                        """,
-                        (evento.participantes_ids,)
-                    )
-
-                elif evento.participante_tipo == "usuario":
-                    cur.execute(
-                        """
-                        SELECT
-                            id,
-                            COALESCE(NULLIF(nombre_completo, ''), username, email, telefono) AS nombre,
-                            NULL AS nickname
-                        FROM administradores
-                        WHERE id = ANY(%s)
-                        """,
-                        (evento.participantes_ids,)
-                    )
-
-                participantes = [
-                    {"id": row[0], "nombre": row[1], "nickname": row[2]}
-                    for row in cur.fetchall()
-                ]
+            participantes = _cargar_participantes_por_tipo_pid(
+                cur, evento.participantes_ids, tipo_pid
+            )
 
             conn.commit()
 
             # 8️⃣ Determinar ID público y origen
             public_id = google_event_id if google_event_id else str(ag_id)
             origen = "google_calendar" if google_event_id else "interno"
+
+            pt_out = evento.participante_tipo or _PARTICIPANTE_TIPO_ID_A_STR.get(
+                tipo_pid or 0
+            )
 
             # 9️⃣ Respuesta final
             return EventoOut(
@@ -1160,11 +1073,13 @@ def editar_evento(evento_id: str, evento: EventoIn):
                 fin=evento.fin,
                 participantes_ids=evento.participantes_ids,
                 participantes=participantes,
+                participante_tipo=pt_out,
                 link_meet=nuevo_link_meet,
                 responsable_id=responsable_id,
                 origen=origen,
                 tipo_agendamiento=evento.tipo_agendamiento,
                 google_event_id=google_event_id,
+                medio_reunion_id=medio_resuelto,
             )
 
         except HTTPException:
@@ -1185,21 +1100,18 @@ def editar_eventov01(evento_id: str, evento: EventoIn):
     with get_connection_context() as conn:
         cur = conn.cursor()
         try:
-            # 1️⃣ Validación básica de fechas
             if evento.fin <= evento.inicio:
                 raise HTTPException(
                     status_code=400,
                     detail="La fecha de fin debe ser posterior a la fecha de inicio."
                 )
 
-            # 2️⃣ Buscar el agendamiento en BD
-            #    - Si evento_id es numérico → buscar por id interno
-            #    - Si no → buscar por google_event_id
             if evento_id.isdigit():
                 cur.execute(
                     """
                     SELECT id, titulo, descripcion, fecha_inicio, fecha_fin,
-                           aspirante_id, responsable_id, estado, link_meet, google_event_id
+                           responsable_id, estado, link_meet, google_event_id,
+                           tipo_agendamiento, medio_reunion_id
                     FROM agendamientos
                     WHERE id = %s
                     """,
@@ -1209,7 +1121,8 @@ def editar_eventov01(evento_id: str, evento: EventoIn):
                 cur.execute(
                     """
                     SELECT id, titulo, descripcion, fecha_inicio, fecha_fin,
-                           aspirante_id, responsable_id, estado, link_meet, google_event_id
+                           responsable_id, estado, link_meet, google_event_id,
+                           tipo_agendamiento, medio_reunion_id
                     FROM agendamientos
                     WHERE google_event_id = %s
                     """,
@@ -1226,19 +1139,34 @@ def editar_eventov01(evento_id: str, evento: EventoIn):
                 _descripcion_actual,
                 _inicio_actual,
                 _fin_actual,
-                _aspirante_id,
                 responsable_id,
                 estado,
                 link_meet_actual,
-                google_event_id
+                google_event_id,
+                tipo_agendamiento_actual,
+                medio_actual,
             ) = row
 
-            # 3️⃣ Determinar nuevo link_meet (si tu EventoIn lo incluye como campo opcional)
-            #    Si no existe en el modelo, simplemente deja esta línea como:
-            #    nuevo_link_meet = link_meet_actual
-            nuevo_link_meet = getattr(evento, "link_meet", link_meet_actual)
+            medio_resuelto = _resolver_medio_reunion_id(
+                cur, evento.tipo_agendamiento, evento.medio_reunion_id
+            )
+            if medio_resuelto is None and medio_actual is not None:
+                medio_resuelto = medio_actual
 
-            # 4️⃣ Actualizar el agendamiento en BD
+            nuevo_link_meet = getattr(evento, "link_meet", None)
+            if nuevo_link_meet is None:
+                nuevo_link_meet = link_meet_actual
+
+            if medio_resuelto == MEDIO_REUNION_TIKTOK_LIVE:
+                if not evento.participantes_ids:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Se requiere al menos un participante para generar el enlace TikTok LIVE.",
+                    )
+                link_tik = obtener_link_live_por_creador(evento.participantes_ids[0])
+                if link_tik:
+                    nuevo_link_meet = link_tik
+
             cur.execute(
                 """
                 UPDATE agendamientos
@@ -1247,6 +1175,8 @@ def editar_eventov01(evento_id: str, evento: EventoIn):
                     titulo = %s,
                     descripcion = %s,
                     link_meet = %s,
+                    tipo_agendamiento = %s,
+                    medio_reunion_id = %s,
                     actualizado_en = NOW()
                 WHERE id = %s
                 """,
@@ -1256,49 +1186,47 @@ def editar_eventov01(evento_id: str, evento: EventoIn):
                     evento.titulo,
                     evento.descripcion,
                     nuevo_link_meet,
+                    evento.tipo_agendamiento,
+                    medio_resuelto,
                     ag_id,
                 )
             )
 
-            # 5️⃣ Actualizar participantes (tablas agendamientos_participantes)
             cur.execute(
                 "DELETE FROM agendamientos_participantes WHERE agendamiento_id = %s",
                 (ag_id,)
             )
 
+            tipo_pid = _resolver_participante_tipo_id(cur, evento)
+            if evento.participantes_ids and tipo_pid is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="participante_tipo no válido o no se pudo resolver desde agendamientos_tipo.",
+                )
+
             for participante_id in evento.participantes_ids:
                 cur.execute(
                     """
-                    INSERT INTO agendamientos_participantes (agendamiento_id, aspirante_id)
-                    VALUES (%s, %s)
+                    INSERT INTO agendamientos_participantes (
+                        agendamiento_id,
+                        participante_tipo_id,
+                        participante_id
+                    )
+                    VALUES (%s, %s, %s)
                     """,
-                    (ag_id, participante_id)
+                    (ag_id, tipo_pid, participante_id),
                 )
 
-            # 6️⃣ Consultar datos de participantes para la respuesta
-            participantes = []
-            if evento.participantes_ids:
-                cur.execute(
-                    """
-                    SELECT
-                        id,
-                        COALESCE(NULLIF(nombre_real, ''), nickname) AS nombre,
-                        nickname
-                    FROM aspirantes
-                    WHERE id = ANY(%s)
-                    """,
-                    (evento.participantes_ids,)
-                )
-                participantes = [
-                    {"id": row[0], "nombre": row[1], "nickname": row[2]}
-                    for row in cur.fetchall()
-                ]
+            participantes = _cargar_participantes_por_tipo_pid(
+                cur, evento.participantes_ids, tipo_pid
+            )
 
-            # 7️⃣ Determinar ID público y origen (solo informativo)
             public_id = google_event_id if google_event_id else str(ag_id)
             origen = "google_calendar" if google_event_id else "interno"
+            pt_out = evento.participante_tipo or _PARTICIPANTE_TIPO_ID_A_STR.get(
+                tipo_pid or 0
+            )
 
-            # 8️⃣ Respuesta final
             return EventoOut(
                 id=public_id,
                 titulo=evento.titulo,
@@ -1307,9 +1235,13 @@ def editar_eventov01(evento_id: str, evento: EventoIn):
                 fin=evento.fin,
                 participantes_ids=evento.participantes_ids,
                 participantes=participantes,
+                participante_tipo=pt_out,
                 link_meet=nuevo_link_meet,
                 responsable_id=responsable_id,
                 origen=origen,
+                tipo_agendamiento=evento.tipo_agendamiento,
+                google_event_id=google_event_id,
+                medio_reunion_id=medio_resuelto,
             )
 
         except HTTPException:
@@ -1360,30 +1292,36 @@ def eliminar_evento(evento_id: str):
 
 @router.post("/api/eventos", response_model=EventoOut)
 def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario_actual)):
-    # 1) Validación básica
     if evento.fin <= evento.inicio:
         raise HTTPException(
             status_code=400,
             detail="La fecha de fin debe ser posterior a la fecha de inicio."
         )
 
-    if evento.participante_tipo not in ("aspirante", "creador", "usuario"):
+    if evento.participante_tipo is not None and evento.participante_tipo not in (
+        "aspirante",
+        "creador",
+        "administrador",
+    ):
         raise HTTPException(
             status_code=400,
-            detail="participante_tipo inválido. Use: aspirante, creador o usuario."
+            detail="participante_tipo inválido. Use: aspirante, creador o administrador."
         )
 
-    # 2) Obtener config
     google_meet_enabled_str = get_config("google_meet_enabled")
-    google_meet_enabled = str(google_meet_enabled_str).lower() in ['true', '1', 't', 'y', 'yes']
-
+    google_meet_enabled = str(google_meet_enabled_str).lower() in ["true", "1", "t", "y", "yes"]
     debe_crear_meet = google_meet_enabled and evento.requiere_meet
 
     link_reunion = evento.link_meet
     google_event_id = None
 
-    # 3) Intentar crear evento en Google si aplica
-    if evento.tipo_agendamiento not in (1, 5) and google_meet_enabled:
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            medio_id = _resolver_medio_reunion_id(
+                cur, evento.tipo_agendamiento, evento.medio_reunion_id
+            )
+
+    if medio_id == MEDIO_REUNION_GOOGLE_MEET and google_meet_enabled:
         try:
             google_event = crear_evento_google(
                 resumen=evento.titulo,
@@ -1392,45 +1330,44 @@ def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario
                 fecha_fin=evento.fin,
                 requiere_meet=debe_crear_meet,
             )
-
             google_event_id = google_event.get("id")
             link_reunion = google_event.get("hangoutLink")
-
         except Exception as e:
             logger.error(f"⚠️ Error creando evento Google Calendar: {e}")
             logger.error(traceback.format_exc())
             google_event_id = None
 
-    # 4) Si tipo_agendamiento == 1 o 5 → generar link TikTok
-    if evento.tipo_agendamiento in (1, 5):
-
+    if medio_id == MEDIO_REUNION_TIKTOK_LIVE:
         if not evento.participantes_ids:
             raise HTTPException(
                 status_code=400,
-                detail="Se requiere al menos un participante para generar el link."
+                detail="Se requiere al menos un participante (usuario TikTok) para generar el enlace LIVE.",
             )
-
-        # Para LIVE / prueba TikTok, el participante principal debe ser creador
-        if evento.participante_tipo != "creador":
-            raise HTTPException(
-                status_code=400,
-                detail="Para este tipo de agendamiento el participante debe ser de tipo creador."
-            )
-
-        creador_principal_id = evento.participantes_ids[0]
-
-        link_tiktok = obtener_link_live_por_creador(creador_principal_id)
+        tik_uid = evento.participantes_ids[0]
+        link_tiktok = obtener_link_live_por_creador(tik_uid)
         if link_tiktok:
             link_reunion = link_tiktok
         else:
-            logger.warning(f"No se pudo generar link LIVE para el creador {creador_principal_id}")
+            logger.warning(
+                "No se pudo generar link TikTok LIVE para participante_id=%s",
+                tik_uid,
+            )
 
-    # 5) Abrimos transacción principal para guardar en BD
     with get_connection_context() as conn:
         try:
             cur = conn.cursor()
+            medio_guardar = _resolver_medio_reunion_id(
+                cur, evento.tipo_agendamiento, evento.medio_reunion_id
+            )
+            tipo_pid = _resolver_participante_tipo_id(cur, evento)
+            if evento.participantes_ids and tipo_pid is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="participante_tipo no válido o no se pudo resolver desde agendamientos_tipo.",
+                )
 
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT INTO agendamientos (
                     titulo,
                     descripcion,
@@ -1440,99 +1377,53 @@ def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario
                     link_meet,
                     estado,
                     responsable_id,
-                    google_event_id
+                    google_event_id,
+                    medio_reunion_id
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
-            """, (
-                evento.titulo,
-                evento.descripcion,
-                evento.inicio,
-                evento.fin,
-                evento.tipo_agendamiento,
-                link_reunion,
-                1,
-                usuario_actual["id"],
-                google_event_id
-            ))
+                """,
+                (
+                    evento.titulo,
+                    evento.descripcion,
+                    evento.inicio,
+                    evento.fin,
+                    evento.tipo_agendamiento,
+                    link_reunion,
+                    1,
+                    usuario_actual["id"],
+                    google_event_id,
+                    medio_guardar,
+                ),
+            )
 
             agendamiento_id = cur.fetchone()[0]
 
-            # 6) Insertar participantes según tipo
             if evento.participantes_ids:
                 for participante_id in evento.participantes_ids:
-                    if evento.participante_tipo == "aspirante":
-                        cur.execute("""
-                            INSERT INTO agendamientos_participantes (
-                                agendamiento_id,
-                                aspirante_id,
-                                estado
-                            )
-                            VALUES (%s, %s, %s)
-                        """, (agendamiento_id, participante_id, "programado"))
+                    cur.execute(
+                        """
+                        INSERT INTO agendamientos_participantes (
+                            agendamiento_id,
+                            participante_tipo_id,
+                            participante_id,
+                            estado
+                        )
+                        VALUES (%s, %s, %s, %s)
+                        """,
+                        (agendamiento_id, tipo_pid, participante_id, "programado"),
+                    )
 
-                    elif evento.participante_tipo == "creador":
-                        cur.execute("""
-                            INSERT INTO agendamientos_participantes (
-                                agendamiento_id,
-                                creador_id,
-                                estado
-                            )
-                            VALUES (%s, %s, %s)
-                        """, (agendamiento_id, participante_id, "programado"))
-
-                    elif evento.participante_tipo == "usuario":
-                        cur.execute("""
-                            INSERT INTO agendamientos_participantes (
-                                agendamiento_id,
-                                administrador_id,
-                                estado
-                            )
-                            VALUES (%s, %s, %s)
-                        """, (agendamiento_id, participante_id, "programado"))
-
-            # 7) Consultar datos de participantes según tipo
-            participantes = []
-
-            if evento.participantes_ids:
-                if evento.participante_tipo == "aspirante":
-                    cur.execute("""
-                        SELECT
-                            id,
-                            COALESCE(NULLIF(nombre_real, ''), nickname, usuario, telefono) AS nombre,
-                            nickname
-                        FROM aspirantes
-                        WHERE id = ANY(%s)
-                    """, (evento.participantes_ids,))
-
-                elif evento.participante_tipo == "creador":
-                    cur.execute("""
-                        SELECT
-                            id,
-                            COALESCE(NULLIF(nombre_real, ''), nickname, telefono) AS nombre,
-                            nickname
-                        FROM aspirantes
-                        WHERE id = ANY(%s)
-                    """, (evento.participantes_ids,))
-
-                elif evento.participante_tipo == "usuario":
-                    cur.execute("""
-                        SELECT
-                            id,
-                            COALESCE(NULLIF(nombre_completo, ''), username, email, telefono) AS nombre,
-                            NULL AS nickname
-                        FROM administradores
-                        WHERE id = ANY(%s)
-                    """, (evento.participantes_ids,))
-
-                participantes = [
-                    {"id": row[0], "nombre": row[1], "nickname": row[2]}
-                    for row in cur.fetchall()
-                ]
+            participantes = _cargar_participantes_por_tipo_pid(
+                cur, evento.participantes_ids, tipo_pid
+            )
 
             conn.commit()
 
-            # 8) Respuesta
+            pt_out = evento.participante_tipo or _PARTICIPANTE_TIPO_ID_A_STR.get(
+                tipo_pid or 0
+            )
+
             return EventoOut(
                 agendamiento_id=str(agendamiento_id),
                 titulo=evento.titulo,
@@ -1541,11 +1432,13 @@ def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario
                 fin=evento.fin,
                 participantes_ids=evento.participantes_ids,
                 participantes=participantes,
+                participante_tipo=pt_out,
                 link_meet=link_reunion,
                 responsable_id=usuario_actual["id"],
                 origen="interno",
                 tipo_agendamiento=evento.tipo_agendamiento,
                 google_event_id=google_event_id,
+                medio_reunion_id=medio_guardar,
             )
 
         except HTTPException:
@@ -1562,24 +1455,26 @@ def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario
 
 @router.post("/api/eventosV01", response_model=EventoOut)
 def crear_eventov01(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario_actual)):
-    # 1) Validación básica
     if evento.fin <= evento.inicio:
         raise HTTPException(
             status_code=400,
             detail="La fecha de fin debe ser posterior a la fecha de inicio."
         )
 
-    # 2) Obtener config
     google_meet_enabled_str = get_config("google_meet_enabled")
-    google_meet_enabled = str(google_meet_enabled_str).lower() in ['true', '1', 't', 'y', 'yes']
-
+    google_meet_enabled = str(google_meet_enabled_str).lower() in ["true", "1", "t", "y", "yes"]
     debe_crear_meet = google_meet_enabled and evento.requiere_meet
 
     link_reunion = evento.link_meet
     google_event_id = None
 
-    # 3) intentar crear evento en Google si NO es tipo 1 (ej: entrevista) y se debe crear link de meet
-    if evento.tipo_agendamiento not in (1, 5) and google_meet_enabled:
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            medio_id = _resolver_medio_reunion_id(
+                cur, evento.tipo_agendamiento, evento.medio_reunion_id
+            )
+
+    if medio_id == MEDIO_REUNION_GOOGLE_MEET and google_meet_enabled:
         try:
             google_event = crear_evento_google(
                 resumen=evento.titulo,
@@ -1588,106 +1483,114 @@ def crear_eventov01(evento: EventoIn, usuario_actual: Any = Depends(obtener_usua
                 fecha_fin=evento.fin,
                 requiere_meet=debe_crear_meet,
             )
-
             google_event_id = google_event.get("id")
             link_reunion = google_event.get("hangoutLink")
-
         except Exception as e:
             logger.error(f"⚠️ Error creando evento Google Calendar: {e}")
             logger.error(traceback.format_exc())
             google_event_id = None
 
-    # =========================================================
-    # 4) AJUSTE: Si tipo_agendamiento == 1 → generar link TikTok
-    # =========================================================
-    if evento.tipo_agendamiento in (1, 5):
-
-        # Validamos que al menos venga 1 participante en el array
+    if medio_id == MEDIO_REUNION_TIKTOK_LIVE:
         if not evento.participantes_ids:
             raise HTTPException(
                 status_code=400,
-                detail="Se requiere al menos un participante (el creador) para generar el link de TikTok LIVE."
+                detail="Se requiere al menos un participante (usuario TikTok) para generar el enlace LIVE.",
+            )
+        tik_uid = evento.participantes_ids[0]
+        link_tiktok = obtener_link_live_por_creador(tik_uid)
+        if link_tiktok:
+            link_reunion = link_tiktok
+        else:
+            logger.warning(
+                "No se pudo generar link TikTok LIVE para participante_id=%s",
+                tik_uid,
             )
 
-        # Tomamos el primer participante como el creador principal
-        creador_principal_id = evento.participantes_ids[0]
-
-        link_tiktok = obtener_link_live_por_creador(creador_principal_id)
-        if link_tiktok:
-            link_reunion = link_tiktok  # Sobrescribe el manual si lo calcularon
-        else:
-            logger.warning(f"No se pudo generar link LIVE para el creador {creador_principal_id}")
-
-    # 5) Abrimos transacción principal para guardar en BD
     with get_connection_context() as conn:
         try:
             cur = conn.cursor()
+            medio_guardar = _resolver_medio_reunion_id(
+                cur, evento.tipo_agendamiento, evento.medio_reunion_id
+            )
+            tipo_pid = _resolver_participante_tipo_id(cur, evento)
+            if evento.participantes_ids and tipo_pid is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="participante_tipo no válido o no se pudo resolver desde agendamientos_tipo.",
+                )
 
-            cur.execute("""
-                        INSERT INTO agendamientos (titulo,
-                                                   descripcion,
-                                                   fecha_inicio,
-                                                   fecha_fin,
-                                                   tipo_agendamiento,
-                                                   link_meet,
-                                                   estado,
-                                                   responsable_id,
-                                                   google_event_id)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
-                        """, (
-                            evento.titulo,
-                            evento.descripcion,
-                            evento.inicio,
-                            evento.fin,
-                            evento.tipo_agendamiento,
-                            link_reunion,
-                            1,
-                            usuario_actual["id"],
-                            google_event_id
-                        ))
+            cur.execute(
+                """
+                INSERT INTO agendamientos (
+                    titulo,
+                    descripcion,
+                    fecha_inicio,
+                    fecha_fin,
+                    tipo_agendamiento,
+                    link_meet,
+                    estado,
+                    responsable_id,
+                    google_event_id,
+                    medio_reunion_id
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (
+                    evento.titulo,
+                    evento.descripcion,
+                    evento.inicio,
+                    evento.fin,
+                    evento.tipo_agendamiento,
+                    link_reunion,
+                    1,
+                    usuario_actual["id"],
+                    google_event_id,
+                    medio_guardar,
+                ),
+            )
 
             agendamiento_id = cur.fetchone()[0]
 
-            # 6) Insertar participantes
             if evento.participantes_ids:
                 for participante_id in evento.participantes_ids:
-                    cur.execute("""
-                                INSERT INTO agendamientos_participantes (agendamiento_id, aspirante_id)
-                                VALUES (%s, %s)
-                                """, (agendamiento_id, participante_id))
+                    cur.execute(
+                        """
+                        INSERT INTO agendamientos_participantes (
+                            agendamiento_id,
+                            participante_tipo_id,
+                            participante_id
+                        )
+                        VALUES (%s, %s, %s)
+                        """,
+                        (agendamiento_id, tipo_pid, participante_id),
+                    )
 
-            # 7) Consultar datos de participantes
-            participantes = []
-            if evento.participantes_ids:
-                cur.execute("""
-                            SELECT id,
-                                   COALESCE(NULLIF(nombre_real, ''), nickname) AS nombre,
-                                   nickname
-                            FROM aspirantes
-                            WHERE id = ANY (%s)
-                            """, (evento.participantes_ids,))
-
-                participantes = [
-                    {"id": row[0], "nombre": row[1], "nickname": row[2]}
-                    for row in cur.fetchall()
-                ]
+            participantes = _cargar_participantes_por_tipo_pid(
+                cur, evento.participantes_ids, tipo_pid
+            )
 
             conn.commit()
 
-            # 8) Respuesta
+            pt_out = evento.participante_tipo or _PARTICIPANTE_TIPO_ID_A_STR.get(
+                tipo_pid or 0
+            )
+
             return EventoOut(
-                agendamiento_id=str(agendamiento_id),  # ✅ CORRECTO
+                agendamiento_id=str(agendamiento_id),
                 titulo=evento.titulo,
                 descripcion=evento.descripcion,
                 inicio=evento.inicio,
                 fin=evento.fin,
                 participantes_ids=evento.participantes_ids,
                 participantes=participantes,
+                participante_tipo=pt_out,
                 link_meet=link_reunion,
                 responsable_id=usuario_actual["id"],
                 origen="interno",
                 tipo_agendamiento=evento.tipo_agendamiento,
                 google_event_id=google_event_id,
+                medio_reunion_id=medio_guardar,
             )
 
         except HTTPException:
@@ -1713,6 +1616,9 @@ def crear_eventoV00(evento: EventoIn, usuario_actual: Any = Depends(obtener_usua
                 )
 
             # 2️⃣ Crear agendamiento interno
+            medio_v00 = _resolver_medio_reunion_id(
+                cur, evento.tipo_agendamiento, evento.medio_reunion_id
+            )
             cur.execute("""
                         INSERT INTO agendamientos (titulo,
                                                    descripcion,
@@ -1722,8 +1628,9 @@ def crear_eventoV00(evento: EventoIn, usuario_actual: Any = Depends(obtener_usua
                                                    link_meet,
                                                    estado,
                                                    responsable_id,
-                                                   google_event_id)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
+                                                   google_event_id,
+                                                   medio_reunion_id)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
                         """, (
                             evento.titulo,
                             evento.descripcion,
@@ -1733,7 +1640,8 @@ def crear_eventoV00(evento: EventoIn, usuario_actual: Any = Depends(obtener_usua
                             evento.link_meet,
                             "programado",
                             usuario_actual["id"],
-                            None
+                            None,
+                            medio_v00,
                         ))
 
             agendamiento_id = cur.fetchone()[0]
@@ -1741,9 +1649,13 @@ def crear_eventoV00(evento: EventoIn, usuario_actual: Any = Depends(obtener_usua
             # 3️⃣ Insertar participantes
             for participante_id in evento.participantes_ids:
                 cur.execute("""
-                    INSERT INTO agendamientos_participantes (agendamiento_id, aspirante_id)
-                    VALUES (%s, %s)
-                """, (agendamiento_id, participante_id))
+                    INSERT INTO agendamientos_participantes (
+                        agendamiento_id,
+                        participante_tipo_id,
+                        participante_id
+                    )
+                    VALUES (%s, %s, %s)
+                """, (agendamiento_id, PARTICIPANTE_TIPO_ASPIRANTE_ID, participante_id))
 
             # 4️⃣ Consultar datos de participantes
             participantes = []
@@ -1778,7 +1690,8 @@ def crear_eventoV00(evento: EventoIn, usuario_actual: Any = Depends(obtener_usua
                 link_meet=evento.link_meet if hasattr(evento, "link_meet") else None,
                 responsable_id=usuario_actual["id"],
                 origen="interno",
-                tipo_agendamiento=evento.tipo_agendamiento
+                tipo_agendamiento=evento.tipo_agendamiento,
+                medio_reunion_id=medio_v00,
             )
 
         except Exception as e:
@@ -1825,9 +1738,21 @@ def listar_agendamientos():
             # Para cada agendamiento, obtener los participantes (nombre, nickname)
             for evento in agendamientos:
                 cur.execute("""
-                    SELECT c.id, c.nombre_real as nombre, c.nickname
+                    SELECT
+                        ap.participante_id AS id,
+                        COALESCE(
+                            COALESCE(NULLIF(asp.nombre_real, ''), asp.nickname),
+                            COALESCE(NULLIF(cre.nombre_real, ''), cre.nickname),
+                            COALESCE(NULLIF(adm.nombre_completo, ''), adm.username)
+                        ) AS nombre,
+                        COALESCE(asp.nickname, cre.nickname, NULL) AS nickname
                     FROM agendamientos_participantes ap
-                    JOIN aspirantes c ON c.id = ap.aspirante_id
+                    LEFT JOIN aspirantes asp
+                        ON ap.participante_tipo_id = 1 AND asp.id = ap.participante_id
+                    LEFT JOIN aspirantes cre
+                        ON ap.participante_tipo_id = 2 AND cre.id = ap.participante_id
+                    LEFT JOIN administradores adm
+                        ON ap.participante_tipo_id = 3 AND adm.id = ap.participante_id
                     WHERE ap.agendamiento_id = %s
                 """, (evento["id"],))
                 participantes = cur.fetchall()
@@ -1855,8 +1780,8 @@ def obtener_eventos(
     """
     Obtiene eventos desde la base de datos usando:
       - agendamientos
-      - agendamientos_participantes
-      - aspirantes / administradores (participante_tipo "creador" usa tabla aspirantes y creador_id)
+      - agendamientos_participantes (participante_tipo_id + participante_id)
+      - aspirantes / administradores
     """
 
     if time_min is None:
@@ -1881,15 +1806,16 @@ def obtener_eventos(
                 a.tipo_agendamiento,
                 a.google_event_id,
                 a.timezone,
+                a.medio_reunion_id,
 
                 ap.estado AS estado_participante,
 
-                COALESCE(ap.aspirante_id, ap.creador_id, ap.administrador_id) AS participante_id,
+                ap.participante_id AS participante_id,
 
-                CASE
-                    WHEN ap.aspirante_id IS NOT NULL THEN 'aspirante'
-                    WHEN ap.creador_id IS NOT NULL THEN 'creador'
-                    WHEN ap.administrador_id IS NOT NULL THEN 'usuario'
+                CASE ap.participante_tipo_id
+                    WHEN 1 THEN 'aspirante'
+                    WHEN 2 THEN 'creador'
+                    WHEN 3 THEN 'usuario'
                     ELSE 'usuario'
                 END AS participante_tipo,
 
@@ -1912,18 +1838,13 @@ def obtener_eventos(
             INNER JOIN agendamientos_participantes ap
                    ON ap.agendamiento_id = a.id
             LEFT JOIN aspirantes asp
-                   ON asp.id = ap.aspirante_id
+                   ON asp.id = ap.participante_id AND ap.participante_tipo_id = 1
             LEFT JOIN aspirantes cre
-                   ON cre.id = ap.creador_id
+                   ON cre.id = ap.participante_id AND ap.participante_tipo_id = 2
             LEFT JOIN administradores usr
-                   ON usr.id = ap.administrador_id
+                   ON usr.id = ap.participante_id AND ap.participante_tipo_id = 3
             WHERE a.fecha_inicio >= %s
               AND a.fecha_inicio <= %s
-              AND (
-                ap.aspirante_id IS NOT NULL
-                OR ap.creador_id IS NOT NULL
-                OR ap.administrador_id IS NOT NULL
-            )  
             ORDER BY a.fecha_inicio ASC, a.id ASC
             LIMIT %s
             """
@@ -1949,6 +1870,7 @@ def obtener_eventos(
                 tipo_agendamiento,
                 google_event_id,
                 timezone,
+                medio_reunion_id,
                 estado_participante,
                 participante_id,
                 participante_tipo,
@@ -1969,6 +1891,7 @@ def obtener_eventos(
                         "tipo_agendamiento": tipo_agendamiento,
                         "google_event_id": google_event_id,
                         "timezone": timezone,
+                        "medio_reunion_id": medio_reunion_id,
                         "origen": "google_calendar" if google_event_id else "interno",
                         "participantes": [],
                         "participantes_ids": set(),
@@ -2014,6 +1937,7 @@ def obtener_eventos(
                         origen=ev["origen"],
                         google_event_id=ev["google_event_id"],
                         participante_tipo=ev["participante_tipo"],
+                        medio_reunion_id=ev["medio_reunion_id"],
                     )
                 )
 
@@ -2061,14 +1985,15 @@ def obtener_eventosV011(
                 a.estado,
                 a.link_meet,
                 a.tipo_agendamiento,
+                a.medio_reunion_id,
                 c.id AS aspirante_id,
                 COALESCE(NULLIF(c.nombre_real, ''), c.nickname) AS nombre,
                 c.nickname
             FROM agendamientos a
             LEFT JOIN agendamientos_participantes ap
-                   ON ap.agendamiento_id = a.id
+                   ON ap.agendamiento_id = a.id AND ap.participante_tipo_id = 1
             LEFT JOIN aspirantes c
-                   ON c.id = ap.aspirante_id
+                   ON c.id = ap.participante_id
             WHERE a.fecha_inicio >= %s
               AND a.fecha_inicio <= %s
             ORDER BY a.fecha_inicio ASC, a.id ASC
@@ -2095,6 +2020,7 @@ def obtener_eventosV011(
                 estado,
                 link_meet,
                 tipo_agendamiento,
+                medio_reunion_id,
                 aspirante_id,
                 nombre,
                 nickname,
@@ -2110,6 +2036,7 @@ def obtener_eventosV011(
                         "estado": estado,
                         "link_meet": link_meet,
                         "tipo_agendamiento": tipo_agendamiento,
+                        "medio_reunion_id": medio_reunion_id,
                         "origen": "interno",
                         "participantes": [],
                         "participantes_ids": set(),  # usamos set para evitar duplicados
@@ -2144,6 +2071,7 @@ def obtener_eventosV011(
                         tipo_agendamiento=ev["tipo_agendamiento"],
                         responsable_id=ev["responsable_id"],
                         origen=ev["origen"],
+                        medio_reunion_id=ev["medio_reunion_id"],
                     )
                 )
 
@@ -2631,8 +2559,9 @@ def listar_citas_creador(aspirante_id: int):
                     ON ae.id = a.estado
                 INNER JOIN agendamientos_tipo at
                     ON at.id = a.tipo_agendamiento
-                WHERE ap.aspirante_id = %s  
-                     AND at.participante_tipo_id=1
+                WHERE ap.participante_tipo_id = 1
+                  AND ap.participante_id = %s
+                  AND at.participante_tipo_id = 1
                 ORDER BY a.fecha_inicio ASC
                 """,
                 (aspirante_id,)
@@ -2691,7 +2620,8 @@ def listar_citas_aspiranteV1Token(token: str = Query(...)):
                 FROM agendamientos a
                 JOIN agendamientos_participantes ap
                   ON ap.agendamiento_id = a.id
-                WHERE ap.aspirante_id = %s
+                WHERE ap.participante_tipo_id = 1
+                  AND ap.participante_id = %s
                 ORDER BY a.fecha_inicio ASC
                 """,
                 (aspirante_id,)  # 👈 ahora sí funciona
@@ -2763,7 +2693,8 @@ def guardar_tiktok_live_link(payload: TikTokLiveLinkIn):
                 JOIN agendamientos_participantes ap
                   ON ap.agendamiento_id = a.id
                 WHERE a.id = %s
-                  AND ap.aspirante_id = %s
+                  AND ap.participante_tipo_id = 1
+                  AND ap.participante_id = %s
                 """,
                 (payload.agendamiento_id, aspirante_id)
             )
@@ -3901,8 +3832,9 @@ def crear_agendamiento_aspirante_DB_V1(
         if fecha_fin <= fecha_inicio:
             raise ValueError("fecha_fin debe ser posterior a fecha_inicio.")
 
-        # Si es LIVE y no viene link, construirlo automáticamente
-        if tipo_agendamiento == "LIVE" and not link_meet:
+        # Si es LIVE y no viene link, construirlo automáticamente (usuario TikTok en aspirantes)
+        medio_ins = _fetch_medio_reunion_id_por_tipo(cur, tipo_agendamiento_id)
+        if medio_ins == MEDIO_REUNION_TIKTOK_LIVE and not link_meet:
             link_meet = obtener_link_live_por_creador(aspirante_id)
 
         # 1️⃣ Crear agendamiento
@@ -3913,12 +3845,12 @@ def crear_agendamiento_aspirante_DB_V1(
                 descripcion,
                 fecha_inicio,
                 fecha_fin,
-                aspirante_id,
                 responsable_id,
                 estado,
                 tipo_agendamiento,
                 link_meet,
-                google_event_id
+                google_event_id,
+                medio_reunion_id
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
@@ -3928,12 +3860,12 @@ def crear_agendamiento_aspirante_DB_V1(
                 descripcion,
                 fecha_inicio,
                 fecha_fin,
-                aspirante_id,
                 responsable_id,
                 ESTADO_AGENDAMIENTO_PROGRAMADO,
                 tipo_agendamiento_id,
                 link_meet,
                 google_event_id,
+                medio_ins,
             )
         )
 
@@ -3976,11 +3908,12 @@ def crear_agendamiento_aspirante_DB_V1(
             """
             INSERT INTO agendamientos_participantes (
                 agendamiento_id,
-                aspirante_id
+                participante_tipo_id,
+                participante_id
             )
-            VALUES (%s, %s)
+            VALUES (%s, %s, %s)
             """,
-            (agendamiento_id, aspirante_id)
+            (agendamiento_id, PARTICIPANTE_TIPO_ASPIRANTE_ID, aspirante_id),
         )
 
         return agendamiento_id
@@ -4327,10 +4260,14 @@ def crear_agendamiento_aspirante_DB(
                 # 4️⃣ INSERTAR PARTICIPANTE
                 cur.execute(
                     """
-                    INSERT INTO agendamientos_participantes (agendamiento_id, aspirante_id)
-                    VALUES (%s, %s)
+                    INSERT INTO agendamientos_participantes (
+                        agendamiento_id,
+                        participante_tipo_id,
+                        participante_id
+                    )
+                    VALUES (%s, %s, %s)
                     """,
-                    (agendamiento_id, aspirante_id)
+                    (agendamiento_id, PARTICIPANTE_TIPO_ASPIRANTE_ID, aspirante_id),
                 )
 
                 return agendamiento_id
@@ -5674,12 +5611,12 @@ def enviar_recordatorio_manual(
                 a.link_meet,
                 ta.nombre AS tipo_cita_nombre,
 
-                COALESCE(ap.aspirante_id, ap.creador_id, ap.administrador_id) AS participante_id,
+                ap.participante_id AS participante_id,
 
-                CASE
-                    WHEN ap.aspirante_id IS NOT NULL THEN 'aspirante'
-                    WHEN ap.creador_id IS NOT NULL THEN 'creador'
-                    WHEN ap.administrador_id IS NOT NULL THEN 'usuario'
+                CASE ap.participante_tipo_id
+                    WHEN 1 THEN 'aspirante'
+                    WHEN 2 THEN 'creador'
+                    WHEN 3 THEN 'usuario'
                     ELSE NULL
                 END AS participante_tipo,
 
@@ -5707,13 +5644,13 @@ def enviar_recordatorio_manual(
             INNER JOIN agendamientos_participantes ap
                 ON ap.agendamiento_id = a.id
             LEFT JOIN aspirantes asp
-                ON asp.id = ap.aspirante_id
+                ON asp.id = ap.participante_id AND ap.participante_tipo_id = 1
             LEFT JOIN aspirantes cre
-                ON cre.id = ap.creador_id
+                ON cre.id = ap.participante_id AND ap.participante_tipo_id = 2
             LEFT JOIN administradores usr
-                ON usr.id = ap.administrador_id
+                ON usr.id = ap.participante_id AND ap.participante_tipo_id = 3
             WHERE a.id = %s
-            ORDER BY ap.id ASC
+            ORDER BY CASE ap.participante_tipo_id WHEN 1 THEN 0 WHEN 2 THEN 1 WHEN 3 THEN 2 ELSE 3 END, ap.id ASC
             LIMIT 1
         """, (agendamiento_id,))
 
@@ -5849,69 +5786,45 @@ def enviar_recordatorio_manualV01(
         cita_id, fecha_inicio, fecha_fin, link_meet, tipo_cita_nombre = cita
 
         # =========================================================
-        # 2. Obtener participante principal según la columna llena
+        # 2. Participante principal (prioridad: aspirante → creador → usuario interno)
         # =========================================================
-        telefono = None
-        nombre = None
-        participante_id = None
-        participante_tipo = None
-
-        # Aspirante
         cur.execute("""
             SELECT
-                a.id,
-                COALESCE(NULLIF(a.whatsapp, ''), a.telefono) AS telefono_final,
-                COALESCE(a.nickname, a.nombre_real, a.usuario) AS nombre
+                ap.participante_id,
+                CASE ap.participante_tipo_id
+                    WHEN 1 THEN 'aspirante'
+                    WHEN 2 THEN 'creador'
+                    WHEN 3 THEN 'usuario'
+                END,
+                COALESCE(
+                    COALESCE(NULLIF(asp.whatsapp, ''), asp.telefono),
+                    COALESCE(NULLIF(cre.whatsapp, ''), cre.telefono),
+                    usr.telefono
+                ) AS telefono_final,
+                COALESCE(
+                    COALESCE(NULLIF(asp.nickname, ''), asp.nombre_real, asp.usuario),
+                    COALESCE(NULLIF(cre.nickname, ''), cre.nombre_real),
+                    COALESCE(NULLIF(usr.nombre_completo, ''), usr.username)
+                ) AS nombre
             FROM agendamientos_participantes ap
-            JOIN aspirantes a
-                ON ap.aspirante_id = a.id
+            LEFT JOIN aspirantes asp
+                ON ap.participante_tipo_id = 1 AND asp.id = ap.participante_id
+            LEFT JOIN aspirantes cre
+                ON ap.participante_tipo_id = 2 AND cre.id = ap.participante_id
+            LEFT JOIN administradores usr
+                ON ap.participante_tipo_id = 3 AND usr.id = ap.participante_id
             WHERE ap.agendamiento_id = %s
-              AND ap.aspirante_id IS NOT NULL
+            ORDER BY CASE ap.participante_tipo_id WHEN 1 THEN 0 WHEN 2 THEN 1 WHEN 3 THEN 2 ELSE 3 END, ap.id ASC
             LIMIT 1
         """, (agendamiento_id,))
         row = cur.fetchone()
 
+        participante_id = None
+        participante_tipo = None
+        telefono = None
+        nombre = None
         if row:
-            participante_id, telefono, nombre = row
-            participante_tipo = "aspirante"
-        else:
-            # Creador
-            cur.execute("""
-                SELECT
-                    c.id,
-                    COALESCE(NULLIF(c.whatsapp, ''), c.telefono) AS telefono_final,
-                    COALESCE(c.nickname, c.nombre_real) AS nombre
-                FROM agendamientos_participantes ap
-                JOIN aspirantes c
-                    ON ap.creador_id = c.id
-                WHERE ap.agendamiento_id = %s
-                  AND ap.creador_id IS NOT NULL
-                LIMIT 1
-            """, (agendamiento_id,))
-            row = cur.fetchone()
-
-            if row:
-                participante_id, telefono, nombre = row
-                participante_tipo = "creador"
-            else:
-                # Usuario interno
-                cur.execute("""
-                    SELECT
-                        u.id,
-                        u.telefono AS telefono_final,
-                        COALESCE(u.nombre_completo, u.username) AS nombre
-                    FROM agendamientos_participantes ap
-                    JOIN administradores u
-                        ON ap.administrador_id = u.id
-                    WHERE ap.agendamiento_id = %s
-                      AND ap.administrador_id IS NOT NULL
-                    LIMIT 1
-                """, (agendamiento_id,))
-                row = cur.fetchone()
-
-                if row:
-                    participante_id, telefono, nombre = row
-                    participante_tipo = "usuario"
+            participante_id, participante_tipo, telefono, nombre = row
 
         if not participante_id:
             raise HTTPException(status_code=404, detail="Participante no encontrado para la cita.")
@@ -6015,15 +5928,30 @@ def enviar_recordatorio_manualV01(
                            a.fecha_inicio,
                            a.fecha_fin,
                            a.link_meet,
-                           ta.nombre                                    as tipo_cita_nombre,
-                           COALESCE(NULLIF(c.whatsapp, ''), c.telefono) as telefono_final,
-                           COALESCE(c.nickname, c.nombre_real)          as nombre,
-                           c.id                                         as aspirante_id
+                           ta.nombre AS tipo_cita_nombre,
+                           COALESCE(
+                               COALESCE(NULLIF(asp.whatsapp, ''), asp.telefono),
+                               COALESCE(NULLIF(cre.whatsapp, ''), cre.telefono),
+                               usr.telefono
+                           ) AS telefono_final,
+                           COALESCE(
+                               COALESCE(NULLIF(asp.nickname, ''), asp.nombre_real),
+                               COALESCE(NULLIF(cre.nickname, ''), cre.nombre_real),
+                               COALESCE(NULLIF(usr.nombre_completo, ''), usr.username)
+                           ) AS nombre,
+                           ap.participante_id AS aspirante_id
                     FROM agendamientos a
-                             JOIN agendamientos_participantes ap ON a.id = ap.agendamiento_id
-                             JOIN aspirantes c ON ap.aspirante_id = c.id
-                             LEFT JOIN agendamientos_tipo ta ON a.tipo_agendamiento = ta.id
-                    WHERE a.id = %s LIMIT 1
+                    JOIN agendamientos_participantes ap ON a.id = ap.agendamiento_id
+                    LEFT JOIN aspirantes asp
+                        ON ap.participante_tipo_id = 1 AND asp.id = ap.participante_id
+                    LEFT JOIN aspirantes cre
+                        ON ap.participante_tipo_id = 2 AND cre.id = ap.participante_id
+                    LEFT JOIN administradores usr
+                        ON ap.participante_tipo_id = 3 AND usr.id = ap.participante_id
+                    LEFT JOIN agendamientos_tipo ta ON a.tipo_agendamiento = ta.id
+                    WHERE a.id = %s
+                    ORDER BY CASE ap.participante_tipo_id WHEN 1 THEN 0 WHEN 2 THEN 1 WHEN 3 THEN 2 ELSE 3 END, ap.id ASC
+                    LIMIT 1
                     """, (agendamiento_id,))
 
         row = cur.fetchone()

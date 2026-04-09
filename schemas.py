@@ -22,10 +22,11 @@ class EventoIn(BaseModel):
     inicio: datetime
     fin: datetime
     participantes_ids: List[int] = []
-    participante_tipo: Literal["aspirante", "creador", "usuario"]  # ✅ nuevo
+    participante_tipo: Optional[Literal["aspirante", "creador", "usuario"]] = None
     link_meet: Optional[str] = None
     requiere_meet: Optional[bool] = True
     tipo_agendamiento: Optional[int] = 1
+    medio_reunion_id: Optional[int] = None
 
 
 class EventoOut(EventoIn):

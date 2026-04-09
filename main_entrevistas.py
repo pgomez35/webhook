@@ -212,8 +212,12 @@ def insertar_agendamiento(data: dict) -> Optional[Dict[str, Any]]:
                 # ==========================================
                 cur.execute(
                     """
-                    INSERT INTO agendamientos_participantes (agendamiento_id, aspirante_id)
-                    VALUES (%s, %s)
+                    INSERT INTO agendamientos_participantes (
+                        agendamiento_id,
+                        participante_tipo_id,
+                        participante_id
+                    )
+                    VALUES (%s, 1, %s)
                     """,
                     (agendamiento_id, aspirante_id)
                 )
@@ -559,7 +563,7 @@ def obtener_entrevista_con_agendamientos(aspirante_id: int) -> Optional[dict]:
                             a.descripcion,
                             a.fecha_inicio,
                             a.fecha_fin,
-                            COALESCE(a.aspirante_id, ap.aspirante_id) AS aspirante_id,
+                            COALESCE(a.aspirante_id, ap.participante_id) AS aspirante_id,
                             a.responsable_id,
                             a.estado,
                             a.link_meet,
@@ -572,6 +576,7 @@ def obtener_entrevista_con_agendamientos(aspirante_id: int) -> Optional[dict]:
                             ON a.id = ea.agendamiento_id
                         LEFT JOIN agendamientos_participantes ap
                             ON ap.agendamiento_id = a.id
+                            AND ap.participante_tipo_id IN (1, 2)
                         WHERE ea.entrevista_id = %s
                         ORDER BY a.fecha_inicio ASC
                 """, (entrevista_id,))
@@ -918,7 +923,8 @@ def asegurar_entrevista_existe(cur, agendamiento_id: int, aspirante_id: int) -> 
         JOIN agendamientos_participantes ap
           ON ap.agendamiento_id = e.agendamiento_id
         WHERE e.agendamiento_id = %s
-          AND ap.aspirante_id = %s
+          AND ap.participante_id = %s
+          AND ap.participante_tipo_id IN (1, 2)
         LIMIT 1
     """, (agendamiento_id, aspirante_id))
     row = cur.fetchone()
@@ -933,7 +939,8 @@ def asegurar_entrevista_existe(cur, agendamiento_id: int, aspirante_id: int) -> 
         JOIN agendamientos_participantes ap
           ON ap.agendamiento_id = a.id
         WHERE a.id = %s
-          AND ap.aspirante_id = %s
+          AND ap.participante_id = %s
+          AND ap.participante_tipo_id IN (1, 2)
         LIMIT 1
     """, (agendamiento_id, aspirante_id))
     ag = cur.fetchone()
@@ -1014,7 +1021,7 @@ def obtener_pantalla_evaluacion_entrevistas(aspirante_id: int):
                     a.link_meet,
                     a.tipo_agendamiento,
                     a.estado AS agendamiento_estado,
-                    ap.aspirante_id,
+                    ap.participante_id AS aspirante_id,
 
                     ta.nombre AS tipo_agendamiento_nombre,
                     ta.color AS tipo_agendamiento_color,
@@ -1045,7 +1052,8 @@ def obtener_pantalla_evaluacion_entrevistas(aspirante_id: int):
                   ON e.agendamiento_id = a.id
                 LEFT JOIN entrevista_tipo et
                   ON et.id = e.entrevista_tipo_id
-                WHERE ap.aspirante_id = %s
+                WHERE ap.participante_id = %s
+                  AND ap.participante_tipo_id IN (1, 2)
                   AND a.tipo_agendamiento IN (1, 2)
                 ORDER BY a.fecha_inicio ASC, a.id ASC
             """, (aspirante_id,))
@@ -1107,7 +1115,7 @@ def obtener_detalle_entrevista_por_agendamiento(
             cur.execute("""
                 SELECT
                     a.id AS agendamiento_id,
-                    ap.aspirante_id,
+                    ap.participante_id AS aspirante_id,
                     a.titulo,
                     a.descripcion,
                     a.fecha_inicio,
@@ -1146,7 +1154,8 @@ def obtener_detalle_entrevista_por_agendamiento(
                 LEFT JOIN entrevista_tipo et
                   ON et.id = e.entrevista_tipo_id
                 WHERE a.id = %s
-                  AND ap.aspirante_id = %s
+                  AND ap.participante_id = %s
+                  AND ap.participante_tipo_id IN (1, 2)
                   AND a.tipo_agendamiento IN (1, 2)
                 LIMIT 1
             """, (agendamiento_id, aspirante_id))
@@ -1192,7 +1201,7 @@ def obtener_entrevista_por_id(entrevista_id: int, aspirante_id: int):
             cur.execute("""
                 SELECT
                     a.id AS agendamiento_id,
-                    ap.aspirante_id,
+                    ap.participante_id AS aspirante_id,
                     a.titulo,
                     a.descripcion,
                     a.fecha_inicio,
@@ -1231,7 +1240,8 @@ def obtener_entrevista_por_id(entrevista_id: int, aspirante_id: int):
                 LEFT JOIN entrevista_tipo et
                   ON et.id = e.entrevista_tipo_id
                 WHERE e.id = %s
-                  AND ap.aspirante_id = %s
+                  AND ap.participante_id = %s
+                  AND ap.participante_tipo_id IN (1, 2)
                 LIMIT 1
             """, (entrevista_id, aspirante_id))
 
@@ -1284,7 +1294,8 @@ def evaluar_entrevista(
                 JOIN agendamientos_participantes ap
                   ON ap.agendamiento_id = e.agendamiento_id
                 WHERE e.id = %s
-                  AND ap.aspirante_id = %s
+                  AND ap.participante_id = %s
+                  AND ap.participante_tipo_id IN (1, 2)
                 LIMIT 1
             """, (entrevista_id, aspirante_id))
             base = cur.fetchone()
@@ -1383,7 +1394,8 @@ def evaluar_por_agendamiento(
                 JOIN agendamientos_participantes ap
                   ON ap.agendamiento_id = a.id
                 WHERE a.id = %s
-                  AND ap.aspirante_id = %s
+                  AND ap.participante_id = %s
+                  AND ap.participante_tipo_id IN (1, 2)
                   AND a.tipo_agendamiento IN (1, 2)
                 LIMIT 1
             """, (agendamiento_id, aspirante_id))
@@ -1485,7 +1497,8 @@ def guardar_decision_final(
                 FROM agendamientos_participantes ap
                 WHERE e.id = %s
                   AND ap.agendamiento_id = e.agendamiento_id
-                  AND ap.aspirante_id = %s
+                  AND ap.participante_id = %s
+                  AND ap.participante_tipo_id IN (1, 2)
                 RETURNING e.id, e.decision_final, e.observacion_decision
             """, (
                 data.decision_final,
