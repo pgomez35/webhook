@@ -5986,10 +5986,12 @@ def consolidar_perfil_web(
         # URL del portal con token
         # -------------------------------
 
-        url_info = generar_url_portal(
-            aspirante_id,
+        portal_data = generar_url_portal(
+            aspirante_id=aspirante_id,
             origen="encuesta"
         ) if aspirante_id else None
+
+        url_info = portal_data["url"] if portal_data else None
 
         # -------------------------------
         # Mensaje final
