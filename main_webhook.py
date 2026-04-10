@@ -34,8 +34,9 @@ from evaluaciones import evaluar_y_actualizar_perfil_pre_encuesta, diagnostico_a
 
 
 # from main_EvaluacionAspirante import poblar_scores_creador
-from main_mensajeria_whatsapp import reenviar_ultimo_mensaje, enviar_mensaje_con_credenciales
-from main_portal_aspirantes import generar_url_portal
+from main_mensajeria_whatsapp import reenviar_ultimo_mensaje, enviar_mensaje_texto, \
+    enviar_mensaje_texto_y_guardar, enviar_mensaje_whatsapp_texto
+from main_portal_aspirantes import generar_url_portal, generar_url_portal_para_aspirante
 from tenant import (
     current_business_name,
     current_phone_id,
@@ -3613,7 +3614,200 @@ def procesar_evento_webhook_anticuado(body, phone_id_cliente, token_cliente):
 
 # services/aspirant_flow.py
 
-async def procesar_flujo_aspirante(tenant, phone_number_id, wa_id, tipo, texto, payload_id):
+
+async def procesar_flujo_aspirante(
+    tenant,
+    phone_number_id,
+    wa_id,
+    tipo,
+    texto,
+    payload_id
+):
+    """
+    Flujo principal para aspirantes.
+
+    Prioridad:
+    1. Verificar que el número sí pertenece a un aspirante
+    2. Interceptor temporal (Redis / captura de datos esperados)
+    3. Botón de reconexión "Continuar"
+    4. Enviar siempre el link del portal para consulta del proceso
+
+    Retorna:
+    - True  -> si el mensaje fue atendido por este flujo
+    - False -> si no corresponde a un aspirante y debe seguir al flujo general
+    """
+
+    print(
+        f"\n📨 [ASPIRANTE] Recibido de: {wa_id} | "
+        f"Tipo: {tipo} | Payload: {payload_id} | Texto: '{texto}'"
+    )
+
+    # ---------------------------------------------------------
+    # 1. VALIDAR SI ES ASPIRANTE
+    # ---------------------------------------------------------
+    aspirante_id = obtener_aspirante_id_por_telefono(wa_id)
+
+    if not aspirante_id:
+        print(f"❌ [ASPIRANTE] El teléfono {wa_id} no está registrado como aspirante.")
+        return False
+
+    print(f"✅ [ASPIRANTE] Aspirante identificado: {aspirante_id}")
+
+    # Token del contexto actual WABA
+    token_cliente = current_token.get()
+
+    if not token_cliente:
+        print("❌ [ASPIRANTE] No hay token de cliente en contexto.")
+        return True
+
+    # ---------------------------------------------------------
+    # 2. INTERCEPTOR TEMPORAL (ej. link TikTok, dato puntual)
+    # ---------------------------------------------------------
+    try:
+        capturado_por_interceptor = manejar_input_link_tiktok(
+            aspirante_id,
+            wa_id,
+            tipo,
+            texto,
+            payload_id,
+            token_cliente,
+            phone_number_id
+        )
+
+        if capturado_por_interceptor:
+            print("⚡ [ASPIRANTE] Mensaje capturado por interceptor temporal.")
+            return True
+
+    except Exception as e:
+        print(f"❌ [ASPIRANTE] Error en interceptor temporal: {e}")
+        # No detenemos flujo; sigue al portal
+
+    # ---------------------------------------------------------
+    # 3. BOTÓN DE RECONEXIÓN
+    # ---------------------------------------------------------
+    try:
+        if payload_id:
+            payload_limpio = payload_id.strip()
+            print(f"🔘 [ASPIRANTE] Payload recibido: '{payload_limpio}'")
+
+            if payload_limpio == "Continuar":
+                print(f"✅ [ASPIRANTE] Usuario {wa_id} hizo clic en Continuar.")
+
+                try:
+                    await reenviar_ultimo_mensaje(wa_id)
+                    print(f"🚀 [ASPIRANTE] Último mensaje reenviado correctamente a {wa_id}")
+                    return True
+
+                except Exception as e:
+                    print(f"❌ [ASPIRANTE] Falló el reenvío tras reconexión: {e}")
+                    return True
+
+    except Exception as e:
+        print(f"❌ [ASPIRANTE] Error procesando botón de reconexión: {e}")
+        return True
+
+    # ---------------------------------------------------------
+    # 4. ENVIAR SIEMPRE LINK DEL PORTAL
+    # ---------------------------------------------------------
+    try:
+        url_portal = generar_url_portal_para_aspirante(
+            aspirante_id=aspirante_id,
+            origen="whatsapp"
+        )
+
+        mensaje_portal = (
+            "Puedes ingresar al siguiente link para consultar tu proceso:\n"
+            f"{url_portal}"
+        )
+
+        codigo_api, respuesta_api = enviar_mensaje_texto_simple(
+            token=token_cliente,
+            numero_id=phone_number_id,
+            telefono_destino=wa_id,
+            texto=mensaje_portal
+        )
+
+        print(
+            f"📤 [ASPIRANTE] Envío portal -> código={codigo_api} "
+            f"| wa_id={wa_id} | aspirante_id={aspirante_id}"
+        )
+
+        message_id_meta = None
+        if isinstance(respuesta_api, dict):
+            mensajes = respuesta_api.get("messages") or []
+            if mensajes:
+                message_id_meta = mensajes[0].get("id")
+
+        # Guardar como mensaje enviado
+        try:
+            guardar_mensaje_nuevo(
+                telefono=wa_id,
+                contenido=mensaje_portal,
+                direccion="enviado",
+                tipo="text",
+                message_id_meta=message_id_meta,
+                estado="sent" if codigo_api == 200 else "error"
+            )
+        except Exception as e:
+            print(f"⚠️ [ASPIRANTE] No se pudo guardar log del mensaje enviado: {e}")
+
+        return True
+
+    except Exception as e:
+        print(f"❌ [ASPIRANTE] Error enviando link del portal: {e}")
+        return True
+
+
+async def procesar_flujo_aspiranteV011(tenant, phone_number_id, wa_id, tipo, texto, payload_id):
+    print(f"\n📨 [INICIO] Recibido de: {wa_id} | Tipo: {tipo} | Payload: {payload_id} | Texto: '{texto}'")
+
+    aspirante_id = obtener_aspirante_id_por_telefono(wa_id)
+    if not aspirante_id:
+        print(f"❌ [DEBUG] El teléfono {wa_id} no está registrado como aspirante. Ignorando flujo.")
+        return False
+
+    token_cliente = current_token.get()
+
+    # 1. Interceptor temporal: si estás esperando algo puntual como link de TikTok
+    if manejar_input_link_tiktok(aspirante_id, wa_id, tipo, texto, payload_id, token_cliente, phone_number_id):
+        print("⚡ [DEBUG] Capturado por interceptor Redis.")
+        return True
+
+    # 2. Botón continuar de reconexión
+    if payload_id:
+        payload_limpio = payload_id.strip()
+        if payload_limpio == "Continuar":
+            try:
+                await reenviar_ultimo_mensaje(wa_id)
+                return True
+            except Exception as e:
+                print(f"❌ [ERROR] Falló el reenvío tras reconexión: {e}")
+                return True
+
+    # 3. Respuesta unificada al portal
+    try:
+        url_portal = generar_url_portal_para_aspirante(aspirante_id)
+
+        mensaje_portal = (
+            "Puedes ingresar al siguiente link para consultar tu proceso:\n"
+            f"{url_portal}"
+        )
+
+        enviar_mensaje_texto_y_guardar(
+            phone_number_id=phone_number_id,
+            token=token_cliente,
+            to=wa_id,
+            body=mensaje_portal
+        )
+
+        print(f"🔗 [DEBUG] Link de portal enviado a aspirante {aspirante_id}")
+        return True
+
+    except Exception as e:
+        print(f"❌ [ERROR] No se pudo enviar link portal: {e}")
+        return True
+
+async def procesar_flujo_aspiranteV100(tenant, phone_number_id, wa_id, tipo, texto, payload_id):
     """
     Orquesta la prioridad de respuesta para aspirantes:
     1. Interceptor de Datos Temporales (Redis)
@@ -4372,252 +4566,6 @@ async def _procesar_mensaje_unico(mensaje, tenant_name, phone_number_id, token):
     # E. FLUJO GENERAL
     # ---------------------------------------------------------
     _process_single_message(mensaje, tenant_name)
-
-
-async def _procesar_mensaje_unicoV16022026(mensaje, tenant_name, phone_number_id, token):
-    """
-    Orquestador principal:
-    1. Normaliza
-    2. Registra mensaje
-    3. Onboarding (nuevo usuario)
-    4. Flujo Aspirante
-    5. Flujo General
-    """
-
-    wa_id = mensaje.get("from")
-
-    # ---------------------------------------------------------
-    # A. NORMALIZACIÓN
-    # ---------------------------------------------------------
-    tipo, texto, payload_id = _normalizar_entrada_whatsapp(mensaje)
-    texto_lower = (texto or "").lower()
-
-    # ---------------------------------------------------------
-    # B. LOG EN BD
-    # ---------------------------------------------------------
-    try:
-        registrar_mensaje_recibido(
-            telefono=wa_id,
-            message_id_meta=mensaje.get("id"),
-            tipo=tipo,
-            contenido=f"{texto or ''} {payload_id or ''}".strip()
-        )
-    except Exception as e:
-        print(f"⚠️ Log Error (No crítico): {e}")
-
-    # ---------------------------------------------------------
-    # C. ONBOARDING (PRIMERO)
-    # ---------------------------------------------------------
-    paso = obtener_flujo(wa_id)
-    usuario_bd = buscar_usuario_por_telefono(wa_id)
-
-    print(
-        f"🧾 [DEBUG USER LOOKUP] "
-        f"tenant={tenant_name} | "
-        f"wa_id={wa_id} | "
-        f"usuario_encontrado={'SI' if usuario_bd else 'NO'} | "
-        f"id={usuario_bd.get('id') if usuario_bd else None} | "
-        f"onboarding_completado={usuario_bd.get('onboarding_completado') if usuario_bd else None}"
-    )
-
-    if not usuario_bd:
-        resultado = _process_new_user_onboarding(
-            mensaje=mensaje,
-            numero=wa_id,
-            texto=texto,
-            texto_lower=texto_lower,
-            payload=payload_id,
-            paso=paso,
-            tenant_name=tenant_name,
-            phone_id=phone_number_id,
-            token=token
-        )
-
-        if resultado:
-            return
-
-    # ---------------------------------------------------------
-    # D. FLUJO ASPIRANTE
-    # ---------------------------------------------------------
-    try:
-        procesado_aspirante = procesar_flujo_aspirante(
-            tenant=tenant_name,
-            phone_number_id=phone_number_id,
-            wa_id=wa_id,
-            tipo=tipo,
-            texto=texto,
-            payload_id=payload_id
-        )
-
-        if procesado_aspirante:
-            return
-
-    except Exception as e:
-        print(f"❌ Error flujo aspirante: {e}")
-
-    # ---------------------------------------------------------
-    # E. FLUJO GENERAL
-    # ---------------------------------------------------------
-    _process_single_message(mensaje, tenant_name)
-
-
-
-async def _procesar_mensaje_unicoV0(mensaje, tenant_name, phone_number_id, token):
-    """
-    Orquestador principal:
-    1. Normaliza
-    2. Registra mensaje
-    3. Onboarding (nuevo usuario)
-    4. Flujo Aspirante
-    5. Flujo General
-    """
-
-    wa_id = mensaje.get("from")
-
-    # ---------------------------------------------------------
-    # A. NORMALIZACIÓN
-    # ---------------------------------------------------------
-    tipo, texto, payload_id = _normalizar_entrada_whatsapp(mensaje)
-    texto_lower = (texto or "").lower()
-
-    # ---------------------------------------------------------
-    # B. LOG EN BD
-    # ---------------------------------------------------------
-    try:
-        registrar_mensaje_recibido(
-            tenant=tenant_name,
-            phone_number_id=phone_number_id,
-            display_phone_number=wa_id,
-            wa_id=wa_id,
-            message_id=mensaje.get("id"),
-            content=f"[{tipo}] {texto or ''} {payload_id or ''}",
-            raw_payload=mensaje
-        )
-    except Exception as e:
-        print(f"⚠️ Log Error (No crítico): {e}")
-
-    # ---------------------------------------------------------
-    # C. ONBOARDING (PRIMERO)
-    # ---------------------------------------------------------
-    paso = obtener_flujo(wa_id)
-    usuario_bd = buscar_usuario_por_telefono(wa_id)
-
-    if not usuario_bd:
-        resultado = _process_new_user_onboarding(
-            mensaje=mensaje,
-            numero=wa_id,
-            texto=texto,
-            texto_lower=texto_lower,
-            payload=payload_id,
-            paso=paso,
-            tenant_name=tenant_name,
-            phone_id=phone_number_id,
-            token=token
-        )
-
-        if resultado:
-            return
-
-    # ---------------------------------------------------------
-    # D. FLUJO ASPIRANTE
-    # ---------------------------------------------------------
-    try:
-        procesado_aspirante = procesar_flujo_aspirante(
-            tenant=tenant_name,
-            phone_number_id=phone_number_id,
-            wa_id=wa_id,
-            tipo=tipo,
-            texto=texto,
-            payload_id=payload_id
-        )
-
-        if procesado_aspirante:
-            return
-
-    except Exception as e:
-        print(f"❌ Error flujo aspirante: {e}")
-
-    # ---------------------------------------------------------
-    # E. FLUJO GENERAL
-    # ---------------------------------------------------------
-    _process_single_message(mensaje, tenant_name)
-
-
-async def _procesar_mensaje_unicoV1(mensaje, tenant_name, phone_number_id, token):
-    wa_id = mensaje.get("from")
-
-    # A. Normalización
-    tipo, texto, payload_id = _normalizar_entrada_whatsapp(mensaje)
-    texto_lower = texto.lower() if texto else ""
-
-    # B. Logging
-    try:
-        registrar_mensaje_recibido(
-            tenant=tenant_name,
-            phone_number_id=phone_number_id,
-            display_phone_number=wa_id,
-            wa_id=wa_id,
-            message_id=mensaje.get("id"),
-            content=f"[{tipo}] {texto or ''} {payload_id or ''}",
-            raw_payload=mensaje
-        )
-    except Exception as e:
-        print(f"⚠️ Log Error (No crítico): {e}")
-
-    # ---------------------------------------------------------
-    # 🆕 NIVEL 1: ONBOARDING (PRIORIDAD ABSOLUTA)
-    # ---------------------------------------------------------
-    usuario_bd = buscar_usuario_por_telefono(wa_id)
-    paso = obtener_flujo(wa_id)
-
-    if not usuario_bd and tipo == "text":
-        resultado = _process_new_user_onboarding(
-            mensaje=mensaje,
-            numero=wa_id,
-            texto=texto,
-            texto_lower=texto_lower,
-            paso=paso,
-            tenant_name=tenant_name,
-            payload=payload_id,
-            phone_id=phone_number_id,
-            token=token
-        )
-        if resultado:
-            return  # ⛔ nadie más responde
-
-    # ---------------------------------------------------------
-    # NIVEL 2: FLUJO ASPIRANTE
-    # ---------------------------------------------------------
-    try:
-        procesado_aspirante = procesar_flujo_aspirante(
-            tenant=tenant_name,
-            phone_number_id=phone_number_id,
-            wa_id=wa_id,
-            tipo=tipo,
-            texto=texto,
-            payload_id=payload_id,
-            token_cliente=token
-        )
-
-        if procesado_aspirante:
-            return
-
-    except Exception as e:
-        print(f"❌ Error en flujo aspirante: {e}")
-
-    # ---------------------------------------------------------
-    # NIVEL 3: FLUJO GENERAL (Admin / Bot)
-    # ---------------------------------------------------------
-    datos_normalizados = {
-        "wa_id": wa_id,
-        "tipo": tipo,
-        "texto": texto,
-        "payload": payload_id,
-        "paso": paso
-    }
-
-    _process_single_message(mensaje, tenant_name, datos_normalizados)
-
 
 
 def _normalizar_entrada_whatsapp(mensaje):
@@ -6052,13 +6000,11 @@ def consolidar_perfil_web(
         )
 
         background_tasks.add_task(
-            enviar_mensaje_con_credenciales,
+            enviar_mensaje_whatsapp_texto,
             data.numero,
             mensaje_final,
             token_cliente,
-            phone_id_cliente,
-            business_name,
-            nombre_usuario
+            phone_id_cliente
         )
 
         print(f"✅ Perfil consolidado y mensaje enviado a {data.numero}")
@@ -6442,3 +6388,248 @@ def consolidar_perfil_webV0(
             {"error": "Error al consolidar el perfil"},
             status_code=500
         )
+
+
+async def _procesar_mensaje_unicoV16022026(mensaje, tenant_name, phone_number_id, token):
+    """
+    Orquestador principal:
+    1. Normaliza
+    2. Registra mensaje
+    3. Onboarding (nuevo usuario)
+    4. Flujo Aspirante
+    5. Flujo General
+    """
+
+    wa_id = mensaje.get("from")
+
+    # ---------------------------------------------------------
+    # A. NORMALIZACIÓN
+    # ---------------------------------------------------------
+    tipo, texto, payload_id = _normalizar_entrada_whatsapp(mensaje)
+    texto_lower = (texto or "").lower()
+
+    # ---------------------------------------------------------
+    # B. LOG EN BD
+    # ---------------------------------------------------------
+    try:
+        registrar_mensaje_recibido(
+            telefono=wa_id,
+            message_id_meta=mensaje.get("id"),
+            tipo=tipo,
+            contenido=f"{texto or ''} {payload_id or ''}".strip()
+        )
+    except Exception as e:
+        print(f"⚠️ Log Error (No crítico): {e}")
+
+    # ---------------------------------------------------------
+    # C. ONBOARDING (PRIMERO)
+    # ---------------------------------------------------------
+    paso = obtener_flujo(wa_id)
+    usuario_bd = buscar_usuario_por_telefono(wa_id)
+
+    print(
+        f"🧾 [DEBUG USER LOOKUP] "
+        f"tenant={tenant_name} | "
+        f"wa_id={wa_id} | "
+        f"usuario_encontrado={'SI' if usuario_bd else 'NO'} | "
+        f"id={usuario_bd.get('id') if usuario_bd else None} | "
+        f"onboarding_completado={usuario_bd.get('onboarding_completado') if usuario_bd else None}"
+    )
+
+    if not usuario_bd:
+        resultado = _process_new_user_onboarding(
+            mensaje=mensaje,
+            numero=wa_id,
+            texto=texto,
+            texto_lower=texto_lower,
+            payload=payload_id,
+            paso=paso,
+            tenant_name=tenant_name,
+            phone_id=phone_number_id,
+            token=token
+        )
+
+        if resultado:
+            return
+
+    # ---------------------------------------------------------
+    # D. FLUJO ASPIRANTE
+    # ---------------------------------------------------------
+    try:
+        procesado_aspirante = procesar_flujo_aspirante(
+            tenant=tenant_name,
+            phone_number_id=phone_number_id,
+            wa_id=wa_id,
+            tipo=tipo,
+            texto=texto,
+            payload_id=payload_id
+        )
+
+        if procesado_aspirante:
+            return
+
+    except Exception as e:
+        print(f"❌ Error flujo aspirante: {e}")
+
+    # ---------------------------------------------------------
+    # E. FLUJO GENERAL
+    # ---------------------------------------------------------
+    _process_single_message(mensaje, tenant_name)
+
+
+
+async def _procesar_mensaje_unicoV0(mensaje, tenant_name, phone_number_id, token):
+    """
+    Orquestador principal:
+    1. Normaliza
+    2. Registra mensaje
+    3. Onboarding (nuevo usuario)
+    4. Flujo Aspirante
+    5. Flujo General
+    """
+
+    wa_id = mensaje.get("from")
+
+    # ---------------------------------------------------------
+    # A. NORMALIZACIÓN
+    # ---------------------------------------------------------
+    tipo, texto, payload_id = _normalizar_entrada_whatsapp(mensaje)
+    texto_lower = (texto or "").lower()
+
+    # ---------------------------------------------------------
+    # B. LOG EN BD
+    # ---------------------------------------------------------
+    try:
+        registrar_mensaje_recibido(
+            tenant=tenant_name,
+            phone_number_id=phone_number_id,
+            display_phone_number=wa_id,
+            wa_id=wa_id,
+            message_id=mensaje.get("id"),
+            content=f"[{tipo}] {texto or ''} {payload_id or ''}",
+            raw_payload=mensaje
+        )
+    except Exception as e:
+        print(f"⚠️ Log Error (No crítico): {e}")
+
+    # ---------------------------------------------------------
+    # C. ONBOARDING (PRIMERO)
+    # ---------------------------------------------------------
+    paso = obtener_flujo(wa_id)
+    usuario_bd = buscar_usuario_por_telefono(wa_id)
+
+    if not usuario_bd:
+        resultado = _process_new_user_onboarding(
+            mensaje=mensaje,
+            numero=wa_id,
+            texto=texto,
+            texto_lower=texto_lower,
+            payload=payload_id,
+            paso=paso,
+            tenant_name=tenant_name,
+            phone_id=phone_number_id,
+            token=token
+        )
+
+        if resultado:
+            return
+
+    # ---------------------------------------------------------
+    # D. FLUJO ASPIRANTE
+    # ---------------------------------------------------------
+    try:
+        procesado_aspirante = procesar_flujo_aspirante(
+            tenant=tenant_name,
+            phone_number_id=phone_number_id,
+            wa_id=wa_id,
+            tipo=tipo,
+            texto=texto,
+            payload_id=payload_id
+        )
+
+        if procesado_aspirante:
+            return
+
+    except Exception as e:
+        print(f"❌ Error flujo aspirante: {e}")
+
+    # ---------------------------------------------------------
+    # E. FLUJO GENERAL
+    # ---------------------------------------------------------
+    _process_single_message(mensaje, tenant_name)
+
+
+async def _procesar_mensaje_unicoV1(mensaje, tenant_name, phone_number_id, token):
+    wa_id = mensaje.get("from")
+
+    # A. Normalización
+    tipo, texto, payload_id = _normalizar_entrada_whatsapp(mensaje)
+    texto_lower = texto.lower() if texto else ""
+
+    # B. Logging
+    try:
+        registrar_mensaje_recibido(
+            tenant=tenant_name,
+            phone_number_id=phone_number_id,
+            display_phone_number=wa_id,
+            wa_id=wa_id,
+            message_id=mensaje.get("id"),
+            content=f"[{tipo}] {texto or ''} {payload_id or ''}",
+            raw_payload=mensaje
+        )
+    except Exception as e:
+        print(f"⚠️ Log Error (No crítico): {e}")
+
+    # ---------------------------------------------------------
+    # 🆕 NIVEL 1: ONBOARDING (PRIORIDAD ABSOLUTA)
+    # ---------------------------------------------------------
+    usuario_bd = buscar_usuario_por_telefono(wa_id)
+    paso = obtener_flujo(wa_id)
+
+    if not usuario_bd and tipo == "text":
+        resultado = _process_new_user_onboarding(
+            mensaje=mensaje,
+            numero=wa_id,
+            texto=texto,
+            texto_lower=texto_lower,
+            paso=paso,
+            tenant_name=tenant_name,
+            payload=payload_id,
+            phone_id=phone_number_id,
+            token=token
+        )
+        if resultado:
+            return  # ⛔ nadie más responde
+
+    # ---------------------------------------------------------
+    # NIVEL 2: FLUJO ASPIRANTE
+    # ---------------------------------------------------------
+    try:
+        procesado_aspirante = procesar_flujo_aspirante(
+            tenant=tenant_name,
+            phone_number_id=phone_number_id,
+            wa_id=wa_id,
+            tipo=tipo,
+            texto=texto,
+            payload_id=payload_id,
+            token_cliente=token
+        )
+
+        if procesado_aspirante:
+            return
+
+    except Exception as e:
+        print(f"❌ Error en flujo aspirante: {e}")
+
+    # ---------------------------------------------------------
+    # NIVEL 3: FLUJO GENERAL (Admin / Bot)
+    # ---------------------------------------------------------
+    datos_normalizados = {
+        "wa_id": wa_id,
+        "tipo": tipo,
+        "texto": texto,
+        "payload": payload_id,
+        "paso": paso
+    }
+
+    _process_single_message(mensaje, tenant_name, datos_normalizados)

@@ -3349,50 +3349,86 @@ async def reenviar_ultimo_mensaje0(telefono: str):
             detail=f"Tipo de mensaje no soportado: {tipo_mensaje}"
         )
 
-async def enviar_mensaje_con_credenciales(
+async def enviar_mensaje_whatsapp_texto(
     telefono: str,
     mensaje: str,
     token_cliente: str,
     phone_id_cliente: str,
-    Agencia_nombre: str,
-    nombre: str
 ):
     """
-    Envía un mensaje de texto normal.
-    La validación de errores y la lógica de reconexión/plantilla
-    se manejan posteriormente desde el webhook de statuses.
+    Envía un mensaje de texto simple por WhatsApp Cloud API.
+
+    Notas:
+    - No genera plantillas ni decide reconexión.
+    - La validación de errores de Meta y la lógica de recuperación
+      se gestionan después desde el webhook de statuses.
+    - Registra el mensaje inicialmente en BD como 'sent' o 'error'.
     """
 
     if not telefono or not mensaje:
-        return {"error": "Faltan datos"}
+        return {
+            "status": "error",
+            "detalle": "Faltan datos obligatorios"
+        }
 
     if not token_cliente or not phone_id_cliente:
-        return {"error": "Credenciales inválidas"}
+        return {
+            "status": "error",
+            "detalle": "Credenciales inválidas"
+        }
 
-    codigo, respuesta_api = enviar_mensaje_texto_simple(
-        token=token_cliente,
-        numero_id=phone_id_cliente,
-        telefono_destino=telefono,
-        texto=mensaje
-    )
+    try:
+        codigo, respuesta_api = enviar_mensaje_texto_simple(
+            token=token_cliente,
+            numero_id=phone_id_cliente,
+            telefono_destino=telefono,
+            texto=mensaje
+        )
+    except Exception as e:
+        print(f"❌ Error enviando mensaje WhatsApp a {telefono}: {e}")
+
+        try:
+            guardar_mensaje_nuevo(
+                telefono=telefono,
+                contenido=mensaje,
+                direccion="enviado",
+                tipo="text",
+                message_id_meta=None,
+                estado="error"
+            )
+        except Exception as log_error:
+            print(f"⚠️ Error guardando log de fallo en WhatsApp: {log_error}")
+
+        return {
+            "status": "error",
+            "detalle": str(e),
+            "codigo_api": 500,
+            "message_id_meta": None,
+            "respuesta_api": None
+        }
 
     message_id_meta = None
-    if respuesta_api and isinstance(respuesta_api, dict) and "messages" in respuesta_api:
-        try:
-            message_id_meta = respuesta_api["messages"][0].get("id")
-        except Exception:
-            pass
+    if isinstance(respuesta_api, dict):
+        mensajes = respuesta_api.get("messages") or []
+        if mensajes:
+            try:
+                message_id_meta = mensajes[0].get("id")
+            except Exception:
+                message_id_meta = None
 
-    # Guardamos el mensaje como enviado inicialmente.
-    # El estado real final se actualizará después por webhook.
-    guardar_mensaje_nuevo(
-        telefono=telefono,
-        contenido=mensaje,
-        direccion="enviado",
-        tipo="text",
-        message_id_meta=message_id_meta,
-        estado="sent" if codigo == 200 else "error"
-    )
+    estado_inicial = "sent" if codigo == 200 else "error"
+
+    try:
+        guardar_mensaje_nuevo(
+            telefono=telefono,
+            contenido=mensaje,
+            direccion="enviado",
+            tipo="text",
+            message_id_meta=message_id_meta,
+            estado=estado_inicial
+        )
+    except Exception as e:
+        print(f"⚠️ Error guardando mensaje enviado en BD: {e}")
 
     return {
         "status": "ok" if codigo == 200 else "error",
@@ -3400,6 +3436,59 @@ async def enviar_mensaje_con_credenciales(
         "message_id_meta": message_id_meta,
         "respuesta_api": respuesta_api
     }
+
+
+# async def enviar_mensaje_con_credenciales(
+#     telefono: str,
+#     mensaje: str,
+#     token_cliente: str,
+#     phone_id_cliente: str,
+#     Agencia_nombre: str,
+#     nombre: str
+# ):
+#     """
+#     Envía un mensaje de texto normal.
+#     La validación de errores y la lógica de reconexión/plantilla
+#     se manejan posteriormente desde el webhook de statuses.
+#     """
+#
+#     if not telefono or not mensaje:
+#         return {"error": "Faltan datos"}
+#
+#     if not token_cliente or not phone_id_cliente:
+#         return {"error": "Credenciales inválidas"}
+#
+#     codigo, respuesta_api = enviar_mensaje_texto_simple(
+#         token=token_cliente,
+#         numero_id=phone_id_cliente,
+#         telefono_destino=telefono,
+#         texto=mensaje
+#     )
+#
+#     message_id_meta = None
+#     if respuesta_api and isinstance(respuesta_api, dict) and "messages" in respuesta_api:
+#         try:
+#             message_id_meta = respuesta_api["messages"][0].get("id")
+#         except Exception:
+#             pass
+#
+#     # Guardamos el mensaje como enviado inicialmente.
+#     # El estado real final se actualizará después por webhook.
+#     guardar_mensaje_nuevo(
+#         telefono=telefono,
+#         contenido=mensaje,
+#         direccion="enviado",
+#         tipo="text",
+#         message_id_meta=message_id_meta,
+#         estado="sent" if codigo == 200 else "error"
+#     )
+#
+#     return {
+#         "status": "ok" if codigo == 200 else "error",
+#         "codigo_api": codigo,
+#         "message_id_meta": message_id_meta,
+#         "respuesta_api": respuesta_api
+#     }
 
 # async def enviar_mensaje_con_credencialesV0(
 #     telefono: str,
@@ -4423,6 +4512,99 @@ def enviar_mensaje_no_apto(
             detail=f"Error enviando mensaje NO APTO: {str(e)}"
         )
 
+
+def enviar_mensaje_texto_y_guardar(
+    phone_number_id: str,
+    token: str,
+    to: str,
+    body: str
+):
+    codigo, respuesta = enviar_mensaje_texto(
+        phone_number_id=phone_number_id,
+        token=token,
+        to=to,
+        body=body
+    )
+
+    message_id_meta = None
+
+    if isinstance(respuesta, dict):
+        mensajes = respuesta.get("messages") or []
+        if mensajes:
+            message_id_meta = mensajes[0].get("id")
+
+    try:
+        guardar_mensaje_nuevo(
+            telefono=to,
+            contenido=body,
+            direccion="enviado",
+            tipo="text",
+            message_id_meta=message_id_meta,
+            estado="sent" if codigo == 200 else "error"
+        )
+    except Exception as e:
+        print(f"⚠️ Error guardando mensaje: {e}")
+
+    return codigo, respuesta
+
+def enviar_mensaje_texto(
+    phone_number_id: str,
+    token: str,
+    to: str,
+    body: str
+):
+    """
+    Envía un mensaje de texto vía WhatsApp Cloud API.
+
+    Parámetros:
+    - phone_number_id: ID del número WABA
+    - token: access token de Meta
+    - to: número destino (ej: 573XXXXXXXXX)
+    - body: texto del mensaje
+
+    Retorna:
+    - (codigo_http, respuesta_json)
+    """
+
+    if not phone_number_id or not token:
+        return 400, {"error": "Credenciales inválidas"}
+
+    if not to or not body:
+        return 400, {"error": "Faltan datos (to/body)"}
+
+    url = f"https://graph.facebook.com/v18.0/{phone_number_id}/messages"
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "text",
+        "text": {
+            "body": body
+        }
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+
+        codigo = response.status_code
+
+        try:
+            respuesta_json = response.json()
+        except Exception:
+            respuesta_json = {"raw": response.text}
+
+        return codigo, respuesta_json
+
+    except Exception as e:
+        print(f"❌ Error enviando mensaje WhatsApp: {e}")
+        return 500, {"error": str(e)}
+
+
 # @router.post("/api/aspirantes/no_apto/enviar")
 # def enviar_mensaje_no_apto(
 #     data: EnviarNoAptoIn,
@@ -4522,3 +4704,4 @@ def enviar_mensaje_no_apto(
 #             status_code=500,
 #             detail=f"Error enviando mensaje NO APTO: {str(e)}"
 #         )
+
