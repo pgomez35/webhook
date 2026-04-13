@@ -41,6 +41,7 @@ def obtener_modelo_activo(cur) -> Optional[int]:
         SELECT id
         FROM diagnostico_modelo
         WHERE activo = true
+        ORDER BY id ASC
         LIMIT 1
     """)
     row = cur.fetchone()
@@ -130,24 +131,28 @@ def cargar_categorias_catalogo(cur) -> Dict[int, Dict[str, Any]]:
 
 
 def obtener_nombre_corto_categoria(
-    categoria_id: Optional[int],
-    categoria_nombre: Optional[str],
-    nombre_natural: Optional[str],
-    catalogo_categorias: Dict[int, Dict[str, Any]]
+    categoria_id: Optional[int] = None,
+    categoria_nombre: Optional[str] = None,
+    nombre_natural: Optional[str] = None,
+    catalogo_categorias: Optional[Dict[int, Dict[str, Any]]] = None
 ) -> str:
     """
-    No se quema ningún mapa.
+    Retrocompatible:
+    - soporta llamadas viejas con menos argumentos
+    - no quema mapas
     Prioridad:
     1. nombre_natural del JSON
-    2. nombre_natural desde catalogo
+    2. nombre_natural desde catálogo
     3. nombre del JSON
-    4. nombre desde catalogo
+    4. nombre desde catálogo
     5. fallback
     """
+    catalogo_categorias = catalogo_categorias or {}
+
     if nombre_natural:
         return str(nombre_natural).strip()
 
-    if categoria_id and categoria_id in catalogo_categorias:
+    if categoria_id is not None and categoria_id in catalogo_categorias:
         nombre_natural_db = catalogo_categorias[categoria_id].get("nombre_natural")
         if nombre_natural_db:
             return str(nombre_natural_db).strip()
@@ -155,7 +160,7 @@ def obtener_nombre_corto_categoria(
     if categoria_nombre:
         return str(categoria_nombre).strip()
 
-    if categoria_id and categoria_id in catalogo_categorias:
+    if categoria_id is not None and categoria_id in catalogo_categorias:
         nombre_db = catalogo_categorias[categoria_id].get("nombre")
         if nombre_db:
             return str(nombre_db).strip()
@@ -207,6 +212,8 @@ def generar_insights_principales(categorias: List[Dict[str, Any]]) -> Dict[str, 
         }
 
     def lista_texto(items: List[str]) -> str:
+        if not items:
+            return ""
         if len(items) == 1:
             return items[0]
         if len(items) == 2:
@@ -215,35 +222,43 @@ def generar_insights_principales(categorias: List[Dict[str, Any]]) -> Dict[str, 
 
     categorias_ordenadas = sorted(
         categorias,
-        key=lambda x: float(x["score"]),
+        key=lambda x: float(x.get("score", 0) or 0),
         reverse=True
     )
 
-    max_score = float(categorias_ordenadas[0]["score"])
-    min_score = float(categorias_ordenadas[-1]["score"])
+    max_score = float(categorias_ordenadas[0].get("score", 0) or 0)
+    min_score = float(categorias_ordenadas[-1].get("score", 0) or 0)
 
     fortalezas = [
         c for c in categorias
-        if float(c["score"]) >= 4.0
+        if float(c.get("score", 0) or 0) >= 4.0
     ]
 
     if not fortalezas:
         margen = 0.20
         fortalezas = [
             c for c in categorias
-            if float(c["score"]) >= (max_score - margen)
+            if float(c.get("score", 0) or 0) >= (max_score - margen)
         ]
 
     debilidad = min(
         categorias,
-        key=lambda x: float(x["score"])
+        key=lambda x: float(x.get("score", 0) or 0)
     )
 
     fortalezas_txt = lista_texto(
-        [c["nombre_natural"] for c in fortalezas if c.get("nombre_natural")]
+        [
+            c.get("nombre_natural") or c.get("categoria_nombre")
+            for c in fortalezas
+            if c.get("nombre_natural") or c.get("categoria_nombre")
+        ]
     ) or "áreas destacadas"
 
-    debilidad_txt = debilidad.get("nombre_natural") or debilidad.get("categoria_nombre") or "un área clave"
+    debilidad_txt = (
+        debilidad.get("nombre_natural")
+        or debilidad.get("categoria_nombre")
+        or "un área clave"
+    )
 
     if min_score >= 4.0:
         insight_principal = (
@@ -262,11 +277,11 @@ def generar_insights_principales(categorias: List[Dict[str, Any]]) -> Dict[str, 
             "El perfil requiere fortalecimiento general para consolidar una base más competitiva."
         )
 
-    if float(debilidad["score"]) <= 2.5:
+    if float(debilidad.get("score", 0) or 0) <= 2.5:
         alerta_principal = (
             f"El principal punto de atención está en {debilidad_txt}."
         )
-    elif float(debilidad["score"]) < 3.2:
+    elif float(debilidad.get("score", 0) or 0) < 3.2:
         alerta_principal = (
             f"Conviene seguir fortaleciendo {debilidad_txt}."
         )
@@ -325,12 +340,6 @@ def _variables_bajas_configuradas_desde_bd(
     categoria: Dict[str, Any],
     max_items: int = 2
 ) -> List[Dict[str, Any]]:
-    """
-    Selecciona variables del JSON que:
-    - tienen configuración activa en diagnostico_mejoras_variable
-    - y cumplen score <= score_max configurado en BD
-    """
-
     variables = categoria.get("variables") or []
     if not variables:
         return []
@@ -391,16 +400,6 @@ def _variables_bajas_configuradas_desde_bd(
 
 
 def generar_mejoras_prioritarias(cur, categorias: List[Dict[str, Any]]) -> List[str]:
-    """
-    Genera mejoras usando únicamente:
-    - diagnostico_mejoras_sugeridas
-    - diagnostico_mejoras_variable
-
-    Sin textos quemados.
-    Sin variables quemadas.
-    Sin categorías quemadas.
-    """
-
     if not categorias:
         return []
 
@@ -424,7 +423,7 @@ def generar_mejoras_prioritarias(cur, categorias: List[Dict[str, Any]]) -> List[
         nivel5: Optional[int],
         limite: int
     ) -> List[str]:
-        if not categoria_id or not nivel5 or limite <= 0:
+        if categoria_id is None or nivel5 is None or limite <= 0:
             return []
 
         cur.execute("""
@@ -440,7 +439,6 @@ def generar_mejoras_prioritarias(cur, categorias: List[Dict[str, Any]]) -> List[
         rows = cur.fetchall()
         return [(r[0] or "").strip() for r in rows if r and r[0]]
 
-    # 1) Categoría crítica: dos mejoras base
     categoria_critica = categorias_ordenadas[0]
 
     for texto in traer_mejoras_base_desde_bd(
@@ -450,7 +448,6 @@ def generar_mejoras_prioritarias(cur, categorias: List[Dict[str, Any]]) -> List[
     ):
         agregar_texto(texto)
 
-    # 2) Afinación fina por variables reales del JSON + configuración de BD
     for var in _variables_bajas_configuradas_desde_bd(
         cur=cur,
         categoria=categoria_critica,
@@ -460,11 +457,9 @@ def generar_mejoras_prioritarias(cur, categorias: List[Dict[str, Any]]) -> List[
         if len(mejoras) >= 3:
             break
 
-    # 3) Apoyo secundario si aún hay cupo
     if len(mejoras) < 3 and len(categorias_ordenadas) > 1:
         categoria_secundaria = categorias_ordenadas[1]
         if cat_score(categoria_secundaria) <= 3.2:
-
             for texto in traer_mejoras_base_desde_bd(
                 categoria_id=categoria_secundaria.get("categoria_id"),
                 nivel5=categoria_secundaria.get("nivel5"),
@@ -484,7 +479,6 @@ def generar_mejoras_prioritarias(cur, categorias: List[Dict[str, Any]]) -> List[
                     if len(mejoras) >= 3:
                         break
 
-    # 4) Fallback
     if not mejoras:
         mejoras = [
             "Define acciones concretas para fortalecer tu perfil.",
@@ -720,7 +714,7 @@ def calcular_diagnostico_y_json(cur, aspirante_id: int, modelo_id: int):
 
     demograficos AS (
         SELECT
-            jsonb_object_agg(v.nombre, vv.label) AS data
+            COALESCE(jsonb_object_agg(v.nombre, vv.label), '{}'::jsonb) AS data
         FROM diagnostico_score_variable sv
         JOIN diagnostico_variable v
             ON v.id = sv.variable_id
@@ -741,7 +735,7 @@ def calcular_diagnostico_y_json(cur, aspirante_id: int, modelo_id: int):
             v.nombre AS variable_nombre,
             v.tipo,
             v.peso_variable,
-            v.orden AS variable_orden,
+            COALESCE(v.orden, 9999) AS variable_orden,
 
             sv.valor,
             vv.score,
@@ -786,7 +780,7 @@ def calcular_diagnostico_y_json(cur, aspirante_id: int, modelo_id: int):
                 ORDER BY variable_orden
             ) AS variables,
 
-            SUM(score_variable * (peso_variable / 100.0)) AS score_categoria
+            COALESCE(SUM(score_variable * (peso_variable / 100.0)), 0) AS score_categoria
 
         FROM variables_calc
         GROUP BY
@@ -849,7 +843,7 @@ def calcular_diagnostico_y_json(cur, aspirante_id: int, modelo_id: int):
 
     total_calc AS (
         SELECT
-            SUM(score_categoria * (peso_categoria / 100.0)) AS score_total
+            COALESCE(SUM(score_categoria * (peso_categoria / 100.0)), 0) AS score_total
         FROM categorias_json
     ),
 
@@ -860,23 +854,26 @@ def calcular_diagnostico_y_json(cur, aspirante_id: int, modelo_id: int):
                 'modelo_nombre', m.modelo_nombre,
                 'modelo_descripcion', m.modelo_descripcion,
                 'demograficos', d.data,
-                'score_total', ROUND(tc.score_total, 2),
+                'score_total', ROUND(tc.score_total::numeric, 2),
                 'categorias',
-                jsonb_agg(
-                    jsonb_build_object(
-                        'categoria_id', categoria_id,
-                        'categoria_nombre', categoria_nombre,
-                        'nombre_natural', nombre_natural,
-                        'descripcion', categoria_descripcion,
-                        'peso_categoria', peso_categoria,
-                        'score', ROUND(score_categoria, 2),
-                        'nivel', nivel,
-                        'nivel5', nivel5,
-                        'script', script,
-                        'script_largo', script_largo,
-                        'variables', variables
-                    )
-                    ORDER BY categoria_orden
+                COALESCE(
+                    jsonb_agg(
+                        jsonb_build_object(
+                            'categoria_id', categoria_id,
+                            'categoria_nombre', categoria_nombre,
+                            'nombre_natural', nombre_natural,
+                            'descripcion', categoria_descripcion,
+                            'peso_categoria', peso_categoria,
+                            'score', ROUND(score_categoria::numeric, 2),
+                            'nivel', nivel,
+                            'nivel5', nivel5,
+                            'script', script,
+                            'script_largo', script_largo,
+                            'variables', variables
+                        )
+                        ORDER BY categoria_orden
+                    ),
+                    '[]'::jsonb
                 )
             ) AS diagnostico_json,
             tc.score_total
@@ -898,7 +895,7 @@ def calcular_diagnostico_y_json(cur, aspirante_id: int, modelo_id: int):
     SELECT
         %(aspirante_id)s,
         %(modelo_id)s,
-        ROUND(score_total, 2),
+        ROUND(score_total::numeric, 2),
         CASE
             WHEN score_total >= 3.75 THEN 3
             WHEN score_total >= 2.75 THEN 2
@@ -931,9 +928,9 @@ def calcular_diagnostico_y_json(cur, aspirante_id: int, modelo_id: int):
     if not row:
         return
 
-    diagnostico = row[0]
-
+    diagnostico = row[0] or {}
     categorias = []
+
     for c in diagnostico.get("categorias", []):
         categorias.append({
             "categoria_id": c.get("categoria_id"),
@@ -969,7 +966,7 @@ def calcular_diagnostico_y_json(cur, aspirante_id: int, modelo_id: int):
         WHERE aspirante_id = %s
           AND modelo_id = %s
     """, (
-        json.dumps(diagnostico),
+        json.dumps(diagnostico, ensure_ascii=False),
         resumen_corto[:500],
         texto_whatsapp,
         aspirante_id,
@@ -985,44 +982,40 @@ def actualizar_estado_preevaluacion(aspirante_id: int, payload: Dict[str, Any]):
     estado = payload.get("estado_evaluacion")
     estado_id = None
 
-    if estado:
-        estado_id = obtener_estado_por_nombre(cur=get_connection_context().__enter__().cursor(), nombre_estado=estado)
-
     with get_connection_context() as conn:
-        cur = conn.cursor()
+        with conn.cursor() as cur:
+            if estado:
+                estado_id = obtener_estado_por_nombre(cur, estado)
 
-        if estado:
-            estado_id = obtener_estado_por_nombre(cur, estado)
+            sets = []
+            valores = []
 
-        sets = []
-        valores = []
+            for campo, valor in payload.items():
+                if valor is not None:
+                    sets.append(f"{campo} = %s")
+                    valores.append(valor)
 
-        for campo, valor in payload.items():
-            if valor is not None:
-                sets.append(f"{campo} = %s")
-                valores.append(valor)
+            if sets:
+                valores.append(aspirante_id)
 
-        if sets:
-            valores.append(aspirante_id)
+                query = f"""
+                    UPDATE aspirantes_perfil
+                    SET {', '.join(sets)},
+                        actualizado_en = NOW()
+                    WHERE aspirante_id = %s
+                """
+                cur.execute(query, valores)
 
-            query = f"""
-                UPDATE aspirantes_perfil
-                SET {', '.join(sets)},
-                    actualizado_en = NOW()
-                WHERE aspirante_id = %s
-            """
-            cur.execute(query, valores)
-
-        if estado_id is not None:
-            cur.execute("""
-                UPDATE aspirantes
-                SET estado_id = %s
-                WHERE id = %s
-            """, (estado_id, aspirante_id))
+            if estado_id is not None:
+                cur.execute("""
+                    UPDATE aspirantes
+                    SET estado_id = %s
+                    WHERE id = %s
+                """, (estado_id, aspirante_id))
 
         conn.commit()
 
-    print(f"✅ Aspirante {aspirante_id} actualizado (estado={estado}, estado_id={estado_id})")
+    logger.info("Aspirante %s actualizado (estado=%s, estado_id=%s)", aspirante_id, estado, estado_id)
 
 
 @router.post(
@@ -1095,8 +1088,7 @@ def sync_cualitativo_perfil_y_variables(
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Error en sync_cualitativo_perfil_y_variables")
         raise HTTPException(
             status_code=500,
             detail=f"Error en sync_cualitativo_perfil_y_variables: {str(e)}"
@@ -1180,7 +1172,7 @@ def diagnostico_creador(aspirante_id: int):
                     "id": estado_id,
                     "nombre": estado_nombre
                 },
-                **diagnostico_json
+                **(diagnostico_json or {})
             }
 
 
@@ -1219,6 +1211,7 @@ def diagnostico_aspirante_ui(aspirante_id: int):
 
             diagnostico_json, diagnostico_resumen, texto_whatsapp, nickname, nombre = row
 
+            diagnostico_json = diagnostico_json or {}
             if diagnostico_resumen and isinstance(diagnostico_json, dict):
                 diagnostico_json["diagnostico_resumen"] = diagnostico_resumen
 
@@ -1379,7 +1372,6 @@ def actualizar_entrevista_tipo(tipo_id: int, data: dict):
             return {
                 "success": True
             }
-
 
 
 # import logging
