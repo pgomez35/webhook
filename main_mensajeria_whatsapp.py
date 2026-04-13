@@ -2843,10 +2843,10 @@ async def reenviar_ultimo_mensaje(telefono: str):
               AND direccion = 'enviado'
               AND tipo IN ('text', 'document', 'audio', 'image', 'video')
               AND estado = 'failed'
-              AND error_codigo = 131047
+              AND error_codigo = %s
             ORDER BY fecha DESC
             LIMIT 1
-        """, (telefono,))
+        """, (telefono, "131047"))
         row = cur.fetchone()
 
     if not row:
@@ -2858,7 +2858,7 @@ async def reenviar_ultimo_mensaje(telefono: str):
     media_url = row['media_url']
     tipo_mensaje = row['tipo']
     fecha = row['fecha']
-    error_was_24h = (row['error_codigo'] == 131047)
+    error_was_24h = str(row.get("error_codigo") or "") == "131047"
 
     logger.info(
         f"📦 Mensaje recuperado | tipo={tipo_mensaje} | fecha={fecha} | "

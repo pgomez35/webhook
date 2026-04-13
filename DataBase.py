@@ -602,7 +602,7 @@ def guardar_mensaje_nuevo20260325(
                 # Insertar mensaje en NUEVA tabla
                 cur.execute("""
                     INSERT INTO mensajes_whatsapp
-                    (aspirante_id, telefono, direccion, tipo, contenido,
+                    (usuario_id, telefono, direccion, tipo, contenido,
                      media_url, message_id_meta, estado)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """, (

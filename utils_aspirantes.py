@@ -981,7 +981,7 @@ async def _procesar_error_envio(status_obj, tenant, phone_id, token, business_na
                         error_mensaje = %s
                     WHERE message_id_meta = %s
                     """,
-                    (code, message, message_id_meta)
+                    (None if code is None else str(code), message, message_id_meta)
                 )
 
         if code == 131047:

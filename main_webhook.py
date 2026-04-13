@@ -2695,7 +2695,7 @@ def registrar_mensaje_recibido(
                     """
                     INSERT INTO mensajes_whatsapp
                     (
-                        aspirante_id,
+                        usuario_id,
                         telefono,
                         direccion,
                         tipo,
