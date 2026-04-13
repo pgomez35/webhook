@@ -494,7 +494,7 @@ def forzar_cambio_estado_por_id(aspirante_id: int, nuevo_id_estado: int):
 
 
 
-@router.post("/api/aspirantes_perfil/{aspirante_id}/pre_resumen/calcularV1",
+@router.post("/api/aspirantes_perfilV1/{aspirante_id}/pre_resumen/calcularV1",
     tags=["Resumen Pre-Evaluación"]
 )
 def actualizar_cualitativo_y_recalcular_pre_encuestaV1(

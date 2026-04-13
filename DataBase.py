@@ -527,6 +527,7 @@ def obtener_contactos_db(estado: Optional[str] = None):
         return {"status": "error", "mensaje": str(e)}
 
 
+
 def guardar_mensaje_nuevo(
     telefono,
     contenido=None,
@@ -540,26 +541,20 @@ def guardar_mensaje_nuevo(
         with get_connection_context() as conn:
             with conn.cursor() as cur:
 
-                aspirante_id = None
-
-                # Buscar aspirante existente
                 cur.execute(
-                    "SELECT id FROM aspirantes WHERE telefono = %s OR whatsapp = %s LIMIT 1",
-                    (telefono, telefono)
+                    "SELECT id FROM aspirantes WHERE telefono = %s",
+                    (telefono,)
                 )
                 usuario = cur.fetchone()
+                usuario_id = usuario[0] if usuario else None
 
-                if usuario:
-                    aspirante_id = usuario[0]
-
-                # Insertar mensaje sin crear aspirante automáticamente
                 cur.execute("""
                     INSERT INTO mensajes_whatsapp
-                    (aspirante_id, telefono, direccion, tipo, contenido,
+                    (usuario_id, telefono, direccion, tipo, contenido,
                      media_url, message_id_meta, estado)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
-                    aspirante_id,
+                    usuario_id,
                     telefono,
                     direccion,
                     tipo,
@@ -570,9 +565,6 @@ def guardar_mensaje_nuevo(
                 ))
 
                 conn.commit()
-
-        print("✅ Mensaje guardado correctamente.")
-
     except Exception as e:
         print(f"❌ Error guardando mensaje: {e}")
         traceback.print_exc()
