@@ -163,12 +163,14 @@ def resolver_nombre_corto_categoria(
 
 
 def obtener_estado_por_nombre(cur, nombre_estado: str) -> Optional[int]:
+    nombre_estado = nombre_estado.strip()
+
     cur.execute("""
-        SELECT id
-        FROM aspirantes_estados
-        WHERE LOWER(nombre) = LOWER(%s)
-        LIMIT 1
-    """, (nombre_estado,))
+                SELECT id
+                FROM aspirantes_estados
+                WHERE LOWER(nombre) = LOWER(%s) LIMIT 1
+                """, (nombre_estado,))
+
     row = cur.fetchone()
     return row[0] if row else None
 
