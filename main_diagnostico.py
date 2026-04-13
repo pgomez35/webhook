@@ -238,13 +238,15 @@ def generar_resumen_corto_desde_diagnostico(diagnostico: Dict[str, Any]) -> str:
         f"Presenta señales positivas en {fortaleza_txt}, pero necesita trabajar {debilidad_txt} antes de avanzar."
     )
 
-
-def generar_mejoras_prioritarias(categorias: List[Dict[str, Any]]) -> List[str]:
+def generar_mejoras_prioritarias(cur, categorias: List[Dict[str, Any]]) -> List[str]:
     """
-    Genera mejoras priorizadas según el perfil real:
-    1. Primero ataca la categoría más débil.
-    2. Luego agrega, si hace falta, una mejora secundaria de otra categoría.
-    3. Evita recomendaciones genéricas que no reflejan el diagnóstico principal.
+    Genera mejoras desde la tabla diagnostico_mejoras_sugeridas.
+
+    Reglas:
+    1. Prioriza la categoría con menor score.
+    2. Busca mejoras según categoria_id y nivel5.
+    3. Si la segunda categoría también está floja, agrega 1 mejora de apoyo.
+    4. Devuelve máximo 3 mejoras.
     """
 
     if not categorias:
@@ -253,152 +255,241 @@ def generar_mejoras_prioritarias(categorias: List[Dict[str, Any]]) -> List[str]:
     def cat_score(cat: Dict[str, Any]) -> float:
         return float(cat.get("score", 0) or 0)
 
-    def var_score(var: Dict[str, Any]) -> float:
-        return float(var.get("score", 0) or 0)
-
-    def nombre_cat(cat: Dict[str, Any]) -> str:
-        return (cat.get("nombre_natural") or cat.get("categoria_nombre") or "").lower()
-
     categorias_ordenadas = sorted(categorias, key=cat_score)
-    categoria_critica = categorias_ordenadas[0]
-    score_critico = cat_score(categoria_critica)
-    nombre_critico = nombre_cat(categoria_critica)
-    variables_criticas = categoria_critica.get("variables") or []
 
     mejoras: List[str] = []
+    vistos = set()
 
-    # =====================================================
-    # 1. REGLAS PARA LA CATEGORÍA MÁS CRÍTICA
-    # =====================================================
+    def agregar_mejoras_desde_bd(
+        categoria_id: Optional[int],
+        nivel5: Optional[int],
+        limite: int,
+        excluir_textos: set[str]
+    ) -> List[str]:
+        if not categoria_id or not nivel5 or limite <= 0:
+            return []
 
-    if "compromiso" in nombre_critico or "alineación" in nombre_critico:
-        mejoras.append("Define una intención profesional clara frente al proyecto.")
-        mejoras.append("Establece una meta concreta de crecimiento o monetización en TikTok LIVE.")
-        mejoras.append("Convierte tu talento y constancia en un plan real y sostenido de trabajo.")
-
-    elif "audiencia" in nombre_critico or "mercado" in nombre_critico:
-        likes_bajos = any(
-            v.get("variable") == "Likes" and var_score(v) <= 2
-            for v in variables_criticas
+        cur.execute(
+            """
+            SELECT texto
+            FROM diagnostico_mejoras_sugeridas
+            WHERE categoria_id = %s
+              AND %s BETWEEN nivel_min AND nivel_max
+            ORDER BY prioridad ASC, id ASC
+            """,
+            (categoria_id, nivel5)
         )
-        seguidores_bajos = any(
-            v.get("variable") == "Seguidores" and var_score(v) <= 2
-            for v in variables_criticas
-        )
-        videos_bajos = any(
-            v.get("variable") == "Cantidad de videos" and var_score(v) <= 2
-            for v in variables_criticas
-        )
+        rows = cur.fetchall()
 
-        if likes_bajos:
-            mejoras.append("Fortalece la interacción y la retención de audiencia en tus contenidos.")
-        if seguidores_bajos:
-            mejoras.append("Trabaja en estrategias para aumentar el alcance y atraer nuevos seguidores.")
-        if videos_bajos:
-            mejoras.append("Aumenta la constancia de contenido para sostener el crecimiento de tu audiencia.")
+        salida: List[str] = []
+        for row in rows:
+            texto = (row[0] or "").strip()
+            if texto and texto not in excluir_textos:
+                salida.append(texto)
+            if len(salida) >= limite:
+                break
 
-        if not mejoras:
-            mejoras.append("Mejora la conversión de tu audiencia con llamados a la acción más claros.")
-            mejoras.append("Refuerza la fidelización para convertir métricas en crecimiento más estable.")
-            mejoras.append("Ajusta tu estrategia de contenido para fortalecer tu potencial de mercado.")
+        return salida
 
-    elif "operativa" in nombre_critico:
-        duracion_baja = any(
-            v.get("variable") == "Duración de emisiones" and var_score(v) <= 2
-            for v in variables_criticas
-        )
-        frecuencia_baja = any(
-            v.get("variable") in ("Días de emisiones", "Frecuencia de lives") and var_score(v) <= 2
-            for v in variables_criticas
-        )
-        tiempo_bajo = any(
-            v.get("variable") == "Tiempo disponible" and var_score(v) <= 2
-            for v in variables_criticas
-        )
+    # 1) Categoría principal: la más débil
+    categoria_critica = categorias_ordenadas[0]
+    categoria_critica_id = categoria_critica.get("categoria_id")
+    nivel5_critico = categoria_critica.get("nivel5")
 
-        if duracion_baja:
-            mejoras.append("Aumenta gradualmente la duración de tus lives para aprovechar mejor tu capacidad operativa.")
-        if frecuencia_baja:
-            mejoras.append("Define un calendario fijo de emisiones semanales para ganar constancia.")
-        if tiempo_bajo:
-            mejoras.append("Organiza mejor tu disponibilidad para sostener una rutina más estable de transmisiones.")
+    principales = agregar_mejoras_desde_bd(
+        categoria_id=categoria_critica_id,
+        nivel5=nivel5_critico,
+        limite=3,
+        excluir_textos=vistos
+    )
 
-        if not mejoras:
-            mejoras.append("Fortalece tu planificación de lives para mejorar consistencia y rendimiento.")
-            mejoras.append("Convierte tu organización actual en una rutina más estable y sostenible.")
-            mejoras.append("Ajusta tu frecuencia y estructura de emisiones para ganar eficiencia.")
+    for texto in principales:
+        if texto not in vistos:
+            vistos.add(texto)
+            mejoras.append(texto)
 
-    elif "talento" in nombre_critico:
-        apariencia_baja = any(
-            v.get("variable") == "Apariencia" and var_score(v) <= 2
-            for v in variables_criticas
-        )
-        calidad_baja = any(
-            v.get("variable") == "Calidad de contenido (incluye originalidad)" and var_score(v) <= 2
-            for v in variables_criticas
-        )
-        bio_baja = any(
-            v.get("variable") == "Bio clara" and var_score(v) <= 2
-            for v in variables_criticas
-        )
-        narrativa_baja = any(
-            v.get("variable") == "Hashtags y narrativa" and var_score(v) <= 2
-            for v in variables_criticas
-        )
-
-        if calidad_baja:
-            mejoras.append("Mejora la originalidad, estructura y propuesta de valor de tu contenido.")
-        if apariencia_baja:
-            mejoras.append("Cuida más tu presentación visual para proyectar una imagen más fuerte y atractiva.")
-        if bio_baja:
-            mejoras.append("Haz tu biografía más clara para comunicar mejor tu identidad como creador.")
-        if narrativa_baja:
-            mejoras.append("Trabaja mejor la narrativa y el enfoque de tus publicaciones para conectar más con la audiencia.")
-
-        if not mejoras:
-            mejoras.append("Refuerza tu propuesta creativa para que tu talento sea más consistente y competitivo.")
-            mejoras.append("Mejora la claridad de tu identidad como creador.")
-            mejoras.append("Haz más sólida la experiencia visual y narrativa de tu contenido.")
-
-    else:
-        mejoras.append("Identifica con mayor claridad tu principal área de mejora dentro del proceso.")
-        mejoras.append("Define acciones concretas para fortalecer tu perfil.")
-        mejoras.append("Convierte tu diagnóstico en un plan de mejora progresivo y medible.")
-
-    # =====================================================
-    # 2. AGREGAR UNA MEJORA SECUNDARIA SI APORTA VALOR
-    # =====================================================
-
-    if len(categorias_ordenadas) > 1:
+    # 2) Categoría secundaria: solo si realmente está floja y aún falta cupo
+    if len(mejoras) < 3 and len(categorias_ordenadas) > 1:
         categoria_secundaria = categorias_ordenadas[1]
-        nombre_secundario = nombre_cat(categoria_secundaria)
         score_secundario = cat_score(categoria_secundaria)
 
-        # Solo agregar apoyo si realmente está floja
         if score_secundario <= 3.2:
-            if ("audiencia" in nombre_secundario or "mercado" in nombre_secundario):
-                mejoras.append("Como apoyo adicional, mejora la conversión y fidelización de tu audiencia.")
-            elif "operativa" in nombre_secundario:
-                mejoras.append("Como apoyo adicional, refuerza tu rutina de emisiones para sostener el crecimiento.")
-            elif "compromiso" in nombre_secundario or "alineación" in nombre_secundario:
-                mejoras.append("Como apoyo adicional, fortalece tu enfoque profesional y la claridad de tus objetivos.")
-            elif "talento" in nombre_secundario:
-                mejoras.append("Como apoyo adicional, sigue refinando tu propuesta creativa y visual.")
+            secundarias = agregar_mejoras_desde_bd(
+                categoria_id=categoria_secundaria.get("categoria_id"),
+                nivel5=categoria_secundaria.get("nivel5"),
+                limite=(3 - len(mejoras)),
+                excluir_textos=vistos
+            )
 
-    # =====================================================
-    # 3. LIMPIEZA FINAL
-    # =====================================================
+            for texto in secundarias:
+                if texto not in vistos:
+                    vistos.add(texto)
+                    mejoras.append(texto)
+                if len(mejoras) >= 3:
+                    break
 
-    seen = set()
-    salida: List[str] = []
-    for m in mejoras:
-        m = m.strip()
-        if m and m not in seen:
-            seen.add(m)
-            salida.append(m)
+    return mejoras[:3]
 
-    # Máximo 3 para que siga siendo usable
-    return salida[:3]
+# def generar_mejoras_prioritarias(categorias: List[Dict[str, Any]]) -> List[str]:
+#     """
+#     Genera mejoras priorizadas según el perfil real:
+#     1. Primero ataca la categoría más débil.
+#     2. Luego agrega, si hace falta, una mejora secundaria de otra categoría.
+#     3. Evita recomendaciones genéricas que no reflejan el diagnóstico principal.
+#     """
+#
+#     if not categorias:
+#         return []
+#
+#     def cat_score(cat: Dict[str, Any]) -> float:
+#         return float(cat.get("score", 0) or 0)
+#
+#     def var_score(var: Dict[str, Any]) -> float:
+#         return float(var.get("score", 0) or 0)
+#
+#     def nombre_cat(cat: Dict[str, Any]) -> str:
+#         return (cat.get("nombre_natural") or cat.get("categoria_nombre") or "").lower()
+#
+#     categorias_ordenadas = sorted(categorias, key=cat_score)
+#     categoria_critica = categorias_ordenadas[0]
+#     score_critico = cat_score(categoria_critica)
+#     nombre_critico = nombre_cat(categoria_critica)
+#     variables_criticas = categoria_critica.get("variables") or []
+#
+#     mejoras: List[str] = []
+#
+#     # =====================================================
+#     # 1. REGLAS PARA LA CATEGORÍA MÁS CRÍTICA
+#     # =====================================================
+#
+#     if "compromiso" in nombre_critico or "alineación" in nombre_critico:
+#         mejoras.append("Define una intención profesional clara frente al proyecto.")
+#         mejoras.append("Establece una meta concreta de crecimiento o monetización en TikTok LIVE.")
+#         mejoras.append("Convierte tu talento y constancia en un plan real y sostenido de trabajo.")
+#
+#     elif "audiencia" in nombre_critico or "mercado" in nombre_critico:
+#         likes_bajos = any(
+#             v.get("variable") == "Likes" and var_score(v) <= 2
+#             for v in variables_criticas
+#         )
+#         seguidores_bajos = any(
+#             v.get("variable") == "Seguidores" and var_score(v) <= 2
+#             for v in variables_criticas
+#         )
+#         videos_bajos = any(
+#             v.get("variable") == "Cantidad de videos" and var_score(v) <= 2
+#             for v in variables_criticas
+#         )
+#
+#         if likes_bajos:
+#             mejoras.append("Fortalece la interacción y la retención de audiencia en tus contenidos.")
+#         if seguidores_bajos:
+#             mejoras.append("Trabaja en estrategias para aumentar el alcance y atraer nuevos seguidores.")
+#         if videos_bajos:
+#             mejoras.append("Aumenta la constancia de contenido para sostener el crecimiento de tu audiencia.")
+#
+#         if not mejoras:
+#             mejoras.append("Mejora la conversión de tu audiencia con llamados a la acción más claros.")
+#             mejoras.append("Refuerza la fidelización para convertir métricas en crecimiento más estable.")
+#             mejoras.append("Ajusta tu estrategia de contenido para fortalecer tu potencial de mercado.")
+#
+#     elif "operativa" in nombre_critico:
+#         duracion_baja = any(
+#             v.get("variable") == "Duración de emisiones" and var_score(v) <= 2
+#             for v in variables_criticas
+#         )
+#         frecuencia_baja = any(
+#             v.get("variable") in ("Días de emisiones", "Frecuencia de lives") and var_score(v) <= 2
+#             for v in variables_criticas
+#         )
+#         tiempo_bajo = any(
+#             v.get("variable") == "Tiempo disponible" and var_score(v) <= 2
+#             for v in variables_criticas
+#         )
+#
+#         if duracion_baja:
+#             mejoras.append("Aumenta gradualmente la duración de tus lives para aprovechar mejor tu capacidad operativa.")
+#         if frecuencia_baja:
+#             mejoras.append("Define un calendario fijo de emisiones semanales para ganar constancia.")
+#         if tiempo_bajo:
+#             mejoras.append("Organiza mejor tu disponibilidad para sostener una rutina más estable de transmisiones.")
+#
+#         if not mejoras:
+#             mejoras.append("Fortalece tu planificación de lives para mejorar consistencia y rendimiento.")
+#             mejoras.append("Convierte tu organización actual en una rutina más estable y sostenible.")
+#             mejoras.append("Ajusta tu frecuencia y estructura de emisiones para ganar eficiencia.")
+#
+#     elif "talento" in nombre_critico:
+#         apariencia_baja = any(
+#             v.get("variable") == "Apariencia" and var_score(v) <= 2
+#             for v in variables_criticas
+#         )
+#         calidad_baja = any(
+#             v.get("variable") == "Calidad de contenido (incluye originalidad)" and var_score(v) <= 2
+#             for v in variables_criticas
+#         )
+#         bio_baja = any(
+#             v.get("variable") == "Bio clara" and var_score(v) <= 2
+#             for v in variables_criticas
+#         )
+#         narrativa_baja = any(
+#             v.get("variable") == "Hashtags y narrativa" and var_score(v) <= 2
+#             for v in variables_criticas
+#         )
+#
+#         if calidad_baja:
+#             mejoras.append("Mejora la originalidad, estructura y propuesta de valor de tu contenido.")
+#         if apariencia_baja:
+#             mejoras.append("Cuida más tu presentación visual para proyectar una imagen más fuerte y atractiva.")
+#         if bio_baja:
+#             mejoras.append("Haz tu biografía más clara para comunicar mejor tu identidad como creador.")
+#         if narrativa_baja:
+#             mejoras.append("Trabaja mejor la narrativa y el enfoque de tus publicaciones para conectar más con la audiencia.")
+#
+#         if not mejoras:
+#             mejoras.append("Refuerza tu propuesta creativa para que tu talento sea más consistente y competitivo.")
+#             mejoras.append("Mejora la claridad de tu identidad como creador.")
+#             mejoras.append("Haz más sólida la experiencia visual y narrativa de tu contenido.")
+#
+#     else:
+#         mejoras.append("Identifica con mayor claridad tu principal área de mejora dentro del proceso.")
+#         mejoras.append("Define acciones concretas para fortalecer tu perfil.")
+#         mejoras.append("Convierte tu diagnóstico en un plan de mejora progresivo y medible.")
+#
+#     # =====================================================
+#     # 2. AGREGAR UNA MEJORA SECUNDARIA SI APORTA VALOR
+#     # =====================================================
+#
+#     if len(categorias_ordenadas) > 1:
+#         categoria_secundaria = categorias_ordenadas[1]
+#         nombre_secundario = nombre_cat(categoria_secundaria)
+#         score_secundario = cat_score(categoria_secundaria)
+#
+#         # Solo agregar apoyo si realmente está floja
+#         if score_secundario <= 3.2:
+#             if ("audiencia" in nombre_secundario or "mercado" in nombre_secundario):
+#                 mejoras.append("Como apoyo adicional, mejora la conversión y fidelización de tu audiencia.")
+#             elif "operativa" in nombre_secundario:
+#                 mejoras.append("Como apoyo adicional, refuerza tu rutina de emisiones para sostener el crecimiento.")
+#             elif "compromiso" in nombre_secundario or "alineación" in nombre_secundario:
+#                 mejoras.append("Como apoyo adicional, fortalece tu enfoque profesional y la claridad de tus objetivos.")
+#             elif "talento" in nombre_secundario:
+#                 mejoras.append("Como apoyo adicional, sigue refinando tu propuesta creativa y visual.")
+#
+#     # =====================================================
+#     # 3. LIMPIEZA FINAL
+#     # =====================================================
+#
+#     seen = set()
+#     salida: List[str] = []
+#     for m in mejoras:
+#         m = m.strip()
+#         if m and m not in seen:
+#             seen.add(m)
+#             salida.append(m)
+#
+#     # Máximo 3 para que siga siendo usable
+#     return salida[:3]
 
 
 def generar_texto_whatsapp_completo(ui_data: Dict[str, Any]) -> str:
