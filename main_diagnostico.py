@@ -130,22 +130,16 @@ def cargar_categorias_catalogo(cur) -> Dict[int, Dict[str, Any]]:
     return catalogo
 
 
-def obtener_nombre_corto_categoria(
-    categoria_id: Optional[int] = None,
-    categoria_nombre: Optional[str] = None,
-    nombre_natural: Optional[str] = None,
-    catalogo_categorias: Optional[Dict[int, Dict[str, Any]]] = None
+def resolver_nombre_corto_categoria(
+    categoria_id=None,
+    categoria_nombre=None,
+    nombre_natural=None,
+    catalogo_categorias=None
 ) -> str:
     """
-    Retrocompatible:
-    - soporta llamadas viejas con menos argumentos
-    - no quema mapas
-    Prioridad:
-    1. nombre_natural del JSON
-    2. nombre_natural desde catálogo
-    3. nombre del JSON
-    4. nombre desde catálogo
-    5. fallback
+    Función nueva con nombre distinto para evitar colisión
+    con cualquier definición vieja de obtener_nombre_corto_categoria.
+    No quema categorías.
     """
     catalogo_categorias = catalogo_categorias or {}
 
@@ -577,7 +571,7 @@ def construir_diagnostico_ui(
         categorias_ui.append({
             "categoria_id": categoria_id,
             "nombre": categoria_nombre or catalogo_categorias.get(categoria_id, {}).get("nombre"),
-            "nombre_corto": obtener_nombre_corto_categoria(
+            "nombre_corto": resolver_nombre_corto_categoria(
                 categoria_id=categoria_id,
                 categoria_nombre=categoria_nombre,
                 nombre_natural=nombre_natural,
@@ -1373,6 +1367,7 @@ def actualizar_entrevista_tipo(tipo_id: int, data: dict):
                 "success": True
             }
 
+        
 # import logging
 # import json
 # from typing import List, Dict, Any, Optional, Tuple
