@@ -2453,17 +2453,16 @@ def actualizar_fecha_agendamiento(
 
             conn.commit()
 
-            # 6️⃣ Respuesta
+            # 6️⃣ Respuesta (EventoOut exige agendamiento_id; no usar id ni campos fuera del schema)
             return EventoOut(
-                id=str(ag_id),
-                titulo=titulo_actual,
-                descripcion=descripcion_actual,
+                agendamiento_id=str(ag_id),
+                titulo=titulo_actual or "Sin título",
+                descripcion=descripcion_actual or "",
                 inicio=nuevo_inicio,
                 fin=nuevo_fin,
-                aspirante_id=aspirante_id,
-                responsable_id=responsable_id,
-                estado=estado,
+                participantes_ids=[aspirante_id] if aspirante_id is not None else [],
                 link_meet=link_meet_actual if tipo_agendamiento == "ENTREVISTA" else None,
+                responsable_id=responsable_id,
                 origen="interno",
             )
 
