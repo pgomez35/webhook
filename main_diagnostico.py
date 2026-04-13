@@ -1373,7 +1373,6 @@ def actualizar_entrevista_tipo(tipo_id: int, data: dict):
                 "success": True
             }
 
-
 # import logging
 # import json
 # from typing import List, Dict, Any, Optional, Tuple
