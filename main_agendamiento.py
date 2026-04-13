@@ -3030,13 +3030,10 @@ def enviar_link_agendamiento_aspiranteV1(
         expiracion=None,    # idem
     )
 
-
-
-
-
 def generar_token_corto(longitud=10):
     caracteres = string.ascii_letters + string.digits  # A-Z a-z 0-9
     return ''.join(secrets.choice(caracteres) for _ in range(longitud))
+
 
 @router.post("/api/agendamientos/aspirante/enviar/tokenV1", response_model=LinkAgendamientoOut)
 def crear_y_enviar_link_agendamiento_aspiranteTokenV1(

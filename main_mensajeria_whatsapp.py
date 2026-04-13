@@ -3589,7 +3589,7 @@ def mensaje_no_apto_simple(nombre: Optional[str], business_name: str) -> str:
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT valor
-                    FROM configuracion_agencia_keys
+                    FROM configuracion_agencia
                     WHERE clave = %s
                     LIMIT 1
                 """, ("mensaje_rechazado",))
