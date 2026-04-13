@@ -1966,7 +1966,7 @@ def construir_diagnostico_ui(
         categorias_ui.append({
             "categoria_id": categoria_id,
             "nombre": c.get("categoria_nombre"),
-            "nombre_corto": nombre_corto_categoria(c.get("categoria_nombre")),
+            "nombre_corto": obtener_nombre_corto_categoria(c.get("categoria_nombre")),
             "nombre_natural": c.get("nombre_natural"),
             "descripcion": c.get("descripcion"),
             "peso_categoria": c.get("peso_categoria"),
@@ -2006,7 +2006,29 @@ def construir_diagnostico_ui(
 
     return ui_data
 
+def obtener_nombre_corto_categoria(
+    categoria_id: Optional[int],
+    categoria_nombre: Optional[str],
+    nombre_natural: Optional[str],
+    catalogo_categorias: Dict[int, Dict[str, Any]]
+) -> str:
+    if nombre_natural:
+        return str(nombre_natural).strip()
 
+    if categoria_id and categoria_id in catalogo_categorias:
+        nombre_natural_db = catalogo_categorias[categoria_id].get("nombre_natural")
+        if nombre_natural_db:
+            return str(nombre_natural_db).strip()
+
+    if categoria_nombre:
+        return str(categoria_nombre).strip()
+
+    if categoria_id and categoria_id in catalogo_categorias:
+        nombre_db = catalogo_categorias[categoria_id].get("nombre")
+        if nombre_db:
+            return str(nombre_db).strip()
+
+    return "Categoría"
 # =========================================================
 # PERSISTENCIA DE DIAGNÓSTICO
 # =========================================================
@@ -2353,16 +2375,29 @@ def calcular_diagnostico_y_json(cur, aspirante_id: int, modelo_id: int):
 # =========================================================
 # FLUJO DE TALENTO / PREEVALUACIÓN
 # =========================================================
+def obtener_estado_por_nombre(cur, nombre_estado: str) -> Optional[int]:
+    cur.execute("""
+                SELECT id
+                FROM aspirantes_estados
+                WHERE LOWER(nombre) = LOWER(%s) LIMIT 1
+                """, (nombre_estado,))
+
+    row = cur.fetchone()
+    return row[0] if row else None
+
 
 def actualizar_estado_preevaluacion(aspirante_id: int, payload: Dict[str, Any]):
-    estado = payload.get("estado_evaluacion")
-    estado_id = None
 
-    if estado:
-        estado_id = ESTADO_MAP_PREEVAL.get(estado, ESTADO_DEFAULT)
+    estado_nombre = payload.get("estado_evaluacion")
 
     with get_connection_context() as conn:
         cur = conn.cursor()
+
+        estado_id = None
+
+        # 🔥 Obtener estado desde BD (NO hardcode)
+        if estado_nombre:
+            estado_id = obtener_estado_por_nombre(cur, estado_nombre)
 
         sets = []
         valores = []
@@ -2384,7 +2419,8 @@ def actualizar_estado_preevaluacion(aspirante_id: int, payload: Dict[str, Any]):
 
             cur.execute(query, valores)
 
-        if estado_id is not None:
+        # 🔥 Solo actualiza si encontró el estado
+        if estado_id:
             cur.execute("""
                 UPDATE aspirantes
                 SET estado_id = %s
@@ -2394,10 +2430,9 @@ def actualizar_estado_preevaluacion(aspirante_id: int, payload: Dict[str, Any]):
         conn.commit()
 
     print(
-        f"✅ Creador {aspirante_id} actualizado "
-        f"(estado={estado}, estado_id={estado_id})"
+        f"✅ Aspirante {aspirante_id} actualizado "
+        f"(estado={estado_nombre}, estado_id={estado_id})"
     )
-
 
 @router.post(
     "/api/aspirantes_perfil/{aspirante_id}/talento/actualizar",
