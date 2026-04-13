@@ -2360,20 +2360,23 @@ def actualizar_fecha_agendamiento(
             cur.execute(
                 """
                 SELECT
-                    id,
-                    titulo,
-                    descripcion,
-                    fecha_inicio,
-                    fecha_fin,
-                    aspirante_id,
-                    responsable_id,
-                    estado,
-                    link_meet,
-                    tipo_agendamiento
-                FROM agendamientos
-                WHERE id = %s
+                    a.id,
+                    a.titulo,
+                    a.descripcion,
+                    a.fecha_inicio,
+                    a.fecha_fin,
+                    ap.participante_id AS aspirante_id,
+                    a.responsable_id,
+                    a.estado,
+                    a.link_meet,
+                    a.tipo_agendamiento
+                FROM agendamientos a
+                LEFT JOIN agendamientos_participantes ap
+                    ON ap.agendamiento_id = a.id
+                   AND ap.participante_tipo_id = %s
+                WHERE a.id = %s
                 """,
-                (agendamiento_id,)
+                (PARTICIPANTE_TIPO_ASPIRANTE_ID, agendamiento_id),
             )
 
             row = cur.fetchone()
