@@ -24,11 +24,11 @@ class PerfilCualitativoPayload(BaseModel):
     calidad_contenido: int = Field(..., ge=0, le=5)
     eval_biografia: int = Field(..., ge=0, le=5)
     metadata_videos: int = Field(..., ge=0, le=5)
-    eval_foto: int = Field(..., ge=0, le=5)  # solo aspirantes_perfil
+    eval_foto: int = Field(..., ge=0, le=5)
 
 
 class ActualizarPreEvaluacionIn(BaseModel):
-    estado_evaluacion: Optional[str] = None  # "No apto" | "Entrevista" | "Invitar a TikTok"
+    estado_evaluacion: Optional[str] = None
     usuario_evalua: Optional[str] = None
     observaciones_finales: Optional[str] = None
 
@@ -42,7 +42,7 @@ ESTADO_MAP_PREEVAL = {
     "Entrevista": 4,
     "Invitar a TikTok": 5,
 }
-ESTADO_DEFAULT = 99  # si no coincide
+ESTADO_DEFAULT = 99
 
 MAPA_NOMBRE_CORTO_CATEGORIA = {
     "Potencial de Talento": "Talento",
@@ -93,7 +93,9 @@ def nombre_corto_categoria(nombre_categoria: Optional[str]) -> str:
     return MAPA_NOMBRE_CORTO_CATEGORIA.get(nombre_categoria, nombre_categoria)
 
 
-def obtener_fortaleza_y_debilidad(categorias: List[Dict[str, Any]]) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+def obtener_fortaleza_y_debilidad(
+    categorias: List[Dict[str, Any]]
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
     if not categorias:
         return None, None
 
@@ -126,19 +128,10 @@ def top_variables_categoria(cat: Dict[str, Any], top_n: int = 3) -> List[str]:
 
 
 # =========================================================
-# INSIGHTS Y RESÚMENES
+# INSIGHTS / RESÚMENES / TEXTO WHATSAPP
 # =========================================================
 
 def generar_insights_principales(categorias: List[Dict[str, Any]]) -> Dict[str, Optional[str]]:
-    """
-    categorias = [
-        {
-            "nombre_natural": "talento creativo",
-            "score": 4.2
-        }
-    ]
-    """
-
     if not categorias:
         return {
             "insight_principal": None,
@@ -286,10 +279,69 @@ def generar_mejoras_prioritarias(categorias: List[Dict[str, Any]]) -> List[str]:
     return salida[:3]
 
 
+def generar_texto_whatsapp_completo(ui_data: Dict[str, Any]) -> str:
+    resultado = ui_data.get("resultado", {})
+    resumen_corto = ui_data.get("resumen_corto", "")
+    categorias = ui_data.get("categorias", [])
+    mejoras_prioritarias = ui_data.get("mejoras_prioritarias", [])
+
+    partes: List[str] = []
+
+    partes.append("📊 *Tu diagnóstico en TikTok LIVE*")
+    partes.append("")
+    partes.append("Este es tu resultado actual dentro del proceso de evaluación. Guárdalo para revisarlo más adelante.")
+    partes.append("")
+    partes.append("*Resultado general*")
+    partes.append(f"⭐ Puntaje: {resultado.get('score_total')} ({resultado.get('score_total_100')}/100)")
+    partes.append(f"📌 Clasificación: {resultado.get('clasificacion')}")
+    partes.append("")
+
+    if resumen_corto:
+        partes.append("*Resumen*")
+        partes.append(resumen_corto)
+        partes.append("")
+
+    if resultado.get("fortaleza_principal"):
+        partes.append("*Fortaleza principal*")
+        partes.append(f"🔥 {resultado.get('fortaleza_principal')}")
+        partes.append("")
+
+    if resultado.get("debilidad_principal"):
+        partes.append("*Punto de mejora*")
+        partes.append(f"⚠️ {resultado.get('debilidad_principal')}")
+        partes.append("")
+
+    if categorias:
+        partes.append("*Detalle por categorías*")
+        partes.append("")
+
+        for cat in categorias:
+            partes.append(f"*{cat.get('nombre_corto')}* — {cat.get('nivel5')}/5")
+
+            if cat.get("script"):
+                partes.append(str(cat.get("script")).strip())
+
+            if cat.get("script_largo") and cat.get("script_largo") != cat.get("script"):
+                partes.append(str(cat.get("script_largo")).strip())
+
+            partes.append("")
+
+    if mejoras_prioritarias:
+        partes.append("*Mejoras prioritarias*")
+        for mejora in mejoras_prioritarias:
+            partes.append(f"• {mejora}")
+        partes.append("")
+
+    partes.append("✅ Guarda este mensaje. Este resultado puede no estar disponible más adelante.")
+
+    return "\n".join(partes).strip()
+
+
 def construir_diagnostico_ui(
     diagnostico_json: Dict[str, Any],
     nickname: Optional[str] = None,
-    nombre: Optional[str] = None
+    nombre: Optional[str] = None,
+    texto_whatsapp: Optional[str] = None
 ) -> Dict[str, Any]:
     categorias = diagnostico_json.get("categorias") or []
     score_total = float(diagnostico_json.get("score_total", 0) or 0)
@@ -324,7 +376,7 @@ def construir_diagnostico_ui(
             "estado": estado
         })
 
-    return {
+    ui_data = {
         "success": True,
         "creador": {
             "nickname": nickname,
@@ -342,8 +394,14 @@ def construir_diagnostico_ui(
         "resumen_corto": resumen_corto,
         "categorias": categorias_ui,
         "mejoras_prioritarias": generar_mejoras_prioritarias(categorias),
-        "demograficos": diagnostico_json.get("demograficos", {})
+        "demograficos": diagnostico_json.get("demograficos", {}),
+        "texto_whatsapp": texto_whatsapp
     }
+
+    if not ui_data["texto_whatsapp"]:
+        ui_data["texto_whatsapp"] = generar_texto_whatsapp_completo(ui_data)
+
+    return ui_data
 
 
 # =========================================================
@@ -570,11 +628,8 @@ def calcular_diagnostico_y_json(cur, aspirante_id: int, modelo_id: int):
                 'modelo_id', m.id,
                 'modelo_nombre', m.modelo_nombre,
                 'modelo_descripcion', m.modelo_descripcion,
-
                 'demograficos', d.data,
-
                 'score_total', ROUND(tc.score_total, 2),
-
                 'categorias',
                 jsonb_agg(
                     jsonb_build_object(
@@ -668,15 +723,25 @@ def calcular_diagnostico_y_json(cur, aspirante_id: int, modelo_id: int):
 
     resumen_corto = generar_resumen_corto_desde_diagnostico(diagnostico)
 
+    ui_data = construir_diagnostico_ui(
+        diagnostico_json={
+            **diagnostico,
+            "diagnostico_resumen": resumen_corto
+        }
+    )
+    texto_whatsapp = generar_texto_whatsapp_completo(ui_data)
+
     cur.execute("""
         UPDATE diagnostico_score_general
         SET diagnostico_json = %s,
-            diagnostico_resumen = %s
+            diagnostico_resumen = %s,
+            texto_whatsapp = %s
         WHERE aspirante_id = %s
         AND modelo_id = %s
     """, (
         json.dumps(diagnostico),
         resumen_corto[:500],
+        texto_whatsapp,
         aspirante_id,
         modelo_id
     ))
@@ -843,7 +908,6 @@ def actualizar_preevaluacion(
 # ENDPOINTS DIAGNÓSTICO
 # =========================================================
 
-# Mantener este endpoint actual para la SaaS interna
 @router.get("/api/aspirantes/{aspirante_id}/diagnostico")
 def diagnostico_creador(aspirante_id: int):
     with get_connection_context() as conn:
@@ -889,7 +953,6 @@ def diagnostico_creador(aspirante_id: int):
             }
 
 
-# Nuevo endpoint orientado al portal del aspirante
 @router.get("/api/aspirantes/{aspirante_id}/diagnostico-ui")
 def diagnostico_aspirante_ui(aspirante_id: int):
     with get_connection_context() as conn:
@@ -907,6 +970,7 @@ def diagnostico_aspirante_ui(aspirante_id: int):
                 SELECT 
                     d.diagnostico_json,
                     d.diagnostico_resumen,
+                    d.texto_whatsapp,
                     c.nickname,
                     c.nombre_real as nombre
                 FROM diagnostico_score_general d
@@ -924,7 +988,7 @@ def diagnostico_aspirante_ui(aspirante_id: int):
                     "message": "Diagnóstico no calculado"
                 }
 
-            diagnostico_json, diagnostico_resumen, nickname, nombre = r
+            diagnostico_json, diagnostico_resumen, texto_whatsapp, nickname, nombre = r
 
             if diagnostico_resumen and isinstance(diagnostico_json, dict):
                 diagnostico_json["diagnostico_resumen"] = diagnostico_resumen
@@ -932,7 +996,8 @@ def diagnostico_aspirante_ui(aspirante_id: int):
             return construir_diagnostico_ui(
                 diagnostico_json=diagnostico_json,
                 nickname=nickname,
-                nombre=nombre
+                nombre=nombre,
+                texto_whatsapp=texto_whatsapp
             )
 
 
@@ -1091,6 +1156,1104 @@ def actualizar_entrevista_tipo(tipo_id: int, data: dict):
             return {
                 "success": True
             }
+
+# import logging
+# import json
+# from typing import List, Dict, Any, Optional, Tuple
+#
+# from fastapi import APIRouter, HTTPException, Depends
+# from pydantic import BaseModel, Field
+#
+# from main_auth import obtener_usuario_actual
+# from tenant import current_tenant, current_business_name
+# from DataBase import get_connection_context
+#
+# logger = logging.getLogger(__name__)
+# router = APIRouter()
+#
+#
+# # =========================================================
+# # MODELOS
+# # =========================================================
+#
+# class PerfilCualitativoPayload(BaseModel):
+#     potencial_estimado: int = Field(..., ge=0, le=5)
+#     apariencia: int = Field(..., ge=0, le=5)
+#     engagement: int = Field(..., ge=0, le=5)
+#     calidad_contenido: int = Field(..., ge=0, le=5)
+#     eval_biografia: int = Field(..., ge=0, le=5)
+#     metadata_videos: int = Field(..., ge=0, le=5)
+#     eval_foto: int = Field(..., ge=0, le=5)  # solo aspirantes_perfil
+#
+#
+# class ActualizarPreEvaluacionIn(BaseModel):
+#     estado_evaluacion: Optional[str] = None  # "No apto" | "Entrevista" | "Invitar a TikTok"
+#     usuario_evalua: Optional[str] = None
+#     observaciones_finales: Optional[str] = None
+#
+#
+# # =========================================================
+# # CONSTANTES
+# # =========================================================
+#
+# ESTADO_MAP_PREEVAL = {
+#     "No apto": 7,
+#     "Entrevista": 4,
+#     "Invitar a TikTok": 5,
+# }
+# ESTADO_DEFAULT = 99  # si no coincide
+#
+# MAPA_NOMBRE_CORTO_CATEGORIA = {
+#     "Potencial de Talento": "Talento",
+#     "Potencial de Mercado": "Audiencia",
+#     "Capacidad Operativa": "Operativa",
+#     "Intención y Alineación": "Compromiso",
+# }
+#
+#
+# # =========================================================
+# # HELPERS GENERALES
+# # =========================================================
+#
+# def obtener_modelo_activo(cur) -> Optional[int]:
+#     cur.execute("""
+#         SELECT id
+#         FROM diagnostico_modelo
+#         WHERE activo = true
+#         LIMIT 1
+#     """)
+#     r = cur.fetchone()
+#     return r[0] if r else None
+#
+#
+# def score_a_100(score_5: float) -> int:
+#     try:
+#         return round((float(score_5) / 5.0) * 100)
+#     except Exception:
+#         return 0
+#
+#
+# def score_a_clasificacion(score_5: float) -> str:
+#     try:
+#         s = float(score_5)
+#     except Exception:
+#         s = 0.0
+#
+#     if s >= 4.2:
+#         return "Alto potencial"
+#     if s >= 3.0:
+#         return "Potencial medio"
+#     return "Potencial en desarrollo"
+#
+#
+# def nombre_corto_categoria(nombre_categoria: Optional[str]) -> str:
+#     if not nombre_categoria:
+#         return "Categoría"
+#     return MAPA_NOMBRE_CORTO_CATEGORIA.get(nombre_categoria, nombre_categoria)
+#
+#
+# def obtener_fortaleza_y_debilidad(categorias: List[Dict[str, Any]]) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+#     if not categorias:
+#         return None, None
+#
+#     fortaleza = max(categorias, key=lambda x: float(x.get("score", 0) or 0))
+#     debilidad = min(categorias, key=lambda x: float(x.get("score", 0) or 0))
+#     return fortaleza, debilidad
+#
+#
+# def top_variables_categoria(cat: Dict[str, Any], top_n: int = 3) -> List[str]:
+#     variables = cat.get("variables") or []
+#
+#     variables_ordenadas = sorted(
+#         variables,
+#         key=lambda v: (
+#             float(v.get("score", 0) or 0),
+#             float(v.get("peso_variable", 0) or 0)
+#         ),
+#         reverse=True
+#     )
+#
+#     salida: List[str] = []
+#     for v in variables_ordenadas:
+#         nombre = v.get("variable")
+#         if nombre and nombre not in salida:
+#             salida.append(nombre)
+#         if len(salida) >= top_n:
+#             break
+#
+#     return salida
+#
+#
+# # =========================================================
+# # INSIGHTS Y RESÚMENES
+# # =========================================================
+#
+# def generar_insights_principales(categorias: List[Dict[str, Any]]) -> Dict[str, Optional[str]]:
+#     """
+#     categorias = [
+#         {
+#             "nombre_natural": "talento creativo",
+#             "score": 4.2
+#         }
+#     ]
+#     """
+#
+#     if not categorias:
+#         return {
+#             "insight_principal": None,
+#             "alerta_principal": None
+#         }
+#
+#     def lista_texto(items: List[str]) -> str:
+#         if len(items) == 1:
+#             return items[0]
+#         if len(items) == 2:
+#             return f"{items[0]} y {items[1]}"
+#         return ", ".join(items[:-1]) + f" y {items[-1]}"
+#
+#     categorias_ordenadas = sorted(
+#         categorias,
+#         key=lambda x: float(x["score"]),
+#         reverse=True
+#     )
+#
+#     max_score = float(categorias_ordenadas[0]["score"])
+#     min_score = float(categorias_ordenadas[-1]["score"])
+#
+#     fortalezas = [
+#         c for c in categorias
+#         if float(c["score"]) >= 4.0
+#     ]
+#
+#     if not fortalezas:
+#         margen = 0.20
+#         fortalezas = [
+#             c for c in categorias
+#             if float(c["score"]) >= (max_score - margen)
+#         ]
+#
+#     debilidad = min(
+#         categorias,
+#         key=lambda x: float(x["score"])
+#     )
+#
+#     fortalezas_txt = lista_texto(
+#         [c["nombre_natural"] for c in fortalezas]
+#     )
+#
+#     debilidad_txt = debilidad["nombre_natural"]
+#
+#     if min_score >= 4.0:
+#         insight_principal = (
+#             f"Perfil sólido y equilibrado, con fortalezas en {fortalezas_txt}."
+#         )
+#     elif max_score >= 4.0:
+#         insight_principal = (
+#             f"El perfil muestra una base favorable, con mejor desempeño en {fortalezas_txt}."
+#         )
+#     elif max_score >= 3.0:
+#         insight_principal = (
+#             f"El perfil se encuentra en desarrollo, con mejor desempeño en {fortalezas_txt}."
+#         )
+#     else:
+#         insight_principal = (
+#             "El perfil requiere fortalecimiento general para consolidar una base más competitiva."
+#         )
+#
+#     if float(debilidad["score"]) <= 2.5:
+#         alerta_principal = (
+#             f"El principal punto de atención está en {debilidad_txt}."
+#         )
+#     elif float(debilidad["score"]) < 3.2:
+#         alerta_principal = (
+#             f"Conviene seguir fortaleciendo {debilidad_txt}."
+#         )
+#     else:
+#         alerta_principal = None
+#
+#     return {
+#         "insight_principal": insight_principal,
+#         "alerta_principal": alerta_principal
+#     }
+#
+#
+# def generar_resumen_corto_desde_diagnostico(diagnostico: Dict[str, Any]) -> str:
+#     categorias = diagnostico.get("categorias") or []
+#     fortaleza, debilidad = obtener_fortaleza_y_debilidad(categorias)
+#
+#     score_total = float(diagnostico.get("score_total", 0) or 0)
+#     clasificacion = score_a_clasificacion(score_total)
+#
+#     fortaleza_txt = fortaleza.get("nombre_natural") if fortaleza else "una categoría destacada"
+#     debilidad_txt = debilidad.get("nombre_natural") if debilidad else "un aspecto por fortalecer"
+#
+#     if clasificacion == "Alto potencial":
+#         return (
+#             f"Perfil sólido con alto potencial para avanzar en la agencia. "
+#             f"Su principal fortaleza está en {fortaleza_txt}, y conviene seguir fortaleciendo {debilidad_txt}."
+#         )
+#
+#     if clasificacion == "Potencial medio":
+#         return (
+#             f"El perfil muestra una base favorable para crecer en TikTok LIVE. "
+#             f"Destaca en {fortaleza_txt}, aunque requiere fortalecer {debilidad_txt} para avanzar con mayor solidez."
+#         )
+#
+#     return (
+#         f"El perfil se encuentra en desarrollo. "
+#         f"Presenta señales positivas en {fortaleza_txt}, pero necesita trabajar {debilidad_txt} antes de avanzar."
+#     )
+#
+#
+# def generar_mejoras_prioritarias(categorias: List[Dict[str, Any]]) -> List[str]:
+#     mejoras: List[str] = []
+#
+#     for c in categorias:
+#         nombre = (c.get("nombre_natural") or "").lower()
+#         score = float(c.get("score", 0) or 0)
+#         variables = c.get("variables") or []
+#
+#         if "compromiso" in nombre and score < 3:
+#             mejoras.append("Define una intención profesional clara frente al proyecto.")
+#             mejoras.append("Establece una meta concreta de crecimiento o monetización en TikTok LIVE.")
+#
+#         if ("audiencia" in nombre or "mercado" in nombre) and score < 3.5:
+#             mejoras.append("Fortalece la interacción y la retención de audiencia en tus contenidos.")
+#             mejoras.append("Mejora llamados a la acción y consistencia para consolidar tu comunidad.")
+#
+#         if "operativa" in nombre:
+#             for v in variables:
+#                 v_nombre = v.get("variable")
+#                 v_score = float(v.get("score", 0) or 0)
+#
+#                 if v_nombre == "Duración de emisiones" and v_score <= 2:
+#                     mejoras.append("Aumenta gradualmente la duración de tus lives.")
+#
+#                 if v_nombre in ("Días de emisiones", "Frecuencia de lives") and v_score <= 2:
+#                     mejoras.append("Define un calendario fijo de emisiones semanales.")
+#
+#         if "talento" in nombre and score < 3:
+#             mejoras.append("Mejora la calidad visual, originalidad y estructura de tu contenido.")
+#
+#     seen = set()
+#     salida: List[str] = []
+#     for m in mejoras:
+#         if m not in seen:
+#             seen.add(m)
+#             salida.append(m)
+#
+#     return salida[:3]
+#
+#
+# def construir_diagnostico_ui(
+#     diagnostico_json: Dict[str, Any],
+#     nickname: Optional[str] = None,
+#     nombre: Optional[str] = None
+# ) -> Dict[str, Any]:
+#     categorias = diagnostico_json.get("categorias") or []
+#     score_total = float(diagnostico_json.get("score_total", 0) or 0)
+#
+#     fortaleza, debilidad = obtener_fortaleza_y_debilidad(categorias)
+#
+#     resumen_corto = diagnostico_json.get("diagnostico_resumen") or generar_resumen_corto_desde_diagnostico(diagnostico_json)
+#
+#     categorias_ui = []
+#     for c in categorias:
+#         categoria_id = c.get("categoria_id")
+#         estado = "neutral"
+#
+#         if fortaleza and categoria_id == fortaleza.get("categoria_id"):
+#             estado = "fortaleza"
+#         elif debilidad and categoria_id == debilidad.get("categoria_id"):
+#             estado = "critica"
+#
+#         categorias_ui.append({
+#             "categoria_id": categoria_id,
+#             "nombre": c.get("categoria_nombre"),
+#             "nombre_corto": nombre_corto_categoria(c.get("categoria_nombre")),
+#             "nombre_natural": c.get("nombre_natural"),
+#             "descripcion": c.get("descripcion"),
+#             "peso_categoria": c.get("peso_categoria"),
+#             "score": c.get("score"),
+#             "nivel": c.get("nivel"),
+#             "nivel5": c.get("nivel5"),
+#             "script": c.get("script"),
+#             "script_largo": c.get("script_largo"),
+#             "top_variables": top_variables_categoria(c, top_n=3),
+#             "estado": estado
+#         })
+#
+#     return {
+#         "success": True,
+#         "creador": {
+#             "nickname": nickname,
+#             "nombre": nombre
+#         },
+#         "resultado": {
+#             "score_total": round(score_total, 2),
+#             "score_total_100": score_a_100(score_total),
+#             "clasificacion": score_a_clasificacion(score_total),
+#             "insight_principal": diagnostico_json.get("insight_principal"),
+#             "alerta_principal": diagnostico_json.get("alerta_principal"),
+#             "fortaleza_principal": fortaleza.get("nombre_natural") if fortaleza else None,
+#             "debilidad_principal": debilidad.get("nombre_natural") if debilidad else None,
+#         },
+#         "resumen_corto": resumen_corto,
+#         "categorias": categorias_ui,
+#         "mejoras_prioritarias": generar_mejoras_prioritarias(categorias),
+#         "demograficos": diagnostico_json.get("demograficos", {})
+#     }
+#
+#
+# # =========================================================
+# # PERSISTENCIA DE DIAGNÓSTICO
+# # =========================================================
+#
+# def guardar_scores_desde_perfil(cur, aspirante_id: int):
+#     cur.execute("""
+#         SELECT id, campo_db, tipo
+#         FROM diagnostico_variable
+#         WHERE encuesta_id = 0
+#         AND tipo in ('numérica','rango')
+#         AND campo_db IS NOT NULL
+#     """)
+#     variables = cur.fetchall()
+#
+#     if not variables:
+#         return
+#
+#     values_sql = ",".join(
+#         f"({v[0]}, p.{v[1]})"
+#         for v in variables
+#     )
+#
+#     sql = f"""
+#     WITH perfil_vars AS (
+#         SELECT
+#             p.aspirante_id,
+#             v.variable_id,
+#             v.valor
+#         FROM aspirantes_perfil p
+#         CROSS JOIN LATERAL (
+#             VALUES
+#             {values_sql}
+#         ) AS v(variable_id, valor)
+#         WHERE p.aspirante_id = %s
+#         AND v.valor IS NOT NULL
+#     ),
+#     valores_resueltos AS (
+#         SELECT
+#             pv.aspirante_id,
+#             pv.variable_id,
+#             pv.valor AS valor_original,
+#             dvv.id AS valor_modificado
+#         FROM perfil_vars pv
+#         JOIN diagnostico_variable dv
+#             ON dv.id = pv.variable_id
+#         JOIN diagnostico_variable_valor dvv
+#             ON dvv.variable_id = pv.variable_id
+#             AND (
+#                 (dv.tipo = 'numérica' AND dvv.score = pv.valor)
+#                 OR
+#                 (dv.tipo = 'rango' AND pv.valor BETWEEN dvv.min_val AND dvv.max_val)
+#             )
+#     )
+#     INSERT INTO diagnostico_score_variable
+#     (aspirante_id, variable_id, valor, valor_id)
+#     SELECT
+#         aspirante_id,
+#         variable_id,
+#         valor_original,
+#         valor_modificado
+#     FROM valores_resueltos
+#     ON CONFLICT (aspirante_id, variable_id)
+#     DO UPDATE
+#     SET valor = EXCLUDED.valor,
+#         valor_id = EXCLUDED.valor_id
+#     """
+#     cur.execute(sql, (aspirante_id,))
+#
+#
+# def calcular_diagnostico_y_json(cur, aspirante_id: int, modelo_id: int):
+#     sql = """
+#     WITH modelo_info AS (
+#         SELECT
+#             id,
+#             nombre AS modelo_nombre,
+#             descripcion AS modelo_descripcion
+#         FROM diagnostico_modelo
+#         WHERE id = %(modelo_id)s
+#     ),
+#
+#     demograficos AS (
+#         SELECT
+#             jsonb_object_agg(v.nombre, vv.label) AS data
+#         FROM diagnostico_score_variable sv
+#         JOIN diagnostico_variable v
+#             ON v.id = sv.variable_id
+#         LEFT JOIN diagnostico_variable_valor vv
+#             ON vv.id = sv.valor_id
+#         WHERE sv.aspirante_id = %(aspirante_id)s
+#         AND sv.variable_id IN (1,2,3,12,20)
+#     ),
+#
+#     variables_calc AS (
+#         SELECT
+#             mc.modelo_id,
+#             mc.categoria_id,
+#             mc.peso_categoria,
+#             mc.orden AS categoria_orden,
+#
+#             v.id AS variable_id,
+#             v.nombre AS variable_nombre,
+#             v.tipo,
+#             v.peso_variable,
+#             v.orden AS variable_orden,
+#
+#             sv.valor,
+#             vv.score,
+#             vv.nivel,
+#             vv.label,
+#
+#             COALESCE(vv.score, 0) AS score_variable
+#
+#         FROM diagnostico_modelo_categoria mc
+#
+#         JOIN diagnostico_variable v
+#             ON v.categoria_id = mc.categoria_id
+#             AND v.activa = true
+#
+#         LEFT JOIN diagnostico_score_variable sv
+#             ON sv.variable_id = v.id
+#             AND sv.aspirante_id = %(aspirante_id)s
+#
+#         LEFT JOIN diagnostico_variable_valor vv
+#             ON vv.id = sv.valor_id
+#
+#         WHERE mc.modelo_id = %(modelo_id)s
+#     ),
+#
+#     categorias_calc AS (
+#         SELECT
+#             modelo_id,
+#             categoria_id,
+#             peso_categoria,
+#             categoria_orden,
+#
+#             jsonb_agg(
+#                 jsonb_build_object(
+#                     'variable_id', variable_id,
+#                     'variable', variable_nombre,
+#                     'tipo', tipo,
+#                     'valor', valor,
+#                     'score', score_variable,
+#                     'peso_variable', peso_variable,
+#                     'nivel', nivel,
+#                     'label', label
+#                 )
+#                 ORDER BY variable_orden
+#             ) AS variables,
+#
+#             SUM(score_variable * (peso_variable / 100.0)) AS score_categoria
+#
+#         FROM variables_calc
+#
+#         GROUP BY
+#             modelo_id,
+#             categoria_id,
+#             peso_categoria,
+#             categoria_orden
+#     ),
+#
+#     categorias_nivel AS (
+#         SELECT
+#             *,
+#             CASE
+#                 WHEN score_categoria >= 3.75 THEN 3
+#                 WHEN score_categoria >= 2.75 THEN 2
+#                 ELSE 1
+#             END AS nivel,
+#
+#             CASE
+#                 WHEN score_categoria < 1.5 THEN 1
+#                 WHEN score_categoria < 2.5 THEN 2
+#                 WHEN score_categoria < 3.5 THEN 3
+#                 WHEN score_categoria < 4.5 THEN 4
+#                 ELSE 5
+#             END AS nivel5
+#         FROM categorias_calc
+#     ),
+#
+#     categorias_json AS (
+#         SELECT
+#             cn.categoria_id,
+#             cn.categoria_orden,
+#             cn.variables,
+#             cn.score_categoria,
+#             cn.peso_categoria,
+#             cn.nivel,
+#             cn.nivel5,
+#
+#             c.nombre AS categoria_nombre,
+#             c.nombre_natural,
+#             c.descripcion AS categoria_descripcion,
+#
+#             s.script,
+#             COALESCE(sl.script, s.script) AS script_largo
+#
+#         FROM categorias_nivel cn
+#
+#         JOIN diagnostico_categoria c
+#             ON c.id = cn.categoria_id
+#
+#         LEFT JOIN diagnostico_interpretacion_categoria s
+#             ON s.categoria_id = cn.categoria_id
+#             AND s.nivel = cn.nivel5
+#             AND s.escala = 5
+#
+#         LEFT JOIN diagnostico_interpretacion_categoria sl
+#             ON sl.categoria_id = cn.categoria_id
+#             AND sl.nivel = cn.nivel5
+#             AND sl.escala = 51
+#     ),
+#
+#     total_calc AS (
+#         SELECT
+#             SUM(score_categoria * (peso_categoria / 100.0)) AS score_total
+#         FROM categorias_json
+#     ),
+#
+#     json_final AS (
+#         SELECT
+#             jsonb_build_object(
+#                 'modelo_id', m.id,
+#                 'modelo_nombre', m.modelo_nombre,
+#                 'modelo_descripcion', m.modelo_descripcion,
+#
+#                 'demograficos', d.data,
+#
+#                 'score_total', ROUND(tc.score_total, 2),
+#
+#                 'categorias',
+#                 jsonb_agg(
+#                     jsonb_build_object(
+#                         'categoria_id', categoria_id,
+#                         'categoria_nombre', categoria_nombre,
+#                         'nombre_natural', nombre_natural,
+#                         'descripcion', categoria_descripcion,
+#                         'peso_categoria', peso_categoria,
+#                         'score', ROUND(score_categoria, 2),
+#                         'nivel', nivel,
+#                         'nivel5', nivel5,
+#                         'script', script,
+#                         'script_largo', script_largo,
+#                         'variables', variables
+#                     )
+#                     ORDER BY categoria_orden
+#                 )
+#             ) AS diagnostico_json,
+#
+#             tc.score_total
+#
+#         FROM categorias_json cj
+#         CROSS JOIN total_calc tc
+#         CROSS JOIN modelo_info m
+#         CROSS JOIN demograficos d
+#
+#         GROUP BY
+#             tc.score_total,
+#             m.id,
+#             m.modelo_nombre,
+#             m.modelo_descripcion,
+#             d.data
+#     )
+#
+#     INSERT INTO diagnostico_score_general
+#     (aspirante_id, modelo_id, puntaje_total, nivel, diagnostico_json)
+#
+#     SELECT
+#         %(aspirante_id)s,
+#         %(modelo_id)s,
+#         ROUND(score_total, 2),
+#
+#         CASE
+#             WHEN score_total >= 3.75 THEN 3
+#             WHEN score_total >= 2.75 THEN 2
+#             ELSE 1
+#         END,
+#
+#         diagnostico_json
+#
+#     FROM json_final
+#
+#     ON CONFLICT (aspirante_id, modelo_id)
+#     DO UPDATE
+#     SET
+#         puntaje_total = EXCLUDED.puntaje_total,
+#         nivel = EXCLUDED.nivel,
+#         diagnostico_json = EXCLUDED.diagnostico_json
+#     """
+#
+#     cur.execute(sql, {
+#         "aspirante_id": aspirante_id,
+#         "modelo_id": modelo_id
+#     })
+#
+#     cur.execute("""
+#         SELECT diagnostico_json
+#         FROM diagnostico_score_general
+#         WHERE aspirante_id = %s
+#         AND modelo_id = %s
+#     """, (aspirante_id, modelo_id))
+#
+#     row = cur.fetchone()
+#
+#     if not row:
+#         return
+#
+#     diagnostico = row[0]
+#
+#     categorias = []
+#     for c in diagnostico.get("categorias", []):
+#         categorias.append({
+#             "nombre_natural": c.get("nombre_natural"),
+#             "score": c.get("score", 0)
+#         })
+#
+#     insights = generar_insights_principales(categorias)
+#
+#     diagnostico["insight_principal"] = insights["insight_principal"]
+#     diagnostico["alerta_principal"] = insights["alerta_principal"]
+#
+#     resumen_corto = generar_resumen_corto_desde_diagnostico(diagnostico)
+#
+#     cur.execute("""
+#         UPDATE diagnostico_score_general
+#         SET diagnostico_json = %s,
+#             diagnostico_resumen = %s
+#         WHERE aspirante_id = %s
+#         AND modelo_id = %s
+#     """, (
+#         json.dumps(diagnostico),
+#         resumen_corto[:500],
+#         aspirante_id,
+#         modelo_id
+#     ))
+#
+#
+# # =========================================================
+# # FLUJO DE TALENTO / PREEVALUACIÓN
+# # =========================================================
+#
+# def actualizar_estado_preevaluacion(aspirante_id: int, payload: Dict[str, Any]):
+#     estado = payload.get("estado_evaluacion")
+#     estado_id = None
+#
+#     if estado:
+#         estado_id = ESTADO_MAP_PREEVAL.get(estado, ESTADO_DEFAULT)
+#
+#     with get_connection_context() as conn:
+#         cur = conn.cursor()
+#
+#         sets = []
+#         valores = []
+#
+#         for campo, valor in payload.items():
+#             if valor is not None:
+#                 sets.append(f"{campo} = %s")
+#                 valores.append(valor)
+#
+#         if sets:
+#             valores.append(aspirante_id)
+#
+#             query = f"""
+#                 UPDATE aspirantes_perfil
+#                 SET {', '.join(sets)},
+#                     actualizado_en = NOW()
+#                 WHERE aspirante_id = %s
+#             """
+#
+#             cur.execute(query, valores)
+#
+#         if estado_id is not None:
+#             cur.execute("""
+#                 UPDATE aspirantes
+#                 SET estado_id = %s
+#                 WHERE id = %s
+#             """, (estado_id, aspirante_id))
+#
+#         conn.commit()
+#
+#     print(
+#         f"✅ Creador {aspirante_id} actualizado "
+#         f"(estado={estado}, estado_id={estado_id})"
+#     )
+#
+#
+# @router.post(
+#     "/api/aspirantes_perfil/{aspirante_id}/talento/actualizar",
+#     tags=["Categoria talento"]
+# )
+# def sync_cualitativo_perfil_y_variables(
+#     aspirante_id: int,
+#     payload: PerfilCualitativoPayload,
+#     usuario_actual: dict = Depends(obtener_usuario_actual),
+# ):
+#     try:
+#         data = payload.model_dump()
+#
+#         for k, v in data.items():
+#             try:
+#                 data[k] = int(v)
+#             except Exception:
+#                 raise HTTPException(status_code=400, detail=f"{k} debe ser entero")
+#
+#             if not (0 <= data[k] <= 5):
+#                 raise HTTPException(status_code=400, detail=f"{k} debe estar entre 0 y 5")
+#
+#         with get_connection_context() as conn:
+#             with conn.cursor() as cur:
+#
+#                 cur.execute("""
+#                     UPDATE aspirantes_perfil
+#                     SET apariencia = %s,
+#                         engagement = %s,
+#                         calidad_contenido = %s,
+#                         eval_biografia = %s,
+#                         metadata_videos = %s,
+#                         eval_foto = %s,
+#                         potencial_estimado = %s
+#                     WHERE aspirante_id = %s
+#                 """, (
+#                     data["apariencia"],
+#                     data["engagement"],
+#                     data["calidad_contenido"],
+#                     data["eval_biografia"],
+#                     data["metadata_videos"],
+#                     data["eval_foto"],
+#                     data["potencial_estimado"],
+#                     aspirante_id
+#                 ))
+#
+#                 perfil_rows = cur.rowcount
+#
+#                 guardar_scores_desde_perfil(cur, aspirante_id)
+#
+#                 modelo_id = obtener_modelo_activo(cur)
+#
+#                 if not modelo_id:
+#                     raise HTTPException(
+#                         status_code=500,
+#                         detail="No existe modelo de diagnóstico activo"
+#                     )
+#
+#                 calcular_diagnostico_y_json(cur, aspirante_id, modelo_id)
+#
+#             conn.commit()
+#
+#         return {
+#             "status": "ok",
+#             "mensaje": "aspirantes_perfil actualizado, scores sincronizados y diagnóstico recalculado",
+#             "aspirante_id": aspirante_id,
+#             "aspirantes_perfil_filas_afectadas": perfil_rows,
+#             "payload": data
+#         }
+#
+#     except HTTPException:
+#         raise
+#
+#     except Exception as e:
+#         import traceback
+#         traceback.print_exc()
+#
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error en sync_cualitativo_perfil_y_variables: {str(e)}"
+#         )
+#
+#
+# @router.put("/api/aspirantes_perfil/{aspirante_id}/preevaluacion")
+# def actualizar_preevaluacion(
+#     aspirante_id: int,
+#     datos: ActualizarPreEvaluacionIn,
+#     usuario_actual: dict = Depends(obtener_usuario_actual),
+# ):
+#     try:
+#         payload = {
+#             "estado_evaluacion": datos.estado_evaluacion,
+#             "usuario_evalua": datos.usuario_evalua,
+#             "observaciones_finales": datos.observaciones_finales
+#         }
+#
+#         actualizar_estado_preevaluacion(aspirante_id, payload)
+#
+#         return {
+#             "status": "ok",
+#             "mensaje": "Pre-evaluación actualizada correctamente",
+#             "aspirante_id": aspirante_id,
+#             "estado_evaluacion": datos.estado_evaluacion,
+#         }
+#
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
+#
+#
+# # =========================================================
+# # ENDPOINTS DIAGNÓSTICO
+# # =========================================================
+#
+# # Mantener este endpoint actual para la SaaS interna
+# @router.get("/api/aspirantes/{aspirante_id}/diagnostico")
+# def diagnostico_creador(aspirante_id: int):
+#     with get_connection_context() as conn:
+#         with conn.cursor() as cur:
+#
+#             modelo_id = obtener_modelo_activo(cur)
+#
+#             if not modelo_id:
+#                 return {
+#                     "success": False,
+#                     "message": "No hay modelo de diagnóstico activo"
+#                 }
+#
+#             cur.execute("""
+#                 SELECT
+#                     d.diagnostico_json,
+#                     c.nickname,
+#                     c.nombre_real as nombre
+#                 FROM diagnostico_score_general d
+#                 JOIN aspirantes c
+#                     ON c.id = d.aspirante_id
+#                 WHERE d.aspirante_id = %s
+#                 AND d.modelo_id = %s
+#             """, (aspirante_id, modelo_id))
+#
+#             r = cur.fetchone()
+#
+#             if not r:
+#                 return {
+#                     "success": False,
+#                     "message": "Diagnóstico no calculado"
+#                 }
+#
+#             diagnostico_json, nickname, nombre = r
+#
+#             return {
+#                 "success": True,
+#                 "creador": {
+#                     "nickname": nickname,
+#                     "nombre": nombre
+#                 },
+#                 **diagnostico_json
+#             }
+#
+#
+# # Nuevo endpoint orientado al portal del aspirante
+# @router.get("/api/aspirantes/{aspirante_id}/diagnostico-ui")
+# def diagnostico_aspirante_ui(aspirante_id: int):
+#     with get_connection_context() as conn:
+#         with conn.cursor() as cur:
+#
+#             modelo_id = obtener_modelo_activo(cur)
+#
+#             if not modelo_id:
+#                 return {
+#                     "success": False,
+#                     "message": "No hay modelo de diagnóstico activo"
+#                 }
+#
+#             cur.execute("""
+#                 SELECT
+#                     d.diagnostico_json,
+#                     d.diagnostico_resumen,
+#                     c.nickname,
+#                     c.nombre_real as nombre
+#                 FROM diagnostico_score_general d
+#                 JOIN aspirantes c
+#                     ON c.id = d.aspirante_id
+#                 WHERE d.aspirante_id = %s
+#                 AND d.modelo_id = %s
+#             """, (aspirante_id, modelo_id))
+#
+#             r = cur.fetchone()
+#
+#             if not r:
+#                 return {
+#                     "success": False,
+#                     "message": "Diagnóstico no calculado"
+#                 }
+#
+#             diagnostico_json, diagnostico_resumen, nickname, nombre = r
+#
+#             if diagnostico_resumen and isinstance(diagnostico_json, dict):
+#                 diagnostico_json["diagnostico_resumen"] = diagnostico_resumen
+#
+#             return construir_diagnostico_ui(
+#                 diagnostico_json=diagnostico_json,
+#                 nickname=nickname,
+#                 nombre=nombre
+#             )
+#
+#
+# # =========================================================
+# # ENTREVISTA TIPOS
+# # =========================================================
+#
+# @router.get("/api/entrevista-tipos/opciones")
+# def opciones_entrevista_tipos():
+#     with get_connection_context() as conn:
+#         with conn.cursor() as cur:
+#
+#             cur.execute("""
+#                 SELECT
+#                     id,
+#                     nombre
+#                 FROM entrevista_tipo
+#                 WHERE activo = TRUE
+#                 ORDER BY orden, id
+#             """)
+#
+#             rows = cur.fetchall()
+#             columnas = [desc[0] for desc in cur.description]
+#             data = [dict(zip(columnas, r)) for r in rows]
+#
+#             return {
+#                 "success": True,
+#                 "data": data
+#             }
+#
+#
+# @router.get("/api/entrevista-tipos")
+# def listar_entrevista_tipos():
+#     with get_connection_context() as conn:
+#         with conn.cursor() as cur:
+#
+#             cur.execute("""
+#                 SELECT
+#                     id,
+#                     nombre,
+#                     descripcion,
+#                     duracion_default,
+#                     tipo,
+#                     activo,
+#                     orden
+#                 FROM entrevista_tipo
+#                 ORDER BY orden, id
+#             """)
+#
+#             rows = cur.fetchall()
+#             columnas = [desc[0] for desc in cur.description]
+#             data = [dict(zip(columnas, r)) for r in rows]
+#
+#             return {
+#                 "success": True,
+#                 "data": data
+#             }
+#
+#
+# @router.get("/api/entrevista-tipos/{tipo_id}")
+# def obtener_entrevista_tipo(tipo_id: int):
+#     with get_connection_context() as conn:
+#         with conn.cursor() as cur:
+#
+#             cur.execute("""
+#                 SELECT
+#                     id,
+#                     nombre,
+#                     descripcion,
+#                     duracion_default,
+#                     tipo,
+#                     activo,
+#                     orden
+#                 FROM entrevista_tipo
+#                 WHERE id = %s
+#             """, (tipo_id,))
+#
+#             r = cur.fetchone()
+#
+#             if not r:
+#                 return {
+#                     "success": False,
+#                     "message": "Tipo de entrevista no encontrado"
+#                 }
+#
+#             columnas = [desc[0] for desc in cur.description]
+#             data = dict(zip(columnas, r))
+#
+#             return {
+#                 "success": True,
+#                 "data": data
+#             }
+#
+#
+# @router.post("/api/entrevista-tipos")
+# def crear_entrevista_tipo(data: dict):
+#     with get_connection_context() as conn:
+#         with conn.cursor() as cur:
+#
+#             cur.execute("""
+#                 INSERT INTO entrevista_tipo (
+#                     nombre,
+#                     descripcion,
+#                     duracion_default,
+#                     tipo,
+#                     activo,
+#                     orden
+#                 )
+#                 VALUES (%s,%s,%s,%s,%s,%s)
+#                 RETURNING id
+#             """, (
+#                 data.get("nombre"),
+#                 data.get("descripcion"),
+#                 data.get("duracion_default"),
+#                 data.get("tipo"),
+#                 data.get("activo", True),
+#                 data.get("orden", 1)
+#             ))
+#
+#             new_id = cur.fetchone()[0]
+#             conn.commit()
+#
+#             return {
+#                 "success": True,
+#                 "id": new_id
+#             }
+#
+#
+# @router.put("/api/entrevista-tipos/{tipo_id}")
+# def actualizar_entrevista_tipo(tipo_id: int, data: dict):
+#     with get_connection_context() as conn:
+#         with conn.cursor() as cur:
+#
+#             cur.execute("""
+#                 UPDATE entrevista_tipo
+#                 SET
+#                     nombre = %s,
+#                     descripcion = %s,
+#                     duracion_default = %s,
+#                     tipo = %s,
+#                     activo = %s,
+#                     orden = %s
+#                 WHERE id = %s
+#             """, (
+#                 data.get("nombre"),
+#                 data.get("descripcion"),
+#                 data.get("duracion_default"),
+#                 data.get("tipo"),
+#                 data.get("activo"),
+#                 data.get("orden"),
+#                 tipo_id
+#             ))
+#
+#             conn.commit()
+#
+#             return {
+#                 "success": True
+#             }
+
+
+
+
 
 
 # import logging
