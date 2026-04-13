@@ -1380,7 +1380,7 @@ def evaluar_entrevista(
 # ENDPOINT 5: EVALUAR POR AGENDAMIENTO
 # =========================================================
 
-@router.patch("/api/agendamientos/{agendamiento_id}/creador/{aspirante_id}/evaluar")
+@router.patch("/api/agendamientos/{agendamiento_id}/aspirante/{aspirante_id}/evaluar")
 def evaluar_por_agendamiento(
     agendamiento_id: int,
     aspirante_id: int,
