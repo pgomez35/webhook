@@ -177,7 +177,7 @@ def actualizar_estado_creador_preevaluacion(aspirante_id: int, estado: str):
 #         """, (estado_id, aspirante_id))
 
 
-# @router.put("/api/aspirantes_perfil/{aspirante_id}/preevaluacion")
+# legacy: PUT preevaluacion (handler comentado; no hay ruta registrada)
 # def actualizar_preevaluacion(
 #     aspirante_id: int,
 #     datos: ActualizarPreEvaluacionIn,
@@ -265,8 +265,8 @@ def forzar_cambio_estado_por_id(aspirante_id: int, nuevo_id_estado: int):
 #     eval_foto: int = Field(..., ge=0, le=5)  # solo aspirantes_perfil
 
 
-# @router.post(
-#     "/api/aspirantes_perfil/{aspirante_id}/talento/actualizar",
+# legacy: POST aspirantes_perfil/.../talento/actualizar (comentado; sin @router)
+#     ruta histórica no expuesta
 #     tags=["Categoria talento"]
 # )
 # def sync_cualitativo_perfil_y_variables(
@@ -440,8 +440,8 @@ def forzar_cambio_estado_por_id(aspirante_id: int, nuevo_id_estado: int):
 #     eval_foto: int = Field(..., ge=0, le=5)
 
 
-# @router.get(
-#     "/api/aspirantes_perfil/{aspirante_id}/talento/cargar",
+# legacy: GET aspirantes_perfil/.../talento/cargar (comentado; sin @router)
+#     ruta histórica no expuesta
 #     tags=["Perfil Cualitativo"],
 #     response_model=PerfilCualitativoPayloadOut
 # )
@@ -1283,7 +1283,7 @@ class CategoriaPesoUpdate(BaseModel):
 class ModeloCategoriasUpdate(BaseModel):
     categorias: List[CategoriaPesoUpdate]
 
-# @router.get("/api/modelos-evaluacion", response_model=List[ModeloEvaluacionOut])
+# legacy: GET modelos-evaluacion (handler comentado; no hay ruta registrada)
 # def listar_modelos(activos: bool = Query(True)):
 #     TENANT = current_tenant.get()
 #
@@ -1321,7 +1321,7 @@ class ModeloCategoriasUpdate(BaseModel):
 #     ]
 #
 #
-# @router.post("/api/modelos-evaluacion")
+# legacy: POST modelos-evaluacion (handler comentado; no hay ruta registrada)
 # def crear_modelo(data: ModeloEvaluacionCreate):
 #     TENANT = current_tenant.get()
 #     if not TENANT:
@@ -1341,7 +1341,7 @@ class ModeloCategoriasUpdate(BaseModel):
 #     return {"id": modelo_id}
 #
 #
-# @router.get("/api/modelos-evaluacion/{modelo_id}/categorias",
+# legacy: GET modelos-evaluacion/.../categorias (comentado; sin @router)
 #             response_model=List[ModeloCategoriaOut])
 # def listar_categorias(modelo_id: int):
 #     TENANT = current_tenant.get()
@@ -1369,7 +1369,7 @@ class ModeloCategoriasUpdate(BaseModel):
 #     ]
 #
 #
-# @router.post("/api/modelos-evaluacion/{modelo_id}/categorias")
+# legacy: POST modelos-evaluacion/.../categorias (handler comentado; no hay ruta registrada)
 # def crear_categoria(modelo_id: int, data: ModeloCategoriaCreate):
 #     TENANT = current_tenant.get()
 #     if not TENANT:
@@ -1389,7 +1389,7 @@ class ModeloCategoriasUpdate(BaseModel):
 #     return {"id": categoria_id}
 #
 #
-# @router.get("/api/categorias/{categoria_id}/variables",
+# legacy: GET categorias/.../variables (comentado; sin @router)
 #             response_model=List[ModeloVariableOut])
 # def listar_variables(categoria_id: int):
 #     TENANT = current_tenant.get()
@@ -1419,7 +1419,7 @@ class ModeloCategoriasUpdate(BaseModel):
 #     ]
 #
 #
-# @router.post("/api/categorias/{categoria_id}/variables")
+# legacy: POST categorias/.../variables (handler comentado; no hay ruta registrada)
 # def crear_variable(categoria_id: int, data: ModeloVariableCreate):
 #     TENANT = current_tenant.get()
 #     if not TENANT:
@@ -1536,7 +1536,7 @@ def listar_resultados(aspirante_id: int):
         for r in rows
     ]
 
-# @router.put("/api/modelos-evaluacion/{modelo_id}/estado")
+# legacy: PUT modelos-evaluacion/.../estado (handler comentado; no hay ruta registrada)
 # def actualizar_estado_modelo(
 #     modelo_id: int,
 #     data: ModeloEvaluacionUpdate
@@ -1587,7 +1587,7 @@ def listar_resultados(aspirante_id: int):
 #     }
 #
 #
-# @router.put("/api/modelos-evaluacion/{modelo_id}/categorias")
+# legacy: PUT modelos-evaluacion/.../categorias (handler comentado; no hay ruta registrada)
 # def actualizar_pesos_categorias(modelo_id: int, data: ModeloCategoriasUpdate):
 #     TENANT = current_tenant.get()
 #     if not TENANT:
