@@ -221,8 +221,8 @@ def actualizar_preferencias(aspirante_id: int, datos: PreferenciasHabitosInput):
 def guardar_resumen_final(aspirante_id: int, datos: GuardarResumenInput):
     try:
         payload = {
-            "diagnostico": datos.diagnostico,
-            "mejoras_sugeridas": datos.mejoras_sugeridas,
+            # Campos migrados fuera de aspirantes_perfil:
+            # diagnostico y mejoras_sugeridas ya no se persisten aquí.
             "observaciones_finales": datos.observaciones_finales,
             "usuario_evalua": datos.usuario_evalua,
             "estado_evaluacion": datos.estado_evaluacion,

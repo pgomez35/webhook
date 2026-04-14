@@ -4257,21 +4257,21 @@ def enviar_link_auto_agendamiento_aspirante(
             raise HTTPException(status_code=400, detail="El aspirante no tiene teléfono registrado.")
 
         # 2️⃣ Actualizar estado según tipo_agendamiento
-        nuevo_estado_id = None
+        nuevo_estado_codigo = None
         if data.tipo_agendamiento == "ENTREVISTA":
-            nuevo_estado_id = 8
+            nuevo_estado_codigo = "solicitud_agendamiento_entrevista"
         elif data.tipo_agendamiento == "LIVE":
-            nuevo_estado_id = 5
+            nuevo_estado_codigo = "solicitud_agendamiento_tiktok"
 
-        if nuevo_estado_id:
+        if nuevo_estado_codigo:
             cur.execute(
                 """
                 UPDATE aspirantes_perfil
-                SET id_chatbot_estado = %s,
+                SET estado_evaluacion = %s,
                     actualizado_en = NOW()
                 WHERE aspirante_id = %s
                 """,
-                (nuevo_estado_id, data.aspirante_id)
+                (nuevo_estado_codigo, data.aspirante_id)
             )
 
         # 3️⃣ Crear token de agendamiento
@@ -4443,12 +4443,15 @@ def enviar_mensaje_no_apto(
             raise HTTPException(status_code=400, detail="El aspirante no tiene número registrado.")
 
         # 2️⃣ Marcar estado NO APTO
-        cur.execute("""
+        cur.execute(
+            """
             UPDATE aspirantes_perfil
-            SET id_chatbot_estado = 4,
+            SET estado_evaluacion = 'no_apto',
                 actualizado_en = NOW()
             WHERE aspirante_id = %s;
-        """, (aspirante_id,))
+            """,
+            (aspirante_id,),
+        )
         conn.commit()
 
     # 3️⃣ Obtener credenciales WABA

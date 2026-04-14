@@ -644,24 +644,33 @@ def guardar_mensaje(telefono, texto, tipo="recibido", es_audio=False):
         with get_connection_context() as conn:
             with conn.cursor() as cur:
 
-                # Buscar o crear usuario
+                # Buscar usuario existente para asociar usuario_id (puede ser NULL)
                 cur.execute("SELECT id FROM aspirantes WHERE telefono = %s", (telefono,))
                 row = cur.fetchone()
+                usuario_id = row[0] if row else None
 
-                if row:
-                    aspirante_id = row[0]
-                else:
-                    cur.execute(
-                        "INSERT INTO aspirantes (telefono) VALUES (%s) RETURNING id",
-                        (telefono,)
-                    )
-                    aspirante_id = cur.fetchone()[0]
+                tipo_mensaje = "audio" if es_audio else "text"
+                estado = "received" if tipo == "recibido" else "sent"
 
-                # Insertar mensaje
-                cur.execute("""
-                    INSERT INTO mensajes (aspirante_id, contenido, tipo, es_audio, fecha)
-                    VALUES (%s, %s, %s, %s, %s)
-                """, (aspirante_id, texto, tipo, es_audio, datetime.now()))
+                # Insertar en tabla nueva mensajes_whatsapp
+                cur.execute(
+                    """
+                    INSERT INTO mensajes_whatsapp
+                    (usuario_id, telefono, direccion, tipo, contenido, media_url, message_id_meta, estado, fecha)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        usuario_id,
+                        telefono,
+                        tipo,
+                        tipo_mensaje,
+                        texto,
+                        texto if es_audio else None,
+                        None,
+                        estado,
+                        datetime.now(),
+                    ),
+                )
 
             conn.commit()
 
@@ -706,12 +715,13 @@ def eliminar_mensajes(telefono):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                    DELETE FROM mensajes
-                    USING aspirantes
-                    WHERE mensajes.aspirante_id = aspirantes.id
-                    AND aspirantes.telefono = %s
-                """, (telefono,))
+                cur.execute(
+                    """
+                    DELETE FROM mensajes_whatsapp
+                    WHERE telefono = %s
+                    """,
+                    (telefono,),
+                )
                 conn.commit()
         print(f"🗑️ Mensajes eliminados para {telefono}")
         return True
@@ -728,12 +738,15 @@ def ver_mensajes(limit=10):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT id, telefono, contenido, tipo, es_audio, fecha
-                    FROM mensajes
+                cur.execute(
+                    """
+                    SELECT id, telefono, contenido, tipo, fecha
+                    FROM mensajes_whatsapp
                     ORDER BY fecha DESC
                     LIMIT %s;
-                """, (limit,))
+                    """,
+                    (limit,),
+                )
                 resultados = cur.fetchall()
                 for fila in resultados:
                     print(f"🟢 {fila}")
@@ -807,22 +820,24 @@ def obtener_mensajesV0(telefono):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT m.contenido, m.tipo, m.fecha, m.es_audio
-                    FROM mensajes m
-                    INNER JOIN aspirantes u ON m.aspirante_id = u.id
-                    WHERE u.telefono = %s
-                    ORDER BY m.fecha ASC
-                """, (telefono,))
+                cur.execute(
+                    """
+                    SELECT contenido, direccion, fecha, tipo
+                    FROM mensajes_whatsapp
+                    WHERE telefono = %s
+                    ORDER BY fecha ASC
+                    """,
+                    (telefono,),
+                )
                 mensajes = cur.fetchall()
                 return [
                     {
                         "contenido": contenido,
-                        "tipo": tipo,
+                        "tipo": direccion,
                         "fecha": fecha.isoformat(),
-                        "es_audio": es_audio
+                        "es_audio": tipo_mensaje == "audio",
                     }
-                    for contenido, tipo, fecha, es_audio in mensajes
+                    for contenido, direccion, fecha, tipo_mensaje in mensajes
                 ]
     except (OperationalError, DatabaseError) as e:
         print(f"❌ Error de base de datos al obtener mensajes: {e}")
@@ -838,13 +853,15 @@ def obtener_ultimos_mensajes(limit=10):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT m.contenido, m.tipo, m.fecha, m.es_audio
-                    FROM mensajes m
-                    JOIN aspirantes u ON m.aspirante_id = u.id
-                    ORDER BY m.fecha ASC
+                cur.execute(
+                    """
+                    SELECT contenido, direccion, fecha, tipo
+                    FROM mensajes_whatsapp
+                    ORDER BY fecha ASC
                     LIMIT %s;
-                    """, (limit,))
+                    """,
+                    (limit,),
+                )
                 resultados = cur.fetchall()
                 for fila in resultados:
                     print(f"🟢 {fila}")
@@ -1685,10 +1702,6 @@ def obtener_aspirantes_perfil(aspirante_id):
                             pc.metadata_videos,
                             pc.actividad_actual,
                             pc.idioma,
-                            pc.diagnostico,
-                            pc.mejoras_sugeridas,
-                            pc.fecha_entrevista,
-                            pc.entrevista,
                             pc.estado_evaluacion,
                             -- Campo traído desde la tabla aspirantes
                             c.encuesta_terminada
@@ -1713,8 +1726,6 @@ def obtener_aspirantes_perfil_entrevista_invitacion(aspirante_id):
                 cur.execute("""
                     SELECT
                         apto,
-                        entrevista,
-                        fecha_entrevista,
                         calificacion_entrevista,
                         invitacion_tiktok,
                         acepta_invitacion,
@@ -1856,9 +1867,8 @@ def actualizar_datos_aspirantes_perfil(aspirante_id, datos_dict):
             "intereses", "tipo_contenido", "horario_preferido", "intencion_trabajo",
             "puntaje_habitos", "puntaje_habitos_categoria",
             # Resumen
-            "estado", "diagnostico", "mejoras_sugeridas",
+            "estado",
             "puntaje_total", "puntaje_total_categoria",
-            "fecha_entrevista", "entrevista",
             "observaciones_finales", "estado_evaluacion",
         ]
 

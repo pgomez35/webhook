@@ -47,40 +47,21 @@ from typing import Optional, Dict, Any, Tuple
 
 def guardar_estado_eval(aspirante_id, codigo_estado):
     """
-    Actualiza la tabla aspirantes_perfil con el nuevo estado.
-    1. Busca el ID numérico del estado en 'chatbot_estados_aspirante' usando el código.
-    2. Actualiza 'aspirantes_perfil'.
+    Actualiza la tabla aspirantes_perfil con el nuevo estado textual.
     """
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                # PASO 1: Obtener el ID numérico basado en el texto (ej: 'esperando_link...')
-                query_lookup = """
-                               SELECT id_chatbot_estado
-                               FROM chatbot_estados_aspirante
-                               WHERE codigo = %s \
-                               """
-                cur.execute(query_lookup, (codigo_estado,))
-                row = cur.fetchone()
-
-                if not row:
-                    print(
-                        f"❌ ERROR CRÍTICO: El estado '{codigo_estado}' NO EXISTE en la tabla 'chatbot_estados_aspirante'.")
-                    print("💡 Solución: Debes insertar este estado en la tabla de configuración SQL primero.")
-                    return False
-
-                id_estado_numerico = row[0]
-
-                # PASO 2: Actualizar el perfil del creador
+                # Guardamos el estado directamente como texto en aspirantes_perfil.estado_evaluacion
                 query_update = """
                                UPDATE aspirantes_perfil
-                               SET id_chatbot_estado = %s
+                               SET estado_evaluacion = %s
                                WHERE aspirante_id = %s \
                                """
-                cur.execute(query_update, (id_estado_numerico, aspirante_id))
+                cur.execute(query_update, (codigo_estado, aspirante_id))
                 conn.commit()
 
-                print(f"💾 BD Actualizada: Creador {aspirante_id} -> Estado '{codigo_estado}' (ID: {id_estado_numerico})")
+                print(f"💾 BD Actualizada: Creador {aspirante_id} -> Estado '{codigo_estado}'")
                 return True
 
     except Exception as e:
@@ -89,33 +70,27 @@ def guardar_estado_eval(aspirante_id, codigo_estado):
 
 def buscar_estado_creador(aspirante_id):
     """
-    Obtiene el estado actual del creador a partir de aspirantes_perfil
-    y trae:
-    - codigo_estado
-    - mensaje_frontend_simple
-    - mensaje_chatbot_simple
+    Obtiene el estado actual del creador desde aspirantes_perfil.estado_evaluacion
+    y devuelve estructura compatible con el flujo actual.
     """
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 sql = """
                     SELECT
-                        cea.codigo,
-                        cea.mensaje_frontend_simple,
-                        cea.mensaje_chatbot_simple
+                        pc.estado_evaluacion
                     FROM aspirantes_perfil pc
-                    INNER JOIN chatbot_estados_aspirante cea
-                        ON pc.id_chatbot_estado = cea.id_chatbot_estado
                     WHERE pc.aspirante_id = %s
                 """
                 cur.execute(sql, (aspirante_id,))
                 row = cur.fetchone()
 
                 if row:
+                    codigo_estado = row[0]
                     return {
-                        "codigo_estado": row[0],
-                        "mensaje_frontend_simple": row[1],
-                        "mensaje_chatbot_simple": row[2],
+                        "codigo_estado": codigo_estado,
+                        "mensaje_frontend_simple": codigo_estado or "Estado no definido.",
+                        "mensaje_chatbot_simple": codigo_estado or "Selecciona una opción:",
                     }
 
                 return None

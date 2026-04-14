@@ -2849,21 +2849,21 @@ def enviar_link_agendamiento_aspiranteV0(
             raise HTTPException(400, "El aspirante no tiene teléfono registrado.")
 
         # 2️⃣ Actualizar estado según tipo_agendamiento
-        nuevo_estado_id = None
+        nuevo_estado_codigo = None
         if data.tipo_agendamiento == "ENTREVISTA":
-            nuevo_estado_id = 8
+            nuevo_estado_codigo = "solicitud_agendamiento_entrevista"
         elif data.tipo_agendamiento == "LIVE":
-            nuevo_estado_id = 5
+            nuevo_estado_codigo = "solicitud_agendamiento_tiktok"
 
-        if nuevo_estado_id:
+        if nuevo_estado_codigo:
             cur.execute(
                 """
                 UPDATE aspirantes_perfil
-                SET id_chatbot_estado = %s,
+                SET estado_evaluacion = %s,
                     actualizado_en = NOW()
                 WHERE aspirante_id = %s
                 """,
-                (nuevo_estado_id, data.aspirante_id)
+                (nuevo_estado_codigo, data.aspirante_id)
             )
 
         conn.commit()
@@ -2970,21 +2970,21 @@ def enviar_link_agendamiento_aspiranteV1(
             raise HTTPException(400, "El aspirante no tiene teléfono registrado.")
 
         # 2) Actualizar estado según tipo_agendamiento
-        nuevo_estado_id = None
+        nuevo_estado_codigo = None
         if data.tipo_agendamiento == "ENTREVISTA":
-            nuevo_estado_id = 8
+            nuevo_estado_codigo = "solicitud_agendamiento_entrevista"
         elif data.tipo_agendamiento == "LIVE":
-            nuevo_estado_id = 5
+            nuevo_estado_codigo = "solicitud_agendamiento_tiktok"
 
-        if nuevo_estado_id:
+        if nuevo_estado_codigo:
             cur.execute(
                 """
                 UPDATE aspirantes_perfil
-                SET id_chatbot_estado = %s,
+                SET estado_evaluacion = %s,
                     actualizado_en    = NOW()
                 WHERE aspirante_id = %s
                 """,
-                (nuevo_estado_id, data.aspirante_id)
+                (nuevo_estado_codigo, data.aspirante_id)
             )
 
         conn.commit()
@@ -3090,23 +3090,23 @@ def crear_y_enviar_link_agendamiento_aspiranteTokenV1(
         # =================================================================
         # 3.5 🔄 ACTUALIZAR ESTADO (Usando el mismo cursor 'cur')
         # =================================================================
-        nuevo_estado_id = None
+        nuevo_estado_codigo = None
         if data.tipo_agendamiento == "ENTREVISTA":
-            nuevo_estado_id = 8
+            nuevo_estado_codigo = "solicitud_agendamiento_entrevista"
         elif data.tipo_agendamiento == "LIVE":
-            nuevo_estado_id = 5
+            nuevo_estado_codigo = "solicitud_agendamiento_tiktok"
 
-        if nuevo_estado_id:
+        if nuevo_estado_codigo:
             # Ejecutamos el update DIRECTAMENTE aquí
             # Nota: Verifica si tu tabla es 'aspirantes' o 'aspirantes_perfil'
             cur.execute(
                 """
                 UPDATE aspirantes_perfil
-                SET id_chatbot_estado = %s,
+                SET estado_evaluacion = %s,
                     actualizado_en    = NOW()
                 WHERE aspirante_id = %s
                 """,
-                (nuevo_estado_id, data.aspirante_id)
+                (nuevo_estado_codigo, data.aspirante_id)
             )
 
         # ✅ COMMIT FINAL: Guarda el Token Y el Estado al mismo tiempo
@@ -3285,11 +3285,14 @@ def enviar_mensaje_no_aptoV0(
             raise HTTPException(status_code=400, detail="El aspirante no tiene número registrado.")
 
         # 2️⃣ Marcar estado NO APTO
-        cur.execute("""
+        cur.execute(
+            """
             UPDATE aspirantes_perfil
-            SET id_chatbot_estado = 4
+            SET estado_evaluacion = 'no_apto'
             WHERE aspirante_id = %s;
-        """, (aspirante_id,))
+            """,
+            (aspirante_id,),
+        )
         conn.commit()
 
     # 3️⃣ Obtener credenciales WABA
@@ -3385,11 +3388,14 @@ def enviar_mensaje_invitacionV0(
             raise HTTPException(status_code=400, detail="El aspirante no tiene número registrado.")
 
         # 2️⃣ Marcar estado NO APTO
-        cur.execute("""
+        cur.execute(
+            """
             UPDATE aspirantes_perfil
-            SET id_chatbot_estado = 4
+            SET estado_evaluacion = 'no_apto'
             WHERE aspirante_id = %s;
-        """, (aspirante_id,))
+            """,
+            (aspirante_id,),
+        )
         conn.commit()
 
     # 3️⃣ Obtener credenciales WABA
@@ -3456,101 +3462,104 @@ def enviar_mensaje_invitacionV0(
         )
 
 
-@router.post("/api/aspirantes/no_apto/enviarV1")
-def enviar_mensaje_no_aptoV1(
-        data: EnviarNoAptoIn,
-        usuario_actual: dict = Depends(obtener_usuario_actual)
-):
-    """
-    Envía mensaje de NO APTO usando SIEMPRE la plantilla.
-    Evita errores por ventana de 24h.
-    """
-
-    with get_connection_context() as conn:
-        cur = conn.cursor()
-
-        # 1) Obtener datos del aspirante
-        cur.execute("""
-                    SELECT id,
-                           COALESCE(nickname, nombre_real) AS nombre,
-                           telefono
-                    FROM aspirantes
-                    WHERE id = %s;
-        """, (data.aspirante_id,))
-        row = cur.fetchone()
-
-        if not row:
-            raise HTTPException(status_code=404, detail="Aspirante no encontrado.")
-
-        aspirante_id, nombre, telefono = row
-
-        if not telefono:
-            raise HTTPException(status_code=400, detail="El aspirante no tiene número registrado.")
-
-        # =========================================================
-        # 1.5) NUEVO: Actualizar estado a 4 (NO APTO)
-        # =========================================================
-        cur.execute("""
-                    UPDATE aspirantes_perfil
-                    SET id_chatbot_estado = 4
-                    WHERE aspirante_id = %s;
-                    """, (aspirante_id,))
-
-        # ⚠️ CRÍTICO: Confirmar la transacción para guardar el cambio
-        conn.commit()
-
-    # =============================
-    # 2) Preparar envío por plantilla
-    # =============================
-    subdominio = current_tenant.get()
-    cuenta = obtener_cuenta_por_subdominio(subdominio)
-
-    if not cuenta:
-        raise HTTPException(
-            status_code=500,
-            detail=f"No hay credenciales WABA para el tenant '{subdominio}'."
-        )
-
-    token = cuenta["access_token"]
-    phone_id = cuenta["phone_number_id"]
-    business_name = (
-        cuenta.get("business_name")
-        or cuenta.get("nombre")
-        or "nuestra agencia"
-    )
-
-    parametros = [
-        nombre or "creador",
-        business_name
-    ]
-
-    # =============================
-    # 3) Enviar plantilla
-    # =============================
-    try:
-        codigo, respuesta_api = enviar_plantilla_generica_parametros(
-            token=token,
-            phone_number_id=phone_id,
-            numero_destino=telefono,
-            nombre_plantilla="no_apto_proceso_v2",
-            codigo_idioma="es_CO",
-            parametros=parametros,  # [nombre, business_name]
-            body_vars_count=2  # 👈 LOS 2 VAN AL BODY, SIN BOTÓN
-        )
-
-        return {
-            "status": "ok" if codigo < 300 else "error",
-            "tipo_envio": "plantilla",
-            "codigo_meta": codigo,
-            "respuesta_api": respuesta_api,
-            "telefono": telefono
-        }
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error enviando plantilla: {str(e)}"
-        )
+# @router.post("/api/aspirantes/no_apto/enviarV1")
+# def enviar_mensaje_no_aptoV1(
+#         data: EnviarNoAptoIn,
+#         usuario_actual: dict = Depends(obtener_usuario_actual)
+# ):
+#     """
+#     Envía mensaje de NO APTO usando SIEMPRE la plantilla.
+#     Evita errores por ventana de 24h.
+#     """
+#
+#     with get_connection_context() as conn:
+#         cur = conn.cursor()
+#
+#         # 1) Obtener datos del aspirante
+#         cur.execute("""
+#                     SELECT id,
+#                            COALESCE(nickname, nombre_real) AS nombre,
+#                            telefono
+#                     FROM aspirantes
+#                     WHERE id = %s;
+#         """, (data.aspirante_id,))
+#         row = cur.fetchone()
+#
+#         if not row:
+#             raise HTTPException(status_code=404, detail="Aspirante no encontrado.")
+#
+#         aspirante_id, nombre, telefono = row
+#
+#         if not telefono:
+#             raise HTTPException(status_code=400, detail="El aspirante no tiene número registrado.")
+#
+#         # =========================================================
+#         # 1.5) NUEVO: Actualizar estado a 4 (NO APTO)
+#         # =========================================================
+#                 cur.execute(
+#                     """
+#                     UPDATE aspirantes_perfil
+#                     SET estado_evaluacion = 'no_apto'
+#                     WHERE aspirante_id = %s;
+#                     """,
+#                     (aspirante_id,),
+#                 )
+#
+#         # ⚠️ CRÍTICO: Confirmar la transacción para guardar el cambio
+#         conn.commit()
+#
+#     # =============================
+#     # 2) Preparar envío por plantilla
+#     # =============================
+#     subdominio = current_tenant.get()
+#     cuenta = obtener_cuenta_por_subdominio(subdominio)
+#
+#     if not cuenta:
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"No hay credenciales WABA para el tenant '{subdominio}'."
+#         )
+#
+#     token = cuenta["access_token"]
+#     phone_id = cuenta["phone_number_id"]
+#     business_name = (
+#         cuenta.get("business_name")
+#         or cuenta.get("nombre")
+#         or "nuestra agencia"
+#     )
+#
+#     parametros = [
+#         nombre or "creador",
+#         business_name
+#     ]
+#
+#     # =============================
+#     # 3) Enviar plantilla
+#     # =============================
+#     try:
+#         codigo, respuesta_api = enviar_plantilla_generica_parametros(
+#             token=token,
+#             phone_number_id=phone_id,
+#             numero_destino=telefono,
+#             nombre_plantilla="no_apto_proceso_v2",
+#             codigo_idioma="es_CO",
+#             parametros=parametros,  # [nombre, business_name]
+#             body_vars_count=2  # 👈 LOS 2 VAN AL BODY, SIN BOTÓN
+#         )
+#
+#         return {
+#             "status": "ok" if codigo < 300 else "error",
+#             "tipo_envio": "plantilla",
+#             "codigo_meta": codigo,
+#             "respuesta_api": respuesta_api,
+#             "telefono": telefono
+#         }
+#
+#     except Exception as e:
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error enviando plantilla: {str(e)}"
+#         )
 
 # ===================================================
 # 📌 CREAR AUTO AGENDAMIENTO ENTREVISTA EN LINK POR WHATSAPP

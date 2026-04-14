@@ -230,12 +230,17 @@ def forzar_cambio_estado_por_id(aspirante_id: int, nuevo_id_estado: int):
                 # Query directa (sin buscar en tabla de estados)
                 query = """
                         UPDATE aspirantes_perfil
-                        SET id_chatbot_estado = %s,
+                        SET estado_evaluacion = CASE
+                                WHEN %s = 5 THEN 'solicitud_agendamiento_tiktok'
+                                WHEN %s = 8 THEN 'solicitud_agendamiento_entrevista'
+                                WHEN %s = 4 THEN 'no_apto'
+                                ELSE COALESCE(estado_evaluacion, 'sin_estado')
+                            END,
                             actualizado_en    = NOW() -- Opcional: para saber cuándo cambió
                         WHERE id = %s \
                         """
 
-                cur.execute(query, (nuevo_id_estado, aspirante_id))
+                cur.execute(query, (nuevo_id_estado, nuevo_id_estado, nuevo_id_estado, aspirante_id))
                 conn.commit()
 
                 if cur.rowcount > 0:

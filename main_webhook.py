@@ -671,10 +671,10 @@ def enviar_diagnostico(numero: str) -> bool:
 
                 aspirante_id, usuario, nombre_real = row
 
-                # 2️⃣ Obtener mejoras_sugeridas desde aspirantes_perfil
+                # 2️⃣ Obtener estado/observaciones desde aspirantes_perfil
                 cur.execute(
                     """
-                    SELECT mejoras_sugeridas
+                    SELECT observaciones_finales, estado_evaluacion
                     FROM aspirantes_perfil
                     WHERE aspirante_id = %s
                     LIMIT 1;
@@ -684,15 +684,20 @@ def enviar_diagnostico(numero: str) -> bool:
                 fila = cur.fetchone()
 
         # 3️⃣ Armar el diagnóstico fuera del contexto de conexión
-        if not fila or not fila[0] or not str(fila[0]).strip():
+        texto_resumen = None
+        if fila:
+            observaciones = str(fila[0]).strip() if fila[0] is not None else ""
+            estado_eval = str(fila[1]).strip() if len(fila) > 1 and fila[1] is not None else ""
+            texto_resumen = observaciones or estado_eval
+
+        if not texto_resumen:
             diagnostico = (
                 f"🔎 Diagnóstico para {nombre_real}:\n"
                 "Aún estamos preparando la evaluación de tu perfil. "
                 "Te avisaremos tan pronto esté lista. ⏳"
             )
         else:
-            mejoras = str(fila[0]).strip()
-            diagnostico = f"🔎 Diagnóstico para {nombre_real}:\n\n{mejoras}"
+            diagnostico = f"🔎 Diagnóstico para {nombre_real}:\n\n{texto_resumen}"
 
         # 4️⃣ Enviar el diagnóstico
         enviar_mensaje(numero, diagnostico)
@@ -2547,16 +2552,19 @@ def guardar_diagnostico_aspirantes_perfil(aspirante_id: int, diagnostico: str):
 
     with get_connection_context() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 UPDATE aspirantes_perfil
-                SET diagnostico = %s
+                SET observaciones_finales = %s
                 WHERE aspirante_id = %s
-            """, (diagnostico or "", aspirante_id))
+                """,
+                (diagnostico or "", aspirante_id),
+            )
 
             if cur.rowcount == 0:
-                print(f"⚠️ No se actualizó diagnostico: no existe aspirantes_perfil para aspirante_id={aspirante_id}")
+                print(f"⚠️ No se actualizaron observaciones: no existe aspirantes_perfil para aspirante_id={aspirante_id}")
             else:
-                print(f"✅ Diagnóstico guardado en aspirantes_perfil (aspirante_id={aspirante_id})")
+                print(f"✅ Observaciones guardadas en aspirantes_perfil (aspirante_id={aspirante_id})")
 
 
 @router.post("/consolidarV1")
@@ -4662,15 +4670,10 @@ def obtener_datos_envio_aspirante(aspirante_id):
                     SELECT
                         c.telefono,
                         COALESCE(c.nickname, c.nombre_real) AS nombre,
-                        cea.codigo,
-                        cea.descripcion,
-                        cea.mensaje_chatbot_simple,
-                        cea.nombre_template
+                        pc.estado_evaluacion
                     FROM aspirantes c
                     INNER JOIN aspirantes_perfil pc
                         ON pc.aspirante_id = c.id
-                    LEFT JOIN chatbot_estados_aspirante cea
-                        ON cea.id_chatbot_estado = pc.id_chatbot_estado
                     WHERE c.id = %s
                     LIMIT 1
                 """
@@ -4683,10 +4686,10 @@ def obtener_datos_envio_aspirante(aspirante_id):
                 return {
                     "telefono": row[0],
                     "nombre": row[1],                 # ✅ ahora sí llega al template
-                    "codigo_estado": row[2],          # ✅ estado real
-                    "descripcion": row[3],
-                    "mensaje_chatbot_simple": row[4],
-                    "nombre_template": row[5]
+                    "codigo_estado": row[2],          # ✅ estado real (texto)
+                    "descripcion": row[2],
+                    "mensaje_chatbot_simple": row[2] or "Selecciona una opción:",
+                    "nombre_template": None,
                 }
 
     except Exception as e:
@@ -4702,17 +4705,7 @@ def obtener_mensaje_por_codigo(codigo_estado):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                sql = """
-                      SELECT mensaje_chatbot_simple
-                      FROM chatbot_estados_aspirante
-                      WHERE codigo = %s \
-                      """
-                cur.execute(sql, (codigo_estado,))
-                row = cur.fetchone()
-
-                if row:
-                    return row[0]
-                return "Selecciona una opción:"
+                return codigo_estado or "Selecciona una opción:"
 
     except Exception as e:
         print(f"❌ Error al obtener mensaje por código {codigo_estado}:", e)
@@ -4721,33 +4714,21 @@ def obtener_mensaje_por_codigo(codigo_estado):
 
 def actualizar_estado_aspirante_(aspirante_id, nuevo_codigo_estado):
     """
-    Actualiza el estado de un aspirante en aspirantes_perfil basándose en el CÓDIGO de estado.
-    Primero busca el ID del estado y luego actualiza.
+    Actualiza el estado textual de un aspirante en aspirantes_perfil.
     """
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                # 1. Obtener el ID numérico del estado basado en el código texto
-                cur.execute("SELECT id_chatbot_estado FROM chatbot_estados_aspirante WHERE codigo = %s",
-                            (nuevo_codigo_estado,))
-                row = cur.fetchone()
-
-                if not row:
-                    print(f"⚠️ El código de estado '{nuevo_codigo_estado}' no existe en la BD.")
-                    return False
-
-                new_id_estado = row[0]
-
-                # 2. Actualizar el perfil del creador
+                # Actualizar el perfil del creador
                 sql_update = """
                              UPDATE aspirantes_perfil
-                             SET id_chatbot_estado   = %s, \
+                             SET estado_evaluacion = %s, \
                                  fecha_actualizacion = CURRENT_TIMESTAMP
                              WHERE aspirante_id = %s \
                              """
-                cur.execute(sql_update, (new_id_estado, aspirante_id))
+                cur.execute(sql_update, (nuevo_codigo_estado, aspirante_id))
                 conn.commit()
-                print(f"✅ Estado actualizado a '{nuevo_codigo_estado}' (ID: {new_id_estado}) para creador {aspirante_id}")
+                print(f"✅ Estado actualizado a '{nuevo_codigo_estado}' para creador {aspirante_id}")
                 return True
 
     except Exception as e:
@@ -5121,19 +5102,20 @@ class ActualizarEstadoRequest(BaseModel):
 @router.get("/listar-estados")
 def listar_estados_db():
     """
-    Obtiene todos los estados posibles de la tabla chatbot_estados_aspirante.
+    Obtiene estados posibles (catálogo fijo en código).
     """
     try:
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                            SELECT codigo, descripcion
-                            FROM chatbot_estados_aspirante
-                            WHERE estado_activo = true
-                            ORDER BY id_chatbot_estado ASC
-                            """)
-                # Retornamos lista de diccionarios
-                estados = [{"codigo": row[0], "descripcion": row[1]} for row in cur.fetchall()]
+        estados = [
+            {"codigo": "post_encuesta_inicial", "descripcion": "Post encuesta inicial"},
+            {"codigo": "solicitud_agendamiento_tiktok", "descripcion": "Solicitud agendamiento TikTok"},
+            {"codigo": "usuario_agendo_prueba_tiktok", "descripcion": "Usuario agendó prueba TikTok"},
+            {"codigo": "solicitud_agendamiento_entrevista", "descripcion": "Solicitud agendamiento entrevista"},
+            {"codigo": "usuario_agendo_entrevista", "descripcion": "Usuario agendó entrevista"},
+            {"codigo": "solicitud_invitacion_tiktok", "descripcion": "Solicitud invitación TikTok"},
+            {"codigo": "invitacion_tiktok_aceptada", "descripcion": "Invitación TikTok aceptada"},
+            {"codigo": "solicitud_invitacion_usuario", "descripcion": "Solicitud invitación usuario"},
+            {"codigo": "no_apto", "descripcion": "No apto"},
+        ]
         return estados
     except Exception as e:
         print(f"❌ Error DB: {e}")

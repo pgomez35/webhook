@@ -103,13 +103,24 @@ def guardar_mensaje_old(telefono, texto, tipo="recibido", es_audio=False):
                 else:
                     aspirante_id = usuario[0]
 
-                # Insertar mensaje
+                # Insertar mensaje en la tabla nueva
                 cur.execute(
                     """
-                    INSERT INTO mensajes (aspirante_id, contenido, tipo, es_audio, fecha)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO mensajes_whatsapp
+                    (usuario_id, telefono, direccion, tipo, contenido, media_url, message_id_meta, estado, fecha)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (aspirante_id, texto, tipo, es_audio, datetime.now())
+                    (
+                        aspirante_id,
+                        telefono,
+                        tipo,
+                        "audio" if es_audio else "text",
+                        texto,
+                        texto if es_audio else None,
+                        None,
+                        "received" if tipo == "recibido" else "sent",
+                        datetime.now(),
+                    ),
                 )
 
                 conn.commit()

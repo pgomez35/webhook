@@ -67,7 +67,6 @@ from main_evaluacion_aspirante import router as EvaluacionAspirante_router
 from main_entrevistas import router as entrevistas_router
 from utils_aspirantes import router as utils_aspirantes_router
 from utils_aspirantes_1 import actualizar_info_phone
-from main_chatbot_estados_aspirante import router as chatbot_estados_aspirante_router
 from main_auth import router as main_auth_router
 from main_diagnostico import router as diagnostico_router
 from main_configuracion import router as bienvenida_router
@@ -112,7 +111,6 @@ app.include_router(agendamiento_router, tags=["Agendamiento"])
 app.include_router(EvaluacionAspirante_router, tags=["Evaluacion Aspirante"])
 app.include_router(entrevistas_router, tags=["entrevistas"])
 app.include_router(utils_aspirantes_router, tags=["utils aspirantes"])
-app.include_router(chatbot_estados_aspirante_router, tags=["chatbot estados aspirante"])
 app.include_router(diagnostico_router, tags=["diagnostico"])
 app.include_router(bienvenida_router, tags=["bienvenida"])
 app.include_router(main_mensajeria_whatsapp_router, tags=["mensajeria whatsapp"])
@@ -2568,7 +2566,7 @@ def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
 
                 # 2. Insertar seguimiento usando manager_id obtenido
                 cur.execute("""
-                    INSERT INTO seguimiento_creadores (
+                    INSERT INTO creadores_seguimiento (
                         aspirante_id, creador_activo_id, manager_id, fecha_seguimiento,
                         estrategias_mejora, compromisos
                     ) VALUES (
@@ -2597,7 +2595,7 @@ def listar_seguimientos_por_creador_activo(creador_activo_id: int):
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT sc.*, au.nombre_completo AS manager_nombre
-                    FROM seguimiento_creadores sc
+                    FROM creadores_seguimiento sc
                     LEFT JOIN administradores au ON sc.manager_id = au.id
                     WHERE sc.creador_activo_id = %s
                     ORDER BY sc.fecha_seguimiento DESC

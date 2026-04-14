@@ -543,12 +543,12 @@ def guardar_aspirantes(
                 ))
 
             # === CARGUE_CREADORES ===
-            cur.execute("SELECT id FROM cargue_creadores WHERE usuario = %s AND hoja_excel = %s", (usuario, hoja_excel))
+            cur.execute("SELECT id FROM aspirantes_cargue WHERE usuario = %s AND hoja_excel = %s", (usuario, hoja_excel))
             cargue_row = cur.fetchone()
             if cargue_row:
                 cargue_id = cargue_row[0]
                 cur.execute("""
-                    UPDATE cargue_creadores SET
+                    UPDATE aspirantes_cargue SET
                         nickname = %s,
                         email = %s,
                         telefono = %s,
@@ -585,7 +585,7 @@ def guardar_aspirantes(
                 ))
             else:
                 cur.execute("""
-                    INSERT INTO cargue_creadores (
+                    INSERT INTO aspirantes_cargue (
                         usuario, nickname, email, telefono, disponibilidad, perfil, motivo_no_apto,
                         contacto, respuesta_creador, entrevista, tipo_solicitud, razon_no_contacto,
                         seguidores, cantidad_videos, likes_totales, duracion_emisiones, dias_emisiones,
