@@ -2,12 +2,10 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Optional, List
 
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from DataBase import get_connection_context
-from main_auth import obtener_usuario_actual
-
 router = APIRouter()
 
 # =========================================================
@@ -404,22 +402,6 @@ def tiempo_estimado_estado(estado_id: Optional[int]) -> Optional[str]:
 # ENDPOINTS BASE PORTAL
 # =========================================================
 
-@router.post("/api/portal/aspirantes/{aspirante_id}/generar-link", response_model=LinkPortalOut)
-def generar_link(
-    aspirante_id: int,
-    forzar_nuevo: bool = Query(False),
-    usuario=Depends(obtener_usuario_actual),
-):
-    data = generar_url_portal(
-        aspirante_id=aspirante_id,
-        creado_por=usuario.get("id") if isinstance(usuario, dict) else None,
-        origen="backoffice",
-        forzar_nuevo=forzar_nuevo,
-    )
-
-    return LinkPortalOut(**data)
-
-
 @router.get("/api/portal/aspirantes/validar", response_model=PortalValidarOut)
 def validar_portal(token: str = Query(..., min_length=10)):
     info = resolver_token_vigente_o_error(token)
@@ -694,62 +676,6 @@ def obtener_citas_portal_aspirante(aspirante_id: int):
 
 
 # =========================================================
-# ENDPOINT COMPATIBLE LISTADO SIMPLE
-# =========================================================
-
-@router.get("/api/aspirantes/{aspirante_id}/citas", response_model=List[CitaAspiranteOut])
-def listar_citas_aspirante(aspirante_id: int):
-    citas: List[CitaAspiranteOut] = []
-
-    with get_connection_context() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT
-                    a.id,
-                    a.fecha_inicio,
-                    a.fecha_fin,
-                    COALESCE(ae.nombre, 'programado') AS estado_nombre,
-                    at.nombre AS tipo_nombre,
-                    a.link_meet
-                FROM agendamientos a
-                INNER JOIN agendamientos_participantes ap
-                    ON ap.agendamiento_id = a.id
-                LEFT JOIN agendamientos_estados ae
-                    ON ae.id = a.estado
-                INNER JOIN agendamientos_tipo at
-                    ON at.id = a.tipo_agendamiento
-                WHERE ap.participante_tipo_id = 1
-                  AND ap.participante_id = %s
-                  AND at.participante_tipo_id = 1
-                ORDER BY a.fecha_inicio ASC
-                """,
-                (aspirante_id,),
-            )
-            rows = cur.fetchall()
-
-    for a_id, f_ini, f_fin, estado_nombre, tipo_nombre, link_meet in rows:
-        duracion_min = calcular_duracion_minutos(f_ini, f_fin)
-        realizada = (estado_nombre or "").strip().lower() == "cumplido"
-
-        citas.append(
-            CitaAspiranteOut(
-                id=a_id,
-                fecha_inicio=f_ini.isoformat() if f_ini else "",
-                fecha_fin=f_fin.isoformat() if f_fin else "",
-                duracion_minutos=duracion_min,
-                tipo_agendamiento=tipo_nombre,
-                realizada=realizada,
-                estado=estado_nombre or "programado",
-                link_meet=link_meet,
-                url_reagendar=None,
-            )
-        )
-
-    return citas
-
-
-# =========================================================
 # FUNCION AUXILIAR PARA OTROS MODULOS
 # =========================================================
 
@@ -960,7 +886,7 @@ def generar_url_portal_para_aspirante(
 # # ENDPOINT: GENERAR LINK (BACKOFFICE)
 # # =========================================================
 #
-# @router.post("/api/portal/aspirantes/{aspirante_id}/generar-link")
+# endpoint legado deshabilitado: generar-link
 # def generar_link(
 #     aspirante_id: int,
 #     usuario=Depends(obtener_usuario_actual)
@@ -980,7 +906,7 @@ def generar_url_portal_para_aspirante(
 # # ENDPOINT: VALIDAR TOKEN
 # # =========================================================
 #
-# @router.get("/api/portal/aspirantes/validar")
+# endpoint legado deshabilitado: validar
 # def validar_portal(token: str = Query(..., min_length=10)):
 #
 #     info = resolver_token_vigente_o_error(token)
@@ -1034,7 +960,7 @@ def generar_url_portal_para_aspirante(
 # # ENDPOINT: RESUMEN PORTAL
 # # =========================================================
 #
-# @router.get("/api/portal/aspirantes/resumen")
+# endpoint legado deshabilitado: resumen
 # def resumen_portal(token: str = Query(..., min_length=10)):
 #
 #     info = resolver_token_vigente_o_error(token)
@@ -1229,7 +1155,7 @@ def generar_url_portal_para_aspirante(
 # # ENDPOINT PRINCIPAL PORTAL
 # # =========================
 #
-# @router.get("/api/portal/aspirantes/{aspirante_id}/citas", response_model=PortalCitasOut)
+# endpoint legado deshabilitado: citas portal
 # def obtener_citas_portal_aspirante(aspirante_id: int):
 #     """
 #     Devuelve las citas del aspirante separadas en:
@@ -1359,7 +1285,7 @@ def generar_url_portal_para_aspirante(
 #     url_reagendar: Optional[str] = None
 #
 #
-# @router.get("/api/aspirantes/{aspirante_id}/citas", response_model=List[CitaAspiranteOut])
+# endpoint legado deshabilitado: listado simple de citas
 # def listar_citas_aspirante(aspirante_id: int):
 #     citas: List[CitaAspiranteOut] = []
 #
@@ -1867,7 +1793,7 @@ def generar_url_portal_para_aspirante(
 # # ENDPOINTS INTERNOS
 # # =========================================================
 #
-# @router.post("/api/portal/aspirantes/crear-link", response_model=LinkPortalOut)
+# endpoint legado deshabilitado: crear-link
 # def crear_link_portal_aspirante(
 #     data: CrearLinkPortalIn,
 #     usuario_actual: dict = Depends(obtener_usuario_actual),
@@ -1888,7 +1814,7 @@ def generar_url_portal_para_aspirante(
 #     )
 #
 #
-# @router.post("/api/portal/aspirantes/enviar", response_model=LinkPortalOut)
+# endpoint legado deshabilitado: enviar
 # def enviar_link_portal_aspirante(
 #     data: CrearLinkPortalIn,
 #     usuario_actual: dict = Depends(obtener_usuario_actual),
@@ -1922,7 +1848,7 @@ def generar_url_portal_para_aspirante(
 #     )
 #
 #
-# @router.post("/api/portal/aspirantes/{aspirante_id}/revocar", response_model=RevocarPortalOut)
+# endpoint legado deshabilitado: revocar
 # def revocar_link_portal_aspirante(
 #     aspirante_id: int,
 #     usuario_actual: dict = Depends(obtener_usuario_actual),
@@ -1947,7 +1873,7 @@ def generar_url_portal_para_aspirante(
 # # ENDPOINTS PÚBLICOS DEL PORTAL
 # # =========================================================
 #
-# @router.get("/api/portal/aspirantes/validar", response_model=PortalValidateOut)
+# endpoint legado deshabilitado: validar
 # def validar_token_portal_aspirante(token: str = Query(..., min_length=10)):
 #     info = resolver_token_vigente_o_error(token)
 #     actualizar_ultimo_uso_token(token)
@@ -1962,7 +1888,7 @@ def generar_url_portal_para_aspirante(
 #     )
 #
 #
-# @router.get("/api/portal/aspirantes/resumen", response_model=PortalResumenOut)
+# endpoint legado deshabilitado: resumen
 # def obtener_resumen_portal_aspirante(token: str = Query(..., min_length=10)):
 #     info = resolver_token_vigente_o_error(token)
 #     actualizar_ultimo_uso_token(token)
@@ -2315,7 +2241,7 @@ def generar_url_portal_para_aspirante(
 # # ENDPOINTS INTERNOS
 # # =========================================================
 #
-# @router.post("/api/portal/aspirantes/crear-link", response_model=LinkPortalOut)
+# endpoint legado deshabilitado: crear-link
 # def crear_link_portal_aspirante(
 #     data: CrearLinkPortalIn,
 #     usuario_actual: dict = Depends(obtener_usuario_actual),
@@ -2375,7 +2301,7 @@ def generar_url_portal_para_aspirante(
 #     )
 #
 #
-# @router.post("/api/portal/aspirantes/enviar", response_model=LinkPortalOut)
+# endpoint legado deshabilitado: enviar
 # def enviar_link_portal_aspirante(
 #     data: CrearLinkPortalIn,
 #     usuario_actual: dict = Depends(obtener_usuario_actual),
@@ -2498,7 +2424,7 @@ def generar_url_portal_para_aspirante(
 #     )
 #
 #
-# @router.post("/api/portal/aspirantes/{aspirante_id}/revocar", response_model=RevocarPortalOut)
+# endpoint legado deshabilitado: revocar
 # def revocar_link_portal_aspirante(
 #     aspirante_id: int,
 #     usuario_actual: dict = Depends(obtener_usuario_actual),
@@ -2532,7 +2458,7 @@ def generar_url_portal_para_aspirante(
 # # ENDPOINTS PÚBLICOS DEL PORTAL
 # # =========================================================
 #
-# @router.get("/api/portal/aspirantes/validar", response_model=PortalValidateOut)
+# endpoint legado deshabilitado: validar
 # def validar_token_portal_aspirante(token: str = Query(..., min_length=10)):
 #     info = resolver_token_vigente_o_error(token)
 #     actualizar_ultimo_uso_token(token)
@@ -2547,7 +2473,7 @@ def generar_url_portal_para_aspirante(
 #     )
 #
 #
-# @router.get("/api/portal/aspirantes/resumen", response_model=PortalResumenOut)
+# endpoint legado deshabilitado: resumen
 # def obtener_resumen_portal_aspirante(token: str = Query(..., min_length=10)):
 #     info = resolver_token_vigente_o_error(token)
 #     actualizar_ultimo_uso_token(token)
