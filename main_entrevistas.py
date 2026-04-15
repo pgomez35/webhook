@@ -347,7 +347,6 @@ def eliminar_agendamiento(
 # 📌 CREAR AGENDAMIENTO ENTREVISTA EN FRONT END
 # ===================================================
 
-@router.post("/api/entrevistas/agendamientosV0", response_model=AgendamientoOut)
 def crear_agendamientoV0(
     datos: AgendamientoCreate,
     usuario_actual: dict = Depends(obtener_usuario_actual)
@@ -406,7 +405,6 @@ def crear_agendamientoV0(
 # ================================
 # 📌 OBTENER ENTREVISTA + AGENDAMIENTOS
 # ================================
-@router.get("/api/entrevistasV0/{aspirante_id}", response_model=EntrevistaDetalleOut)
 def obtener_entrevistaV0(aspirante_id: int):
     try:
         entrevista = obtener_entrevista_con_agendamientos(aspirante_id)
@@ -420,7 +418,6 @@ def obtener_entrevistaV0(aspirante_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener entrevista: {e}")
 
-@router.put("/api/entrevistasV0/{aspirante_id}", response_model=EntrevistaOut, tags=["Entrevistas"])
 def actualizar_entrevistaV0(
     aspirante_id: int,
     datos: EntrevistaUpdate,
@@ -1103,7 +1100,6 @@ def obtener_pantalla_evaluacion_entrevistas(aspirante_id: int):
 # ENDPOINT 2: DETALLE POR AGENDAMIENTO
 # =========================================================
 
-@router.get("/api/entrevistas/agendamiento/{agendamiento_id}/creador/{aspirante_id}")
 def obtener_detalle_entrevista_por_agendamiento(
     agendamiento_id: int,
     aspirante_id: int
@@ -1192,7 +1188,6 @@ def obtener_detalle_entrevista_por_agendamiento(
 # ENDPOINT 3: DETALLE POR ENTREVISTA ID
 # =========================================================
 
-@router.get("/api/entrevistas/{entrevista_id}/creador/{aspirante_id}")
 def obtener_entrevista_por_id(entrevista_id: int, aspirante_id: int):
     now = datetime.now()
 
@@ -1277,7 +1272,6 @@ def obtener_entrevista_por_id(entrevista_id: int, aspirante_id: int):
 # ENDPOINT 4: EVALUAR POR ENTREVISTA ID
 # =========================================================
 
-@router.patch("/api/entrevistas/{entrevista_id}/creador/{aspirante_id}/evaluar")
 def evaluar_entrevista(
     entrevista_id: int,
     aspirante_id: int,
@@ -1481,7 +1475,6 @@ def evaluar_por_agendamiento(
 # ENDPOINT 6: GUARDAR DECISIÓN FINAL
 # =========================================================
 
-@router.patch("/api/entrevistas/{entrevista_id}/creador/{aspirante_id}/decision")
 def guardar_decision_final(
     entrevista_id: int,
     aspirante_id: int,
@@ -1525,3 +1518,457 @@ def guardar_decision_final(
                     "observacion_decision": updated[2]
                 }
             }
+# ---------------------------------------------------------------
+# ---------------------------------------------------------------
+# ---------------------------------------------------------------
+# ---------------------------------------------------------------
+# ---------------------------------------------------------------
+# ---------------------------------------------------------------
+
+# =========================================================
+# SCHEMAS RESULTADO PRUEBAS
+# =========================================================
+
+class EntrevistaVariableInterpretadaOut(BaseModel):
+    variable_codigo: str
+    variable_nombre: str
+    nivel: int
+    etiqueta: Optional[str] = None
+    categoria_resultado: Optional[str] = None
+    mensaje_corto: Optional[str] = None
+    mensaje_largo: Optional[str] = None
+    recomendacion: Optional[str] = None
+
+
+class ResultadoPruebaOut(BaseModel):
+    entrevista_id: int
+    aspirante_id: int
+    agendamiento_id: Optional[int] = None
+    entrevista_tipo_id: Optional[int] = None
+    tipo_nombre: Optional[str] = None
+    fecha: Optional[datetime] = None
+    observaciones: Optional[str] = None
+    decision_final: Optional[str] = None
+    observacion_decision: Optional[str] = None
+    score_total_entrevista: Optional[float] = None
+    score_total: Optional[float] = None
+    nivel_prueba: Optional[str] = None
+    nivel_final: Optional[str] = None
+    fortalezas: List[EntrevistaVariableInterpretadaOut] = Field(default_factory=list)
+    intermedias: List[EntrevistaVariableInterpretadaOut] = Field(default_factory=list)
+    por_mejorar: List[EntrevistaVariableInterpretadaOut] = Field(default_factory=list)
+    recomendaciones: List[str] = Field(default_factory=list)
+    resumen: Optional[str] = None
+    siguiente_paso: Optional[str] = None
+
+
+# =========================================================
+# HELPERS INTERPRETACION RESULTADO PRUEBAS
+# =========================================================
+
+VARIABLES_PRUEBA = [
+    "aspecto_tecnico",
+    "presencia_carisma",
+    "interaccion_audiencia",
+    "profesionalismo_normas",
+]
+
+
+def deduplicar_textos(items: List[str]) -> List[str]:
+    vistos = set()
+    salida = []
+    for item in items:
+        txt = (item or "").strip()
+        if txt and txt not in vistos:
+            vistos.add(txt)
+            salida.append(txt)
+    return salida
+
+
+def obtener_interpretacion_variable_prueba(
+    cur,
+    entrevista_tipo_id: Optional[int],
+    variable_codigo: str,
+    nivel: int
+) -> Optional[Dict[str, Any]]:
+    cur.execute(
+        """
+        SELECT
+            eiv.variable_codigo,
+            COALESCE(ev.nombre, eiv.variable_codigo) AS variable_nombre,
+            eiv.nivel,
+            eiv.etiqueta,
+            eiv.categoria_resultado,
+            eiv.mensaje_corto,
+            eiv.mensaje_largo,
+            eiv.recomendacion
+        FROM entrevistas_interpretacion_variable eiv
+        LEFT JOIN entrevistas_variable ev
+            ON ev.codigo = eiv.variable_codigo
+        WHERE eiv.activo = true
+          AND eiv.variable_codigo = %s
+          AND eiv.nivel = %s
+          AND (eiv.entrevista_tipo_id = %s OR eiv.entrevista_tipo_id IS NULL)
+        ORDER BY
+            CASE WHEN eiv.entrevista_tipo_id = %s THEN 0 ELSE 1 END,
+            eiv.id ASC
+        LIMIT 1
+        """,
+        (variable_codigo, nivel, entrevista_tipo_id, entrevista_tipo_id)
+    )
+
+    row = cur.fetchone()
+    if not row:
+        return None
+
+    return {
+        "variable_codigo": row[0],
+        "variable_nombre": row[1],
+        "nivel": row[2],
+        "etiqueta": row[3],
+        "categoria_resultado": row[4],
+        "mensaje_corto": row[5],
+        "mensaje_largo": row[6],
+        "recomendacion": row[7],
+    }
+
+
+def construir_resumen_resultado_prueba(
+    fortalezas: List[Dict[str, Any]],
+    por_mejorar: List[Dict[str, Any]],
+    decision_final: Optional[str]
+) -> str:
+    decision = (decision_final or "").strip().lower()
+
+    if decision in ("descartar", "rechazado", "no_aprobado"):
+        return "Tu última evaluación evidenció aspectos importantes por fortalecer antes de avanzar en el proceso."
+
+    if fortalezas and por_mejorar:
+        return "Tu última evaluación mostró fortalezas importantes, pero también aspectos clave por mejorar para avanzar con mayor seguridad."
+
+    if por_mejorar:
+        return "Tu última evaluación identificó aspectos que debes fortalecer antes de tu siguiente prueba."
+
+    if fortalezas:
+        return "Tu última evaluación fue favorable y mostró fortalezas claras en los aspectos valorados."
+
+    return "Aquí puedes consultar el resultado de tu última prueba."
+
+
+def construir_siguiente_paso_prueba(
+    decision_final: Optional[str],
+    por_mejorar: List[Dict[str, Any]]
+) -> str:
+    decision = (decision_final or "").strip().lower()
+
+    if decision == "continuar":
+        return "Tu proceso continúa. Mantente atento a las siguientes indicaciones."
+    if decision == "reprogramar":
+        return "Te recomendamos realizar una nueva prueba aplicando las mejoras sugeridas."
+    if decision == "observar":
+        return "Sigue fortaleciendo estos aspectos mientras continúas en evaluación."
+    if decision == "descartar":
+        return "Revisa los aspectos por mejorar y continúa fortaleciendo tu perfil."
+
+    if por_mejorar:
+        return "Revisa las recomendaciones para prepararte mejor en tu siguiente prueba."
+
+    return "Continúa atento a las novedades de tu proceso."
+
+
+def construir_resultado_prueba_desde_row(cur, item: Dict[str, Any]) -> Dict[str, Any]:
+    fortalezas = []
+    intermedias = []
+    por_mejorar = []
+    recomendaciones = []
+
+    for variable_codigo in VARIABLES_PRUEBA:
+        nivel = item.get(variable_codigo)
+        if nivel is None:
+            continue
+
+        interpretacion = obtener_interpretacion_variable_prueba(
+            cur=cur,
+            entrevista_tipo_id=item.get("entrevista_tipo_id"),
+            variable_codigo=variable_codigo,
+            nivel=int(nivel)
+        )
+
+        if interpretacion:
+            dato = interpretacion
+        else:
+            cur.execute(
+                """
+                SELECT nombre
+                FROM entrevistas_variable
+                WHERE codigo = %s
+                LIMIT 1
+                """,
+                (variable_codigo,)
+            )
+            row_var = cur.fetchone()
+            dato = {
+                "variable_codigo": variable_codigo,
+                "variable_nombre": row_var[0] if row_var and row_var[0] else variable_codigo,
+                "nivel": int(nivel),
+                "etiqueta": None,
+                "categoria_resultado": "fortaleza" if int(nivel) >= 4 else "mejora" if int(nivel) <= 2 else "intermedio",
+                "mensaje_corto": None,
+                "mensaje_largo": None,
+                "recomendacion": None,
+            }
+
+        categoria = (dato.get("categoria_resultado") or "").strip().lower()
+
+        if categoria == "fortaleza" or int(dato["nivel"]) >= 4:
+            fortalezas.append(dato)
+        elif categoria == "mejora" or int(dato["nivel"]) <= 2:
+            por_mejorar.append(dato)
+        else:
+            intermedias.append(dato)
+
+        if dato.get("recomendacion"):
+            recomendaciones.append(dato["recomendacion"])
+
+    recomendaciones = deduplicar_textos(recomendaciones)
+
+    resumen = construir_resumen_resultado_prueba(
+        fortalezas=fortalezas,
+        por_mejorar=por_mejorar,
+        decision_final=item.get("decision_final"),
+    )
+
+    siguiente_paso = construir_siguiente_paso_prueba(
+        decision_final=item.get("decision_final"),
+        por_mejorar=por_mejorar
+    )
+
+    return {
+        "entrevista_id": item["entrevista_id"],
+        "aspirante_id": item["aspirante_id"],
+        "agendamiento_id": item.get("agendamiento_id"),
+        "entrevista_tipo_id": item.get("entrevista_tipo_id"),
+        "tipo_nombre": item.get("tipo_nombre"),
+        "fecha": item.get("creado_en"),
+        "observaciones": item.get("observaciones"),
+        "decision_final": item.get("decision_final"),
+        "observacion_decision": item.get("observacion_decision"),
+        "score_total_entrevista": item.get("score_total_entrevista"),
+        "score_total": item.get("score_total"),
+        "nivel_prueba": obtener_nivel_score(item.get("score_total_entrevista")),
+        "nivel_final": obtener_nivel_score(item.get("score_total")),
+        "fortalezas": fortalezas,
+        "intermedias": intermedias,
+        "por_mejorar": por_mejorar,
+        "recomendaciones": recomendaciones,
+        "resumen": resumen,
+        "siguiente_paso": siguiente_paso,
+    }
+
+
+def obtener_prueba_evaluada_por_entrevista_id(cur, entrevista_id: int, aspirante_id: int) -> Optional[Dict[str, Any]]:
+    cur.execute(
+        """
+        SELECT
+            e.id AS entrevista_id,
+            e.aspirante_id,
+            e.agendamiento_id,
+            e.entrevista_tipo_id,
+            e.observaciones,
+            e.aspecto_tecnico,
+            e.presencia_carisma,
+            e.interaccion_audiencia,
+            e.profesionalismo_normas,
+            e.score_total_entrevista,
+            e.score_total,
+            e.estado_id,
+            e.creado_en,
+            e.decision_final,
+            e.observacion_decision,
+            et.nombre AS tipo_nombre
+        FROM entrevistas e
+        LEFT JOIN entrevista_tipo et
+            ON et.id = e.entrevista_tipo_id
+        WHERE e.id = %s
+          AND e.aspirante_id = %s
+          AND e.entrevista_tipo_id = %s
+        LIMIT 1
+        """,
+        (entrevista_id, aspirante_id, TIPO_AGENDAMIENTO_PRUEBA)
+    )
+
+    row = cur.fetchone()
+    if not row:
+        return None
+
+    columns = [desc[0] for desc in cur.description]
+    item = normalizar_item_db(dict(zip(columns, row)))
+    return item
+
+
+def obtener_ultima_prueba_evaluada(cur, aspirante_id: int) -> Optional[Dict[str, Any]]:
+    cur.execute(
+        """
+        SELECT
+            e.id AS entrevista_id,
+            e.aspirante_id,
+            e.agendamiento_id,
+            e.entrevista_tipo_id,
+            e.observaciones,
+            e.aspecto_tecnico,
+            e.presencia_carisma,
+            e.interaccion_audiencia,
+            e.profesionalismo_normas,
+            e.score_total_entrevista,
+            e.score_total,
+            e.estado_id,
+            e.creado_en,
+            e.decision_final,
+            e.observacion_decision,
+            et.nombre AS tipo_nombre
+        FROM entrevistas e
+        LEFT JOIN entrevista_tipo et
+            ON et.id = e.entrevista_tipo_id
+        WHERE e.aspirante_id = %s
+          AND e.entrevista_tipo_id = %s
+          AND (
+                e.estado_id = %s
+                OR e.score_total_entrevista IS NOT NULL
+              )
+        ORDER BY e.creado_en DESC, e.id DESC
+        LIMIT 1
+        """,
+        (aspirante_id, TIPO_AGENDAMIENTO_PRUEBA, ESTADO_ENTREVISTA_EVALUADA)
+    )
+
+    row = cur.fetchone()
+    if not row:
+        return None
+
+    columns = [desc[0] for desc in cur.description]
+    item = normalizar_item_db(dict(zip(columns, row)))
+    return item
+
+
+# =========================================================
+# ENDPOINT: RESULTADO DE UNA PRUEBA POR ENTREVISTA ID
+# =========================================================
+
+@router.get(
+    "/api/entrevistas/{entrevista_id}/aspirante/{aspirante_id}/resultado-prueba",
+    response_model=ResultadoPruebaOut
+)
+def obtener_resultado_prueba(
+    entrevista_id: int,
+    aspirante_id: int
+):
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            item = obtener_prueba_evaluada_por_entrevista_id(
+                cur=cur,
+                entrevista_id=entrevista_id,
+                aspirante_id=aspirante_id
+            )
+
+            if not item:
+                raise HTTPException(
+                    status_code=404,
+                    detail="No se encontró una prueba evaluada para este aspirante."
+                )
+
+            data = construir_resultado_prueba_desde_row(cur, item)
+
+    return ResultadoPruebaOut(**data)
+
+
+# =========================================================
+# ENDPOINT: ULTIMA PRUEBA EVALUADA DEL ASPIRANTE
+# =========================================================
+
+@router.get(
+    "/api/aspirantes/{aspirante_id}/ultima-prueba-resultado",
+    response_model=ResultadoPruebaOut
+)
+def obtener_ultima_prueba_resultado(aspirante_id: int):
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            item = obtener_ultima_prueba_evaluada(
+                cur=cur,
+                aspirante_id=aspirante_id
+            )
+
+            if not item:
+                raise HTTPException(
+                    status_code=404,
+                    detail="El aspirante no tiene pruebas evaluadas."
+                )
+
+            data = construir_resultado_prueba_desde_row(cur, item)
+
+    return ResultadoPruebaOut(**data)
+
+
+# =========================================================
+# ENDPOINT: HISTORIAL DE PRUEBAS EVALUADAS
+# =========================================================
+
+@router.get(
+    "/api/aspirantes/{aspirante_id}/historial-pruebas",
+    response_model=List[ResultadoPruebaOut]
+)
+def obtener_historial_pruebas(aspirante_id: int):
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    e.id AS entrevista_id,
+                    e.aspirante_id,
+                    e.agendamiento_id,
+                    e.entrevista_tipo_id,
+                    e.observaciones,
+                    e.aspecto_tecnico,
+                    e.presencia_carisma,
+                    e.interaccion_audiencia,
+                    e.profesionalismo_normas,
+                    e.score_total_entrevista,
+                    e.score_total,
+                    e.estado_id,
+                    e.creado_en,
+                    e.decision_final,
+                    e.observacion_decision,
+                    et.nombre AS tipo_nombre
+                FROM entrevistas e
+                LEFT JOIN entrevista_tipo et
+                    ON et.id = e.entrevista_tipo_id
+                WHERE e.aspirante_id = %s
+                  AND e.entrevista_tipo_id = %s
+                  AND (
+                        e.estado_id = %s
+                        OR e.score_total_entrevista IS NOT NULL
+                      )
+                ORDER BY e.creado_en DESC, e.id DESC
+                """,
+                (aspirante_id, TIPO_AGENDAMIENTO_PRUEBA, ESTADO_ENTREVISTA_EVALUADA)
+            )
+
+            rows = cur.fetchall()
+            columns = [desc[0] for desc in cur.description]
+
+            salida = []
+            for row in rows:
+                item = normalizar_item_db(dict(zip(columns, row)))
+                data = construir_resultado_prueba_desde_row(cur, item)
+                salida.append(ResultadoPruebaOut(**data))
+
+    return salida
+
+
+# Endpoints deshabilitados (cleanup frontend)
+# - POST /api/entrevistas/agendamientosV0
+# - GET /api/entrevistasV0/{aspirante_id}
+# - PUT /api/entrevistasV0/{aspirante_id}
+# - GET /api/entrevistas/agendamiento/{agendamiento_id}/creador/{aspirante_id}
+# - GET /api/entrevistas/{entrevista_id}/creador/{aspirante_id}
+# - PATCH /api/entrevistas/{entrevista_id}/creador/{aspirante_id}/evaluar
+# - PATCH /api/entrevistas/{entrevista_id}/creador/{aspirante_id}/decision
