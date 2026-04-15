@@ -2767,23 +2767,17 @@ def enviar_link_auto_agendamiento_aspirante(
         if not telefono:
             raise HTTPException(status_code=400, detail="El aspirante no tiene teléfono registrado.")
 
-        # 2️⃣ Actualizar estado según tipo_agendamiento
-        nuevo_estado_id = None
-        if data.tipo_agendamiento == "ENTREVISTA":
-            nuevo_estado_id = 8
-        elif data.tipo_agendamiento == "LIVE":
-            nuevo_estado_id = 5
-
-        if nuevo_estado_id:
-            cur.execute(
-                """
-                UPDATE aspirantes_perfil
-                SET id_chatbot_estado = %s,
-                    actualizado_en = NOW()
-                WHERE aspirante_id = %s
-                """,
-                (nuevo_estado_id, data.aspirante_id)
-            )
+        # 2️⃣ Actualizar estado de mensajería con el tipo de agendamiento enviado
+        estado_mensaje = f"Mensaje Enviado - {data.tipo_agendamiento}"
+        cur.execute(
+            """
+            UPDATE aspirantes_perfil
+            SET estado = %s,
+                actualizado_en = NOW()
+            WHERE aspirante_id = %s
+            """,
+            (estado_mensaje, data.aspirante_id)
+        )
 
         # 3️⃣ Crear token de agendamiento
         token_data = crear_link_agendamiento_token(
@@ -2956,7 +2950,7 @@ def enviar_mensaje_no_apto(
         # 2️⃣ Marcar estado NO APTO
         cur.execute("""
             UPDATE aspirantes_perfil
-            SET id_chatbot_estado = 4,
+            SET estado = 'Mensaje Enviado No apto',
                 actualizado_en = NOW()
             WHERE aspirante_id = %s;
         """, (aspirante_id,))
