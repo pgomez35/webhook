@@ -569,62 +569,6 @@ def guardar_mensaje_nuevo(
         print(f"❌ Error guardando mensaje: {e}")
         traceback.print_exc()
 
-
-def guardar_mensaje_nuevo20260325(
-    telefono,
-    contenido=None,
-    direccion="recibido",
-    tipo="texto",
-    media_url=None,
-    message_id_meta=None,
-    estado="sent"
-):
-    try:
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-
-                # Buscar usuario
-                cur.execute(
-                    "SELECT id FROM aspirantes WHERE telefono = %s",
-                    (telefono,)
-                )
-                usuario = cur.fetchone()
-
-                if not usuario:
-                    cur.execute(
-                        "INSERT INTO aspirantes (telefono) VALUES (%s) RETURNING id",
-                        (telefono,)
-                    )
-                    aspirante_id = cur.fetchone()[0]
-                else:
-                    aspirante_id = usuario[0]
-
-                # Insertar mensaje en NUEVA tabla
-                cur.execute("""
-                    INSERT INTO mensajes_whatsapp
-                    (usuario_id, telefono, direccion, tipo, contenido,
-                     media_url, message_id_meta, estado)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                """, (
-                    aspirante_id,
-                    telefono,
-                    direccion,
-                    tipo,
-                    contenido,
-                    media_url,
-                    message_id_meta,
-                    estado
-                ))
-
-                conn.commit()
-
-        print("✅ Mensaje guardado correctamente.")
-
-    except Exception as e:
-        print(f"❌ Error guardando mensaje: {e}")
-        traceback.print_exc()
-
-
 import re
 from datetime import datetime
 from psycopg2 import DatabaseError
@@ -812,41 +756,6 @@ def obtener_mensajes(telefono):
         traceback.print_exc()
         return []
 
-
-
-
-
-def obtener_mensajesV0(telefono):
-    try:
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT contenido, direccion, fecha, tipo
-                    FROM mensajes_whatsapp
-                    WHERE telefono = %s
-                    ORDER BY fecha ASC
-                    """,
-                    (telefono,),
-                )
-                mensajes = cur.fetchall()
-                return [
-                    {
-                        "contenido": contenido,
-                        "tipo": direccion,
-                        "fecha": fecha.isoformat(),
-                        "es_audio": tipo_mensaje == "audio",
-                    }
-                    for contenido, direccion, fecha, tipo_mensaje in mensajes
-                ]
-    except (OperationalError, DatabaseError) as e:
-        print(f"❌ Error de base de datos al obtener mensajes: {e}")
-        traceback.print_exc()
-        return []
-    except Exception as e:
-        print(f"❌ Error inesperado al obtener mensajes: {e}")
-        traceback.print_exc()
-        return []
 
 
 def obtener_ultimos_mensajes(limit=10):
@@ -1989,34 +1898,6 @@ def obtener_estadisticas_evaluacion():
                 "promedioPuntuacion": float(promedio)
             }
 
-def guardar_en_bd(agendamiento, meet_link, usuario_actual_id, creado):
-    try:
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO agendamientos (
-                        aspirante_id, fecha_inicio, fecha_fin, titulo, descripcion,
-                        link_meet, estado, responsable_id, google_event_id
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, 'programado', %s, %s)
-                """, (
-                    agendamiento.aspirante_id,
-                    agendamiento.inicio,
-                    agendamiento.fin,
-                    agendamiento.titulo,
-                    agendamiento.descripcion,
-                    meet_link,
-                    usuario_actual_id,
-                    creado["id"]  # Google Event ID
-                ))
-                conn.commit()
-                print("Agendamiento guardado correctamente.")
-                return True
-    except Exception as e:
-        print("Error al guardar agendamiento:", e)
-        return False
-
-
 def obtener_aspirante_id_por_usuario(usuario: str) -> Optional[int]:
     """Busca el aspirante_id en la base de datos por nombre de usuario"""
     try:
@@ -2030,21 +1911,6 @@ def obtener_aspirante_id_por_usuario(usuario: str) -> Optional[int]:
     except Exception as e:
         print(f"⚠️ Error buscando creador por usuario {usuario}: {str(e)}")
         return None
-
-
-def eliminar_aspirantes_perfil(perfil_id: int):
-    """Elimina un perfil de creador"""
-    try:
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-                cur.execute("DELETE FROM aspirantes_perfil WHERE id = %s", (perfil_id,))
-                affected_rows = cur.rowcount
-                conn.commit()
-                return affected_rows > 0
-
-    except Exception as e:
-        print("❌ Error al eliminar perfil de creador:", e)
-        return False
 
 
 def obtener_todos_manager():
@@ -2696,83 +2562,6 @@ def crear_invitacion_minima(aspirante_id: int, usuario_invita: int, manager_id: 
         print(f"❌ Error al crear invitación mínima para creador {aspirante_id}:", e)
         return None
 
-
-
-def obtener_invitacion_por_creador(aspirante_id: int):
-    try:
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT 
-                        id,
-                        aspirante_id,
-                        fecha_invitacion,
-                        usuario_invita,
-                        manager_id,
-                        estado,
-                        acepta_invitacion,
-                        fecha_incorporacion,
-                        observaciones,
-                        creado_en
-                    FROM invitaciones
-                    WHERE aspirante_id = %s
-                    ORDER BY fecha_invitacion DESC
-                    LIMIT 1;
-                    """,
-                    (aspirante_id,)
-                )
-                row = cur.fetchone()
-                if row:
-                    columns = [desc[0] for desc in cur.description]
-                    invitacion = dict(zip(columns, row))
-                    return invitacion
-                return None
-    except Exception as e:
-        print(f"❌ Error al consultar invitación de creador {aspirante_id}: {e}")
-        return None
-
-#
-# def obtener_potencial_estimado(aspirante_id: int):
-#     try:
-#         # Validación defensiva
-#         if not isinstance(aspirante_id, int):
-#             print("❌ Error: aspirante_id inválido (debe ser int).")
-#             return 2  # Valor por defecto
-#
-#         with get_connection_context() as conn:
-#             with conn.cursor() as cur:
-#                 cur.execute("""
-#                     SELECT potencial_estimado
-#                     FROM aspirantes_perfil
-#                     WHERE aspirante_id = %s;
-#                 """, (aspirante_id,))
-#
-#                 row = cur.fetchone()
-#
-#         # Si no hay fila → usar 2
-#         if row is None:
-#             print(f"⚠️ No existe registro de potencial_estimado para aspirante_id={aspirante_id}. Usando valor=2 (default)")
-#             return 0
-#
-#         valor = row[0]
-#
-#         # Si hay fila pero valor es NULL → usar 2
-#         if valor is None:
-#             print(f"⚠️ potencial_estimado es NULL para aspirante_id={aspirante_id}. Usando valor=2 (default)")
-#             return 0
-#
-#         # Valor válido
-#         print(f"✅ potencial_estimado obtenido para aspirante_id={aspirante_id}: {valor}")
-#         return valor
-#
-#     except Exception as e:
-#         print(f"❌ Error al obtener potencial_estimado (aspirante_id={aspirante_id}): {e}")
-#         return 2  # fallback seguro
-#
-#
-
-
 def guardar_o_actualizar_token_db(session_id: str, token: str):
     try:
         with get_connection_public_context() as conn:
@@ -3063,23 +2852,6 @@ def actualizar_phone_info_db(
     except Exception as e:
         print("❌ Error al actualizar información WABA en la base de datos:", e)
         return False
-
-
-
-
-def get_connection_public_external():
-    """
-    Devuelve una conexión a la base de datos con search_path fijo a public,
-    ignorando cualquier tenant/contexto.
-    """
-    conn = psycopg2.connect(EXTERNAL_DATABASE_URL)
-    conn.autocommit = False
-
-    with conn.cursor() as cur:
-        cur.execute("SET search_path TO public;")
-
-    return conn
-
 
 def registrar_envio_mensaje(
     tenant: str,

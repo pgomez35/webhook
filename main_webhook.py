@@ -4,6 +4,8 @@
 import json
 import os
 import re
+import secrets
+
 import requests
 import time
 import traceback
@@ -12,6 +14,7 @@ import phonenumbers
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 from urllib.parse import urlparse
+from datetime import datetime, timezone, timedelta
 
 # ============================
 # IMPORTS - Terceros
@@ -24,10 +27,13 @@ from phonenumbers import geocoder, region_code_for_number
 from pydantic import BaseModel
 from rapidfuzz import process, fuzz
 
+from DataBase import buscar_usuario_por_telefono, get_connection, marcar_encuesta_no_finalizada, guardar_mensaje, \
+    obtener_cuenta_por_phone_id, obtener_configuracion_agencia, guardar_mensaje_nuevo, obtener_cuenta_por_subdominio, \
+    marcar_encuesta_completada, buscar_aspirante_por_usuario_tiktok, encuesta_finalizada, actualizar_telefono_aspirante
 # ============================
 # IMPORTS - Locales
 # ============================
-from DataBase import *
+# from DataBase import *
 from enviar_msg_wp import (
     enviar_boton_iniciar_Completa,
     enviar_botones_Completa,

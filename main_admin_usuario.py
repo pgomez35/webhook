@@ -19,8 +19,11 @@ from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel
 
+from DataBase import obtener_todos_usuarioss, crear_usuarios, obtener_usuarios_por_id, eliminar_usuarios, \
+    cambiar_estado_usuarios, obtener_usuarios_por_username, actualizar_usuarios, actualiza_password_usuario, \
+    hash_password, es_admin
 from schemas import *
-from DataBase import *
+# from DataBase import *
 from rapidfuzz import process, fuzz
 import unicodedata
 import traceback
