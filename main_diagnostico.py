@@ -27,7 +27,7 @@ class PerfilCualitativoPayload(BaseModel):
 
 
 class ActualizarPreEvaluacionIn(BaseModel):
-    estado_evaluacion: Optional[str] = None
+    estado_id: Optional[int] = None
     usuario_evalua: Optional[str] = None
     observaciones_finales: Optional[str] = None
 
@@ -975,19 +975,23 @@ def calcular_diagnostico_y_json(cur, aspirante_id: int, modelo_id: int):
 # =========================================================
 
 def actualizar_estado_preevaluacion(aspirante_id: int, payload: Dict[str, Any]):
-    estado = payload.get("estado_evaluacion")
-    estado_id = None
+    estado_id = payload.get("estado_id")
 
     with get_connection_context() as conn:
         with conn.cursor() as cur:
-            if estado:
-                estado_id = obtener_estado_por_nombre(cur, estado)
 
+            # 🔒 Validar estado_id si viene
+            if estado_id is not None:
+                cur.execute("SELECT 1 FROM estados WHERE id = %s", (estado_id,))
+                if not cur.fetchone():
+                    raise ValueError(f"estado_id inválido: {estado_id}")
+
+            # 🧠 Construir UPDATE de perfil (SIN estado_id)
             sets = []
             valores = []
 
             for campo, valor in payload.items():
-                if valor is not None:
+                if campo != "estado_id" and valor is not None:
                     sets.append(f"{campo} = %s")
                     valores.append(valor)
 
@@ -1002,6 +1006,7 @@ def actualizar_estado_preevaluacion(aspirante_id: int, payload: Dict[str, Any]):
                 """
                 cur.execute(query, valores)
 
+            # 🎯 Actualizar estado en tabla principal
             if estado_id is not None:
                 cur.execute("""
                     UPDATE aspirantes
@@ -1011,8 +1016,10 @@ def actualizar_estado_preevaluacion(aspirante_id: int, payload: Dict[str, Any]):
 
         conn.commit()
 
-    logger.info("Aspirante %s actualizado (estado=%s, estado_id=%s)", aspirante_id, estado, estado_id)
-
+    logger.info(
+        "Aspirante %s actualizado (estado_id=%s)",
+        aspirante_id, estado_id
+    )
 
 @router.post(
     "/api/aspirantes_perfil/{aspirante_id}/talento/actualizar",
@@ -1099,7 +1106,7 @@ def actualizar_preevaluacion(
 ):
     try:
         payload = {
-            "estado_evaluacion": datos.estado_evaluacion,
+            "estado_id": datos.estado_id,
             "usuario_evalua": datos.usuario_evalua,
             "observaciones_finales": datos.observaciones_finales
         }
@@ -1110,12 +1117,14 @@ def actualizar_preevaluacion(
             "status": "ok",
             "mensaje": "Pre-evaluación actualizada correctamente",
             "aspirante_id": aspirante_id,
-            "estado_evaluacion": datos.estado_evaluacion,
+            "estado_id": datos.estado_id,
         }
+
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # =========================================================
 # ENDPOINTS DIAGNÓSTICO
