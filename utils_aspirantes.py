@@ -37,6 +37,51 @@ import requests
 import json
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, Tuple
+from urllib.parse import urlparse
+
+# -------------------------------------------------------------------
+# Validación de enlaces TikTok (p. ej. LIVE)
+# -------------------------------------------------------------------
+TIKTOK_DOMINIOS_VALIDOS = (
+    "tiktok.com",
+    "www.tiktok.com",
+    "vt.tiktok.com",
+)
+
+PATRON_TIKTOK_URL = re.compile(
+    r"(https?://[^\s]+tiktok\.com[^\s]*)",
+    re.IGNORECASE,
+)
+
+
+def validar_link_tiktok(texto: str) -> bool:
+    """
+    Valida si el texto contiene un link válido de TikTok (idealmente de LIVE).
+    """
+    if not texto:
+        return False
+
+    match = PATRON_TIKTOK_URL.search(texto)
+    if not match:
+        return False
+
+    url = match.group(1).strip()
+
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+
+    dominio = parsed.netloc.lower()
+    if dominio not in TIKTOK_DOMINIOS_VALIDOS:
+        return False
+
+    path = parsed.path.lower()
+    if "live" not in path:
+        return False
+
+    return True
+
 
 # # --- MOCK DE BASE DE DATOS (Reemplaza con tu lógica real SQL) ---
 # def guardar_estado_eval(aspirante_id, estado):

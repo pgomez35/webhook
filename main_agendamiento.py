@@ -18,7 +18,7 @@ from DataBase import get_connection_context, obtener_cuenta_por_subdominio, \
     obtener_participantes_por_tipo_db, guardar_mensaje_nuevo
 from enviar_msg_wp import enviar_mensaje_texto_simple
 from main_configuracion import get_config
-from main_webhook import validar_link_tiktok
+from utils_aspirantes import validar_link_tiktok
 from schemas import *
 from main_auth import obtener_usuario_actual
 
@@ -1774,7 +1774,7 @@ def crear_agendamiento_aspirante(
                     logger.error(f"⚠️ Error creando evento Google Calendar: {e}")
 
             # 6️⃣ Crear agendamiento + entrevista en la misma transacción
-            agendamiento_id = crear_agendamiento_aspirante_DB_V1(
+            agendamiento_id = crear_agendamiento_aspirante_DB(
                 cur=cur,
                 data=SimpleNamespace(
                     titulo=data.titulo,
@@ -1839,7 +1839,7 @@ def crear_agendamiento_aspirante(
             )
 
 
-def crear_agendamiento_aspirante_DB_V1(
+def crear_agendamiento_aspirante_DB(
     cur,
     data,
     aspirante_id: int,
@@ -1986,7 +1986,7 @@ def crear_agendamiento_aspirante_DB_V1(
         return agendamiento_id
 
     except Exception as e:
-        print("❌ Error en crear_agendamiento_aspirante_DB_V1:", e)
+        print("❌ Error en crear_agendamiento_aspirante_DB:", e)
         return None
 
 
@@ -2028,118 +2028,6 @@ def crear_evento_google(resumen, descripcion, fecha_inicio, fecha_fin, requiere_
         logger.info(f"🔗 Meet: {evento_creado.get('hangoutLink')}")
 
     return evento_creado
-
-def crear_agendamiento_aspirante_DB(
-    data,
-    aspirante_id: int,
-    responsable_id: int
-) -> Optional[int]:
-    """
-    Crea un agendamiento, obtiene/crea la entrevista y registra la relación
-    en entrevista_agendamiento. Devuelve agendamiento_id o None si falla.
-
-    Se espera que `data` tenga:
-      - titulo
-      - descripcion
-      - fecha_inicio (UTC)
-      - fecha_fin (UTC)
-      - tipo_agendamiento (LIVE / ENTREVISTA)
-      - link_meet (opcional, solo ENTREVISTA)
-      - google_event_id (opcional)
-    """
-
-    try:
-        tipo_agendamiento = getattr(data, "tipo_agendamiento", None)
-
-        # 🎯 Mapeo más limpio
-        mapa_tipos = {
-            "ENTREVISTA": 2,
-            "LIVE": 1
-        }
-
-        tipo_agendamiento_id = mapa_tipos.get(tipo_agendamiento, 4)
-
-        link_meet = getattr(data, "link_meet", None)
-        google_event_id = getattr(data, "google_event_id", None)
-
-        ESTADO_AGENDAMIENTO_PROGRAMADO = 1
-
-        # 🔥 Si es LIVE → construir link automáticamente
-        if tipo_agendamiento_id == 4:
-            link_meet = obtener_link_live_por_creador(aspirante_id)
-
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-
-                # 1️⃣ INSERTAR AGENDAMIENTO
-                cur.execute(
-                    """
-                    INSERT INTO agendamientos (titulo,
-                                               descripcion,
-                                               fecha_inicio,
-                                               fecha_fin,
-                                               aspirante_id,
-                                               responsable_id,
-                                               estado,
-                                               tipo_agendamiento,
-                                               link_meet,
-                                               google_event_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
-                    """,
-                    (
-                        data.titulo,
-                        data.descripcion,
-                        data.fecha_inicio,
-                        data.fecha_fin,
-                        aspirante_id,
-                        responsable_id,
-                        ESTADO_AGENDAMIENTO_PROGRAMADO,
-                        tipo_agendamiento_id,
-                        link_meet,
-                        google_event_id,
-                    )
-                )
-
-                agendamiento_id = cur.fetchone()[0]
-
-                # 2️⃣ OBTENER O CREAR ENTREVISTA
-                entrevista = obtener_entrevista_id(aspirante_id, responsable_id)
-                if not entrevista:
-                    raise Exception("No se pudo obtener o crear la entrevista.")
-
-                entrevista_id = entrevista["id"]
-
-                # 3️⃣ INSERTAR EN TABLA entrevista_agendamiento
-                cur.execute(
-                    """
-                    INSERT INTO entrevista_agendamiento (
-                        agendamiento_id,
-                        entrevista_id,
-                        creado_en
-                    )
-                    VALUES (%s, %s, NOW() AT TIME ZONE 'UTC')
-                    """,
-                    (agendamiento_id, entrevista_id)
-                )
-
-                # 4️⃣ INSERTAR PARTICIPANTE
-                cur.execute(
-                    """
-                    INSERT INTO agendamientos_participantes (
-                        agendamiento_id,
-                        participante_tipo_id,
-                        participante_id
-                    )
-                    VALUES (%s, %s, %s)
-                    """,
-                    (agendamiento_id, PARTICIPANTE_TIPO_ASPIRANTE_ID, aspirante_id),
-                )
-
-                return agendamiento_id
-
-    except Exception as e:
-        print("❌ Error al crear agendamiento y relacionar entrevista:", e)
-        return None
 
 def obtener_link_live_por_creador(aspirante_id: int) -> Optional[str]:
     try:

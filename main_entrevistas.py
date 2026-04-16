@@ -12,7 +12,7 @@ from main_auth import obtener_usuario_actual
 from enviar_msg_wp import enviar_plantilla_generica_parametros, enviar_plantilla_generica
 from main_agendamiento import crear_evento
 
-from main_webhook import enviar_mensaje, validar_link_tiktok
+from utils_aspirantes import validar_link_tiktok
 from tenant import current_tenant
 
 

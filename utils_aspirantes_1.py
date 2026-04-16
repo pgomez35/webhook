@@ -1,4 +1,5 @@
 from datetime import datetime
+
 from dotenv import load_dotenv
 import os
 import re
@@ -330,8 +331,6 @@ def subir_audio_cloudinary(ruta_local, public_id=None, carpeta="audios_whatsapp"
     except Exception as e:
         print("❌ Error subiendo audio a Cloudinary:", e)
         return None
-
-
 
 
 # from datetime import datetime
