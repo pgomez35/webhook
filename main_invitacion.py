@@ -1,7 +1,7 @@
 import os
-from datetime import datetime,date,timedelta
+from datetime import datetime, date, timedelta
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, Field,constr
+from pydantic import BaseModel, Field, constr
 import unicodedata
 import logging
 from decimal import Decimal
@@ -18,8 +18,7 @@ from tenant import current_tenant
 
 logger = logging.getLogger("uvicorn.error")
 
-
-router = APIRouter()   # ← ESTE ES EL ROUTER QUE VAS A IMPORTAR EN main.py
+router = APIRouter()
 
 
 # =========================================================
@@ -61,6 +60,17 @@ ESTADOS_TIKTOK_VALIDOS = {
     ESTADO_TIKTOK_APROBADO,
     ESTADO_TIKTOK_RECHAZADO,
 }
+
+# Link global por agencia
+LINK_INVITACION_TIKTOK_DEFAULT = os.getenv(
+    "LINK_INVITACION_TIKTOK_DEFAULT",
+    "https://www.tiktok.com/t/ZMAqjPPCK/"
+)
+
+NOMBRE_AGENCIA_DEFAULT = os.getenv(
+    "NOMBRE_AGENCIA_PORTAL",
+    "Prestige Agency Live"
+)
 
 
 # =========================================================
@@ -136,8 +146,34 @@ class InvitacionDecisionFinalUpdate(BaseModel):
     observaciones: Optional[constr(max_length=300)] = None
 
 
+class InvitacionPortalOut(BaseModel):
+    existe: bool = False
+    aspirante_id: Optional[int] = None
+    invitacion_id: Optional[int] = None
+    estado_invitacion: Optional[str] = None
+    estado_tiktok: Optional[str] = None
+    estado_invitacion_label: Optional[str] = None
+    estado_tiktok_label: Optional[str] = None
+    fecha_invitacion: Optional[date] = None
+    fecha_respuesta_invitacion: Optional[date] = None
+    fecha_respuesta_tiktok: Optional[date] = None
+    fecha_incorporacion: Optional[date] = None
+    manager_id: Optional[int] = None
+    manager_nombre: Optional[str] = None
+    mensaje_enviado: Optional[bool] = None
+    solicitud_tiktok_enviada: Optional[bool] = None
+    observaciones: Optional[str] = None
+    puede_incorporarse: bool = False
+    link_invitacion: Optional[str] = None
+    ruta_tiktok: Optional[str] = None
+    agencia_nombre: Optional[str] = None
+    titulo: Optional[str] = None
+    mensaje_portal: Optional[str] = None
+    mostrar_boton_abrir_tiktok: bool = False
+
+
 # =========================================================
-# HELPERS
+# HELPERS BÁSICOS
 # =========================================================
 
 def row_to_dict(cur, row) -> Dict[str, Any]:
@@ -466,6 +502,164 @@ def validar_puede_asignarse_manager(invitacion: Dict[str, Any]) -> None:
 
 
 # =========================================================
+# HELPERS NUEVOS PARA PORTAL
+# =========================================================
+
+def obtener_nombre_agencia_portal() -> str:
+    tenant_name = None
+    try:
+        tenant_name = current_tenant.get()
+    except Exception:
+        tenant_name = None
+
+    if tenant_name:
+        return f"{tenant_name.capitalize()} Agency Live"
+
+    return NOMBRE_AGENCIA_DEFAULT
+
+
+def obtener_link_invitacion_tiktok_agencia() -> str:
+    return LINK_INVITACION_TIKTOK_DEFAULT
+
+
+def label_estado_invitacion(estado: Optional[str]) -> str:
+    mapa = {
+        ESTADO_INVITACION_PENDIENTE_ENVIO: "Pendiente de envío",
+        ESTADO_INVITACION_ENVIADA: "Enviada",
+        ESTADO_INVITACION_EN_ESPERA: "En espera",
+        ESTADO_INVITACION_ACEPTADA: "Aceptada",
+        ESTADO_INVITACION_RECHAZADA: "Rechazada",
+    }
+    return mapa.get(estado or "", "Sin información")
+
+
+def label_estado_tiktok(estado: Optional[str]) -> str:
+    mapa = {
+        ESTADO_TIKTOK_PENDIENTE: "Pendiente",
+        ESTADO_TIKTOK_ENVIADO: "Enviado",
+        ESTADO_TIKTOK_APROBADO: "Aprobado",
+        ESTADO_TIKTOK_RECHAZADO: "Rechazado",
+    }
+    return mapa.get(estado or "", "Sin información")
+
+
+def construir_mensaje_invitacion_portal(
+    estado_invitacion: Optional[str],
+    estado_tiktok: Optional[str],
+    agencia_nombre: str
+) -> str:
+    if estado_invitacion == ESTADO_INVITACION_RECHAZADA:
+        return (
+            f"La invitación para unirte a {agencia_nombre} no continuó en esta etapa. "
+            "Si tienes dudas, comunícate con la agencia."
+        )
+
+    if estado_tiktok == ESTADO_TIKTOK_RECHAZADO:
+        return (
+            "Tu proceso de incorporación no continuó porque TikTok no aprobó la vinculación "
+            "en esta etapa. Si tienes dudas, comunícate con la agencia."
+        )
+
+    if estado_invitacion == ESTADO_INVITACION_PENDIENTE_ENVIO:
+        return (
+            f"Tu invitación a {agencia_nombre} está en preparación. "
+            "Te avisaremos cuando ya esté disponible para revisarla en TikTok."
+        )
+
+    if estado_invitacion in {ESTADO_INVITACION_ENVIADA, ESTADO_INVITACION_EN_ESPERA} and estado_tiktok == ESTADO_TIKTOK_PENDIENTE:
+        return (
+            f"Ya tienes una invitación de {agencia_nombre}. "
+            "El siguiente paso es revisarla y aceptarla desde TikTok para continuar con tu incorporación."
+        )
+
+    if estado_invitacion in {ESTADO_INVITACION_ENVIADA, ESTADO_INVITACION_EN_ESPERA} and estado_tiktok == ESTADO_TIKTOK_ENVIADO:
+        return (
+            f"Tu invitación de {agencia_nombre} ya fue enviada y el proceso con TikTok está en curso. "
+            "Revisa tu invitación en TikTok y completa tu aceptación si aún está pendiente."
+        )
+
+    if estado_invitacion == ESTADO_INVITACION_ACEPTADA and estado_tiktok in {ESTADO_TIKTOK_PENDIENTE, ESTADO_TIKTOK_ENVIADO}:
+        return (
+            "Ya aceptaste la invitación de la agencia. "
+            "Ahora estamos a la espera de la validación final por parte de TikTok."
+        )
+
+    if estado_invitacion == ESTADO_INVITACION_ACEPTADA and estado_tiktok == ESTADO_TIKTOK_APROBADO:
+        return (
+            "¡Tu incorporación fue aprobada! "
+            "Ahora solo falta completar la asignación final dentro de la agencia."
+        )
+
+    return (
+        f"Tienes una invitación de {agencia_nombre}. "
+        "Revisa el estado actual y sigue los pasos indicados en TikTok para continuar."
+    )
+
+
+def transformar_invitacion_a_portal(invitacion: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    agencia_nombre = obtener_nombre_agencia_portal()
+    link_invitacion = obtener_link_invitacion_tiktok_agencia()
+
+    if not invitacion:
+        return {
+            "existe": False,
+            "agencia_nombre": agencia_nombre,
+            "link_invitacion": link_invitacion,
+            "ruta_tiktok": "TikTok > Herramientas de creador > Centro LIVE > Centro para agencias",
+            "titulo": f"Invitación a {agencia_nombre}",
+            "mensaje_portal": (
+                "Aún no hay una invitación activa registrada para tu proceso."
+            ),
+            "mostrar_boton_abrir_tiktok": False,
+            "puede_incorporarse": False,
+        }
+
+    estado_invitacion = invitacion.get("estado_invitacion")
+    estado_tiktok = invitacion.get("estado_tiktok")
+
+    mostrar_boton_abrir_tiktok = estado_invitacion in {
+        ESTADO_INVITACION_ENVIADA,
+        ESTADO_INVITACION_EN_ESPERA,
+        ESTADO_INVITACION_ACEPTADA,
+    }
+
+    return {
+        "existe": True,
+        "aspirante_id": invitacion.get("aspirante_id"),
+        "invitacion_id": invitacion.get("id"),
+        "estado_invitacion": estado_invitacion,
+        "estado_tiktok": estado_tiktok,
+        "estado_invitacion_label": label_estado_invitacion(estado_invitacion),
+        "estado_tiktok_label": label_estado_tiktok(estado_tiktok),
+        "fecha_invitacion": invitacion.get("fecha_invitacion"),
+        "fecha_respuesta_invitacion": invitacion.get("fecha_respuesta_invitacion"),
+        "fecha_respuesta_tiktok": invitacion.get("fecha_respuesta_tiktok"),
+        "fecha_incorporacion": invitacion.get("fecha_incorporacion"),
+        "manager_id": invitacion.get("manager_id"),
+        "manager_nombre": invitacion.get("nombre_manager"),
+        "mensaje_enviado": invitacion.get("mensaje_enviado"),
+        "solicitud_tiktok_enviada": invitacion.get("solicitud_tiktok_enviada"),
+        "observaciones": invitacion.get("observaciones"),
+        "puede_incorporarse": puede_incorporarse(invitacion),
+        "link_invitacion": link_invitacion,
+        "ruta_tiktok": "TikTok > Herramientas de creador > Centro LIVE > Centro para agencias",
+        "agencia_nombre": agencia_nombre,
+        "titulo": f"Invitación a {agencia_nombre}",
+        "mensaje_portal": construir_mensaje_invitacion_portal(
+            estado_invitacion=estado_invitacion,
+            estado_tiktok=estado_tiktok,
+            agencia_nombre=agencia_nombre
+        ),
+        "mostrar_boton_abrir_tiktok": mostrar_boton_abrir_tiktok,
+    }
+
+
+def obtener_invitacion_portal_por_aspirante(cur, aspirante_id: int) -> Dict[str, Any]:
+    invitacion = obtener_ultima_invitacion_por_creador(cur, aspirante_id)
+    return transformar_invitacion_a_portal(invitacion)
+
+
+# =========================================================
 # ENDPOINT 1: LISTAR MANAGERS
 # =========================================================
 
@@ -589,6 +783,19 @@ def obtener_invitacion_actual_creador(aspirante_id: int):
                 "success": True,
                 "data": invitacion
             }
+
+
+# =========================================================
+# ENDPOINT 3B: OBTENER INVITACIÓN LIMPIA PARA PORTAL
+# =========================================================
+
+@router.get("/api/portal/aspirantes/{aspirante_id}/invitacion", response_model=InvitacionPortalOut)
+def obtener_invitacion_portal(aspirante_id: int):
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            validar_creador_existe(cur, aspirante_id)
+            data = obtener_invitacion_portal_por_aspirante(cur, aspirante_id)
+            return InvitacionPortalOut(**data)
 
 
 # =========================================================
