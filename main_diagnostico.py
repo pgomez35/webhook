@@ -982,7 +982,7 @@ def actualizar_estado_preevaluacion(aspirante_id: int, payload: Dict[str, Any]):
 
             # 🔒 Validar estado_id si viene
             if estado_id is not None:
-                cur.execute("SELECT 1 FROM estados WHERE id = %s", (estado_id,))
+                cur.execute("SELECT 1 FROM aspirantes_estados WHERE id = %s", (estado_id,))
                 if not cur.fetchone():
                     raise ValueError(f"estado_id inválido: {estado_id}")
 
