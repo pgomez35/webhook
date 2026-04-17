@@ -2330,53 +2330,6 @@ def registrar_mensaje_recibido(
         traceback.print_exc()
 
 
-TIKTOK_DOMINIOS_VALIDOS = (
-    "tiktok.com",
-    "www.tiktok.com",
-    "vt.tiktok.com",
-)
-
-PATRON_TIKTOK_URL = re.compile(
-    r"(https?://[^\s]+tiktok\.com[^\s]*)",
-    re.IGNORECASE
-)
-
-def validar_link_tiktok(texto: str) -> bool:
-    """
-    Valida si el texto contiene un link válido de TikTok (idealmente de LIVE).
-    """
-    if not texto:
-        return False
-
-    # 1. Buscar un link dentro del texto
-    match = PATRON_TIKTOK_URL.search(texto)
-    if not match:
-        return False
-
-    url = match.group(1).strip()
-
-    # 2. Parsear la URL
-    try:
-        parsed = urlparse(url)
-    except Exception:
-        return False
-
-    # 3. Verificar dominio
-    dominio = parsed.netloc.lower()
-    if dominio not in TIKTOK_DOMINIOS_VALIDOS:
-        return False
-
-    # 4. Revisar el path
-    path = parsed.path.lower()
-
-    # Si quieres ser estricta y aceptar SOLO lives:
-    if "live" not in path:
-        return False
-
-    return True
-
-
-
 def obtener_entrevista_id(aspirante_id: int, usuario_evalua: int) -> Optional[dict]:
     """
     Obtiene la entrevista asociada a (aspirante_id, usuario_evalua).
@@ -2525,12 +2478,14 @@ def enviar_citas_agendadas(numero: str) -> None:
                         a.descripcion,
                         a.fecha_inicio,
                         a.fecha_fin,
-                        a.estado,
+                        COALESCE(ae.nombre, 'programado') AS estado,
                         COALESCE(a.tipo_agendamiento, 'ENTREVISTA') AS tipo_agendamiento,
                         a.link_meet
                     FROM agendamientos a
                     JOIN agendamientos_participantes ap
                       ON ap.agendamiento_id = a.id
+                    LEFT JOIN agendamientos_estados ae
+                      ON ae.id = a.estado_id
                     WHERE ap.participante_tipo_id = 1
                       AND ap.participante_id = %s
                     ORDER BY a.fecha_inicio ASC

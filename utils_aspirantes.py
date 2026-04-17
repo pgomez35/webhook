@@ -203,10 +203,10 @@ def guardar_link_tiktok_live(aspirante_id, url_tiktok):
 
                     query_insert = """
                                    INSERT INTO agendamientos
-                                   (aspirante_id, tipo_agendamiento, link_meet, estado, titulo, descripcion, creado_en)
-                                   VALUES (%s, 'LIVE', %s, 'pendiente', %s, %s, NOW()) RETURNING id \
+                                   (aspirante_id, tipo_agendamiento, link_meet, estado_id, titulo, descripcion, creado_en)
+                                   VALUES (%s, 'LIVE', %s, %s, %s, %s, NOW()) RETURNING id \
                                    """
-                    cur.execute(query_insert, (aspirante_id, url_tiktok, titulo, descripcion))
+                    cur.execute(query_insert, (aspirante_id, url_tiktok, 1, titulo, descripcion))
                     nuevo_id = cur.fetchone()[0]
 
                     # Opcional: Registrar también en la tabla de participantes para mantener consistencia

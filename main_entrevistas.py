@@ -562,7 +562,7 @@ def obtener_entrevista_con_agendamientos(aspirante_id: int) -> Optional[dict]:
                             a.fecha_fin,
                             COALESCE(a.aspirante_id, ap.participante_id) AS aspirante_id,
                             a.responsable_id,
-                            a.estado,
+                            a.estado_id,
                             a.link_meet,
                             a.google_event_id,
                             a.creado_en AS agendamiento_creado_en,
@@ -1017,7 +1017,7 @@ def obtener_pantalla_evaluacion_entrevistas(aspirante_id: int):
                     a.fecha_fin,
                     a.link_meet,
                     a.tipo_agendamiento,
-                    a.estado AS agendamiento_estado,
+                    a.estado_id AS agendamiento_estado,
                     ap.participante_id AS aspirante_id,
 
                     ta.nombre AS tipo_agendamiento_nombre,
@@ -1118,7 +1118,7 @@ def obtener_detalle_entrevista_por_agendamiento(
                     a.fecha_fin,
                     a.link_meet,
                     a.tipo_agendamiento,
-                    a.estado AS agendamiento_estado,
+                    a.estado_id AS agendamiento_estado,
 
                     ta.nombre AS tipo_agendamiento_nombre,
                     ta.color AS tipo_agendamiento_color,
@@ -1203,7 +1203,7 @@ def obtener_entrevista_por_id(entrevista_id: int, aspirante_id: int):
                     a.fecha_fin,
                     a.link_meet,
                     a.tipo_agendamiento,
-                    a.estado AS agendamiento_estado,
+                    a.estado_id AS agendamiento_estado,
 
                     ta.nombre AS tipo_agendamiento_nombre,
                     ta.color AS tipo_agendamiento_color,

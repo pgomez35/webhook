@@ -171,7 +171,7 @@ def obtener_evento(evento_id: str):
                         a.fecha_inicio,
                         a.fecha_fin,
                         a.responsable_id,
-                        a.estado,
+                        a.estado_id,
                         a.link_meet,
                         a.google_event_id,
                         a.creado_en,
@@ -225,7 +225,7 @@ def obtener_evento(evento_id: str):
                         a.fecha_inicio,
                         a.fecha_fin,
                         a.responsable_id,
-                        a.estado,
+                        a.estado_id,
                         a.link_meet,
                         a.google_event_id,
                         a.creado_en,
@@ -286,7 +286,7 @@ def obtener_evento(evento_id: str):
                 fecha_inicio,
                 fecha_fin,
                 responsable_id,
-                estado,
+                estado_id,
                 link_meet,
                 google_event_id,
                 creado_en,
@@ -711,7 +711,7 @@ def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario
                     fecha_fin,
                     tipo_agendamiento,
                     link_meet,
-                    estado,
+                    estado_id,
                     responsable_id,
                     google_event_id,
                     medio_reunion_id
@@ -811,7 +811,7 @@ def listar_agendamientos():
             cur.execute("""
             SELECT 
                 a.id, a.titulo, a.descripcion, a.fecha_inicio, a.fecha_fin,
-                a.estado, a.link_meet,
+                a.estado_id, a.link_meet,
                 u.nombre_completo AS responsable
             FROM agendamientos a
             LEFT JOIN administradores u ON u.id = a.responsable_id
@@ -883,7 +883,7 @@ def obtener_eventos(
                 a.fecha_inicio,
                 a.fecha_fin,
                 a.responsable_id,
-                a.estado,
+                a.estado_id,
                 a.link_meet,
                 a.tipo_agendamiento,
                 a.google_event_id,
@@ -947,7 +947,7 @@ def obtener_eventos(
                 fecha_inicio,
                 fecha_fin,
                 responsable_id,
-                estado,
+                estado_id,
                 link_meet,
                 tipo_agendamiento,
                 google_event_id,
@@ -968,7 +968,7 @@ def obtener_eventos(
                         "inicio": fecha_inicio,
                         "fin": fecha_fin,
                         "responsable_id": responsable_id,
-                        "estado": estado,
+                        "estado": estado_id,
                         "link_meet": link_meet,
                         "tipo_agendamiento": tipo_agendamiento,
                         "google_event_id": google_event_id,
@@ -1156,7 +1156,7 @@ def actualizar_fecha_agendamiento(
                     a.fecha_fin,
                     ap.participante_id AS aspirante_id,
                     a.responsable_id,
-                    a.estado,
+                    a.estado_id,
                     a.link_meet,
                     a.tipo_agendamiento
                 FROM agendamientos a
@@ -1342,7 +1342,7 @@ def listar_citas_creador(aspirante_id: int):
                 INNER JOIN agendamientos_participantes ap
                     ON ap.agendamiento_id = a.id
                 LEFT JOIN agendamientos_estados ae
-                    ON ae.id = a.estado
+                    ON ae.id = a.estado_id
                 INNER JOIN agendamientos_tipo at
                     ON at.id = a.tipo_agendamiento
                 WHERE ap.participante_tipo_id = 1
@@ -1913,7 +1913,7 @@ def crear_agendamiento_aspirante_DB(
                 fecha_inicio,
                 fecha_fin,
                 responsable_id,
-                estado,
+                estado_id,
                 tipo_agendamiento,
                 link_meet,
                 google_event_id,
