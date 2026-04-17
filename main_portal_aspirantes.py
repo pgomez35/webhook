@@ -796,6 +796,9 @@ def construir_siguiente_paso_portal(
     diagnostico = diagnostico or {}
     invitacion = invitacion or {}
 
+    # ======================================================
+    # 1-2. NUEVO / PRESELECCIÓN
+    # ======================================================
     if estado_id in (ESTADO_ASPIRANTE_NUEVO, ESTADO_ASPIRANTE_PRESELECCION):
         if not encuesta_terminada:
             return {
@@ -806,6 +809,8 @@ def construir_siguiente_paso_portal(
                 "cta_url": None,
                 "cta_externa": False,
                 "modulo_destino": "proceso",
+                "entrevista_id": None,
+                "agendamiento_id": None,
             }
 
         return {
@@ -816,8 +821,13 @@ def construir_siguiente_paso_portal(
             "cta_url": None,
             "cta_externa": False,
             "modulo_destino": "proceso",
+            "entrevista_id": None,
+            "agendamiento_id": None,
         }
 
+    # ======================================================
+    # 3. EVALUACIÓN
+    # ======================================================
     if estado_id == ESTADO_ASPIRANTE_EVALUACION:
         if diagnostico.get("existe"):
             return {
@@ -828,6 +838,8 @@ def construir_siguiente_paso_portal(
                 "cta_url": None,
                 "cta_externa": False,
                 "modulo_destino": "diagnostico",
+                "entrevista_id": None,
+                "agendamiento_id": None,
             }
 
         return {
@@ -838,8 +850,13 @@ def construir_siguiente_paso_portal(
             "cta_url": None,
             "cta_externa": False,
             "modulo_destino": "proceso",
+            "entrevista_id": None,
+            "agendamiento_id": None,
         }
 
+    # ======================================================
+    # 4. ENTREVISTA / PRUEBAS
+    # ======================================================
     if estado_id == ESTADO_ASPIRANTE_ENTREVISTA:
         if proxima_cita:
             ahora = datetime.now()
@@ -862,6 +879,7 @@ def construir_siguiente_paso_portal(
                     "cta_url": link_meet,
                     "cta_externa": True,
                     "modulo_destino": "citas",
+                    "entrevista_id": None,
                     "agendamiento_id": proxima_cita.get("agendamiento_id"),
                 }
 
@@ -873,6 +891,7 @@ def construir_siguiente_paso_portal(
                 "cta_url": None,
                 "cta_externa": False,
                 "modulo_destino": "citas",
+                "entrevista_id": None,
                 "agendamiento_id": proxima_cita.get("agendamiento_id"),
             }
 
@@ -885,6 +904,8 @@ def construir_siguiente_paso_portal(
                 "cta_url": agendamiento_pendiente.get("url"),
                 "cta_externa": True,
                 "modulo_destino": "citas",
+                "entrevista_id": None,
+                "agendamiento_id": None,
             }
 
         if ultima_prueba:
@@ -908,9 +929,14 @@ def construir_siguiente_paso_portal(
             "cta_url": None,
             "cta_externa": False,
             "modulo_destino": "citas",
+            "entrevista_id": None,
+            "agendamiento_id": None,
         }
 
-    if estado_id in (ESTADO_ASPIRANTE_INVITACION, ESTADO_ASPIRANTE_INCORPORADO, ESTADO_ASPIRANTE_RECHAZADO):
+    # ======================================================
+    # 5. INVITACIÓN
+    # ======================================================
+    if estado_id == ESTADO_ASPIRANTE_INVITACION:
         if invitacion.get("mostrar_boton_abrir_tiktok") and invitacion.get("link_invitacion"):
             return {
                 "codigo": "ver_invitacion_tiktok",
@@ -920,6 +946,8 @@ def construir_siguiente_paso_portal(
                 "cta_url": invitacion.get("link_invitacion"),
                 "cta_externa": True,
                 "modulo_destino": "invitacion",
+                "entrevista_id": None,
+                "agendamiento_id": None,
             }
 
         return {
@@ -930,8 +958,45 @@ def construir_siguiente_paso_portal(
             "cta_url": None,
             "cta_externa": False,
             "modulo_destino": "invitacion",
+            "entrevista_id": None,
+            "agendamiento_id": None,
         }
 
+    # ======================================================
+    # 6. INCORPORADO
+    # ======================================================
+    if estado_id == ESTADO_ASPIRANTE_INCORPORADO:
+        return {
+            "codigo": "ver_incorporacion",
+            "titulo": "Consultar tu incorporación",
+            "descripcion": "Tu proceso fue aprobado. Ahora puedes revisar la información de tu incorporación.",
+            "cta_label": "Ver incorporación",
+            "cta_url": None,
+            "cta_externa": False,
+            "modulo_destino": "incorporacion",
+            "entrevista_id": None,
+            "agendamiento_id": None,
+        }
+
+    # ======================================================
+    # 7. RECHAZADO
+    # ======================================================
+    if estado_id == ESTADO_ASPIRANTE_RECHAZADO:
+        return {
+            "codigo": "proceso_finalizado",
+            "titulo": "Proceso finalizado",
+            "descripcion": "Gracias por tu interés. En este momento no continuamos con tu proceso. Puedes revisar la información disponible abajo.",
+            "cta_label": None,
+            "cta_url": None,
+            "cta_externa": False,
+            "modulo_destino": "proceso",
+            "entrevista_id": None,
+            "agendamiento_id": None,
+        }
+
+    # ======================================================
+    # FALLBACK
+    # ======================================================
     return {
         "codigo": "ver_proceso",
         "titulo": "Consultar tu proceso",
@@ -940,6 +1005,8 @@ def construir_siguiente_paso_portal(
         "cta_url": None,
         "cta_externa": False,
         "modulo_destino": "proceso",
+        "entrevista_id": None,
+        "agendamiento_id": None,
     }
 
 
