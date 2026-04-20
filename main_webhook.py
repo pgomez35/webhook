@@ -53,7 +53,8 @@ from utils_aspirantes_1 import *
 from redis_client import redis_set_temp, redis_get_temp, redis_delete_temp
 from utils_aspirantes import obtener_status_24hrs, \
     enviar_plantilla_estado_evaluacion, buscar_estado_creador, \
-    accion_menu_estado_evaluacion, _handle_statuses, enviar_confirmacion_interactiva, manejar_input_link_tiktok
+    accion_menu_estado_evaluacion, _handle_statuses, enviar_confirmacion_interactiva, manejar_input_link_tiktok, \
+    registrar_cambio_estado
 
 # from utils_aspirantes import guardar_estado_eval, obtener_status_24hrs, Enviar_msg_estado, \
 #     enviar_plantilla_estado_evaluacion, obtener_aspirante_id_por_telefono, buscar_estado_creador, Enviar_menu_quickreply, \
@@ -4298,7 +4299,6 @@ def obtener_datos_pais(telefono_webhook: str) -> dict:
             "mensaje": f"Error procesando número: {str(e)}"
         }
 
-
 @router.post("/consolidar")
 def consolidar_perfil_web(
     data: ConsolidarInput,
@@ -4444,12 +4444,58 @@ def consolidar_perfil_web(
                         WHERE aspirante_id = %s
                     """, (zona_horaria, aspirante_id))
 
+                # -------------------------------
+                # Guardar trazabilidad encuesta inicial
+                # -------------------------------
+                cur.execute("""
+                    INSERT INTO aspirantes_encuesta_inicial (
+                        aspirante_id,
+                        respuestas_json,
+                        fecha_inicio,
+                        fecha_fin,
+                        completada,
+                        abandonada,
+                        preguntas_respondidas,
+                        sincronizado,
+                        fecha_sincronizacion,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        %s,
+                        %s::jsonb,
+                        now(),
+                        now(),
+                        true,
+                        false,
+                        %s,
+                        true,
+                        now(),
+                        now(),
+                        now()
+                    )
+                """, (
+                    aspirante_id,
+                    json.dumps(respuestas_dict, ensure_ascii=False),
+                    len(respuestas_dict)
+                ))
+
                 conn.commit()
+
+            # -------------------------------
+            # Pasar aspirante a Evaluación
+            # -------------------------------
+            registrar_cambio_estado(
+                aspirante_id=aspirante_id,
+                nuevo_estado_id=3,  # Evaluación
+                usuario_id=None,
+                origen_cambio="encuesta_link",
+                observacion="Aspirante pasa a Evaluación al completar la encuesta inicial"
+            )
 
         # -------------------------------
         # URL del portal con token
         # -------------------------------
-
         portal_data = generar_url_portal(
             aspirante_id=aspirante_id,
             origen="encuesta"
@@ -4489,4 +4535,196 @@ def consolidar_perfil_web(
             {"error": "Error al consolidar el perfil"},
             status_code=500
         )
+
+
+# @router.post("/consolidar")
+# def consolidar_perfil_web(
+#     data: ConsolidarInput,
+#     background_tasks: BackgroundTasks
+# ):
+#     try:
+#         subdominio = current_tenant.get()
+#
+#         cuenta = obtener_cuenta_por_subdominio(subdominio)
+#         if not cuenta:
+#             return JSONResponse(
+#                 {"error": f"No se encontraron credenciales para {subdominio}"},
+#                 status_code=404
+#             )
+#
+#         token_cliente = cuenta["access_token"]
+#         phone_id_cliente = cuenta["phone_number_id"]
+#         business_name = cuenta.get("business_name", "la agencia")
+#
+#         current_token.set(token_cliente)
+#         current_phone_id.set(phone_id_cliente)
+#         current_business_name.set(business_name)
+#
+#         # -------------------------------
+#         # Procesar respuestas
+#         # -------------------------------
+#         respuestas_dict = {}
+#
+#         if data.respuestas:
+#             for key, valor in data.respuestas.items():
+#                 if isinstance(key, str) and key.isdigit():
+#                     key = int(key)
+#
+#                 respuestas_dict[key] = str(valor).strip() if valor is not None else ""
+#
+#         # -------------------------------
+#         # Detectar país
+#         # -------------------------------
+#         datos_pais = obtener_datos_pais(data.numero)
+#
+#         pais_id = None
+#         pais_texto = None
+#
+#         if not datos_pais.get("error"):
+#             pais_id = datos_pais.get("id_pais")
+#
+#             if datos_pais.get("es_otro"):
+#                 pais_texto = datos_pais.get("pais_real_detectado") or datos_pais.get("nombre_pais")
+#             else:
+#                 pais_texto = datos_pais.get("nombre_pais")
+#
+#             if pais_id is not None:
+#                 respuestas_dict[VARIABLE_PAIS_ID] = str(pais_id)
+#
+#         # -------------------------------
+#         # Obtener usuario
+#         # -------------------------------
+#         try:
+#             usuario_bd = buscar_usuario_por_telefono(data.numero)
+#
+#             nombre_usuario = usuario_bd.get("nombre") if usuario_bd else None
+#             aspirante_id = usuario_bd.get("id") if usuario_bd else None
+#
+#         except Exception as e:
+#             print(f"⚠️ Error obteniendo usuario {data.numero}: {e}")
+#             nombre_usuario = None
+#             aspirante_id = None
+#
+#         # -------------------------------
+#         # Marcar encuesta completada
+#         # -------------------------------
+#         marcar_encuesta_completada(data.numero)
+#
+#         # -------------------------------
+#         # Guardar diagnóstico
+#         # -------------------------------
+#         if aspirante_id and respuestas_dict:
+#             with get_connection_context() as conn:
+#                 cur = conn.cursor()
+#
+#                 cur.execute("""
+#                     SELECT id, campo_db
+#                     FROM diagnostico_variable
+#                     WHERE migrado = true
+#                       AND COALESCE(activa, true) = true
+#                 """)
+#
+#                 variables = {row[0]: row[1] for row in cur.fetchall()}
+#
+#                 for pregunta_id, valor in respuestas_dict.items():
+#                     campo_db = variables.get(pregunta_id)
+#
+#                     # Guardar score solo si es número
+#                     if valor.isdigit():
+#                         valor_int = int(valor)
+#
+#                         cur.execute("""
+#                             INSERT INTO diagnostico_score_variable
+#                                 (aspirante_id, variable_id, valor_id)
+#                             VALUES (%s, %s, %s)
+#                             ON CONFLICT (aspirante_id, variable_id)
+#                             DO UPDATE SET
+#                                 valor_id = EXCLUDED.valor_id
+#                         """, (
+#                             aspirante_id,
+#                             pregunta_id,
+#                             valor_int
+#                         ))
+#
+#                     # Actualizar aspirantes_perfil según campo_db
+#                     if campo_db:
+#                         if not campo_db.replace("_", "").isalnum():
+#                             continue
+#
+#                         query = f"""
+#                             UPDATE aspirantes_perfil
+#                             SET {campo_db} = %s
+#                             WHERE aspirante_id = %s
+#                         """
+#
+#                         cur.execute(query, (valor, aspirante_id))
+#
+#                         if campo_db == "nombre":
+#                             nombre_usuario = valor
+#
+#                 # Guardar pais_texto
+#                 if pais_texto:
+#                     cur.execute("""
+#                         UPDATE aspirantes_perfil
+#                         SET pais_texto = %s
+#                         WHERE aspirante_id = %s
+#                     """, (pais_texto, aspirante_id))
+#
+#                 # Guardar zona_horaria
+#                 zona_horaria = None
+#                 if data.meta and isinstance(data.meta, dict):
+#                     zona_horaria = data.meta.get("zona_horaria")
+#
+#                 if zona_horaria:
+#                     cur.execute("""
+#                         UPDATE aspirantes_perfil
+#                         SET zona_horaria = %s
+#                         WHERE aspirante_id = %s
+#                     """, (zona_horaria, aspirante_id))
+#
+#                 conn.commit()
+#
+#         # -------------------------------
+#         # URL del portal con token
+#         # -------------------------------
+#
+#         portal_data = generar_url_portal(
+#             aspirante_id=aspirante_id,
+#             origen="encuesta"
+#         ) if aspirante_id else None
+#
+#         url_info = portal_data["url"] if portal_data else None
+#
+#         # -------------------------------
+#         # Mensaje final
+#         # -------------------------------
+#         mensaje_final = mensaje_encuesta_final(
+#             nombre=nombre_usuario,
+#             url_info=url_info
+#         )
+#
+#         background_tasks.add_task(
+#             enviar_mensaje_whatsapp_texto,
+#             data.numero,
+#             mensaje_final,
+#             token_cliente,
+#             phone_id_cliente
+#         )
+#
+#         print(f"✅ Perfil consolidado y mensaje enviado a {data.numero}")
+#
+#         return {
+#             "ok": True,
+#             "msg": "Perfil consolidado correctamente",
+#             "pais_texto": pais_texto,
+#             "zona_horaria": data.meta.get("zona_horaria") if data.meta else None
+#         }
+#
+#     except Exception as e:
+#         print(f"❌ Error en consolidar_perfil_web: {e}")
+#
+#         return JSONResponse(
+#             {"error": "Error al consolidar el perfil"},
+#             status_code=500
+#         )
 

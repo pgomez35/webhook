@@ -30,7 +30,7 @@ from starlette.responses import StreamingResponse
 
 import cloudinary
 
-from utils_aspirantes import obtener_status_24hrs, crear_link_agendamiento_token
+from utils_aspirantes import obtener_status_24hrs, crear_link_agendamiento_token, registrar_cambio_estado
 
 cloudinary.config(
     cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
@@ -2495,6 +2495,7 @@ def enviar_mensaje(numero: str, texto: str):
 # ENDPOINT
 # ======================================================
 
+
 @router.post("/api/aspirantes/invitacion/enviar")
 def enviar_mensaje_invitacion(
     data: EnviarNoAptoIn,
@@ -2540,7 +2541,7 @@ def enviar_mensaje_invitacion(
                     )
 
                 # ======================================================
-                # 2️⃣ Buscar última invitación del aspirante
+                # 2️⃣ Buscar o crear invitación
                 # ======================================================
                 cur.execute("""
                     SELECT id, estado_invitacion
@@ -2588,7 +2589,7 @@ def enviar_mensaje_invitacion(
                 conn.commit()
 
         # ======================================================
-        # 3️⃣ Obtener credenciales WABA
+        # 3️⃣ Credenciales WABA
         # ======================================================
         subdominio = current_tenant.get()
         cuenta = obtener_cuenta_por_subdominio(subdominio)
@@ -2608,8 +2609,7 @@ def enviar_mensaje_invitacion(
         )
 
         # ======================================================
-        # 4️⃣ Enviar SIEMPRE mensaje simple
-        #    El webhook manejará errores de ventana 24h
+        # 4️⃣ Enviar mensaje
         # ======================================================
         contenido_guardado = mensaje_invitacion_simple(nombre, business_name)
 
@@ -2621,7 +2621,7 @@ def enviar_mensaje_invitacion(
         )
 
         # ======================================================
-        # 5️⃣ Extraer message_id_meta
+        # 5️⃣ Obtener message_id_meta
         # ======================================================
         if isinstance(respuesta, dict) and respuesta.get("messages"):
             try:
@@ -2630,7 +2630,7 @@ def enviar_mensaje_invitacion(
                 message_id_meta = None
 
         # ======================================================
-        # 6️⃣ Guardar en mensajes_whatsapp
+        # 6️⃣ Guardar mensaje
         # ======================================================
         guardar_mensaje_nuevo(
             telefono=telefono,
@@ -2642,10 +2642,11 @@ def enviar_mensaje_invitacion(
         )
 
         # ======================================================
-        # 7️⃣ Actualizar invitación
+        # 7️⃣ Actualizar invitación + CAMBIO DE ESTADO
         # ======================================================
         with get_connection_context() as conn:
             with conn.cursor() as cur:
+
                 if codigo and codigo < 300:
                     cur.execute("""
                         UPDATE invitaciones
@@ -2661,6 +2662,16 @@ def enviar_mensaje_invitacion(
                         usuario_actual["id"],
                         invitacion_id
                     ))
+
+                    # 🔥 CAMBIO DE ESTADO AQUÍ (CLAVE)
+                    registrar_cambio_estado(
+                        aspirante_id=aspirante_id,
+                        nuevo_estado_id=5,  # Invitación
+                        usuario_id=usuario_actual["id"],
+                        origen_cambio="envio_invitacion_whatsapp",
+                        observacion="Aspirante pasa a Invitación tras envío de mensaje WhatsApp"
+                    )
+
                 else:
                     cur.execute("""
                         UPDATE invitaciones
@@ -2677,7 +2688,7 @@ def enviar_mensaje_invitacion(
                 conn.commit()
 
         # ======================================================
-        # 8️⃣ Respuesta final
+        # 8️⃣ Respuesta
         # ======================================================
         return {
             "status": "ok" if codigo and codigo < 300 else "error",
@@ -2711,6 +2722,8 @@ def enviar_mensaje_invitacion(
             detail=f"Error enviando mensaje de invitación: {str(e)}"
         )
 
+
+
 class AgendamientoUpdateIn(BaseModel):
     inicio: datetime
     fin: Optional[datetime] = None
@@ -2731,6 +2744,7 @@ class CrearLinkAgendamientoIn(BaseModel):
         description="Tipo de cita: 'LIVE' para prueba TikTok LIVE o 'ENTREVISTA' con asesor."
     )
 
+
 @router.post("/api/auto_agendamientos/aspirante/enviar", response_model=LinkAgendamientoOut)
 def enviar_link_auto_agendamiento_aspirante(
     data: CrearLinkAgendamientoIn,
@@ -2740,10 +2754,8 @@ def enviar_link_auto_agendamiento_aspirante(
     Envía un link de agendamiento al aspirante.
     Siempre intenta mensaje simple.
     Si Meta rechaza por ventana 24h, el webhook maneja el flujo de reenvío.
+    El estado del aspirante solo cambia si el mensaje fue enviado exitosamente.
     """
-
-    # logger.error("🔥 ESTOY EN EL ENDPOINT NUEVO enviar_link_agendamiento_aspirante")
-    # logger.error(f"🔥 Schema recibido: {data.model_dump()}")
 
     with get_connection_context() as conn:
         cur = conn.cursor()
@@ -2786,8 +2798,8 @@ def enviar_link_auto_agendamiento_aspirante(
             responsable_id=data.responsable_id,
             duracion_minutos=data.duracion_minutos,
             tipo_agendamiento=data.tipo_agendamiento,
-            horas_expiracion=48,   # ajustable
-            longitud_token=10      # ajustable
+            horas_expiracion=48,
+            longitud_token=10
         )
 
         token = token_data["token"]
@@ -2853,6 +2865,16 @@ def enviar_link_auto_agendamiento_aspirante(
             estado="sent" if codigo and codigo < 300 else "error"
         )
 
+        # 8️⃣ Cambiar estado SOLO si el envío fue exitoso
+        if codigo and codigo < 300:
+            registrar_cambio_estado(
+                aspirante_id=data.aspirante_id,
+                nuevo_estado_id=4,  # Entrevista
+                usuario_id=usuario_actual.get("id"),
+                origen_cambio="envio_link_autoagendamiento",
+                observacion=f"Aspirante pasa a Entrevista tras envío de link de autoagendamiento tipo {data.tipo_agendamiento}"
+            )
+
     except Exception as e:
         logger.exception(
             "❌ Error enviando link de agendamiento (aspirante_id=%s): %s",
@@ -2863,7 +2885,7 @@ def enviar_link_auto_agendamiento_aspirante(
             detail=f"Error enviando link de agendamiento: {str(e)}"
         )
 
-    # 8️⃣ Respuesta API
+    # 9️⃣ Respuesta API
     return LinkAgendamientoOut(
         token=token,
         url=url,
@@ -2947,7 +2969,7 @@ def enviar_mensaje_no_apto(
         if not telefono:
             raise HTTPException(status_code=400, detail="El aspirante no tiene número registrado.")
 
-        # 2️⃣ Marcar estado NO APTO
+        # 2️⃣ Marcar estado operativo en perfil
         cur.execute("""
             UPDATE aspirantes_perfil
             SET estado = 'Mensaje Enviado No apto',
@@ -2993,7 +3015,7 @@ def enviar_mensaje_no_apto(
             except Exception:
                 message_id_meta = None
 
-        # 7️⃣ Guardar en DB (CLAVE 🔥)
+        # 7️⃣ Guardar en DB
         guardar_mensaje_nuevo(
             telefono=telefono,
             contenido=mensaje,
@@ -3003,8 +3025,18 @@ def enviar_mensaje_no_apto(
             estado="sent" if codigo and codigo < 300 else "failed"
         )
 
+        # 8️⃣ Cambiar estado SOLO si el envío fue exitoso
+        if codigo and codigo < 300:
+            registrar_cambio_estado(
+                aspirante_id=aspirante_id,
+                nuevo_estado_id=7,  # Rechazado
+                usuario_id=usuario_actual.get("id"),
+                origen_cambio="envio_no_apto_whatsapp",
+                observacion="Aspirante pasa a Rechazado tras envío de mensaje No apto"
+            )
+
         return {
-            "status": "ok" if codigo < 300 else "error",
+            "status": "ok" if codigo and codigo < 300 else "error",
             "tipo_envio": "mensaje_simple",
             "codigo_meta": codigo,
             "respuesta_api": respuesta,
@@ -3109,3 +3141,458 @@ def enviar_mensaje_texto(
         print(f"❌ Error enviando mensaje WhatsApp: {e}")
         return 500, {"error": str(e)}
 
+
+# @router.post("/api/aspirantes/no_apto/enviar")
+# def enviar_mensaje_no_apto(
+#     data: EnviarNoAptoIn,
+#     usuario_actual: dict = Depends(obtener_usuario_actual)
+# ):
+#     with get_connection_context() as conn:
+#         cur = conn.cursor()
+#
+#         # 1️⃣ Obtener aspirante
+#         cur.execute("""
+#             SELECT id,
+#                    COALESCE(nickname, nombre_real) AS nombre,
+#                    telefono
+#             FROM aspirantes
+#             WHERE id = %s;
+#         """, (data.aspirante_id,))
+#         row = cur.fetchone()
+#
+#         if not row:
+#             raise HTTPException(status_code=404, detail="Aspirante no encontrado.")
+#
+#         aspirante_id, nombre, telefono = row
+#
+#         if not telefono:
+#             raise HTTPException(status_code=400, detail="El aspirante no tiene número registrado.")
+#
+#         # 2️⃣ Marcar estado NO APTO
+#         cur.execute("""
+#             UPDATE aspirantes_perfil
+#             SET estado = 'Mensaje Enviado No apto',
+#                 actualizado_en = NOW()
+#             WHERE aspirante_id = %s;
+#         """, (aspirante_id,))
+#         conn.commit()
+#
+#     # 3️⃣ Obtener credenciales WABA
+#     tenant_key = current_tenant.get()
+#     cuenta = obtener_cuenta_por_subdominio(tenant_key)
+#
+#     if not cuenta:
+#         raise HTTPException(500, f"No hay credenciales WABA para '{tenant_key}'.")
+#
+#     token = cuenta["access_token"]
+#     phone_id = cuenta["phone_number_id"]
+#     business_name = (
+#         cuenta.get("business_name")
+#         or cuenta.get("nombre")
+#         or "nuestra agencia"
+#     )
+#
+#     # 4️⃣ Construir mensaje simple
+#     mensaje = mensaje_no_apto_simple(nombre, business_name)
+#
+#     # ==============================
+#     # 5️⃣ ENVIAR MENSAJE SIMPLE
+#     # ==============================
+#     try:
+#         codigo, respuesta = enviar_mensaje_texto_simple(
+#             token=token,
+#             numero_id=phone_id,
+#             telefono_destino=telefono,
+#             texto=mensaje
+#         )
+#
+#         # 6️⃣ Extraer message_id de Meta
+#         message_id_meta = None
+#         if isinstance(respuesta, dict) and respuesta.get("messages"):
+#             try:
+#                 message_id_meta = respuesta["messages"][0].get("id")
+#             except Exception:
+#                 message_id_meta = None
+#
+#         # 7️⃣ Guardar en DB (CLAVE 🔥)
+#         guardar_mensaje_nuevo(
+#             telefono=telefono,
+#             contenido=mensaje,
+#             direccion="enviado",
+#             tipo="text",
+#             message_id_meta=message_id_meta,
+#             estado="sent" if codigo and codigo < 300 else "failed"
+#         )
+#
+#         return {
+#             "status": "ok" if codigo < 300 else "error",
+#             "tipo_envio": "mensaje_simple",
+#             "codigo_meta": codigo,
+#             "respuesta_api": respuesta,
+#             "telefono": telefono
+#         }
+#
+#     except Exception as e:
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error enviando mensaje NO APTO: {str(e)}"
+#         )
+
+
+
+# @router.post("/api/aspirantes/invitacion/enviar")
+# def enviar_mensaje_invitacion(
+#     data: EnviarNoAptoIn,
+#     usuario_actual: dict = Depends(obtener_usuario_actual)
+# ):
+#     telefono = None
+#     nombre = None
+#     aspirante_id = None
+#     tipo_envio = "mensaje_simple"
+#     contenido_guardado = None
+#     codigo = None
+#     respuesta = None
+#     message_id_meta = None
+#     invitacion_id = None
+#
+#     try:
+#         # ======================================================
+#         # 1️⃣ Obtener aspirante
+#         # ======================================================
+#         with get_connection_context() as conn:
+#             with conn.cursor() as cur:
+#                 cur.execute("""
+#                     SELECT id,
+#                            COALESCE(nickname, nombre_real) AS nombre,
+#                            telefono
+#                     FROM aspirantes
+#                     WHERE id = %s;
+#                 """, (data.aspirante_id,))
+#                 row = cur.fetchone()
+#
+#                 if not row:
+#                     raise HTTPException(
+#                         status_code=404,
+#                         detail="Aspirante no encontrado."
+#                     )
+#
+#                 aspirante_id, nombre, telefono = row
+#
+#                 if not telefono:
+#                     raise HTTPException(
+#                         status_code=400,
+#                         detail="El aspirante no tiene número registrado."
+#                     )
+#
+#                 # ======================================================
+#                 # 2️⃣ Buscar última invitación del aspirante
+#                 # ======================================================
+#                 cur.execute("""
+#                     SELECT id, estado_invitacion
+#                     FROM invitaciones
+#                     WHERE aspirante_id = %s
+#                     ORDER BY id DESC
+#                     LIMIT 1
+#                 """, (aspirante_id,))
+#                 invitacion_row = cur.fetchone()
+#
+#                 if invitacion_row:
+#                     invitacion_id = invitacion_row[0]
+#                 else:
+#                     cur.execute("""
+#                         INSERT INTO invitaciones (
+#                             aspirante_id,
+#                             fecha_invitacion,
+#                             usuario_invita,
+#                             manager_id,
+#                             estado_invitacion,
+#                             estado_tiktok,
+#                             fecha_respuesta_invitacion,
+#                             fecha_respuesta_tiktok,
+#                             fecha_incorporacion,
+#                             mensaje_enviado,
+#                             solicitud_tiktok_enviada,
+#                             observaciones,
+#                             creado_en,
+#                             actualizado_en
+#                         )
+#                         VALUES (
+#                             %s, NULL, %s, NULL, %s, %s,
+#                             NULL, NULL, NULL, false, false, %s, now(), now()
+#                         )
+#                         RETURNING id
+#                     """, (
+#                         aspirante_id,
+#                         usuario_actual["id"],
+#                         "pendiente_envio",
+#                         "pendiente",
+#                         "Invitación creada automáticamente desde envío WhatsApp"
+#                     ))
+#                     invitacion_id = cur.fetchone()[0]
+#
+#                 conn.commit()
+#
+#         # ======================================================
+#         # 3️⃣ Obtener credenciales WABA
+#         # ======================================================
+#         subdominio = current_tenant.get()
+#         cuenta = obtener_cuenta_por_subdominio(subdominio)
+#
+#         if not cuenta:
+#             raise HTTPException(
+#                 status_code=500,
+#                 detail=f"No hay credenciales WABA para '{subdominio}'."
+#             )
+#
+#         token = cuenta["access_token"]
+#         phone_id = cuenta["phone_number_id"]
+#         business_name = (
+#             cuenta.get("business_name")
+#             or cuenta.get("nombre")
+#             or "nuestra agencia"
+#         )
+#
+#         # ======================================================
+#         # 4️⃣ Enviar SIEMPRE mensaje simple
+#         #    El webhook manejará errores de ventana 24h
+#         # ======================================================
+#         contenido_guardado = mensaje_invitacion_simple(nombre, business_name)
+#
+#         codigo, respuesta = enviar_mensaje_texto_simple(
+#             token=token,
+#             numero_id=phone_id,
+#             telefono_destino=telefono,
+#             texto=contenido_guardado
+#         )
+#
+#         # ======================================================
+#         # 5️⃣ Extraer message_id_meta
+#         # ======================================================
+#         if isinstance(respuesta, dict) and respuesta.get("messages"):
+#             try:
+#                 message_id_meta = respuesta["messages"][0].get("id")
+#             except Exception:
+#                 message_id_meta = None
+#
+#         # ======================================================
+#         # 6️⃣ Guardar en mensajes_whatsapp
+#         # ======================================================
+#         guardar_mensaje_nuevo(
+#             telefono=telefono,
+#             contenido=contenido_guardado,
+#             direccion="enviado",
+#             tipo="text",
+#             message_id_meta=message_id_meta,
+#             estado="sent" if codigo and codigo < 300 else "error"
+#         )
+#
+#         # ======================================================
+#         # 7️⃣ Actualizar invitación
+#         # ======================================================
+#         with get_connection_context() as conn:
+#             with conn.cursor() as cur:
+#                 if codigo and codigo < 300:
+#                     cur.execute("""
+#                         UPDATE invitaciones
+#                         SET
+#                             mensaje_enviado = true,
+#                             estado_invitacion = %s,
+#                             fecha_invitacion = CURRENT_DATE,
+#                             usuario_invita = COALESCE(usuario_invita, %s),
+#                             actualizado_en = now()
+#                         WHERE id = %s
+#                     """, (
+#                         "enviada",
+#                         usuario_actual["id"],
+#                         invitacion_id
+#                     ))
+#                 else:
+#                     cur.execute("""
+#                         UPDATE invitaciones
+#                         SET
+#                             mensaje_enviado = false,
+#                             usuario_invita = COALESCE(usuario_invita, %s),
+#                             actualizado_en = now()
+#                         WHERE id = %s
+#                     """, (
+#                         usuario_actual["id"],
+#                         invitacion_id
+#                     ))
+#
+#                 conn.commit()
+#
+#         # ======================================================
+#         # 8️⃣ Respuesta final
+#         # ======================================================
+#         return {
+#             "status": "ok" if codigo and codigo < 300 else "error",
+#             "tipo_envio": tipo_envio,
+#             "codigo_meta": codigo,
+#             "respuesta_api": respuesta if not (codigo and codigo < 300) else None,
+#             "telefono": telefono,
+#             "message_id_meta": message_id_meta,
+#             "invitacion_id": invitacion_id
+#         }
+#
+#     except HTTPException:
+#         raise
+#
+#     except Exception as e:
+#         try:
+#             if telefono:
+#                 guardar_mensaje_nuevo(
+#                     telefono=telefono,
+#                     contenido=contenido_guardado or f"ERROR EN ENVÍO DE INVITACIÓN: {str(e)}",
+#                     direccion="enviado",
+#                     tipo="text",
+#                     message_id_meta=None,
+#                     estado="error"
+#                 )
+#         except Exception:
+#             pass
+#
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error enviando mensaje de invitación: {str(e)}"
+#         )
+
+
+
+# @router.post("/api/auto_agendamientos/aspirante/enviar", response_model=LinkAgendamientoOut)
+# def enviar_link_auto_agendamiento_aspirante(
+#     data: CrearLinkAgendamientoIn,
+#     usuario_actual: dict = Depends(obtener_usuario_actual),
+# ):
+#     """
+#     Envía un link de agendamiento al aspirante.
+#     Siempre intenta mensaje simple.
+#     Si Meta rechaza por ventana 24h, el webhook maneja el flujo de reenvío.
+#     """
+#
+#     # logger.error("🔥 ESTOY EN EL ENDPOINT NUEVO enviar_link_agendamiento_aspirante")
+#     # logger.error(f"🔥 Schema recibido: {data.model_dump()}")
+#
+#     with get_connection_context() as conn:
+#         cur = conn.cursor()
+#
+#         # 1️⃣ Obtener datos del aspirante
+#         cur.execute(
+#             """
+#             SELECT COALESCE(nickname, nombre_real) AS nombre, telefono
+#             FROM aspirantes
+#             WHERE id = %s
+#             """,
+#             (data.aspirante_id,)
+#         )
+#         row = cur.fetchone()
+#
+#         if not row:
+#             raise HTTPException(status_code=404, detail="El aspirante no existe.")
+#
+#         nombre_creador, telefono = row
+#
+#         if not telefono:
+#             raise HTTPException(status_code=400, detail="El aspirante no tiene teléfono registrado.")
+#
+#         # 2️⃣ Actualizar estado de mensajería con el tipo de agendamiento enviado
+#         estado_mensaje = f"Mensaje Enviado - {data.tipo_agendamiento}"
+#         cur.execute(
+#             """
+#             UPDATE aspirantes_perfil
+#             SET estado = %s,
+#                 actualizado_en = NOW()
+#             WHERE aspirante_id = %s
+#             """,
+#             (estado_mensaje, data.aspirante_id)
+#         )
+#
+#         # 3️⃣ Crear token de agendamiento
+#         token_data = crear_link_agendamiento_token(
+#             cur=cur,
+#             aspirante_id=data.aspirante_id,
+#             responsable_id=data.responsable_id,
+#             duracion_minutos=data.duracion_minutos,
+#             tipo_agendamiento=data.tipo_agendamiento,
+#             horas_expiracion=48,   # ajustable
+#             longitud_token=10      # ajustable
+#         )
+#
+#         token = token_data["token"]
+#         expiracion = token_data["expiracion"]
+#
+#         conn.commit()
+#
+#     # 4️⃣ Construir URL del agendador con token
+#     tenant_key = current_tenant.get() or "test"
+#     subdominio = tenant_key if tenant_key != "public" else "test"
+#
+#     url = f"https://{subdominio}.talentum-manager.com/agendar?t={token}"
+#
+#     # 5️⃣ Obtener credenciales WABA
+#     cuenta = obtener_cuenta_por_subdominio(tenant_key)
+#     if not cuenta:
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"No hay credenciales WABA para '{tenant_key}'."
+#         )
+#
+#     business_name = cuenta.get("business_name", "la agencia")
+#
+#     titulo_cita = (
+#         "tu prueba TikTok LIVE"
+#         if data.tipo_agendamiento == "LIVE"
+#         else "tu entrevista con un asesor"
+#     )
+#
+#     # 6️⃣ Construir mensaje simple
+#     mensaje = (
+#         f"Hola {nombre_creador or 'creador(a)'} 👋\n\n"
+#         f"Queremos continuar tu proceso con *{business_name}*.\n\n"
+#         f"📅 Agenda {titulo_cita} aquí:\n"
+#         f"{url}\n\n"
+#         f"⏱️ Duración estimada: {data.duracion_minutos} minutos.\n"
+#         f"🕒 Este enlace estará disponible hasta: {expiracion.strftime('%Y-%m-%d %H:%M')}.\n\n"
+#         "Selecciona el horario que prefieras. Si necesitas cambiar la cita, contáctanos."
+#     )
+#
+#     # 7️⃣ Enviar WhatsApp siempre como mensaje simple
+#     try:
+#         codigo, respuesta = enviar_mensaje_texto_simple(
+#             token=cuenta["access_token"],
+#             numero_id=cuenta["phone_number_id"],
+#             telefono_destino=telefono,
+#             texto=mensaje
+#         )
+#
+#         message_id_meta = None
+#         if isinstance(respuesta, dict) and respuesta.get("messages"):
+#             try:
+#                 message_id_meta = respuesta["messages"][0].get("id")
+#             except Exception:
+#                 message_id_meta = None
+#
+#         guardar_mensaje_nuevo(
+#             telefono=telefono,
+#             contenido=mensaje,
+#             direccion="enviado",
+#             tipo="text",
+#             message_id_meta=message_id_meta,
+#             estado="sent" if codigo and codigo < 300 else "error"
+#         )
+#
+#     except Exception as e:
+#         logger.exception(
+#             "❌ Error enviando link de agendamiento (aspirante_id=%s): %s",
+#             data.aspirante_id, e
+#         )
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error enviando link de agendamiento: {str(e)}"
+#         )
+#
+#     # 8️⃣ Respuesta API
+#     return LinkAgendamientoOut(
+#         token=token,
+#         url=url,
+#         expiracion=expiracion,
+#     )

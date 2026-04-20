@@ -1125,35 +1125,6 @@ def sync_cualitativo_perfil_y_variables(
         )
 
 
-@router.put("/api/aspirantes_perfil/{aspirante_id}/preevaluacion")
-def actualizar_preevaluacion(
-    aspirante_id: int,
-    datos: ActualizarPreEvaluacionIn,
-    usuario_actual: dict = Depends(obtener_usuario_actual),
-):
-    try:
-        payload = {
-            "estado_id": datos.estado_id,
-            "usuario_evalua": datos.usuario_evalua,
-            "observaciones_finales": datos.observaciones_finales
-        }
-
-        uid = usuario_actual.get("id")
-        usuario_id = int(uid) if uid is not None else None
-        actualizar_estado_preevaluacion(aspirante_id, payload, usuario_id=usuario_id)
-
-        return {
-            "status": "ok",
-            "mensaje": "Pre-evaluación actualizada correctamente",
-            "aspirante_id": aspirante_id,
-            "estado_id": datos.estado_id,
-        }
-
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 # =========================================================
 # ENDPOINTS DIAGNÓSTICO
@@ -1407,3 +1378,32 @@ def actualizar_entrevista_tipo(tipo_id: int, data: dict):
                 "success": True
             }
 
+# @router.put("/api/aspirantes_perfil/{aspirante_id}/preevaluacion")
+# def actualizar_preevaluacion(
+#     aspirante_id: int,
+#     datos: ActualizarPreEvaluacionIn,
+#     usuario_actual: dict = Depends(obtener_usuario_actual),
+# ):
+#     try:
+#         payload = {
+#             "estado_id": datos.estado_id,
+#             "usuario_evalua": datos.usuario_evalua,
+#             "observaciones_finales": datos.observaciones_finales
+#         }
+#
+#         uid = usuario_actual.get("id")
+#         usuario_id = int(uid) if uid is not None else None
+#         actualizar_estado_preevaluacion(aspirante_id, payload, usuario_id=usuario_id)
+#
+#         return {
+#             "status": "ok",
+#             "mensaje": "Pre-evaluación actualizada correctamente",
+#             "aspirante_id": aspirante_id,
+#             "estado_id": datos.estado_id,
+#         }
+#
+#     except ValueError as ve:
+#         raise HTTPException(status_code=400, detail=str(ve))
+#
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))

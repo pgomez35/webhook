@@ -1633,3 +1633,74 @@ def crear_link_agendamiento_token(
         status_code=500,
         detail="No fue posible generar un token único de agendamiento."
     )
+
+
+def registrar_cambio_estado(
+    aspirante_id: int,
+    nuevo_estado_id: int,
+    usuario_id: int = None,
+    origen_cambio: str = None,
+    observacion: str = None
+) -> bool:
+    """
+    Cambia el estado del aspirante y registra el historial.
+
+    Retorna:
+        True si hubo cambio
+        False si ya estaba en ese estado
+    """
+    try:
+        with get_connection_context() as conn:
+            cur = conn.cursor()
+
+            # Obtener estado actual
+            cur.execute("""
+                SELECT estado_id
+                FROM aspirantes
+                WHERE id = %s
+            """, (aspirante_id,))
+            row = cur.fetchone()
+
+            if not row:
+                return False
+
+            estado_actual = row[0]
+
+            # Si ya está en ese estado, no hacer nada
+            if estado_actual == nuevo_estado_id:
+                return False
+
+            # Actualizar estado
+            cur.execute("""
+                UPDATE aspirantes
+                SET estado_id = %s,
+                    actualizado_en = now()
+                WHERE id = %s
+            """, (nuevo_estado_id, aspirante_id))
+
+            # Insertar historial
+            cur.execute("""
+                INSERT INTO aspirantes_estado_historial (
+                    aspirante_id,
+                    estado_id,
+                    fecha_cambio,
+                    usuario_id,
+                    origen_cambio,
+                    observacion,
+                    created_at
+                )
+                VALUES (%s, %s, now(), %s, %s, %s, now())
+            """, (
+                aspirante_id,
+                nuevo_estado_id,
+                usuario_id,
+                origen_cambio,
+                observacion
+            ))
+
+            conn.commit()
+            return True
+
+    except Exception as e:
+        print(f"❌ Error en registrar_cambio_estado: {e}")
+        return False
