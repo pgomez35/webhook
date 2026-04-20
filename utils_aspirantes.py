@@ -83,6 +83,29 @@ def validar_link_tiktok(texto: str) -> bool:
     return True
 
 
+def construir_url_actualizar_perfil(numero: str, tenant_name: Optional[str] = None) -> str:
+    """
+    Construye la URL para actualizar perfil usando solo FRONTEND_BASE_URL.
+
+    Args:
+        numero: Número de teléfono del usuario
+        tenant_name: Nombre del tenant (opcional)
+
+    Returns:
+        URL completa para actualizar perfil, por ejemplo:
+        https://agencia.talentum-manager.com/actualizar-perfil?numero=573001112233
+    """
+    frontend_base_url = os.getenv("FRONTEND_BASE_URL", "https://talentum-manager.com")
+    domain = frontend_base_url.replace("https://", "").replace("http://", "").replace("www.", "")
+
+    if tenant_name:
+        base_url = f"https://{tenant_name}.{domain}"
+    else:
+        base_url = f"https://{domain}"
+
+    return f"{base_url}/actualizar-perfil?numero={numero}"
+
+
 # # --- MOCK DE BASE DE DATOS (Reemplaza con tu lógica real SQL) ---
 # def guardar_estado_eval(aspirante_id, estado):
 #     # UPDATE aspirantes_perfil SET estado_evaluacion = estado WHERE aspirante_id = aspirante_id

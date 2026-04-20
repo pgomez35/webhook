@@ -54,7 +54,7 @@ from redis_client import redis_set_temp, redis_get_temp, redis_delete_temp
 from utils_aspirantes import obtener_status_24hrs, \
     enviar_plantilla_estado_evaluacion, buscar_estado_creador, \
     accion_menu_estado_evaluacion, _handle_statuses, enviar_confirmacion_interactiva, manejar_input_link_tiktok, \
-    registrar_cambio_estado
+    registrar_cambio_estado, construir_url_actualizar_perfil
 
 # from utils_aspirantes import guardar_estado_eval, obtener_status_24hrs, Enviar_msg_estado, \
 #     enviar_plantilla_estado_evaluacion, obtener_aspirante_id_por_telefono, buscar_estado_creador, Enviar_menu_quickreply, \
@@ -67,28 +67,6 @@ load_dotenv()
 # CONFIGURACIÓN - URLs Frontend
 # ============================
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "https://talentum-manager.com")
-
-def construir_url_actualizar_perfil(numero: str, tenant_name: Optional[str] = None) -> str:
-    """
-    Construye la URL para actualizar perfil usando solo FRONTEND_BASE_URL.
-
-    Args:
-        numero: Número de teléfono del usuario
-        tenant_name: Nombre del tenant (opcional)
-
-    Returns:
-        URL completa para actualizar perfil, por ejemplo:
-        https://agencia.talentum-manager.com/actualizar-perfil?numero=573001112233
-    """
-    # Remover https:// y www. si están presentes, para poder insertar el tenant
-    domain = FRONTEND_BASE_URL.replace("https://", "").replace("http://", "").replace("www.", "")
-    
-    if tenant_name:
-        base_url = f"https://{tenant_name}.{domain}"
-    else:
-        base_url = f"https://{domain}"
-    
-    return f"{base_url}/actualizar-perfil?numero={numero}"
 
 router = APIRouter()
 
@@ -2586,8 +2564,6 @@ def enviar_citas_agendadas(numero: str) -> None:
         )
     )
 
-
-FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "https://talentum-manager.com")
 
 def construir_url_portal_citas(token: str, tenant_name: Optional[str] = None) -> str:
     """
