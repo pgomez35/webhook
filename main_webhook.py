@@ -960,88 +960,88 @@ def procesar_respuestas(respuestas):
 # - validar_aceptar_ciudad(), infer_zona_horaria(), etc. (usadas dentro de procesar_respuestas)
 
 
-def insertar_aspirante_encuesta_inicial(
-    telefono: str,
-    datos: dict,
-    tenant_schema: str
-):
-    """
-    Inserta los datos iniciales del aspirante en {schema}.aspirante_encuesta_inicial
-    SOLO si aún no existe ese teléfono.
-    """
-    try:
-        print("🧪 [ASPIRANTE] Iniciando inserción en aspirante_encuesta_inicial")
-        print(f"📞 [ASPIRANTE] Teléfono: {telefono}")
-        print(f"📦 [ASPIRANTE] Datos recibidos: {datos}")
-
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-
-                # 🔎 Validar existencia previa
-                cur.execute(f"""
-                    SELECT 1
-                    FROM {tenant_schema}.aspirante_encuesta_inicial
-                    WHERE telefono = %s
-                    LIMIT 1
-                """, (telefono,))
-
-                if cur.fetchone():
-                    print(f"ℹ️ [ASPIRANTE] Ya existe registro para {telefono}. No se inserta.")
-                    return {"inserted": False, "reason": "exists"}
-
-                # 👇 Tomar experiencia TikTok Live desde el json (si existe)
-                experiencia_tiktok = 0
-                try:
-                    exp_raw = datos.get("experiencia_otras_plataformas") or "{}"
-                    exp_json = json.loads(exp_raw) if isinstance(exp_raw, str) else (exp_raw or {})
-                    experiencia_tiktok = exp_json.get("TikTok Live", 0) or 0
-                except Exception:
-                    experiencia_tiktok = 0
-
-                # ✅ Insert
-                cur.execute(f"""
-                    INSERT INTO {tenant_schema}.aspirante_encuesta_inicial (
-                        telefono,
-                        nombre,
-                        edad,
-                        genero,
-                        pais,
-                        ciudad,
-                        actividad_actual,
-                        intencion_trabajo,
-                        tiempo_disponible,
-                        frecuencia_lives,
-                        experiencia_tiktok,
-                        tiempo_experiencia,
-                        created_at
-                    ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
-                    )
-                """, (
-                    telefono,
-                    datos.get("nombre"),
-                    datos.get("edad"),
-                    datos.get("genero"),
-                    datos.get("pais"),
-                    datos.get("ciudad"),
-                    datos.get("actividad_actual"),
-                    datos.get("intencion_trabajo"),
-                    datos.get("tiempo_disponible"),
-                    datos.get("frecuencia_lives"),
-                    experiencia_tiktok,
-                    # Si tú quieres guardar "tiempo_experiencia" (paso 9) en meses, aquí podrías ponerlo:
-                    # pero en tu procesar_respuestas lo conviertes a años. Si no existe, queda None.
-                    None
-                ))
-
-                conn.commit()
-                print(f"✅ [ASPIRANTE] Insertado correctamente en {tenant_schema}.aspirante_encuesta_inicial")
-                return {"inserted": True}
-
-    except Exception as e:
-        print(f"❌ [ASPIRANTE] Error insertando encuesta inicial para {telefono}: {e}")
-        traceback.print_exc()
-        return {"inserted": False, "error": str(e)}
+# def insertar_aspirante_encuesta_inicial(
+#     telefono: str,
+#     datos: dict,
+#     tenant_schema: str
+# ):
+#     """
+#     Inserta los datos iniciales del aspirante en {schema}.aspirante_encuesta_inicial
+#     SOLO si aún no existe ese teléfono.
+#     """
+#     try:
+#         print("🧪 [ASPIRANTE] Iniciando inserción en aspirante_encuesta_inicial")
+#         print(f"📞 [ASPIRANTE] Teléfono: {telefono}")
+#         print(f"📦 [ASPIRANTE] Datos recibidos: {datos}")
+#
+#         with get_connection_context() as conn:
+#             with conn.cursor() as cur:
+#
+#                 # 🔎 Validar existencia previa
+#                 cur.execute(f"""
+#                     SELECT 1
+#                     FROM {tenant_schema}.aspirante_encuesta_inicial
+#                     WHERE telefono = %s
+#                     LIMIT 1
+#                 """, (telefono,))
+#
+#                 if cur.fetchone():
+#                     print(f"ℹ️ [ASPIRANTE] Ya existe registro para {telefono}. No se inserta.")
+#                     return {"inserted": False, "reason": "exists"}
+#
+#                 # 👇 Tomar experiencia TikTok Live desde el json (si existe)
+#                 experiencia_tiktok = 0
+#                 try:
+#                     exp_raw = datos.get("experiencia_otras_plataformas") or "{}"
+#                     exp_json = json.loads(exp_raw) if isinstance(exp_raw, str) else (exp_raw or {})
+#                     experiencia_tiktok = exp_json.get("TikTok Live", 0) or 0
+#                 except Exception:
+#                     experiencia_tiktok = 0
+#
+#                 # ✅ Insert
+#                 cur.execute(f"""
+#                     INSERT INTO {tenant_schema}.aspirante_encuesta_inicial (
+#                         telefono,
+#                         nombre,
+#                         edad,
+#                         genero,
+#                         pais,
+#                         ciudad,
+#                         actividad_actual,
+#                         intencion_trabajo,
+#                         tiempo_disponible,
+#                         frecuencia_lives,
+#                         experiencia_tiktok,
+#                         tiempo_experiencia,
+#                         created_at
+#                     ) VALUES (
+#                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
+#                     )
+#                 """, (
+#                     telefono,
+#                     datos.get("nombre"),
+#                     datos.get("edad"),
+#                     datos.get("genero"),
+#                     datos.get("pais"),
+#                     datos.get("ciudad"),
+#                     datos.get("actividad_actual"),
+#                     datos.get("intencion_trabajo"),
+#                     datos.get("tiempo_disponible"),
+#                     datos.get("frecuencia_lives"),
+#                     experiencia_tiktok,
+#                     # Si tú quieres guardar "tiempo_experiencia" (paso 9) en meses, aquí podrías ponerlo:
+#                     # pero en tu procesar_respuestas lo conviertes a años. Si no existe, queda None.
+#                     None
+#                 ))
+#
+#                 conn.commit()
+#                 print(f"✅ [ASPIRANTE] Insertado correctamente en {tenant_schema}.aspirante_encuesta_inicial")
+#                 return {"inserted": True}
+#
+#     except Exception as e:
+#         print(f"❌ [ASPIRANTE] Error insertando encuesta inicial para {telefono}: {e}")
+#         traceback.print_exc()
+#         return {"inserted": False, "error": str(e)}
 
 
 def consolidar_perfil(

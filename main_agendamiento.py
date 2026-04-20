@@ -1646,6 +1646,7 @@ def crear_agendamiento_aspirante(
     → Valida token
     → Crea agendamiento
     → Marca token como usado
+    → Guarda agendamiento_id en agendamientos_link_tokens
     → Si es ENTREVISTA, crea evento en Google Calendar con Meet
     """
 
@@ -1663,7 +1664,8 @@ def crear_agendamiento_aspirante(
                     expiracion,
                     usado,
                     duracion_minutos,
-                    tipo_agendamiento
+                    tipo_agendamiento,
+                    agendamiento_id
                 FROM agendamientos_link_tokens
                 WHERE token = %s
                 """,
@@ -1681,14 +1683,28 @@ def crear_agendamiento_aspirante(
                 expiracion,
                 usado,
                 duracion_minutos,
-                tipo_agendamiento_db
+                tipo_agendamiento_db,
+                agendamiento_id_existente
             ) = token_row
 
             if usado:
-                raise HTTPException(status_code=400, detail="Este link ya fue utilizado.")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Este link ya fue utilizado."
+                )
 
             if expiracion < datetime.now():
-                raise HTTPException(status_code=400, detail="Este link ya expiró.")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Este link ya expiró."
+                )
+
+            # Seguridad extra: si por alguna razón ya quedó ligado a una cita
+            if agendamiento_id_existente:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Este link ya está asociado a un agendamiento."
+                )
 
             # 2️⃣ Obtener aspirante
             cur.execute(
@@ -1790,17 +1806,21 @@ def crear_agendamiento_aspirante(
             )
 
             if not agendamiento_id:
-                raise HTTPException(status_code=500, detail="No se pudo crear el agendamiento.")
+                raise HTTPException(
+                    status_code=500,
+                    detail="No se pudo crear el agendamiento."
+                )
 
-            # 7️⃣ Marcar token como usado
+            # 7️⃣ Marcar token como usado + guardar agendamiento_id
             cur.execute(
                 """
                 UPDATE agendamientos_link_tokens
                 SET usado = true,
-                    usado_en = NOW()
+                    usado_en = NOW(),
+                    agendamiento_id = %s
                 WHERE token = %s
                 """,
-                (token,)
+                (agendamiento_id, token)
             )
 
             conn.commit()
@@ -1829,8 +1849,10 @@ def crear_agendamiento_aspirante(
             )
 
         except HTTPException:
+            conn.rollback()
             raise
         except Exception as e:
+            conn.rollback()
             logger.error(f"❌ Error creando agendamiento de aspirante: {e}")
             logger.error(traceback.format_exc())
             raise HTTPException(

@@ -974,7 +974,12 @@ def calcular_diagnostico_y_json(cur, aspirante_id: int, modelo_id: int):
 # FLUJO DE TALENTO / PREEVALUACIÓN
 # =========================================================
 
-def actualizar_estado_preevaluacion(aspirante_id: int, payload: Dict[str, Any]):
+def actualizar_estado_preevaluacion(
+    aspirante_id: int,
+    payload: Dict[str, Any],
+    *,
+    usuario_id: Optional[int] = None,
+):
     estado_id = payload.get("estado_id")
 
     with get_connection_context() as conn:
@@ -1013,6 +1018,28 @@ def actualizar_estado_preevaluacion(aspirante_id: int, payload: Dict[str, Any]):
                     SET estado_id = %s
                     WHERE id = %s
                 """, (estado_id, aspirante_id))
+
+                obs_raw = payload.get("observaciones_finales")
+                if obs_raw is not None:
+                    obs_strip = str(obs_raw).strip()
+                    obs_val = obs_strip[:300] if obs_strip else None
+                else:
+                    obs_val = None
+
+                cur.execute(
+                    """
+                    INSERT INTO aspirantes_estado_historial (
+                        aspirante_id, estado_id, usuario_id, origen_cambio, observacion
+                    ) VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        aspirante_id,
+                        int(estado_id),
+                        usuario_id,
+                        "preevaluacion",
+                        obs_val,
+                    ),
+                )
 
         conn.commit()
 
@@ -1111,7 +1138,9 @@ def actualizar_preevaluacion(
             "observaciones_finales": datos.observaciones_finales
         }
 
-        actualizar_estado_preevaluacion(aspirante_id, payload)
+        uid = usuario_actual.get("id")
+        usuario_id = int(uid) if uid is not None else None
+        actualizar_estado_preevaluacion(aspirante_id, payload, usuario_id=usuario_id)
 
         return {
             "status": "ok",
