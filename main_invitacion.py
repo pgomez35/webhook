@@ -13,7 +13,7 @@ from enviar_msg_wp import enviar_plantilla_generica_parametros, enviar_plantilla
 from main_agendamiento import crear_evento
 
 from tenant import current_tenant
-
+from utils_aspirantes import registrar_cambio_estado
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -996,17 +996,23 @@ def actualizar_invitacion(invitacion_id: int, data: InvitacionUpdate):
             ))
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
-            actualizar_estado_creador_según_invitacion(cur, invitacion["aspirante_id"], invitacion)
             conn.commit()
 
-            invitacion = obtener_invitacion_por_id(cur, invitacion_id)
+    # ✅ Cambiar a Incorporado solo si ya cumple condición final
+    if puede_incorporarse(invitacion):
+        registrar_cambio_estado(
+            aspirante_id=invitacion["aspirante_id"],
+            nuevo_estado_id=6,  # Incorporado
+            usuario_id=usuario_invita,
+            origen_cambio="actualizar_invitacion",
+            observacion="Aspirante pasa a Incorporado tras aceptación de invitación y TikTok"
+        )
 
-            return {
-                "success": True,
-                "message": "Invitación actualizada correctamente",
-                "data": invitacion
-            }
-
+    return {
+        "success": True,
+        "message": "Invitación actualizada correctamente",
+        "data": invitacion
+    }
 
 # =========================================================
 # ENDPOINT 7: ACTUALIZAR ESTADOS
@@ -1320,3 +1326,83 @@ def asignar_manager_e_incorporacion(invitacion_id: int, data: InvitacionAsignaci
                 "message": "Manager asignado e incorporación actualizada correctamente",
                 "data": invitacion
             }
+
+# @router.put("/api/invitaciones/{invitacion_id}")
+# def actualizar_invitacion(invitacion_id: int, data: InvitacionUpdate):
+#     with get_connection_context() as conn:
+#         with conn.cursor() as cur:
+#             actual = obtener_invitacion_por_id(cur, invitacion_id)
+#
+#             estado_invitacion = (
+#                 data.estado_invitacion
+#                 if data.estado_invitacion is not None
+#                 else actual["estado_invitacion"]
+#             )
+#             estado_tiktok = (
+#                 data.estado_tiktok
+#                 if data.estado_tiktok is not None
+#                 else actual["estado_tiktok"]
+#             )
+#
+#             validar_estado_invitacion(estado_invitacion)
+#             validar_estado_tiktok(estado_tiktok)
+#
+#             usuario_invita = (
+#                 data.usuario_invita
+#                 if data.usuario_invita is not None
+#                 else actual["usuario_invita"]
+#             )
+#             if usuario_invita is not None:
+#                 validar_usuario_existe(cur, usuario_invita)
+#
+#             manager_id = (
+#                 data.manager_id
+#                 if data.manager_id is not None
+#                 else actual["manager_id"]
+#             )
+#             if manager_id is not None:
+#                 validar_manager_existe(cur, manager_id)
+#
+#             cur.execute("""
+#                 UPDATE invitaciones
+#                 SET
+#                     fecha_invitacion = %s,
+#                     usuario_invita = %s,
+#                     manager_id = %s,
+#                     estado_invitacion = %s,
+#                     estado_tiktok = %s,
+#                     fecha_respuesta_invitacion = %s,
+#                     fecha_respuesta_tiktok = %s,
+#                     fecha_incorporacion = %s,
+#                     mensaje_enviado = %s,
+#                     solicitud_tiktok_enviada = %s,
+#                     observaciones = %s,
+#                     actualizado_en = now()
+#                 WHERE id = %s
+#             """, (
+#                 data.fecha_invitacion if data.fecha_invitacion is not None else actual["fecha_invitacion"],
+#                 usuario_invita,
+#                 manager_id,
+#                 estado_invitacion,
+#                 estado_tiktok,
+#                 data.fecha_respuesta_invitacion if data.fecha_respuesta_invitacion is not None else actual["fecha_respuesta_invitacion"],
+#                 data.fecha_respuesta_tiktok if data.fecha_respuesta_tiktok is not None else actual["fecha_respuesta_tiktok"],
+#                 data.fecha_incorporacion if data.fecha_incorporacion is not None else actual["fecha_incorporacion"],
+#                 data.mensaje_enviado if data.mensaje_enviado is not None else actual["mensaje_enviado"],
+#                 data.solicitud_tiktok_enviada if data.solicitud_tiktok_enviada is not None else actual["solicitud_tiktok_enviada"],
+#                 data.observaciones if data.observaciones is not None else actual["observaciones"],
+#                 invitacion_id
+#             ))
+#
+#             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
+#             actualizar_estado_creador_según_invitacion(cur, invitacion["aspirante_id"], invitacion)
+#             conn.commit()
+#
+#             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
+#
+#             return {
+#                 "success": True,
+#                 "message": "Invitación actualizada correctamente",
+#                 "data": invitacion
+#             }
+
