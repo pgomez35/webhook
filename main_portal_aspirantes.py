@@ -10,6 +10,8 @@ from DataBase import get_connection_context
 from tenant import current_tenant
 from main_invitacion import obtener_invitacion_portal_por_aspirante, InvitacionPortalOut
 from utils_aspirantes import construir_url_actualizar_perfil
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, quote
+
 
 router = APIRouter()
 
@@ -76,7 +78,7 @@ def construir_base_portal_url() -> str:
 def construir_base_agendamiento_url() -> str:
     """
     Construye la base del front para /agendar
-    - test   -> https://test.talentum-manager.com/agendar
+    - test   -> https://talentum-manager.com/agendar
     - public -> https://talentum-manager.com/agendar
     """
     if PORTAL_BASE_URL:
@@ -805,12 +807,33 @@ def construir_siguiente_paso_portal(
     url_encuesta = None
     if numero_contacto:
         try:
-            url_encuesta = construir_url_actualizar_perfil(
+            base_url = construir_url_actualizar_perfil(
                 numero_contacto,
                 tenant_name=tenant_name
             )
-        except Exception:
+
+            # 👇 ESTA ES LA CLAVE
+            return_path = "/portal-aspirante"
+
+            # seguridad básica
+            if not return_path.startswith("/") or return_path.startswith("//"):
+                raise ValueError("Ruta inválida")
+
+            parsed = urlparse(base_url)
+            query_params = parse_qs(parsed.query)
+
+            # 👇 agregas return
+            query_params["return"] = [quote(return_path, safe="")]
+
+            new_query = urlencode(query_params, doseq=True)
+            url_encuesta = urlunparse(parsed._replace(query=new_query))
+
+            print("URL encuesta final:", url_encuesta)
+
+        except Exception as e:
+            print("Error URL encuesta:", e)
             url_encuesta = None
+
 
     # ======================================================
     # 1-2. NUEVO / PRESELECCIÓN
@@ -1433,7 +1456,7 @@ def generar_url_portal_para_aspirante(
 # def construir_base_agendamiento_url() -> str:
 #     """
 #     Construye la base del front para /agendar
-#     - test   -> https://test.talentum-manager.com/agendar
+#     - test   -> https://talentum-manager.com/agendar
 #     - public -> https://talentum-manager.com/agendar
 #     """
 #     if PORTAL_BASE_URL:
@@ -2330,7 +2353,7 @@ def generar_url_portal_para_aspirante(
 # def construir_base_agendamiento_url() -> str:
 #     """
 #     Construye la base del front para /agendar
-#     - test   -> https://test.talentum-manager.com/agendar
+#     - test   -> https://talentum-manager.com/agendar
 #     - public -> https://talentum-manager.com/agendar
 #     """
 #     if PORTAL_BASE_URL:

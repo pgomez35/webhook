@@ -82,28 +82,47 @@ def validar_link_tiktok(texto: str) -> bool:
 
     return True
 
+from urllib.parse import urlencode, urlparse, urlunparse
 
-def construir_url_actualizar_perfil(numero: str, tenant_name: Optional[str] = None) -> str:
+def construir_url_actualizar_perfil(
+    numero_contacto: str,
+    *,
+    tenant_name: Optional[str] = None,
+    return_path: Optional[str] = None,
+) -> str:
     """
-    Construye la URL para actualizar perfil usando solo FRONTEND_BASE_URL.
-
-    Args:
-        numero: Número de teléfono del usuario
-        tenant_name: Nombre del tenant (opcional)
-
-    Returns:
-        URL completa para actualizar perfil, por ejemplo:
-        https://agencia.talentum-manager.com/actualizar-perfil?numero=573001112233
+    Construye la URL de actualizar perfil con soporte de tenant y return seguro.
     """
+
     frontend_base_url = os.getenv("FRONTEND_BASE_URL", "https://talentum-manager.com")
-    domain = frontend_base_url.replace("https://", "").replace("http://", "").replace("www.", "")
+    parsed = urlparse(frontend_base_url)
+
+    # Construir dominio base
+    netloc = parsed.netloc.replace("www.", "")
 
     if tenant_name:
-        base_url = f"https://{tenant_name}.{domain}"
-    else:
-        base_url = f"https://{domain}"
+        netloc = f"{tenant_name}.{netloc}"
 
-    return f"{base_url}/actualizar-perfil?numero={numero}"
+    # Validar return_path (solo rutas internas)
+    params: dict[str, str] = {"numero": str(numero_contacto)}
+
+    if return_path:
+        if return_path.startswith("/"):
+            params["return"] = return_path
+        else:
+            # opcional: puedes loggear o ignorar silenciosamente
+            pass
+
+    query = urlencode(params)
+
+    return urlunparse((
+        parsed.scheme,
+        netloc,
+        "/actualizar-perfil",
+        "",
+        query,
+        ""
+    ))
 
 
 # # --- MOCK DE BASE DE DATOS (Reemplaza con tu lógica real SQL) ---
