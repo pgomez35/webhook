@@ -787,6 +787,8 @@ def tiempo_estimado_estado(estado_id: Optional[int]) -> Optional[str]:
 def construir_siguiente_paso_portal(
     estado_id: Optional[int],
     encuesta_terminada: bool,
+    telefono: Optional[str] = None,
+    whatsapp: Optional[str] = None,
     diagnostico: Optional[Dict[str, Any]] = None,
     proxima_cita: Optional[Dict[str, Any]] = None,
     agendamiento_pendiente: Optional[Dict[str, Any]] = None,
@@ -796,18 +798,31 @@ def construir_siguiente_paso_portal(
     diagnostico = diagnostico or {}
     invitacion = invitacion or {}
 
+    numero_contacto = whatsapp or telefono
+    tenant_name = obtener_tenant_actual()
+
+    url_encuesta = None
+    if numero_contacto:
+        try:
+            url_encuesta = construir_url_actualizar_perfil(
+                numero_contacto,
+                tenant_name=tenant_name
+            )
+        except Exception:
+            url_encuesta = None
+
     # ======================================================
     # 1-2. NUEVO / PRESELECCIÓN
     # ======================================================
     if estado_id in (ESTADO_ASPIRANTE_NUEVO, ESTADO_ASPIRANTE_PRESELECCION):
         if not encuesta_terminada:
             return {
-                "codigo": "completar_registro",
-                "titulo": "Completar tu registro",
-                "descripcion": "Revisa el proceso y las preguntas frecuentes para avanzar con claridad.",
-                "cta_label": "Ver proceso",
-                "cta_url": None,
-                "cta_externa": False,
+                "codigo": "completar_encuesta",
+                "titulo": "Completar tu encuesta",
+                "descripcion": "Para continuar con tu proceso, debes completar la encuesta inicial.",
+                "cta_label": "Ir a la encuesta",
+                "cta_url": url_encuesta,
+                "cta_externa": True if url_encuesta else False,
                 "modulo_destino": "proceso",
                 "entrevista_id": None,
                 "agendamiento_id": None,
@@ -1068,6 +1083,8 @@ def resumen_portal(token: str = Query(..., min_length=10)):
             siguiente_paso = construir_siguiente_paso_portal(
                 estado_id=info["estado_id"],
                 encuesta_terminada=info["encuesta_terminada"],
+                telefono=info["telefono"],
+                whatsapp=info["whatsapp"],
                 diagnostico=diagnostico,
                 proxima_cita=proxima_cita,
                 agendamiento_pendiente=agendamiento_pendiente,
@@ -3206,3 +3223,307 @@ def generar_url_portal_para_aspirante(
 #         "pagos": False,
 #         "soporte": True,
 #     }
+
+
+
+# def construir_siguiente_paso_portal(
+#     estado_id: Optional[int],
+#     encuesta_terminada: bool,
+#     diagnostico: Optional[Dict[str, Any]] = None,
+#     proxima_cita: Optional[Dict[str, Any]] = None,
+#     agendamiento_pendiente: Optional[Dict[str, Any]] = None,
+#     invitacion: Optional[Dict[str, Any]] = None,
+#     ultima_prueba: Optional[Dict[str, Any]] = None,
+# ) -> Dict[str, Any]:
+#     diagnostico = diagnostico or {}
+#     invitacion = invitacion or {}
+#
+#     # ======================================================
+#     # 1-2. NUEVO / PRESELECCIÓN
+#     # ======================================================
+#     if estado_id in (ESTADO_ASPIRANTE_NUEVO, ESTADO_ASPIRANTE_PRESELECCION):
+#         if not encuesta_terminada:
+#             return {
+#                 "codigo": "completar_registro",
+#                 "titulo": "Completar tu registro",
+#                 "descripcion": "Revisa el proceso y las preguntas frecuentes para avanzar con claridad.",
+#                 "cta_label": "Ver proceso",
+#                 "cta_url": None,
+#                 "cta_externa": False,
+#                 "modulo_destino": "proceso",
+#                 "entrevista_id": None,
+#                 "agendamiento_id": None,
+#             }
+#
+#         return {
+#             "codigo": "revisar_proceso",
+#             "titulo": "Conocer el proceso",
+#             "descripcion": "Tu información ya fue recibida. Mientras avanzamos, puedes revisar cómo funciona el proceso.",
+#             "cta_label": "Ver proceso",
+#             "cta_url": None,
+#             "cta_externa": False,
+#             "modulo_destino": "proceso",
+#             "entrevista_id": None,
+#             "agendamiento_id": None,
+#         }
+#
+#     # ======================================================
+#     # 3. EVALUACIÓN
+#     # ======================================================
+#     if estado_id == ESTADO_ASPIRANTE_EVALUACION:
+#         if diagnostico.get("existe"):
+#             return {
+#                 "codigo": "ver_diagnostico",
+#                 "titulo": "Ver tu diagnóstico",
+#                 "descripcion": "Ya puedes consultar el análisis actual de tu perfil.",
+#                 "cta_label": "Ver diagnóstico",
+#                 "cta_url": None,
+#                 "cta_externa": False,
+#                 "modulo_destino": "diagnostico",
+#                 "entrevista_id": None,
+#                 "agendamiento_id": None,
+#             }
+#
+#         return {
+#             "codigo": "esperar_evaluacion",
+#             "titulo": "Esperar evaluación",
+#             "descripcion": "Estamos revisando tu perfil. Esta etapa normalmente tarda entre 7 y 10 días.",
+#             "cta_label": "Ver proceso",
+#             "cta_url": None,
+#             "cta_externa": False,
+#             "modulo_destino": "proceso",
+#             "entrevista_id": None,
+#             "agendamiento_id": None,
+#         }
+#
+#     # ======================================================
+#     # 4. ENTREVISTA / PRUEBAS
+#     # ======================================================
+#     if estado_id == ESTADO_ASPIRANTE_ENTREVISTA:
+#         if proxima_cita:
+#             ahora = datetime.now()
+#             fecha_inicio = proxima_cita.get("fecha_inicio")
+#             fecha_fin = proxima_cita.get("fecha_fin")
+#             link_meet = proxima_cita.get("link_meet")
+#
+#             puede_unirse = False
+#             if fecha_inicio and fecha_fin and link_meet:
+#                 ventana_inicio = fecha_inicio - timedelta(minutes=15)
+#                 ventana_fin = fecha_fin + timedelta(hours=4)
+#                 puede_unirse = ventana_inicio <= ahora <= ventana_fin
+#
+#             if puede_unirse and link_meet:
+#                 return {
+#                     "codigo": "unirse_cita",
+#                     "titulo": "Unirte a tu cita",
+#                     "descripcion": "Tu próxima cita ya está disponible para unirte.",
+#                     "cta_label": "Unirme",
+#                     "cta_url": link_meet,
+#                     "cta_externa": True,
+#                     "modulo_destino": "citas",
+#                     "entrevista_id": None,
+#                     "agendamiento_id": proxima_cita.get("agendamiento_id"),
+#                 }
+#
+#             return {
+#                 "codigo": "ver_citas",
+#                 "titulo": "Ver tus citas",
+#                 "descripcion": "Ya tienes una cita programada. Revisa la fecha, hora y detalles.",
+#                 "cta_label": "Ver citas",
+#                 "cta_url": None,
+#                 "cta_externa": False,
+#                 "modulo_destino": "citas",
+#                 "entrevista_id": None,
+#                 "agendamiento_id": proxima_cita.get("agendamiento_id"),
+#             }
+#
+#         if agendamiento_pendiente and agendamiento_pendiente.get("pendiente"):
+#             return {
+#                 "codigo": "agendar_prueba",
+#                 "titulo": "Agendar tu prueba",
+#                 "descripcion": "Tienes un enlace disponible para programar tu siguiente paso.",
+#                 "cta_label": "Agendar ahora",
+#                 "cta_url": agendamiento_pendiente.get("url"),
+#                 "cta_externa": True,
+#                 "modulo_destino": "citas",
+#                 "entrevista_id": None,
+#                 "agendamiento_id": None,
+#             }
+#
+#         if ultima_prueba:
+#             return {
+#                 "codigo": "ver_resultado_prueba",
+#                 "titulo": "Ver el resultado de tu última prueba",
+#                 "descripcion": "Consulta tu evaluación más reciente para prepararte mejor.",
+#                 "cta_label": "Ver resultado",
+#                 "cta_url": None,
+#                 "cta_externa": False,
+#                 "modulo_destino": "citas",
+#                 "entrevista_id": ultima_prueba.get("entrevista_id"),
+#                 "agendamiento_id": ultima_prueba.get("agendamiento_id"),
+#             }
+#
+#         return {
+#             "codigo": "revisar_citas",
+#             "titulo": "Revisar tus citas",
+#             "descripcion": "Consulta el estado de tu proceso de entrevista y tus próximas actividades.",
+#             "cta_label": "Ver citas",
+#             "cta_url": None,
+#             "cta_externa": False,
+#             "modulo_destino": "citas",
+#             "entrevista_id": None,
+#             "agendamiento_id": None,
+#         }
+#
+#     # ======================================================
+#     # 5. INVITACIÓN
+#     # ======================================================
+#     if estado_id == ESTADO_ASPIRANTE_INVITACION:
+#         if invitacion.get("mostrar_boton_abrir_tiktok") and invitacion.get("link_invitacion"):
+#             return {
+#                 "codigo": "ver_invitacion_tiktok",
+#                 "titulo": "Ver tu invitación",
+#                 "descripcion": invitacion.get("mensaje_portal"),
+#                 "cta_label": "Ver invitación en TikTok",
+#                 "cta_url": invitacion.get("link_invitacion"),
+#                 "cta_externa": True,
+#                 "modulo_destino": "invitacion",
+#                 "entrevista_id": None,
+#                 "agendamiento_id": None,
+#             }
+#
+#         return {
+#             "codigo": "ver_estado_invitacion",
+#             "titulo": "Consultar tu estado de invitación",
+#             "descripcion": invitacion.get("mensaje_portal") or "Revisa el estado actual de tu invitación.",
+#             "cta_label": "Ver invitación",
+#             "cta_url": None,
+#             "cta_externa": False,
+#             "modulo_destino": "invitacion",
+#             "entrevista_id": None,
+#             "agendamiento_id": None,
+#         }
+#
+#     # ======================================================
+#     # 6. INCORPORADO
+#     # ======================================================
+#     if estado_id == ESTADO_ASPIRANTE_INCORPORADO:
+#         return {
+#             "codigo": "ver_incorporacion",
+#             "titulo": "Consultar tu incorporación",
+#             "descripcion": "Tu proceso fue aprobado. Ahora puedes revisar la información de tu incorporación.",
+#             "cta_label": "Ver incorporación",
+#             "cta_url": None,
+#             "cta_externa": False,
+#             "modulo_destino": "incorporacion",
+#             "entrevista_id": None,
+#             "agendamiento_id": None,
+#         }
+#
+#     # ======================================================
+#     # 7. RECHAZADO
+#     # ======================================================
+#     if estado_id == ESTADO_ASPIRANTE_RECHAZADO:
+#         return {
+#             "codigo": "proceso_finalizado",
+#             "titulo": "Proceso finalizado",
+#             "descripcion": "Gracias por tu interés. En este momento no continuamos con tu proceso. Puedes revisar la información disponible abajo.",
+#             "cta_label": None,
+#             "cta_url": None,
+#             "cta_externa": False,
+#             "modulo_destino": "proceso",
+#             "entrevista_id": None,
+#             "agendamiento_id": None,
+#         }
+#
+#     # ======================================================
+#     # FALLBACK
+#     # ======================================================
+#     return {
+#         "codigo": "ver_proceso",
+#         "titulo": "Consultar tu proceso",
+#         "descripcion": "Revisa en qué etapa te encuentras actualmente.",
+#         "cta_label": "Ver proceso",
+#         "cta_url": None,
+#         "cta_externa": False,
+#         "modulo_destino": "proceso",
+#         "entrevista_id": None,
+#         "agendamiento_id": None,
+#     }
+
+# @router.get("/api/portal/aspirantes/resumen", response_model=PortalResumenOut)
+# def resumen_portal(token: str = Query(..., min_length=10)):
+#     info = resolver_token_vigente_o_error(token)
+#     actualizar_uso_token(token)
+#
+#     with get_connection_context() as conn:
+#         with conn.cursor() as cur:
+#             diagnostico = obtener_diagnostico_portal(
+#                 cur=cur,
+#                 aspirante_id=info["aspirante_id"],
+#             )
+#
+#             agendamiento_pendiente = obtener_agendamiento_pendiente(
+#                 cur=cur,
+#                 aspirante_id=info["aspirante_id"],
+#             )
+#
+#             proxima_cita = obtener_proxima_cita_valida(
+#                 cur=cur,
+#                 aspirante_id=info["aspirante_id"],
+#             )
+#
+#             ultima_prueba = obtener_ultima_prueba_evaluada_portal(
+#                 cur=cur,
+#                 aspirante_id=info["aspirante_id"],
+#             )
+#
+#             invitacion = None
+#             invitacion_data = None
+#             if info["estado_id"] in (5, 6, 7):
+#                 invitacion_data = obtener_invitacion_portal_por_aspirante(
+#                     cur=cur,
+#                     aspirante_id=info["aspirante_id"],
+#                 )
+#                 invitacion = InvitacionPortalOut(**invitacion_data)
+#
+#             siguiente_paso = construir_siguiente_paso_portal(
+#                 estado_id=info["estado_id"],
+#                 encuesta_terminada=info["encuesta_terminada"],
+#                 diagnostico=diagnostico,
+#                 proxima_cita=proxima_cita,
+#                 agendamiento_pendiente=agendamiento_pendiente,
+#                 invitacion=invitacion_data,
+#                 ultima_prueba=ultima_prueba,
+#             )
+#
+#     return PortalResumenOut(
+#         aspirante_id=info["aspirante_id"],
+#         nombre=info["nombre"],
+#         telefono=info["telefono"],
+#         whatsapp=info["whatsapp"],
+#         email=info["email"],
+#         usuario=info["usuario"],
+#         estado_id=info["estado_id"],
+#         estado_nombre=info["estado_nombre"],
+#         mensaje_estado=mensaje_estado(info["estado_id"]),
+#         tiempo_estimado=tiempo_estimado_estado(info["estado_id"]),
+#         encuesta_terminada=info["encuesta_terminada"],
+#         paso_actual=obtener_paso_actual(
+#             estado_id=info["estado_id"],
+#             encuesta_terminada=info["encuesta_terminada"],
+#         ),
+#         total_pasos=TOTAL_PASOS_PORTAL,
+#         modulos=construir_modulos(
+#             estado_id=info["estado_id"],
+#             tiene_agendamiento_pendiente=agendamiento_pendiente is not None,
+#         ),
+#         siguiente_paso=SiguientePasoOut(**siguiente_paso),
+#         expiracion_token=info["expiracion"],
+#         agendamiento_pendiente=(
+#             AgendamientoPendienteOut(**agendamiento_pendiente)
+#             if agendamiento_pendiente
+#             else AgendamientoPendienteOut(pendiente=False)
+#         ),
+#         invitacion=invitacion,
+#     )
