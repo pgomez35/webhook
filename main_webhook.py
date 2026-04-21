@@ -4202,7 +4202,7 @@ class ConsolidarInput(BaseModel):
     numero: str
     respuestas: Optional[dict] = None
     meta: Optional[dict] = None
-
+    origen: Optional[str] = None
 
 PAISES_SISTEMA = {
     'AR': {'id': 119, 'nombre': 'Argentina'},
@@ -4274,6 +4274,8 @@ def obtener_datos_pais(telefono_webhook: str) -> dict:
             "error": True,
             "mensaje": f"Error procesando número: {str(e)}"
         }
+
+ORIGEN_PORTAL = "portal-aspirante"
 
 @router.post("/consolidar")
 def consolidar_perfil_web(
@@ -4487,21 +4489,27 @@ def consolidar_perfil_web(
             url_info=url_info
         )
 
-        background_tasks.add_task(
-            enviar_mensaje_whatsapp_texto,
-            data.numero,
-            mensaje_final,
-            token_cliente,
-            phone_id_cliente
-        )
+        origen = (data.origen or "").strip().lower()
+        enviar_mensaje = origen != ORIGEN_PORTAL
 
-        print(f"✅ Perfil consolidado y mensaje enviado a {data.numero}")
+        if enviar_mensaje:
+            background_tasks.add_task(
+                enviar_mensaje_whatsapp_texto,
+                data.numero,
+                mensaje_final,
+                token_cliente,
+                phone_id_cliente
+            )
+            print(f"✅ Perfil consolidado y mensaje enviado a {data.numero}")
+        else:
+            print(f"✅ Perfil consolidado sin envío de mensaje (origen={origen})")
 
         return {
             "ok": True,
             "msg": "Perfil consolidado correctamente",
             "pais_texto": pais_texto,
-            "zona_horaria": data.meta.get("zona_horaria") if data.meta else None
+            "zona_horaria": data.meta.get("zona_horaria") if data.meta else None,
+            "mensaje_enviado": enviar_mensaje
         }
 
     except Exception as e:
