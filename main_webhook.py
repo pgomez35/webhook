@@ -1799,7 +1799,244 @@ def _process_interactive_message(mensaje: dict, numero: str, paso: Optional[str 
     return {"status": "ok"}
 
 
+
 def _process_new_user_onboarding(
+    mensaje: dict,
+    numero: str,
+    texto: str,
+    texto_lower: str,
+    payload: str,
+    paso: Optional[str | int],
+    tenant_name: str,
+    phone_id: str = None,
+    token: str = None
+) -> Optional[dict]:
+    """
+    Flujo de onboarding para nuevos usuarios vía WhatsApp.
+    Pide usuario TikTok → confirma nickname → envía encuesta.
+    Si el aspirante está en estado 1 y confirma su identidad,
+    se actualiza a estado 2 usando registrar_cambio_estado.
+    """
+
+    tipo = mensaje.get("type")
+
+    # -----------------------------------------------------
+    # VALIDACIÓN DE TIPO DE MENSAJE
+    # -----------------------------------------------------
+    if tipo not in ["text", "interactive"]:
+        return None
+
+    # Extraer payload si es botón
+    if not payload and tipo == "interactive":
+        payload = (
+            mensaje.get("interactive", {})
+            .get("button_reply", {})
+            .get("id")
+        )
+
+    # -----------------------------------------------------
+    # VALIDACIÓN DE PASO (ANTI-CORRUPCIÓN DE FLUJO)
+    # -----------------------------------------------------
+    pasos_validos = [
+        None,
+        "esperando_usuario_tiktok",
+        "confirmando_nickname",
+        "esperando_inicio_encuesta",
+    ]
+
+    if paso not in pasos_validos:
+        print(f"⚠️ Reiniciando flujo para {numero}, paso inválido: {paso}")
+        eliminar_flujo(numero)
+        paso = None
+
+    # =====================================================
+    # PASO 0 – INICIO
+    # =====================================================
+    if paso is None:
+        enviar_mensaje(
+            numero,
+            "¡Hola! 👋 Bienvenido.\n"
+            "Para comenzar, por favor escribe tu *usuario de TikTok* "
+            "(sin @)."
+        )
+        actualizar_flujo(numero, "esperando_usuario_tiktok")
+        return {"status": "ok"}
+
+    # =====================================================
+    # PASO 1 – ESPERANDO USUARIO TIKTOK
+    # =====================================================
+    if paso == "esperando_usuario_tiktok":
+
+        if tipo != "text":
+            enviar_mensaje(numero, "✍️ Por favor escribe tu usuario de TikTok.")
+            return {"status": "ok"}
+
+        input_usuario = texto.strip()
+        aspirante = buscar_aspirante_por_usuario_tiktok(input_usuario)
+
+        if not aspirante:
+            enviar_mensaje(
+                numero,
+                "❌ No encontramos ese usuario.\n"
+                "Verifica e inténtalo nuevamente."
+            )
+            return {"status": "ok"}
+
+        # 🔑 NICKNAME REAL (LO ÚNICO QUE SE CONFIRMA)
+        nickname_tiktok = (
+            aspirante.get("usuario_tiktok")
+            or aspirante.get("nickname")
+        )
+
+        if not nickname_tiktok:
+            enviar_mensaje(
+                numero,
+                "⚠️ Encontramos el perfil, pero no pudimos obtener "
+                "el usuario de TikTok. Escríbelo nuevamente."
+            )
+            return {"status": "ok"}
+
+        # Guardar aspirante temporal
+        try:
+            redis_set_temp(numero, aspirante, ttl=900)
+        except Exception as e:
+            print(f"⚠️ Redis falló, usando memoria: {e}")
+            usuarios_temp[numero] = aspirante
+
+        # Confirmación con botones
+        if phone_id and token:
+            enviar_confirmacion_interactiva(
+                numero=numero,
+                nickname=nickname_tiktok,
+                phone_id=phone_id,
+                token=token
+            )
+        else:
+            enviar_mensaje(
+                numero,
+                f"Encontramos el usuario: *{nickname_tiktok}*.\n"
+                "¿Eres tú? (Responde SÍ o NO)"
+            )
+
+        actualizar_flujo(numero, "confirmando_nickname")
+        return {"status": "ok"}
+
+    # =====================================================
+    # PASO 2 – CONFIRMANDO NICKNAME
+    # =====================================================
+    if paso == "confirmando_nickname":
+
+        es_si = (
+            payload == "BTN_CONFIRM_YES"
+            or (tipo == "text" and texto_lower in ["si", "sí", "s", "y", "yes"])
+        )
+
+        es_no = (
+            payload == "BTN_CONFIRM_NO"
+            or (tipo == "text" and texto_lower in ["no", "n"])
+        )
+
+        # -------------------------
+        # CONFIRMA QUE SÍ
+        # -------------------------
+        if es_si:
+            aspirante = redis_get_temp(numero) or usuarios_temp.get(numero)
+
+            if not aspirante:
+                enviar_mensaje(
+                    numero,
+                    "⏳ La sesión expiró. "
+                    "Por favor escribe nuevamente tu usuario de TikTok."
+                )
+                actualizar_flujo(numero, "esperando_usuario_tiktok")
+                return {"status": "ok"}
+
+            aspirante_id = aspirante["id"]
+
+            # Asociar teléfono
+            actualizar_telefono_aspirante(aspirante_id, numero)
+
+            # Cambiar de estado 1 -> 2
+            try:
+                estado_actual = aspirante.get("estado_id")
+
+                if estado_actual == 1:
+                    cambio_hecho = registrar_cambio_estado(
+                        aspirante_id=aspirante_id,
+                        nuevo_estado_id=2,
+                        usuario_id=None,
+                        origen_cambio="whatsapp_onboarding",
+                        observacion="Aspirante identificado por primera vez en chatbot y enviado a encuesta"
+                    )
+                    print(f"🔄 Cambio estado 1->2 aspirante={aspirante_id}: {cambio_hecho}")
+                else:
+                    print(f"ℹ️ Aspirante {aspirante_id} no estaba en estado 1. Estado actual: {estado_actual}")
+
+            except Exception as e:
+                print(f"❌ Error cambiando estado del aspirante {aspirante_id}: {e}")
+
+            # Limpiar temporales
+            try:
+                redis_delete_temp(numero)
+            except Exception:
+                pass
+            usuarios_temp.pop(numero, None)
+
+            # Enviar encuesta (se mantiene comportamiento actual)
+            enviar_inicio_encuesta(numero)
+            actualizar_flujo(numero, "esperando_inicio_encuesta")
+            return {"status": "ok"}
+
+        # -------------------------
+        # CONFIRMA QUE NO
+        # -------------------------
+        if es_no:
+            enviar_mensaje(
+                numero,
+                "👌 Entendido.\n"
+                "Por favor escribe nuevamente tu *usuario de TikTok* correcto."
+            )
+
+            try:
+                redis_delete_temp(numero)
+            except Exception:
+                pass
+            usuarios_temp.pop(numero, None)
+
+            actualizar_flujo(numero, "esperando_usuario_tiktok")
+            return {"status": "ok"}
+
+        # -------------------------
+        # INPUT INVÁLIDO
+        # -------------------------
+        enviar_mensaje(
+            numero,
+            "⚠️ No te entendí.\n"
+            "Por favor selecciona una de las opciones."
+        )
+        return {"status": "ok"}
+
+    # =====================================================
+    # PASO 3 – REENVÍO DE LINK DE ENCUESTA
+    # =====================================================
+    if paso == "esperando_inicio_encuesta":
+        tenant_actual = tenant_name or current_tenant.get() or "default"
+        url_web = construir_url_actualizar_perfil(
+            numero,
+            tenant_name=tenant_actual
+        )
+
+        enviar_mensaje(
+            numero,
+            "📋 Para comenzar la encuesta, haz clic aquí:\n\n"
+            f"{url_web}\n\n"
+            "Puedes hacerlo desde tu celular o computadora."
+        )
+        return {"status": "ok"}
+
+    return None
+
+def _process_new_user_onboardingV1(
     mensaje: dict,
     numero: str,
     texto: str,
