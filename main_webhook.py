@@ -12,7 +12,7 @@ import traceback
 import unicodedata
 import phonenumbers
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Optional
+from typing import Optional, Dict, Any
 from urllib.parse import urlparse
 from datetime import datetime, timezone, timedelta
 
@@ -41,6 +41,7 @@ from enviar_msg_wp import (
     enviar_plantilla_generica,
     enviar_plantilla_generica_parametros
 )
+from main_diagnostico import obtener_estado_aspirante
 from main_mensajeria_whatsapp import reenviar_ultimo_mensaje, enviar_mensaje_whatsapp_texto
 from main_portal_aspirantes import generar_url_portal, generar_url_portal_para_aspirante
 from tenant import (
@@ -54,7 +55,8 @@ from redis_client import redis_set_temp, redis_get_temp, redis_delete_temp
 from utils_aspirantes import obtener_status_24hrs, \
     enviar_plantilla_estado_evaluacion, buscar_estado_creador, \
     accion_menu_estado_evaluacion, _handle_statuses, enviar_confirmacion_interactiva, manejar_input_link_tiktok, \
-    registrar_cambio_estado, construir_url_actualizar_perfil
+    registrar_cambio_estado, construir_url_actualizar_perfil, iniciar_trazabilidad_encuesta_inicial, \
+    habilitar_trazabilidad_encuesta_inicial
 
 # from utils_aspirantes import guardar_estado_eval, obtener_status_24hrs, Enviar_msg_estado, \
 #     enviar_plantilla_estado_evaluacion, obtener_aspirante_id_por_telefono, buscar_estado_creador, Enviar_menu_quickreply, \
@@ -1799,7 +1801,6 @@ def _process_interactive_message(mensaje: dict, numero: str, paso: Optional[str 
     return {"status": "ok"}
 
 
-
 def _process_new_user_onboarding(
     mensaje: dict,
     numero: str,
@@ -1813,7 +1814,7 @@ def _process_new_user_onboarding(
 ) -> Optional[dict]:
     """
     Flujo de onboarding para nuevos usuarios vía WhatsApp.
-    Pide usuario TikTok → confirma nickname → envía encuesta.
+    Pide usuario TikTok -> confirma nickname -> envía encuesta.
     Si el aspirante está en estado 1 y confirma su identidad,
     se actualiza a estado 2 usando registrar_cambio_estado.
     """
@@ -1882,7 +1883,7 @@ def _process_new_user_onboarding(
             )
             return {"status": "ok"}
 
-        # 🔑 NICKNAME REAL (LO ÚNICO QUE SE CONFIRMA)
+        # Nickname real a confirmar
         nickname_tiktok = (
             aspirante.get("usuario_tiktok")
             or aspirante.get("nickname")
@@ -1958,7 +1959,7 @@ def _process_new_user_onboarding(
 
             # Cambiar de estado 1 -> 2
             try:
-                estado_actual = aspirante.get("estado_id")
+                estado_actual = obtener_estado_aspirante(aspirante_id)
 
                 if estado_actual == 1:
                     cambio_hecho = registrar_cambio_estado(
@@ -1970,7 +1971,10 @@ def _process_new_user_onboarding(
                     )
                     print(f"🔄 Cambio estado 1->2 aspirante={aspirante_id}: {cambio_hecho}")
                 else:
-                    print(f"ℹ️ Aspirante {aspirante_id} no estaba en estado 1. Estado actual: {estado_actual}")
+                    print(
+                        f"ℹ️ Aspirante {aspirante_id} no estaba en estado 1. "
+                        f"Estado actual: {estado_actual}"
+                    )
 
             except Exception as e:
                 print(f"❌ Error cambiando estado del aspirante {aspirante_id}: {e}")
@@ -1982,7 +1986,7 @@ def _process_new_user_onboarding(
                 pass
             usuarios_temp.pop(numero, None)
 
-            # Enviar encuesta (se mantiene comportamiento actual)
+            # Enviar encuesta
             enviar_inicio_encuesta(numero)
             actualizar_flujo(numero, "esperando_inicio_encuesta")
             return {"status": "ok"}
@@ -2035,6 +2039,7 @@ def _process_new_user_onboarding(
         return {"status": "ok"}
 
     return None
+
 
 def _process_new_user_onboardingV1(
     mensaje: dict,
@@ -2191,7 +2196,7 @@ def _process_new_user_onboardingV1(
 
             # Cambiar de estado 1 -> 2
             try:
-                estado_actual = aspirante.get("estado_id")
+                estado_actual = obtener_estado_aspirante(aspirante_id)
 
                 if estado_actual == 1:
                     cambio_hecho = registrar_cambio_estado(
@@ -5031,6 +5036,84 @@ def consolidar_perfil_web(
 
         return JSONResponse(
             {"error": "Error al consolidar el perfil"},
+            status_code=500
+        )
+
+
+
+class IniciarEncuestaInput(BaseModel):
+    numero: str
+    meta: Optional[Dict[str, Any]] = None
+
+
+@router.post("/encuesta/iniciar")
+def iniciar_encuesta_inicial(data: IniciarEncuestaInput):
+    try:
+        # -------------------------------
+        # Obtener usuario
+        # -------------------------------
+        try:
+            usuario_bd = buscar_usuario_por_telefono(data.numero)
+            aspirante_id = usuario_bd.get("id") if usuario_bd else None
+        except Exception as e:
+            print(f"⚠️ Error obteniendo usuario {data.numero}: {e}")
+            aspirante_id = None
+
+        if not aspirante_id:
+            return JSONResponse(
+                {"error": "No se encontró aspirante para ese número"},
+                status_code=404
+            )
+
+        # -------------------------------
+        # Guardar zona horaria si viene
+        # -------------------------------
+        zona_horaria = None
+        if data.meta and isinstance(data.meta, dict):
+            zona_horaria = data.meta.get("zona_horaria")
+
+        if zona_horaria:
+            try:
+                with get_connection_context() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            UPDATE aspirantes_perfil
+                            SET zona_horaria = %s
+                            WHERE aspirante_id = %s
+                            """,
+                            (zona_horaria, aspirante_id)
+                        )
+                    conn.commit()
+            except Exception as e:
+                print(f"⚠️ Error guardando zona_horaria para aspirante {aspirante_id}: {e}")
+
+        # -------------------------------
+        # Habilitar trazabilidad de encuesta
+        # -------------------------------
+        ok = habilitar_trazabilidad_encuesta_inicial(
+            aspirante_id=aspirante_id,
+            respuestas_json={},
+            preguntas_respondidas=0
+        )
+
+        if not ok:
+            return JSONResponse(
+                {"error": "No se pudo iniciar la encuesta"},
+                status_code=500
+            )
+
+        return {
+            "ok": True,
+            "msg": "Encuesta iniciada correctamente",
+            "aspirante_id": aspirante_id,
+            "zona_horaria": zona_horaria
+        }
+
+    except Exception as e:
+        print(f"❌ Error en iniciar_encuesta_inicial: {e}")
+        return JSONResponse(
+            {"error": "Error al iniciar la encuesta"},
             status_code=500
         )
 

@@ -1746,3 +1746,240 @@ def registrar_cambio_estado(
     except Exception as e:
         print(f"❌ Error en registrar_cambio_estado: {e}")
         return False
+
+
+def iniciar_trazabilidad_encuesta_inicial(
+    aspirante_id: int,
+    respuestas_json: Optional[dict] = None,
+    preguntas_respondidas: int = 0,
+    sincronizado: bool = False
+) -> bool:
+    """
+    Crea un registro inicial de trazabilidad de encuesta si no existe una
+    encuesta inicial abierta/no completada para el aspirante.
+    """
+    try:
+        respuestas_json = respuestas_json or {}
+
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                # Validar si ya existe una encuesta inicial pendiente
+                cur.execute(
+                    """
+                    SELECT id
+                    FROM aspirantes_encuesta_inicial
+                    WHERE aspirante_id = %s
+                      AND completada = false
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (aspirante_id,)
+                )
+                existente = cur.fetchone()
+
+                if existente:
+                    return False
+
+                cur.execute(
+                    """
+                    INSERT INTO aspirantes_encuesta_inicial (
+                        aspirante_id,
+                        respuestas_json,
+                        fecha_inicio,
+                        fecha_fin,
+                        completada,
+                        abandonada,
+                        preguntas_respondidas,
+                        sincronizado,
+                        fecha_sincronizacion,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        %s,
+                        %s::jsonb,
+                        now(),
+                        NULL,
+                        false,
+                        true,
+                        %s,
+                        %s,
+                        NULL,
+                        now(),
+                        now()
+                    )
+                    """,
+                    (
+                        aspirante_id,
+                        json.dumps(respuestas_json, ensure_ascii=False),
+                        preguntas_respondidas,
+                        sincronizado
+                    )
+                )
+
+            conn.commit()
+
+        return True
+
+    except Exception as e:
+        print(f"❌ Error en iniciar_trazabilidad_encuesta_inicial: {e}")
+        return False
+
+
+def habilitar_trazabilidad_encuesta_inicial(
+        aspirante_id: int,
+        respuestas_json: Optional[dict] = None,
+        preguntas_respondidas: int = 0
+) -> bool:
+    """
+    Marca como iniciada la encuesta inicial.
+
+    Reglas:
+    - Si ya existe una encuesta no completada, la reutiliza y la deja iniciada.
+    - Si no existe, la crea.
+    - Al iniciar:
+        completada = false
+        abandonada = true
+        fecha_inicio = now()
+        fecha_fin = null
+    """
+    try:
+        respuestas_json = respuestas_json or {}
+
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                # Buscar una trazabilidad abierta
+                cur.execute(
+                    """
+                    SELECT id
+                    FROM aspirantes_encuesta_inicial
+                    WHERE aspirante_id = %s
+                      AND completada = false
+                    ORDER BY created_at DESC LIMIT 1
+                    """,
+                    (aspirante_id,)
+                )
+                row = cur.fetchone()
+
+                if row:
+                    encuesta_id = row[0]
+
+                    cur.execute(
+                        """
+                        UPDATE aspirantes_encuesta_inicial
+                        SET fecha_inicio          = COALESCE(fecha_inicio, now()),
+                            fecha_fin             = NULL,
+                            completada            = false,
+                            abandonada            = true,
+                            preguntas_respondidas = %s,
+                            respuestas_json       = %s::jsonb,
+                            updated_at = now()
+                        WHERE id = %s
+                        """,
+                        (
+                            preguntas_respondidas,
+                            json.dumps(respuestas_json, ensure_ascii=False),
+                            encuesta_id
+                        )
+                    )
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO aspirantes_encuesta_inicial (aspirante_id,
+                                                                 respuestas_json,
+                                                                 fecha_inicio,
+                                                                 fecha_fin,
+                                                                 completada,
+                                                                 abandonada,
+                                                                 preguntas_respondidas,
+                                                                 sincronizado,
+                                                                 fecha_sincronizacion,
+                                                                 created_at,
+                                                                 updated_at)
+                        VALUES (%s,
+                                %s::jsonb,
+                                now(),
+                                NULL,
+                                false,
+                                true,
+                                %s,
+                                false,
+                                NULL,
+                                now(),
+                                now())
+                        """,
+                        (
+                            aspirante_id,
+                            json.dumps(respuestas_json, ensure_ascii=False),
+                            preguntas_respondidas
+                        )
+                    )
+
+            conn.commit()
+        return True
+
+    except Exception as e:
+        print(f"❌ Error en habilitar_trazabilidad_encuesta_inicial: {e}")
+        return False
+
+
+def obtener_estado_aspirante(aspirante_id: int) -> Optional[int]:
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT estado_id
+                    FROM aspirantes
+                    WHERE id = %s
+                """, (aspirante_id,))
+                row = cur.fetchone()
+                return row[0] if row else None
+    except Exception as e:
+        print(f"❌ Error obteniendo estado del aspirante {aspirante_id}: {e}")
+        return None
+
+def finalizar_trazabilidad_encuesta_inicial(
+    aspirante_id: int,
+    respuestas_json: dict,
+    preguntas_respondidas: int
+) -> bool:
+    """
+    Marca como finalizada la última encuesta inicial no completada del aspirante.
+    """
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE aspirantes_encuesta_inicial
+                    SET respuestas_json = %s::jsonb,
+                        fecha_fin = now(),
+                        completada = true,
+                        abandonada = false,
+                        preguntas_respondidas = %s,
+                        sincronizado = true,
+                        fecha_sincronizacion = now(),
+                        updated_at = now()
+                    WHERE id = (
+                        SELECT id
+                        FROM aspirantes_encuesta_inicial
+                        WHERE aspirante_id = %s
+                          AND completada = false
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                    )
+                    """,
+                    (
+                        json.dumps(respuestas_json, ensure_ascii=False),
+                        preguntas_respondidas,
+                        aspirante_id
+                    )
+                )
+
+            conn.commit()
+
+        return True
+
+    except Exception as e:
+        print(f"❌ Error en finalizar_trazabilidad_encuesta_inicial: {e}")
+        return False
