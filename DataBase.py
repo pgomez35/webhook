@@ -2323,7 +2323,7 @@ def buscar_aspirante_por_usuario_tiktok(usuario_tiktok: str):
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT id,nickname FROM aspirantes WHERE usuario = %s LIMIT 1",
+                    "SELECT id,nickname,estado_id FROM aspirantes WHERE usuario = %s LIMIT 1",
                     (usuario_tiktok,)
                 )
                 row = cur.fetchone()
