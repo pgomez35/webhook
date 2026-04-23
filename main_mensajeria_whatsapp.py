@@ -60,19 +60,25 @@ def marcar_leido(data: dict):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-
                 cur.execute("""
                     INSERT INTO mensajes_whatsapp_chat_estado (telefono, last_read_at, actualizado_en)
-                    SELECT 
+                    SELECT
                         %s,
-                        MAX(fecha),
+                        t.max_fecha,
                         NOW()
-                    FROM mensajes_whatsapp
-                    WHERE telefono = %s
+                    FROM (
+                        SELECT MAX(fecha) AS max_fecha
+                        FROM mensajes_whatsapp
+                        WHERE telefono = %s
+                          AND direccion = 'recibido'
+                    ) t
+                    WHERE t.max_fecha IS NOT NULL
                     ON CONFLICT (telefono)
-                    DO UPDATE SET 
+                    DO UPDATE SET
                         last_read_at = EXCLUDED.last_read_at,
                         actualizado_en = NOW()
+                    WHERE mensajes_whatsapp_chat_estado.last_read_at IS NULL
+                       OR mensajes_whatsapp_chat_estado.last_read_at < EXCLUDED.last_read_at
                 """, (telefono, telefono))
 
             conn.commit()
@@ -81,6 +87,7 @@ def marcar_leido(data: dict):
 
     except Exception as e:
         print("❌ Error marcar leído:", e)
+        traceback.print_exc()
         return {"ok": False}
 
 
