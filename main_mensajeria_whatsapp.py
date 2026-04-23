@@ -49,6 +49,34 @@ def listar_contactos(
 ):
     return obtener_contactos_db_nueva(tipo, search, estado)
 
+
+@router.post("/mensajes/marcar-leido")
+def marcar_leido(data: dict):
+    telefono = data.get("telefono")
+
+    if not telefono:
+        raise HTTPException(status_code=400, detail="Teléfono requerido")
+
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE mensajes_whatsapp_chat_estado
+                    SET leido = TRUE,
+                        fecha_lectura = NOW()
+                    WHERE telefono = %s
+                      AND leido = FALSE
+                """, (telefono,))
+            conn.commit()
+
+        return {"ok": True}
+
+    except Exception as e:
+        print("❌ Error marcar leído:", e)
+        return {"ok": False}
+
+
+
 @router.get("/mensajes/{telefono}")
 def listar_mensajes(telefono: str):
     return obtener_mensajes(telefono)

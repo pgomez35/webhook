@@ -829,8 +829,6 @@ def obtener_mensajes(telefono):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-
-                # 1️⃣ Obtener mensajes
                 cur.execute("""
                     SELECT contenido,
                            direccion,
@@ -842,18 +840,6 @@ def obtener_mensajes(telefono):
                 """, (telefono,))
 
                 mensajes = cur.fetchall()
-
-                # 2️⃣ Marcar conversación como leída (UPSERT)
-                cur.execute("""
-                    INSERT INTO mensajes_whatsapp_chat_estado (telefono, last_read_at, actualizado_en)
-                    VALUES (%s, NOW(), NOW())
-                    ON CONFLICT (telefono)
-                    DO UPDATE SET 
-                        last_read_at = NOW(),
-                        actualizado_en = NOW()
-                """, (telefono,))
-
-                conn.commit()
 
                 return [
                     {
