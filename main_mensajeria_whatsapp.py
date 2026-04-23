@@ -60,13 +60,21 @@ def marcar_leido(data: dict):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
+
                 cur.execute("""
-                    UPDATE mensajes_whatsapp_chat_estado
-                    SET leido = TRUE,
-                        fecha_lectura = NOW()
+                    INSERT INTO mensajes_whatsapp_chat_estado (telefono, last_read_at, actualizado_en)
+                    SELECT 
+                        %s,
+                        MAX(fecha),
+                        NOW()
+                    FROM mensajes_whatsapp
                     WHERE telefono = %s
-                      AND leido = FALSE
-                """, (telefono,))
+                    ON CONFLICT (telefono)
+                    DO UPDATE SET 
+                        last_read_at = EXCLUDED.last_read_at,
+                        actualizado_en = NOW()
+                """, (telefono, telefono))
+
             conn.commit()
 
         return {"ok": True}
