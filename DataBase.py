@@ -430,42 +430,120 @@ def actualizar_contacto_info_db(telefono: str, datos: ActualizacionContactoInfo)
         traceback.print_exc()
         return {"status": "error", "mensaje": str(e)}
 
-def obtener_contactos_db_nueva(estado=None):
+
+def obtener_contactos_db_nueva(tipo=None, search=None, estado=None):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
 
-                base_query = """
-                    SELECT a.usuario,
-                           a.nickname,
-                           a.nombre_real AS nombre,
-                           a.whatsapp AS telefono,
-                           b.nombre AS estado
+                query = """
+                WITH ultima_actividad AS (
+                    SELECT telefono, MAX(fecha) AS ultima_actividad
+                    FROM mensajes_whatsapp
+                    GROUP BY telefono
+                ),
+
+                contactos AS (
+
+                    -- 👤 ASPIRANTES
+                    SELECT 
+                        a.id,
+                        'aspirante' AS tipo,
+                        a.usuario,
+                        a.nickname,
+                        a.nombre_real AS nombre,
+                        a.whatsapp AS telefono,
+                        ae.nombre AS estado,
+                        ua.ultima_actividad
                     FROM aspirantes a
-                    INNER JOIN aspirantes_estados b ON a.estado_id = b.id
-                    WHERE a.whatsapp IS NOT NULL
-                      AND a.whatsapp != ''
-                      AND a.estado_id IN (1,2,3,4,5)
+                    LEFT JOIN aspirantes_estados ae ON a.estado_id = ae.id
+                    LEFT JOIN ultima_actividad ua ON ua.telefono = a.whatsapp
+                    WHERE a.whatsapp IS NOT NULL AND a.whatsapp != ''
+
+                    UNION ALL
+
+                    -- 🎥 CREADORES
+                    SELECT 
+                        c.id,
+                        'creador' AS tipo,
+                        c.usuario,
+                        c.nickname,
+                        c.nombre_real AS nombre,
+                        c.whatsapp AS telefono,
+                        c.estado_operativo AS estado,
+                        ua.ultima_actividad
+                    FROM creadores c
+                    LEFT JOIN ultima_actividad ua ON ua.telefono = c.whatsapp
+                    WHERE c.whatsapp IS NOT NULL AND c.whatsapp != ''
+
+                    UNION ALL
+
+                    -- 🛠 ADMIN
+                    SELECT 
+                        ad.id,
+                        'admin' AS tipo,
+                        ad.username AS usuario,
+                        NULL AS nickname,
+                        ad.nombre_completo AS nombre,
+                        ad.telefono,
+                        ar.nombre AS estado,
+                        ua.ultima_actividad
+                    FROM administradores ad
+                    LEFT JOIN administradores_roles ar 
+                        ON ad.administradores_roles_id = ar.id
+                    LEFT JOIN ultima_actividad ua 
+                        ON ua.telefono = ad.telefono
+                    WHERE ad.telefono IS NOT NULL AND ad.telefono != ''
+                )
+
+                SELECT *
+                FROM contactos
+                WHERE 1=1
                 """
 
                 params = []
 
-                # 🔥 Filtro dinámico por estado
+                # 🔎 Filtro por tipo
+                if tipo:
+                    query += " AND tipo = %s"
+                    params.append(tipo)
+
+                # 🔎 Buscador
+                if search:
+                    query += """
+                    AND (
+                        LOWER(nombre) LIKE %s OR
+                        LOWER(usuario) LIKE %s OR
+                        telefono LIKE %s
+                    )
+                    """
+                    search_param = f"%{search.lower()}%"
+                    params.extend([search_param, search_param, search_param])
+
+                # 🔎 Estado (aplica principalmente a aspirantes)
                 if estado:
-                    base_query += " AND b.id = %s"
+                    query += " AND estado = %s"
                     params.append(estado)
 
-                base_query += " ORDER BY a.usuario ASC"
+                # 🔥 Orden clave
+                query += """
+                ORDER BY 
+                    ultima_actividad DESC NULLS LAST,
+                    nombre ASC
+                """
 
-                cur.execute(base_query, params)
+                cur.execute(query, params)
 
                 contactos = [
                     {
-                        "usuario": row[0],
-                        "nickname": row[1],
-                        "nombre": row[2],
-                        "telefono": row[3],
-                        "estado": row[4]
+                        "id": row[0],
+                        "tipo": row[1],
+                        "usuario": row[2],
+                        "nickname": row[3],
+                        "nombre": row[4],
+                        "telefono": row[5],
+                        "estado": row[6],
+                        "ultima_actividad": row[7],
                     }
                     for row in cur.fetchall()
                 ]
@@ -476,6 +554,8 @@ def obtener_contactos_db_nueva(estado=None):
         print(f"❌ Error obteniendo contactos: {e}")
         traceback.print_exc()
         return []
+
+
 
 
 def obtener_contactos_db(estado: Optional[str] = None):
@@ -3079,3 +3159,176 @@ def obtener_participantes_por_tipo_db(tipo: str):
 #                 ),
 #             )
 #         conn.commit()
+
+# def obtener_contactos_db_nueva(estado=None):
+#     try:
+#         with get_connection_context() as conn:
+#             with conn.cursor() as cur:
+#
+#                 base_query = """
+#                     SELECT a.usuario,
+#                            a.nickname,
+#                            a.nombre_real AS nombre,
+#                            a.whatsapp AS telefono,
+#                            b.nombre AS estado
+#                     FROM aspirantes a
+#                     INNER JOIN aspirantes_estados b ON a.estado_id = b.id
+#                     WHERE a.whatsapp IS NOT NULL
+#                       AND a.whatsapp != ''
+#                       AND a.estado_id IN (1,2,3,4,5)
+#                 """
+#
+#                 params = []
+#
+#                 # 🔥 Filtro dinámico por estado
+#                 if estado:
+#                     base_query += " AND b.id = %s"
+#                     params.append(estado)
+#
+#                 base_query += " ORDER BY a.usuario ASC"
+#
+#                 cur.execute(base_query, params)
+#
+#                 contactos = [
+#                     {
+#                         "usuario": row[0],
+#                         "nickname": row[1],
+#                         "nombre": row[2],
+#                         "telefono": row[3],
+#                         "estado": row[4]
+#                     }
+#                     for row in cur.fetchall()
+#                 ]
+#
+#                 return contactos
+#
+#     except Exception as e:
+#         print(f"❌ Error obteniendo contactos: {e}")
+#         traceback.print_exc()
+#         return []
+
+# def obtener_contactos_db_nueva(tipo=None, search=None, estado=None):
+#     try:
+#         with get_connection_context() as conn:
+#             with conn.cursor() as cur:
+#
+#                 query = """
+#                 WITH contactos AS (
+#
+#                     -- 👤 ASPIRANTES
+#                     SELECT
+#                         a.id,
+#                         'aspirante' AS tipo,
+#                         a.usuario,
+#                         a.nickname,
+#                         a.nombre_real AS nombre,
+#                         a.whatsapp AS telefono,
+#                         ae.nombre AS estado,
+#                         (
+#                             SELECT MAX(m.fecha)
+#                             FROM mensajes_whatsapp m
+#                             WHERE m.telefono = a.whatsapp
+#                         ) AS ultima_actividad
+#                     FROM aspirantes a
+#                     LEFT JOIN aspirantes_estados ae ON a.estado_id = ae.id
+#                     WHERE a.whatsapp IS NOT NULL AND a.whatsapp != ''
+#
+#                     UNION ALL
+#
+#                     -- 🎥 CREADORES
+#                     SELECT
+#                         c.id,
+#                         'creador' AS tipo,
+#                         c.usuario,
+#                         c.nickname,
+#                         c.nombre_real AS nombre,
+#                         c.whatsapp AS telefono,
+#                         c.estado_operativo AS estado,
+#                         (
+#                             SELECT MAX(m.fecha)
+#                             FROM mensajes_whatsapp m
+#                             WHERE m.telefono = c.whatsapp
+#                         ) AS ultima_actividad
+#                     FROM creadores c
+#                     WHERE c.whatsapp IS NOT NULL AND c.whatsapp != ''
+#
+#                     UNION ALL
+#
+#                     -- 🛠 ADMIN
+#                     SELECT
+#                         ad.id,
+#                         'admin' AS tipo,
+#                         ad.username AS usuario,
+#                         NULL AS nickname,
+#                         ad.nombre_completo AS nombre,
+#                         ad.telefono,
+#                         ar.nombre AS estado,
+#                         (
+#                             SELECT MAX(m.fecha)
+#                             FROM mensajes_whatsapp m
+#                             WHERE m.telefono = ad.telefono
+#                         ) AS ultima_actividad
+#                     FROM administradores ad
+#                     LEFT JOIN administradores_roles ar ON ad.administradores_roles_id = ar.id
+#                     WHERE ad.telefono IS NOT NULL AND ad.telefono != ''
+#                 )
+#
+#                 SELECT *
+#                 FROM contactos
+#                 WHERE 1=1
+#                 """
+#
+#                 params = []
+#
+#                 # 🔎 Filtro por tipo
+#                 if tipo:
+#                     query += " AND tipo = %s"
+#                     params.append(tipo)
+#
+#                 # 🔎 Buscador
+#                 if search:
+#                     query += """
+#                     AND (
+#                         LOWER(nombre) LIKE %s OR
+#                         LOWER(usuario) LIKE %s OR
+#                         telefono LIKE %s
+#                     )
+#                     """
+#                     search_param = f"%{search.lower()}%"
+#                     params.extend([search_param, search_param, search_param])
+#
+#                 # 🔎 Estado (solo aplica fuerte a aspirantes)
+#                 if estado:
+#                     query += " AND estado = %s"
+#                     params.append(estado)
+#
+#                 # 🔥 ORDEN CLAVE (esto te arregla el problema visual)
+#                 query += """
+#                 ORDER BY
+#                     ultima_actividad DESC NULLS LAST,
+#                     nombre ASC
+#                 """
+#
+#                 cur.execute(query, params)
+#
+#                 contactos = [
+#                     {
+#                         "id": row[0],
+#                         "tipo": row[1],
+#                         "usuario": row[2],
+#                         "nickname": row[3],
+#                         "nombre": row[4],
+#                         "telefono": row[5],
+#                         "estado": row[6],
+#                         "ultima_actividad": row[7],
+#                     }
+#                     for row in cur.fetchall()
+#                 ]
+#
+#                 return contactos
+#
+#     except Exception as e:
+#         print(f"❌ Error obteniendo contactos: {e}")
+#         traceback.print_exc()
+#         return []
+

@@ -42,16 +42,12 @@ cloudinary.config(
 router = APIRouter()
 
 @router.get("/contactos")
-def listar_contactos(estado: Optional[int] = None, request: Request = None):
-    from tenant import current_tenant
-    tenant_actual = current_tenant.get()
-    print(f"🔍 [DEBUG /contactos] Tenant actual: {tenant_actual}")
-    if request:
-        print(f"🔍 [DEBUG /contactos] Request state tenant_name: {getattr(request.state, 'tenant_name', 'N/A')}")
-        print(f"🔍 [DEBUG /contactos] Request state agencia: {getattr(request.state, 'agencia', 'N/A')}")
-        print(f"🔍 [DEBUG /contactos] Request host: {request.headers.get('host', 'N/A')}")
-        print(f"🔍 [DEBUG /contactos] Request X-Tenant-Name: {request.headers.get('x-tenant-name', 'N/A')}")
-    return obtener_contactos_db_nueva(estado)
+def listar_contactos(
+    tipo: Optional[str] = None,   # aspirante | creador | admin
+    search: Optional[str] = None,
+    estado: Optional[int] = None,
+):
+    return obtener_contactos_db_nueva(tipo, search, estado)
 
 @router.get("/mensajes/{telefono}")
 def listar_mensajes(telefono: str):
@@ -3596,3 +3592,14 @@ def enviar_mensaje_texto(
 #         url=url,
 #         expiracion=expiracion,
 #     )
+# @router.get("/contactos")
+# def listar_contactos(estado: Optional[int] = None, request: Request = None):
+#     from tenant import current_tenant
+#     tenant_actual = current_tenant.get()
+#     print(f"🔍 [DEBUG /contactos] Tenant actual: {tenant_actual}")
+#     if request:
+#         print(f"🔍 [DEBUG /contactos] Request state tenant_name: {getattr(request.state, 'tenant_name', 'N/A')}")
+#         print(f"🔍 [DEBUG /contactos] Request state agencia: {getattr(request.state, 'agencia', 'N/A')}")
+#         print(f"🔍 [DEBUG /contactos] Request host: {request.headers.get('host', 'N/A')}")
+#         print(f"🔍 [DEBUG /contactos] Request X-Tenant-Name: {request.headers.get('x-tenant-name', 'N/A')}")
+#     return obtener_contactos_db_nueva(estado)
