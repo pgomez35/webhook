@@ -608,6 +608,183 @@ def obtener_contactos_db_nueva(tipo=None, search=None, estado=None, leidos=None)
 
 
 
+
+def obtener_contactos_db_nueva_Version_alternartiva(tipo=None, search=None, estado=None, leidos=None):
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+
+                params = []
+                bloques_contactos = []
+
+                # =====================
+                # ASPIRANTES
+                # =====================
+                if not tipo or tipo == "aspirante":
+                    q = """
+                    SELECT 
+                        a.id,
+                        'aspirante' AS tipo,
+                        a.usuario,
+                        a.nickname,
+                        a.nombre_real AS nombre,
+                        a.whatsapp AS telefono,
+                        ae.nombre AS estado
+                    FROM aspirantes a
+                    LEFT JOIN aspirantes_estados ae 
+                        ON a.estado_id = ae.id
+                    WHERE a.whatsapp IS NOT NULL
+                      AND a.whatsapp <> ''
+                    """
+                    if estado:
+                        q += " AND ae.nombre = %s"
+                        params.append(estado)
+
+                    bloques_contactos.append(q)
+
+                # =====================
+                # CREADORES
+                # =====================
+                if not tipo or tipo == "creador":
+                    q = """
+                    SELECT 
+                        c.id,
+                        'creador' AS tipo,
+                        c.usuario,
+                        c.nickname,
+                        c.nombre_real AS nombre,
+                        c.whatsapp AS telefono,
+                        c.estado_operativo AS estado
+                    FROM creadores c
+                    WHERE c.whatsapp IS NOT NULL
+                      AND c.whatsapp <> ''
+                    """
+                    bloques_contactos.append(q)
+
+                # =====================
+                # ADMIN
+                # =====================
+                if not tipo or tipo == "admin":
+                    q = """
+                    SELECT 
+                        ad.id,
+                        'admin' AS tipo,
+                        ad.username AS usuario,
+                        NULL AS nickname,
+                        ad.nombre_completo AS nombre,
+                        ad.telefono AS telefono,
+                        ar.nombre AS estado
+                    FROM administradores ad
+                    LEFT JOIN administradores_roles ar 
+                        ON ad.administradores_roles_id = ar.id
+                    WHERE ad.telefono IS NOT NULL
+                      AND ad.telefono <> ''
+                    """
+                    bloques_contactos.append(q)
+
+                if not bloques_contactos:
+                    return []
+
+                query = """
+                WITH contactos_base AS (
+                """ + "\nUNION ALL\n".join(bloques_contactos) + """
+                ),
+                telefonos_contacto AS (
+                    SELECT DISTINCT telefono
+                    FROM contactos_base
+                    WHERE telefono IS NOT NULL
+                      AND telefono <> ''
+                ),
+                ultima_actividad AS (
+                    SELECT 
+                        mw.telefono,
+                        MAX(mw.fecha) AS ultima_actividad
+                    FROM mensajes_whatsapp mw
+                    INNER JOIN telefonos_contacto tc
+                        ON tc.telefono = mw.telefono
+                    GROUP BY mw.telefono
+                ),
+                no_leidos AS (
+                    SELECT 
+                        mw.telefono,
+                        COUNT(*)::int AS cantidad
+                    FROM mensajes_whatsapp mw
+                    INNER JOIN telefonos_contacto tc
+                        ON tc.telefono = mw.telefono
+                    LEFT JOIN mensajes_whatsapp_chat_estado ce
+                        ON ce.telefono = mw.telefono
+                    WHERE mw.direccion = 'recibido'
+                      AND (
+                          ce.last_read_at IS NULL
+                          OR mw.fecha > ce.last_read_at
+                      )
+                    GROUP BY mw.telefono
+                )
+                SELECT
+                    cb.id,
+                    cb.tipo,
+                    cb.usuario,
+                    cb.nickname,
+                    cb.nombre,
+                    cb.telefono,
+                    cb.estado,
+                    ua.ultima_actividad,
+                    COALESCE(nl.cantidad, 0) AS no_leidos
+                FROM contactos_base cb
+                LEFT JOIN ultima_actividad ua
+                    ON ua.telefono = cb.telefono
+                LEFT JOIN no_leidos nl
+                    ON nl.telefono = cb.telefono
+                WHERE 1=1
+                """
+
+                if search:
+                    search_like = f"%{search}%"
+                    query += """
+                    AND (
+                        COALESCE(cb.nombre, '') ILIKE %s
+                        OR COALESCE(cb.usuario, '') ILIKE %s
+                        OR COALESCE(cb.telefono, '') LIKE %s
+                    )
+                    """
+                    params.extend([search_like, search_like, search_like])
+
+                if leidos is True:
+                    query += " AND COALESCE(nl.cantidad, 0) = 0"
+                elif leidos is False:
+                    query += " AND COALESCE(nl.cantidad, 0) > 0"
+
+                query += """
+                ORDER BY
+                    COALESCE(nl.cantidad, 0) DESC,
+                    ua.ultima_actividad DESC NULLS LAST,
+                    cb.nombre ASC
+                """
+
+                cur.execute(query, params)
+                rows = cur.fetchall()
+
+                return [
+                    {
+                        "id": row[0],
+                        "tipo": row[1],
+                        "usuario": row[2],
+                        "nickname": row[3],
+                        "nombre": row[4],
+                        "telefono": row[5],
+                        "estado": row[6],
+                        "ultima_actividad": row[7],
+                        "no_leidos": row[8],
+                    }
+                    for row in rows
+                ]
+
+    except Exception as e:
+        print(f"❌ Error obteniendo contactos: {e}")
+        traceback.print_exc()
+        return []
+
+
 def obtener_contactos_db(estado: Optional[str] = None):
     try:
         tenant_actual = current_tenant.get()
