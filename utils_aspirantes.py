@@ -1676,6 +1676,62 @@ def crear_link_agendamiento_token(
         detail="No fue posible generar un token único de agendamiento."
     )
 
+def registrar_cambio_estado_con_cursor(
+    cur,
+    aspirante_id: int,
+    nuevo_estado_id: int,
+    usuario_id: int = None,
+    origen_cambio: str = None,
+    observacion: str = None
+) -> bool:
+    """
+    Cambia el estado del aspirante y registra historial usando el cursor actual.
+    No hace commit, porque el commit lo maneja el endpoint principal.
+    """
+
+    cur.execute("""
+        SELECT estado_id
+        FROM aspirantes
+        WHERE id = %s
+    """, (aspirante_id,))
+
+    row = cur.fetchone()
+
+    if not row:
+        return False
+
+    estado_actual = row[0]
+
+    if estado_actual == nuevo_estado_id:
+        return False
+
+    cur.execute("""
+        UPDATE aspirantes
+        SET estado_id = %s,
+            actualizado_en = now()
+        WHERE id = %s
+    """, (nuevo_estado_id, aspirante_id))
+
+    cur.execute("""
+        INSERT INTO aspirantes_estado_historial (
+            aspirante_id,
+            estado_id,
+            fecha_cambio,
+            usuario_id,
+            origen_cambio,
+            observacion,
+            created_at
+        )
+        VALUES (%s, %s, now(), %s, %s, %s, now())
+    """, (
+        aspirante_id,
+        nuevo_estado_id,
+        usuario_id,
+        origen_cambio,
+        observacion
+    ))
+
+    return True
 
 def registrar_cambio_estado(
     aspirante_id: int,
