@@ -2236,7 +2236,9 @@ def crear_o_actualizar_creador_desde_aspirante(
             seguidores,
             videos,
             likes,
-            siguiendo
+            duracion_emisiones,
+            dias_emisiones,
+            tiempo_disponible
         FROM aspirantes_perfil
         WHERE aspirante_id = %s
         LIMIT 1
@@ -2247,10 +2249,12 @@ def crear_o_actualizar_creador_desde_aspirante(
     seguidores = perfil[0] if perfil else 0
     videos = perfil[1] if perfil else 0
     likes = perfil[2] if perfil else 0
-    # siguiendo = perfil[3] if perfil else 0  # opcional
+    horas_live = perfil[3] if perfil else 0
+    dias_emision = perfil[4] if perfil else 0
+    tiempo_disponible = perfil[5] if perfil else 0
 
     # -------------------------------
-    # 3. Insert / Update creador
+    # 3. INSERT / UPDATE en creadores (CORE)
     # -------------------------------
     cur.execute("""
         INSERT INTO creadores (
@@ -2261,22 +2265,12 @@ def crear_o_actualizar_creador_desde_aspirante(
             telefono,
             foto,
             categoria,
-            estado,
-            manager_id,
-            fecha_incorporacion,
-            seguidores,
-            videos,
-            me_gusta
+            estado
         )
         VALUES (
             %s, %s, %s, %s, %s, %s,
             NULL,
-            'activo',
-            %s,
-            COALESCE(%s::date, CURRENT_DATE),
-            %s,
-            %s,
-            %s
+            'activo'
         )
         ON CONFLICT (aspirante_id)
         DO UPDATE SET
@@ -2285,11 +2279,6 @@ def crear_o_actualizar_creador_desde_aspirante(
             email = EXCLUDED.email,
             telefono = EXCLUDED.telefono,
             foto = EXCLUDED.foto,
-            manager_id = COALESCE(EXCLUDED.manager_id, creadores.manager_id),
-            fecha_incorporacion = COALESCE(creadores.fecha_incorporacion, EXCLUDED.fecha_incorporacion),
-            seguidores = COALESCE(EXCLUDED.seguidores, creadores.seguidores),
-            videos = COALESCE(EXCLUDED.videos, creadores.videos),
-            me_gusta = COALESCE(EXCLUDED.me_gusta, creadores.me_gusta),
             estado = 'activo'
         RETURNING id
     """, (
@@ -2298,15 +2287,57 @@ def crear_o_actualizar_creador_desde_aspirante(
         usuario_tiktok,
         aspirante[4],
         telefono,
-        aspirante[7],
+        aspirante[7]
+    ))
+
+    creador_id = cur.fetchone()[0]
+
+    # -------------------------------
+    # 4. INSERT / UPDATE en detalle
+    # -------------------------------
+    cur.execute("""
+        INSERT INTO creadores_detalle (
+            creador_id,
+            manager_id,
+            tiempo_disponible,
+            fecha_incorporacion,
+            seguidores,
+            videos,
+            me_gusta,
+            horas_live,
+            dias_emision,
+            updated_at
+        )
+        VALUES (
+            %s, %s, %s,
+            COALESCE(%s::date, CURRENT_DATE),
+            %s, %s, %s, %s, %s,
+            now()
+        )
+        ON CONFLICT (creador_id)
+        DO UPDATE SET
+            manager_id = COALESCE(EXCLUDED.manager_id, creadores_detalle.manager_id),
+            tiempo_disponible = EXCLUDED.tiempo_disponible,
+            fecha_incorporacion = COALESCE(creadores_detalle.fecha_incorporacion, EXCLUDED.fecha_incorporacion),
+            seguidores = EXCLUDED.seguidores,
+            videos = EXCLUDED.videos,
+            me_gusta = EXCLUDED.me_gusta,
+            horas_live = EXCLUDED.horas_live,
+            dias_emision = EXCLUDED.dias_emision,
+            updated_at = now()
+    """, (
+        creador_id,
         manager_id,
+        tiempo_disponible,
         fecha_incorporacion,
         seguidores,
         videos,
-        likes
+        likes,
+        horas_live,
+        dias_emision
     ))
 
-    return cur.fetchone()[0]
+    return creador_id
 
 def obtener_creadores_activos_db():
     """
