@@ -779,69 +779,255 @@ def obtener_creador_activo(id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/api/creadores_activos", response_model=CreadorActivoDB, status_code=201)
+@router.post("/api/creadores_activos", status_code=201)
 def agregar_creador_activo(creador: CreadorActivoCreate):
     try:
+        data = creador.dict()
+
         with get_connection_context() as conn:
             with conn.cursor() as cur:
+
+                # 1. Insertar datos base en creadores
                 cur.execute("""
                     INSERT INTO creadores (
-                        aspirante_id, nombre, usuario_tiktok, email, telefono, foto, categoria, estado, manager_id,
-                        horario_lives, tiempo_disponible, fecha_incorporacion, fecha_graduacion,
-                        seguidores, videos, me_gusta, diamantes, horas_live, numero_partidas, dias_emision
-                    ) VALUES (
-                        %(aspirante_id)s, %(nombre)s, %(usuario_tiktok)s, %(email)s, %(telefono)s, %(foto)s, %(categoria)s, %(estado)s, %(manager_id)s,
-                        %(horario_lives)s, %(tiempo_disponible)s, %(fecha_incorporacion)s, %(fecha_graduacion)s,
-                        %(seguidores)s, %(videos)s, %(me_gusta)s, %(diamantes)s, %(horas_live)s, %(numero_partidas)s, %(dias_emision)s
-                    ) RETURNING *;
-                """, creador.dict())
-                row = cur.fetchone()
+                        aspirante_id,
+                        nombre,
+                        usuario_tiktok,
+                        email,
+                        telefono,
+                        foto,
+                        categoria,
+                        estado
+                    )
+                    VALUES (
+                        %(aspirante_id)s,
+                        %(nombre)s,
+                        %(usuario_tiktok)s,
+                        %(email)s,
+                        %(telefono)s,
+                        %(foto)s,
+                        %(categoria)s,
+                        COALESCE(%(estado)s, 'activo')
+                    )
+                    RETURNING id;
+                """, data)
+
+                creador_id = cur.fetchone()[0]
+
+                # 2. Insertar datos operativos en creadores_detalle
+                cur.execute("""
+                    INSERT INTO creadores_detalle (
+                        creador_id,
+                        manager_id,
+                        horario_lives,
+                        tiempo_disponible,
+                        fecha_incorporacion,
+                        fecha_graduacion,
+                        seguidores,
+                        videos,
+                        me_gusta,
+                        diamantes,
+                        horas_live,
+                        numero_partidas,
+                        dias_emision,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        %s,
+                        %(manager_id)s,
+                        %(horario_lives)s,
+                        %(tiempo_disponible)s,
+                        %(fecha_incorporacion)s,
+                        %(fecha_graduacion)s,
+                        %(seguidores)s,
+                        %(videos)s,
+                        %(me_gusta)s,
+                        %(diamantes)s,
+                        %(horas_live)s,
+                        %(numero_partidas)s,
+                        %(dias_emision)s,
+                        now(),
+                        now()
+                    );
+                """, {"creador_id": creador_id, **data})
+
                 conn.commit()
+
+                # 3. Retornar creador completo
+                cur.execute("""
+                    SELECT
+                        c.id,
+                        c.aspirante_id,
+                        c.nombre,
+                        c.usuario_tiktok,
+                        c.email,
+                        c.telefono,
+                        c.foto,
+                        c.categoria,
+                        c.estado,
+
+                        d.manager_id,
+                        d.horario_lives,
+                        d.tiempo_disponible,
+                        d.fecha_incorporacion,
+                        d.fecha_graduacion,
+                        d.seguidores,
+                        d.videos,
+                        d.me_gusta,
+                        d.diamantes,
+                        d.horas_live,
+                        d.numero_partidas,
+                        d.dias_emision
+
+                    FROM creadores c
+                    LEFT JOIN creadores_detalle d
+                        ON d.creador_id = c.id
+                    WHERE c.id = %s
+                """, (creador_id,))
+
+                row = cur.fetchone()
                 columns = [desc[0] for desc in cur.description]
+
                 return dict(zip(columns, row))
+
     except Exception as e:
+        print(f"❌ Error creando creador activo: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.put("/api/creadores_activos/{id}", response_model=CreadorActivoDB)
+@router.put("/api/creadores_activos/{id}")
 def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
     try:
+        data = creador.dict()
+
         with get_connection_context() as conn:
             with conn.cursor() as cur:
+
+                # 1. Verificar que exista
                 cur.execute("""
-                    UPDATE creadores SET
-                        aspirante_id=%(aspirante_id)s,
-                        nombre=%(nombre)s,
-                        usuario_tiktok=%(usuario_tiktok)s,
-                        email=%(email)s,
-                        telefono=%(telefono)s,
-                        foto=%(foto)s,
-                        categoria=%(categoria)s,
-                        estado=%(estado)s,
-                        manager_id=%(manager_id)s,
-                        horario_lives=%(horario_lives)s,
-                        tiempo_disponible=%(tiempo_disponible)s,
-                        fecha_incorporacion=%(fecha_incorporacion)s,
-                        fecha_graduacion=%(fecha_graduacion)s,
-                        seguidores=%(seguidores)s,
-                        videos=%(videos)s,
-                        me_gusta=%(me_gusta)s,
-                        diamantes=%(diamantes)s,
-                        horas_live=%(horas_live)s,
-                        numero_partidas=%(numero_partidas)s,
-                        dias_emision=%(dias_emision)s
-                    WHERE id=%(id)s
-                    RETURNING *;
-                """, {**creador.dict(), "id": id})
-                row = cur.fetchone()
-                if not row:
-                    raise HTTPException(status_code=404, detail="Creador no encontrado")
+                    SELECT id
+                    FROM creadores
+                    WHERE id = %s
+                """, (id,))
+
+                if not cur.fetchone():
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Creador no encontrado"
+                    )
+
+                # 2. Actualizar tabla principal
+                cur.execute("""
+                    UPDATE creadores
+                    SET
+                        aspirante_id = %(aspirante_id)s,
+                        nombre = %(nombre)s,
+                        usuario_tiktok = %(usuario_tiktok)s,
+                        email = %(email)s,
+                        telefono = %(telefono)s,
+                        foto = %(foto)s,
+                        categoria = %(categoria)s,
+                        estado = %(estado)s,
+                        updated_at = now()
+                    WHERE id = %(id)s
+                """, {**data, "id": id})
+
+                # 3. Insertar o actualizar detalle
+                cur.execute("""
+                    INSERT INTO creadores_detalle (
+                        creador_id,
+                        manager_id,
+                        horario_lives,
+                        tiempo_disponible,
+                        fecha_incorporacion,
+                        fecha_graduacion,
+                        seguidores,
+                        videos,
+                        me_gusta,
+                        diamantes,
+                        horas_live,
+                        numero_partidas,
+                        dias_emision,
+                        updated_at
+                    )
+                    VALUES (
+                        %(id)s,
+                        %(manager_id)s,
+                        %(horario_lives)s,
+                        %(tiempo_disponible)s,
+                        %(fecha_incorporacion)s,
+                        %(fecha_graduacion)s,
+                        %(seguidores)s,
+                        %(videos)s,
+                        %(me_gusta)s,
+                        %(diamantes)s,
+                        %(horas_live)s,
+                        %(numero_partidas)s,
+                        %(dias_emision)s,
+                        now()
+                    )
+                    ON CONFLICT (creador_id)
+                    DO UPDATE SET
+                        manager_id = EXCLUDED.manager_id,
+                        horario_lives = EXCLUDED.horario_lives,
+                        tiempo_disponible = EXCLUDED.tiempo_disponible,
+                        fecha_incorporacion = EXCLUDED.fecha_incorporacion,
+                        fecha_graduacion = EXCLUDED.fecha_graduacion,
+                        seguidores = EXCLUDED.seguidores,
+                        videos = EXCLUDED.videos,
+                        me_gusta = EXCLUDED.me_gusta,
+                        diamantes = EXCLUDED.diamantes,
+                        horas_live = EXCLUDED.horas_live,
+                        numero_partidas = EXCLUDED.numero_partidas,
+                        dias_emision = EXCLUDED.dias_emision,
+                        updated_at = now()
+                """, {**data, "id": id})
+
                 conn.commit()
+
+                # 4. Retornar creador completo
+                cur.execute("""
+                    SELECT
+                        c.id,
+                        c.aspirante_id,
+                        c.nombre,
+                        c.usuario_tiktok,
+                        c.email,
+                        c.telefono,
+                        c.foto,
+                        c.categoria,
+                        c.estado,
+
+                        d.manager_id,
+                        d.horario_lives,
+                        d.tiempo_disponible,
+                        d.fecha_incorporacion,
+                        d.fecha_graduacion,
+                        d.seguidores,
+                        d.videos,
+                        d.me_gusta,
+                        d.diamantes,
+                        d.horas_live,
+                        d.numero_partidas,
+                        d.dias_emision
+
+                    FROM creadores c
+                    LEFT JOIN creadores_detalle d
+                        ON d.creador_id = c.id
+                    WHERE c.id = %s
+                """, (id,))
+
+                row = cur.fetchone()
                 columns = [desc[0] for desc in cur.description]
+
                 return dict(zip(columns, row))
+
     except HTTPException:
         raise
+
     except Exception as e:
+        print(f"❌ Error editando creador activo {id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1104,3 +1290,71 @@ def obtener_foto_creador_activo(creador_activo_id: int):
 #         raise
 #     except Exception as e:
 #         raise HTTPException(status_code=500, detail=str(e))
+
+
+# @router.put("/api/creadores_activos/{id}", response_model=CreadorActivoDB)
+# def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
+#     try:
+#         with get_connection_context() as conn:
+#             with conn.cursor() as cur:
+#                 cur.execute("""
+#                     UPDATE creadores SET
+#                         aspirante_id=%(aspirante_id)s,
+#                         nombre=%(nombre)s,
+#                         usuario_tiktok=%(usuario_tiktok)s,
+#                         email=%(email)s,
+#                         telefono=%(telefono)s,
+#                         foto=%(foto)s,
+#                         categoria=%(categoria)s,
+#                         estado=%(estado)s,
+#                         manager_id=%(manager_id)s,
+#                         horario_lives=%(horario_lives)s,
+#                         tiempo_disponible=%(tiempo_disponible)s,
+#                         fecha_incorporacion=%(fecha_incorporacion)s,
+#                         fecha_graduacion=%(fecha_graduacion)s,
+#                         seguidores=%(seguidores)s,
+#                         videos=%(videos)s,
+#                         me_gusta=%(me_gusta)s,
+#                         diamantes=%(diamantes)s,
+#                         horas_live=%(horas_live)s,
+#                         numero_partidas=%(numero_partidas)s,
+#                         dias_emision=%(dias_emision)s
+#                     WHERE id=%(id)s
+#                     RETURNING *;
+#                 """, {**creador.dict(), "id": id})
+#                 row = cur.fetchone()
+#                 if not row:
+#                     raise HTTPException(status_code=404, detail="Creador no encontrado")
+#                 conn.commit()
+#                 columns = [desc[0] for desc in cur.description]
+#                 return dict(zip(columns, row))
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
+
+
+# @router.post("/api/creadores_activos", response_model=CreadorActivoDB, status_code=201)
+# def agregar_creador_activo(creador: CreadorActivoCreate):
+#     try:
+#         with get_connection_context() as conn:
+#             with conn.cursor() as cur:
+#                 cur.execute("""
+#                     INSERT INTO creadores (
+#                         aspirante_id, nombre, usuario_tiktok, email, telefono, foto, categoria, estado, manager_id,
+#                         horario_lives, tiempo_disponible, fecha_incorporacion, fecha_graduacion,
+#                         seguidores, videos, me_gusta, diamantes, horas_live, numero_partidas, dias_emision
+#                     ) VALUES (
+#                         %(aspirante_id)s, %(nombre)s, %(usuario_tiktok)s, %(email)s, %(telefono)s, %(foto)s, %(categoria)s, %(estado)s, %(manager_id)s,
+#                         %(horario_lives)s, %(tiempo_disponible)s, %(fecha_incorporacion)s, %(fecha_graduacion)s,
+#                         %(seguidores)s, %(videos)s, %(me_gusta)s, %(diamantes)s, %(horas_live)s, %(numero_partidas)s, %(dias_emision)s
+#                     ) RETURNING *;
+#                 """, creador.dict())
+#                 row = cur.fetchone()
+#                 conn.commit()
+#                 columns = [desc[0] for desc in cur.description]
+#                 return dict(zip(columns, row))
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
+
+
