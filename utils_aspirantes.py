@@ -2081,7 +2081,6 @@ def resolver_token_portal_general_o_error(token: str) -> dict:
                 )
 
             estado = token_row[1]
-            expiracion = token_row[2]
             aspirante_id = token_row[3]
             creador_id = token_row[4]
             tipo_portal = token_row[5] or "aspirante"
@@ -2092,10 +2091,18 @@ def resolver_token_portal_general_o_error(token: str) -> dict:
                     detail=f"El token existe, pero no está activo. Estado actual: {estado}."
                 )
 
-            cur.execute("SELECT NOW()")
-            ahora = cur.fetchone()[0]
+            # ✅ Validar expiración en SQL para evitar error timezone
+            cur.execute("""
+                SELECT expiracion <= NOW() AS expirado
+                FROM portal_access_tokens
+                WHERE token = %s
+                LIMIT 1
+            """, (token,))
 
-            if expiracion <= ahora:
+            expirado_row = cur.fetchone()
+            expirado = expirado_row[0] if expirado_row else True
+
+            if expirado:
                 raise HTTPException(
                     status_code=410,
                     detail="El token existe, pero ya expiró."
