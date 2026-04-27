@@ -2039,3 +2039,16 @@ def finalizar_trazabilidad_encuesta_inicial(
     except Exception as e:
         print(f"❌ Error en finalizar_trazabilidad_encuesta_inicial: {e}")
         return False
+
+def actualizar_uso_token(token: str) -> None:
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE portal_access_tokens
+                SET ultimo_uso_en = NOW()
+                WHERE token = %s
+                """,
+                (token,),
+            )
+            conn.commit()

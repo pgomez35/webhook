@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from DataBase import get_connection_context
 from tenant import current_tenant
 from main_invitacion import obtener_invitacion_portal_por_aspirante, InvitacionPortalOut
-from utils_aspirantes import construir_url_actualizar_perfil
+from utils_aspirantes import construir_url_actualizar_perfil, actualizar_uso_token
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, quote
 
 

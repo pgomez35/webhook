@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from DataBase import get_connection_context
 from tenant import current_tenant
 from main_invitacion import obtener_invitacion_portal_por_aspirante, InvitacionPortalOut
-from utils_aspirantes import construir_url_actualizar_perfil
+from utils_aspirantes import construir_url_actualizar_perfil, actualizar_uso_token
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, quote
 
 
@@ -457,18 +457,7 @@ def resolver_token_vigente_o_error(token: str) -> dict:
             }
 
 
-def actualizar_uso_token(token: str) -> None:
-    with get_connection_context() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE portal_access_tokens
-                SET ultimo_uso_en = NOW()
-                WHERE token = %s
-                """,
-                (token,),
-            )
-            conn.commit()
+
 
 
 # =========================================================
