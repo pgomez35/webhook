@@ -1592,7 +1592,7 @@ async def subir_foto_creador_activo(creador_activo_id: int, foto: UploadFile = F
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE creadores_activos SET foto = %s WHERE id = %s",
+                    "UPDATE creadores SET foto = %s WHERE id = %s",
                     (url_foto, creador_activo_id),
                 )
                 conn.commit()
@@ -2189,3 +2189,151 @@ def resolver_token_portal_general_o_error(token: str) -> dict:
                 "estado_nombre": row[13] or "Proceso",
                 "usuario": row[7],
             }
+
+
+def crear_o_actualizar_creador_desde_aspirante(
+    cur,
+    aspirante_id: int,
+    manager_id: int | None = None,
+    fecha_incorporacion=None
+) -> int:
+
+    # -------------------------------
+    # 1. Datos del aspirante
+    # -------------------------------
+    cur.execute("""
+        SELECT 
+            id,
+            usuario,
+            nickname,
+            nombre_real,
+            email,
+            telefono,
+            whatsapp,
+            foto_url
+        FROM aspirantes
+        WHERE id = %s
+        LIMIT 1
+    """, (aspirante_id,))
+
+    aspirante = cur.fetchone()
+
+    if not aspirante:
+        raise HTTPException(
+            status_code=404,
+            detail="No se encontró el aspirante"
+        )
+
+    nombre = aspirante[3] or aspirante[2] or aspirante[1] or f"Creador {aspirante[0]}"
+    usuario_tiktok = aspirante[1] or aspirante[2]
+    telefono = aspirante[5] or aspirante[6]
+
+    # -------------------------------
+    # 2. Métricas desde aspirantes_perfil
+    # -------------------------------
+    cur.execute("""
+        SELECT 
+            seguidores,
+            videos,
+            likes,
+            siguiendo
+        FROM aspirantes_perfil
+        WHERE aspirante_id = %s
+        LIMIT 1
+    """, (aspirante_id,))
+
+    perfil = cur.fetchone()
+
+    seguidores = perfil[0] if perfil else 0
+    videos = perfil[1] if perfil else 0
+    likes = perfil[2] if perfil else 0
+    # siguiendo = perfil[3] if perfil else 0  # opcional
+
+    # -------------------------------
+    # 3. Insert / Update creador
+    # -------------------------------
+    cur.execute("""
+        INSERT INTO creadores (
+            aspirante_id,
+            nombre,
+            usuario_tiktok,
+            email,
+            telefono,
+            foto,
+            categoria,
+            estado,
+            manager_id,
+            fecha_incorporacion,
+            seguidores,
+            videos,
+            me_gusta
+        )
+        VALUES (
+            %s, %s, %s, %s, %s, %s,
+            NULL,
+            'activo',
+            %s,
+            COALESCE(%s::date, CURRENT_DATE),
+            %s,
+            %s,
+            %s
+        )
+        ON CONFLICT (aspirante_id)
+        DO UPDATE SET
+            nombre = EXCLUDED.nombre,
+            usuario_tiktok = EXCLUDED.usuario_tiktok,
+            email = EXCLUDED.email,
+            telefono = EXCLUDED.telefono,
+            foto = EXCLUDED.foto,
+            manager_id = COALESCE(EXCLUDED.manager_id, creadores.manager_id),
+            fecha_incorporacion = COALESCE(creadores.fecha_incorporacion, EXCLUDED.fecha_incorporacion),
+            seguidores = COALESCE(EXCLUDED.seguidores, creadores.seguidores),
+            videos = COALESCE(EXCLUDED.videos, creadores.videos),
+            me_gusta = COALESCE(EXCLUDED.me_gusta, creadores.me_gusta),
+            estado = 'activo'
+        RETURNING id
+    """, (
+        aspirante_id,
+        nombre,
+        usuario_tiktok,
+        aspirante[4],
+        telefono,
+        aspirante[7],
+        manager_id,
+        fecha_incorporacion,
+        seguidores,
+        videos,
+        likes
+    ))
+
+    return cur.fetchone()[0]
+
+def obtener_creadores_activos_db():
+    """
+    Lista creadores activos para la vista de listado (panel izquierdo).
+    No usa joins para mantener velocidad y simplicidad.
+    """
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT
+                        c.id,
+                        c.nombre,
+                        c.usuario_tiktok,
+                        COALESCE(c.categoria, 'Sin categoría') AS categoria,
+                        COALESCE(c.estado, 'activo') AS estado
+                    FROM creadores c
+                    WHERE COALESCE(c.estado, 'activo') = 'activo'
+                    ORDER BY 
+                        c.id DESC;
+                """)
+
+                rows = cur.fetchall()
+                columns = [desc[0] for desc in cur.description]
+
+                return [dict(zip(columns, row)) for row in rows]
+
+    except Exception as e:
+        print(f"❌ Error al obtener creadores activos: {e}")
+        return []

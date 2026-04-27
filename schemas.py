@@ -636,6 +636,8 @@ class CreadorActivoBase(BaseModel):
     aspirante_id: Optional[int] = None
     nombre: str
     usuario_tiktok: str
+    email: Optional[str] = None
+    telefono: Optional[str] = None
     foto: Optional[str] = None
     categoria: Optional[str] = None
     estado: Optional[str] = None
