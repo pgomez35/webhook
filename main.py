@@ -72,6 +72,7 @@ from main_aspirantes import router as main_aspirantes_router
 from main_portal_aspirantes import router as main_portal_aspirantes_router
 from main_estadisticas_aspirantes import router as main_estadisticas_router
 from main_creadores_perfil import router as main_creadores_perfil_router
+from main_portal_creadores import router as main_portal_creadores_router
 
 # ⚙️ Inicializar FastAPI
 app = FastAPI()
@@ -94,6 +95,8 @@ app.include_router(main_aspirantes_router, tags=["aspirantes"])
 app.include_router(main_portal_aspirantes_router, tags=["portal aspirantes"])
 app.include_router(main_estadisticas_router, tags=["estadisticas aspirantes"])
 app.include_router(main_creadores_perfil_router, tags=["creadores perfil"])
+app.include_router(main_portal_creadores_router, tags=["portal creadores"])
+
 
 # ✅ Configurar correctamente CORS
 app.add_middleware(
