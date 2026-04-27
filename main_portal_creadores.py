@@ -32,6 +32,7 @@ from fastapi.responses import JSONResponse
 
 @router.get("/api/portal/validar")
 def validar_portal_general(token: str = Query(..., min_length=10)):
+    print("🔥🔥🔥 ENTRÓ AL ENDPOINT NUEVO validar_portal_general 🔥🔥🔥")
     try:
         info = resolver_token_portal_general_o_error(token)
         actualizar_uso_token(token)

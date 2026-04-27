@@ -1044,6 +1044,7 @@ def construir_siguiente_paso_portal(
 
 @router.get("/api/portal/aspirantes/validar", response_model=PortalValidarOut)
 def validar_portal(token: str = Query(..., min_length=10)):
+
     info = resolver_token_vigente_o_error(token)
     actualizar_uso_token(token)
 
