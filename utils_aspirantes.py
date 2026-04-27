@@ -2091,7 +2091,6 @@ def resolver_token_portal_general_o_error(token: str) -> dict:
                     detail=f"El token existe, pero no está activo. Estado actual: {estado}."
                 )
 
-            # ✅ Validar expiración en SQL para evitar error timezone
             cur.execute("""
                 SELECT expiracion <= NOW() AS expirado
                 FROM portal_access_tokens
@@ -2140,8 +2139,10 @@ def resolver_token_portal_general_o_error(token: str) -> dict:
 
                     ae.nombre AS estado_nombre,
 
-                    c.nombre_real AS creador_nombre,
-                    c.nickname AS creador_nickname
+                    c.nombre AS creador_nombre,
+                    c.usuario_tiktok AS creador_usuario_tiktok,
+                    c.estado AS creador_estado,
+                    c.categoria AS creador_categoria
 
                 FROM portal_access_tokens pat
                 LEFT JOIN aspirantes a
@@ -2174,6 +2175,12 @@ def resolver_token_portal_general_o_error(token: str) -> dict:
                 or f"Usuario {row[2] or row[3]}"
             )
 
+            estado_nombre = (
+                row[16]
+                if tipo_portal == "creador" and row[16]
+                else row[13] or "Proceso"
+            )
+
             return {
                 "token": row[0],
                 "tipo_portal": tipo_portal,
@@ -2186,10 +2193,10 @@ def resolver_token_portal_general_o_error(token: str) -> dict:
                 "whatsapp": row[10],
                 "email": row[11],
                 "encuesta_terminada": row[12],
-                "estado_nombre": row[13] or "Proceso",
+                "estado_nombre": estado_nombre,
                 "usuario": row[7],
+                "creador_categoria": row[17],
             }
-
 
 def crear_o_actualizar_creador_desde_aspirante(
     cur,
