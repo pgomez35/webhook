@@ -1093,13 +1093,13 @@ def actualizar_invitacion(invitacion_id: int, data: InvitacionUpdate):
 
             if puede_incorporarse(invitacion):
                 registrar_cambio_estado_con_cursor(
+                    cur=cur,
                     aspirante_id=invitacion["aspirante_id"],
                     nuevo_estado_id=6,
                     usuario_id=usuario_invita,
                     origen_cambio="actualizar_invitacion",
                     observacion="Aspirante pasa a Incorporado tras aceptación de invitación y TikTok"
                 )
-
                 creador_id = crear_o_actualizar_creador_desde_aspirante(
                     cur=cur,
                     aspirante_id=invitacion["aspirante_id"],
