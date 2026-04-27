@@ -2052,3 +2052,133 @@ def actualizar_uso_token(token: str) -> None:
                 (token,),
             )
             conn.commit()
+
+
+def resolver_token_portal_general_o_error(token: str) -> dict:
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+
+            # 1. Verificar si el token existe
+            cur.execute("""
+                SELECT
+                    token,
+                    estado,
+                    expiracion,
+                    aspirante_id,
+                    creador_id,
+                    COALESCE(tipo_portal, 'aspirante') AS tipo_portal
+                FROM portal_access_tokens
+                WHERE token = %s
+                LIMIT 1
+            """, (token,))
+
+            token_row = cur.fetchone()
+
+            if not token_row:
+                raise HTTPException(
+                    status_code=400,
+                    detail="El token enviado no existe en portal_access_tokens."
+                )
+
+            estado = token_row[1]
+            expiracion = token_row[2]
+            aspirante_id = token_row[3]
+            creador_id = token_row[4]
+            tipo_portal = token_row[5] or "aspirante"
+
+            if estado != "activo":
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"El token existe, pero no está activo. Estado actual: {estado}."
+                )
+
+            cur.execute("SELECT NOW()")
+            ahora = cur.fetchone()[0]
+
+            if expiracion <= ahora:
+                raise HTTPException(
+                    status_code=410,
+                    detail="El token existe, pero ya expiró."
+                )
+
+            if not aspirante_id and tipo_portal == "aspirante":
+                raise HTTPException(
+                    status_code=409,
+                    detail="El token es de aspirante, pero no tiene aspirante_id asociado."
+                )
+
+            if tipo_portal == "creador" and not creador_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail="El token es de creador, pero no tiene creador_id asociado."
+                )
+
+            # 2. Traer datos completos
+            cur.execute("""
+                SELECT
+                    pat.token,
+                    COALESCE(pat.tipo_portal, 'aspirante') AS tipo_portal,
+                    pat.aspirante_id,
+                    pat.creador_id,
+                    pat.expiracion,
+
+                    a.nombre_real,
+                    a.nickname,
+                    a.usuario,
+                    a.estado_id,
+                    a.telefono,
+                    a.whatsapp,
+                    a.email,
+                    COALESCE(a.encuesta_terminada, false) AS encuesta_terminada,
+
+                    ae.nombre AS estado_nombre,
+
+                    c.nombre_real AS creador_nombre,
+                    c.nickname AS creador_nickname
+
+                FROM portal_access_tokens pat
+                LEFT JOIN aspirantes a
+                    ON a.id = pat.aspirante_id
+                LEFT JOIN aspirantes_estados ae
+                    ON ae.id = a.estado_id
+                LEFT JOIN creadores c
+                    ON c.id = pat.creador_id
+                WHERE pat.token = %s
+                LIMIT 1
+            """, (token,))
+
+            row = cur.fetchone()
+
+            if not row:
+                raise HTTPException(
+                    status_code=500,
+                    detail="El token pasó validación inicial, pero no se pudieron cargar sus datos."
+                )
+
+            tipo_portal = row[1] or "aspirante"
+
+            aspirante_nombre = row[5] or row[6] or row[7]
+            creador_nombre = row[14] or row[15]
+
+            nombre = (
+                creador_nombre
+                if tipo_portal == "creador" and creador_nombre
+                else aspirante_nombre
+                or f"Usuario {row[2] or row[3]}"
+            )
+
+            return {
+                "token": row[0],
+                "tipo_portal": tipo_portal,
+                "aspirante_id": row[2],
+                "creador_id": row[3],
+                "expiracion": row[4],
+                "nombre": nombre,
+                "estado_id": row[8],
+                "telefono": row[9],
+                "whatsapp": row[10],
+                "email": row[11],
+                "encuesta_terminada": row[12],
+                "estado_nombre": row[13] or "Proceso",
+                "usuario": row[7],
+            }
