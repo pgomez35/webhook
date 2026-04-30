@@ -1928,6 +1928,390 @@ def obtener_detalle_diagnostico_capacitacion(
         )
 
 
+def parse_jsonb(value):
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value)
+    except Exception:
+        return value
+
+
+def nivel_por_score(score):
+    if score is None:
+        return "SIN_DATOS"
+    score = float(score)
+    if score < 2.5:
+        return "BAJO"
+    if score < 4:
+        return "MEDIO"
+    return "ALTO"
+
+
+def color_por_nivel(nivel):
+    return {
+        "BAJO": "red",
+        "MEDIO": "amber",
+        "ALTO": "green",
+        "SIN_DATOS": "gray"
+    }.get(nivel, "gray")
+
+
+def prioridad_por_score(score):
+    if score is None:
+        return "sin_datos"
+    score = float(score)
+    if score < 2.5:
+        return "alta"
+    if score < 4:
+        return "media"
+    return "baja"
+
+
+def recomendacion_capacitacion(campo_db, nombre_variable, nivel):
+    recomendaciones = {
+        "kpi_compliance_real": {
+            "tema": "Normas y cumplimiento de plataforma",
+            "recomendacion": "Capacitar en normas de comunidad, políticas de contenido, prevención de infracciones y buenas prácticas para proteger la cuenta y la agencia."
+        },
+        "kpi_monetizacion_live": {
+            "tema": "Monetización y retención en LIVE",
+            "recomendacion": "Capacitar en dinámicas de regalos, metas, retención de audiencia, activación del chat y estrategias para mejorar ingresos."
+        },
+        "kpi_uso_operativo": {
+            "tema": "Herramientas LIVE",
+            "recomendacion": "Capacitar en uso operativo de TikTok LIVE, TikTok Live Studio, OBS, Tikfinity, alertas, escenas y funciones disponibles."
+        },
+        "kpi_calidad_tecnica": {
+            "tema": "Setup, producción y calidad técnica",
+            "recomendacion": "Capacitar en iluminación, encuadre, sonido, fondo, presencia visual y optimización básica del entorno de transmisión."
+        }
+    }
+
+    base = recomendaciones.get(campo_db, {
+        "tema": nombre_variable,
+        "recomendacion": f"Capacitar en {nombre_variable}."
+    })
+
+    if nivel == "ALTO":
+        return {
+            "tema": base["tema"],
+            "recomendacion": f"{base['tema']} está en buen nivel. Mantener seguimiento y refuerzo ligero."
+        }
+
+    return base
+
+
+def normalizar_respuesta_capacitacion(row):
+    if row.get("respuesta_valor_id") is not None:
+        return {
+            "tipo": "opcion",
+            "valor_id": row["respuesta_valor_id"],
+            "label": row.get("valor_label"),
+            "score": row.get("valor_score"),
+            "nivel": row.get("valor_nivel")
+        }
+
+    if row.get("valor_json") is not None:
+        return {
+            "tipo": "json",
+            "valor": parse_jsonb(row["valor_json"])
+        }
+
+    if row.get("valor_texto") is not None:
+        return {
+            "tipo": "texto",
+            "valor": row["valor_texto"]
+        }
+
+    if row.get("valor_numeric") is not None:
+        return {
+            "tipo": "numeric",
+            "valor": float(row["valor_numeric"])
+        }
+
+    if row.get("valor_integer") is not None:
+        return {
+            "tipo": "integer",
+            "valor": row["valor_integer"]
+        }
+
+    return {
+        "tipo": "sin_respuesta",
+        "valor": None
+    }
+
+
+@router.get("/api/creadores/{creador_id}/talent-card/capacitacion")
+def obtener_capacitacion_talent_card(
+    creador_id: int,
+    encuesta_id: int = Query(2)
+):
+    """
+    Devuelve la categoría CAPACITACION con:
+    - detalle de variables
+    - score general de capacitación
+    - necesidades priorizadas
+    - temas sugeridos de capacitación
+    """
+
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+
+                # Validar creador
+                cur.execute("""
+                    SELECT id
+                    FROM creadores
+                    WHERE id = %s
+                    LIMIT 1
+                """, (creador_id,))
+
+                if not cur.fetchone():
+                    raise HTTPException(
+                        status_code=404,
+                        detail="No se encontró el creador"
+                    )
+
+                # Traer solo CAPACITACION
+                cur.execute("""
+                    SELECT
+                        c.id AS categoria_id,
+                        c.nombre AS categoria_nombre,
+                        c.nombre_natural,
+                        c.descripcion AS categoria_descripcion,
+                        c.orden AS categoria_orden,
+                        c.tipo AS categoria_tipo,
+
+                        v.id AS variable_id,
+                        v.nombre AS variable_nombre,
+                        v.campo_db,
+                        v.texto AS pregunta,
+                        v.tipo,
+                        v.tipo_form,
+                        COALESCE(v.peso_variable, 0) AS peso_variable,
+                        v.orden AS variable_orden,
+
+                        r.valor_integer,
+                        r.valor_numeric,
+                        r.valor_texto,
+                        r.valor_json,
+                        r.valor_id,
+
+                        COALESCE(
+                            r.valor_id,
+                            CASE
+                                WHEN v.tipo_form = 'boton'
+                                 AND r.valor_texto ~ '^[0-9]+$'
+                                THEN r.valor_texto::integer
+                                ELSE NULL
+                            END
+                        ) AS respuesta_valor_id,
+
+                        val.label AS valor_label,
+                        val.score AS valor_score,
+                        val.nivel AS valor_nivel
+                    FROM creadores_perfil_variable v
+                    INNER JOIN creadores_perfil_categoria c
+                        ON c.id = v.categoria_id
+                    LEFT JOIN creadores_perfil_respuesta r
+                        ON r.variable_id = v.id
+                       AND r.creador_id = %s
+                    LEFT JOIN creadores_perfil_valor val
+                        ON val.id = COALESCE(
+                            r.valor_id,
+                            CASE
+                                WHEN v.tipo_form = 'boton'
+                                 AND r.valor_texto ~ '^[0-9]+$'
+                                THEN r.valor_texto::integer
+                                ELSE NULL
+                            END
+                        )
+                    WHERE v.encuesta_id = %s
+                      AND UPPER(c.tipo) = 'CAPACITACION'
+                      AND COALESCE(v.activa, true) = true
+                      AND COALESCE(c.activa, true) = true
+                    ORDER BY c.orden ASC NULLS LAST, v.orden ASC NULLS LAST, v.id ASC
+                """, (creador_id, encuesta_id))
+
+                rows = cur.fetchall()
+
+        if not rows:
+            return {
+                "ok": True,
+                "creador_id": creador_id,
+                "encuesta_id": encuesta_id,
+                "capacitacion": None,
+                "mensaje": "No hay categoría de capacitación configurada."
+            }
+
+        categoria = {
+            "categoria_id": rows[0]["categoria_id"],
+            "nombre": rows[0]["categoria_nombre"],
+            "nombre_natural": rows[0]["nombre_natural"],
+            "descripcion": rows[0]["categoria_descripcion"],
+            "tipo": rows[0]["categoria_tipo"],
+            "orden": rows[0]["categoria_orden"],
+            "variables": []
+        }
+
+        suma_ponderada = 0
+        suma_pesos = 0
+        respondidas = 0
+
+        necesidades = []
+        temas_capacitacion = []
+
+        distribucion = {
+            "BAJO": 0,
+            "MEDIO": 0,
+            "ALTO": 0,
+            "SIN_DATOS": 0
+        }
+
+        for row in rows:
+            respuesta = normalizar_respuesta_capacitacion(row)
+
+            score = respuesta.get("score")
+            nivel = nivel_por_score(score)
+            color = color_por_nivel(nivel)
+            prioridad = prioridad_por_score(score)
+
+            peso = float(row["peso_variable"] or 0)
+
+            if score is not None and peso > 0:
+                suma_ponderada += float(score) * peso
+                suma_pesos += peso
+                respondidas += 1
+
+            distribucion[nivel] += 1
+
+            recomendacion_data = recomendacion_capacitacion(
+                row["campo_db"],
+                row["variable_nombre"],
+                nivel
+            )
+
+            variable_payload = {
+                "variable_id": row["variable_id"],
+                "nombre": row["variable_nombre"],
+                "campo_db": row["campo_db"],
+                "pregunta": row["pregunta"],
+                "tipo": row["tipo"],
+                "tipo_form": row["tipo_form"],
+                "peso_variable": peso,
+                "orden": row["variable_orden"],
+                "respuesta": respuesta,
+                "analisis": {
+                    "score": score,
+                    "nivel": nivel,
+                    "color": color,
+                    "prioridad": prioridad,
+                    "requiere_capacitacion": prioridad in ["alta", "media", "sin_datos"],
+                    "tema": recomendacion_data["tema"],
+                    "recomendacion": recomendacion_data["recomendacion"]
+                }
+            }
+
+            categoria["variables"].append(variable_payload)
+
+            if prioridad in ["alta", "media", "sin_datos"]:
+                necesidades.append({
+                    "variable_id": row["variable_id"],
+                    "nombre": row["variable_nombre"],
+                    "campo_db": row["campo_db"],
+                    "tema": recomendacion_data["tema"],
+                    "score": score,
+                    "nivel": nivel,
+                    "color": color,
+                    "prioridad": prioridad,
+                    "recomendacion": recomendacion_data["recomendacion"]
+                })
+
+                temas_capacitacion.append({
+                    "tema": recomendacion_data["tema"],
+                    "prioridad": prioridad,
+                    "campo_db": row["campo_db"],
+                    "variable": row["variable_nombre"],
+                    "recomendacion": recomendacion_data["recomendacion"]
+                })
+
+        score_general = round(suma_ponderada / suma_pesos, 2) if suma_pesos > 0 else None
+        nivel_general = nivel_por_score(score_general)
+
+        necesidades_ordenadas = sorted(
+            necesidades,
+            key=lambda x: {
+                "alta": 1,
+                "media": 2,
+                "sin_datos": 3,
+                "baja": 4
+            }.get(x["prioridad"], 5)
+        )
+
+        temas_ordenados = sorted(
+            temas_capacitacion,
+            key=lambda x: {
+                "alta": 1,
+                "media": 2,
+                "sin_datos": 3,
+                "baja": 4
+            }.get(x["prioridad"], 5)
+        )
+
+        if nivel_general == "BAJO":
+            texto_general = "El creador requiere un plan de capacitación prioritario antes de escalar su operación."
+            accion_sugerida = "Asignar formación inicial y acompañamiento cercano en los temas críticos detectados."
+        elif nivel_general == "MEDIO":
+            texto_general = "El creador tiene una base funcional, pero necesita refuerzo en áreas específicas."
+            accion_sugerida = "Asignar capacitación focalizada en los temas con prioridad alta o media."
+        elif nivel_general == "ALTO":
+            texto_general = "El creador muestra buen nivel operativo y requiere solo seguimiento o formación avanzada."
+            accion_sugerida = "Mantener seguimiento y ofrecer formación avanzada para optimizar resultados."
+        else:
+            texto_general = "No hay información suficiente para definir necesidades de capacitación."
+            accion_sugerida = "Completar la encuesta o revisar respuestas faltantes."
+
+        return {
+            "ok": True,
+            "creador_id": creador_id,
+            "encuesta_id": encuesta_id,
+            "capacitacion": {
+                "score_general": score_general,
+                "nivel_general": nivel_general,
+                "color": color_por_nivel(nivel_general),
+                "texto_general": texto_general,
+                "accion_sugerida": accion_sugerida,
+                "resumen": {
+                    "total_variables": len(rows),
+                    "variables_respondidas": respondidas,
+                    "porcentaje_respuesta": round((respondidas / len(rows)) * 100, 2) if rows else 0,
+                    "total_necesidades": len(necesidades_ordenadas),
+                    "prioridad_alta": len([n for n in necesidades_ordenadas if n["prioridad"] == "alta"]),
+                    "prioridad_media": len([n for n in necesidades_ordenadas if n["prioridad"] == "media"]),
+                    "sin_datos": len([n for n in necesidades_ordenadas if n["prioridad"] == "sin_datos"]),
+                    "sin_necesidades": len(necesidades_ordenadas) == 0,
+                    "distribucion_niveles": distribucion
+                },
+                "necesidades": necesidades_ordenadas,
+                "temas_capacitacion": temas_ordenados,
+                "categoria": categoria
+            }
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        print("❌ Error obteniendo capacitación Talent Card:", e)
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail="Error obteniendo capacitación del creador"
+        )
+
 
 
 
