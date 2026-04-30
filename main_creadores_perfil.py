@@ -492,15 +492,11 @@ def consolidar_encuesta_creador(data: ConsolidarEncuestaCreadorInput):
         for key, valor in data.respuestas.items():
             if isinstance(key, str) and key.isdigit():
                 key = int(key)
-
             respuestas_dict[key] = valor
 
         with get_connection_context() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
 
-                # -------------------------------
-                # Validar creador
-                # -------------------------------
                 cur.execute("""
                     SELECT id
                     FROM creadores
@@ -516,9 +512,6 @@ def consolidar_encuesta_creador(data: ConsolidarEncuestaCreadorInput):
                         status_code=404
                     )
 
-                # -------------------------------
-                # Obtener variables activas
-                # -------------------------------
                 cur.execute("""
                     SELECT
                         id,
@@ -541,7 +534,6 @@ def consolidar_encuesta_creador(data: ConsolidarEncuestaCreadorInput):
                     variable = variables.get(pregunta_id)
 
                     if not variable:
-                        print(f"⚠️ Variable no encontrada o inactiva: {pregunta_id}")
                         preguntas_omitidas.append(pregunta_id)
                         continue
 
@@ -554,47 +546,44 @@ def consolidar_encuesta_creador(data: ConsolidarEncuestaCreadorInput):
                     valor_texto = None
                     valor_json = None
 
-                    # -------------------------------
-                    # Clasificación del valor
-                    # -------------------------------
-
                     if valor is None or valor == "":
-                        valor_texto = None
-
-                    elif tipo_form == "multiple":
-                        # Ejemplo: [749, 750, 751]
-                        valor_json = json.dumps(valor, ensure_ascii=False)
+                        pass
 
                     elif tipo_form == "boton":
-                        # El botón representa una opción seleccionada
                         try:
                             valor_id = int(valor)
                         except Exception:
                             valor_texto = str(valor).strip()
 
+                    elif tipo_form == "multiple":
+                        if isinstance(valor, list):
+                            valor_json = json.dumps(valor, ensure_ascii=False)
+                        else:
+                            valor_json = json.dumps([valor], ensure_ascii=False)
+
                     elif tipo_form == "number":
-                        # Si quieres guardar enteros exactos en valor_integer
-                        # y decimales en valor_numeric
                         try:
-                            numero = float(valor)
-
-                            if numero.is_integer():
-                                valor_integer = int(numero)
-                            else:
-                                valor_numeric = numero
-
+                            valor_numeric = float(valor)
                         except Exception:
                             valor_texto = str(valor).strip()
 
                     elif tipo_form == "text":
                         valor_texto = str(valor).strip()
 
-                    # -------------------------------
-                    # Fallback por tipo
-                    # -------------------------------
-
                     elif tipo in ["json", "jsonb"] or isinstance(valor, (dict, list)):
                         valor_json = json.dumps(valor, ensure_ascii=False)
+
+                    elif tipo in ["boton", "select", "radio", "escala"]:
+                        try:
+                            valor_id = int(valor)
+                        except Exception:
+                            valor_texto = str(valor).strip()
+
+                    elif tipo in ["number", "numeric", "decimal", "float"]:
+                        try:
+                            valor_numeric = float(valor)
+                        except Exception:
+                            valor_texto = str(valor).strip()
 
                     elif tipo in ["integer", "int", "numero_entero"]:
                         try:
@@ -602,18 +591,9 @@ def consolidar_encuesta_creador(data: ConsolidarEncuestaCreadorInput):
                         except Exception:
                             valor_texto = str(valor).strip()
 
-                    elif tipo in ["numeric", "decimal", "float", "number"]:
-                        try:
-                            valor_numeric = float(valor)
-                        except Exception:
-                            valor_texto = str(valor).strip()
-
                     else:
                         valor_texto = str(valor).strip()
 
-                    # -------------------------------
-                    # Guardar respuesta
-                    # -------------------------------
                     cur.execute("""
                         INSERT INTO creadores_perfil_respuesta (
                             creador_id,
@@ -659,6 +639,7 @@ def consolidar_encuesta_creador(data: ConsolidarEncuestaCreadorInput):
 
     except Exception as e:
         print(f"❌ Error en consolidar_encuesta_creador: {e}")
+        traceback.print_exc()
         return JSONResponse(
             {
                 "error": "Error al consolidar encuesta del creador",
@@ -1218,90 +1199,9 @@ def obtener_foto_creador_activo(creador_activo_id: int):
 
 # -------------------------------------------
 # -------------------------------------------
+# -----ENDPOINTS TALEND CARD---------
 # -------------------------------------------
 # -------------------------------------------
-
-
-# =========================================================
-# RESUMEN PLANO PARA FRONTEND
-# =========================================================
-
-@router.get("/api/creadores/{creador_id}/perfil-resumen")
-def obtener_resumen_perfil_creador(
-    creador_id: int,
-    encuesta_id: int = Query(2)
-):
-    """
-    Devuelve las respuestas en formato plano por campo_db.
-    Útil para mostrar ficha/resumen en React.
-    """
-
-    try:
-        with get_connection_context() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("""
-                    SELECT
-                        v.campo_db,
-                        v.nombre,
-                        v.tipo,
-                        v.tipo_form,
-                        r.valor_integer,
-                        r.valor_numeric,
-                        r.valor_texto,
-                        r.valor_json,
-                        r.valor_id,
-                        val.label AS valor_label,
-                        val.score AS valor_score
-                    FROM creadores_perfil_respuesta r
-                    INNER JOIN creadores_perfil_variable v
-                        ON v.id = r.variable_id
-                    LEFT JOIN creadores_perfil_valor val
-                        ON val.id = r.valor_id
-                    WHERE r.creador_id = %s
-                      AND v.encuesta_id = %s
-                    ORDER BY v.orden ASC
-                """, (creador_id, encuesta_id))
-
-                rows = cur.fetchall()
-
-        resumen = {}
-
-        for row in rows:
-            campo = row["campo_db"]
-
-            if row["valor_json"] is not None:
-                valor = row["valor_json"]
-            elif row["valor_texto"] is not None:
-                valor = row["valor_texto"]
-            elif row["valor_numeric"] is not None:
-                valor = row["valor_numeric"]
-            elif row["valor_label"] is not None:
-                valor = {
-                    "valor_id": row["valor_id"],
-                    "score": row["valor_score"],
-                    "label": row["valor_label"]
-                }
-            else:
-                valor = row["valor_integer"]
-
-            resumen[campo] = {
-                "nombre": row["nombre"],
-                "tipo": row["tipo"],
-                "tipo_form": row["tipo_form"],
-                "valor": valor
-            }
-
-        return {
-            "ok": True,
-            "creador_id": creador_id,
-            "resumen": resumen
-        }
-
-    except Exception as e:
-        print("❌ Error obteniendo resumen perfil creador:", e)
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Error obteniendo resumen del creador")
-
 
 # ============================================================
 # HELPERS
@@ -1310,10 +1210,8 @@ def obtener_resumen_perfil_creador(
 def parse_jsonb(value):
     if value is None:
         return None
-
     if isinstance(value, (dict, list)):
         return value
-
     try:
         return json.loads(value)
     except Exception:
@@ -1342,26 +1240,27 @@ def color_por_nivel(nivel):
     }.get(nivel, "gray")
 
 
-def texto_analisis_categoria(nombre_categoria, nivel):
-    if nivel == "ALTO":
-        return f"{nombre_categoria} es una fortaleza clara del creador."
-    if nivel == "MEDIO":
-        return f"{nombre_categoria} muestra una base entrenable, pero requiere seguimiento."
-    if nivel == "BAJO":
-        return f"{nombre_categoria} requiere fortalecimiento prioritario."
-    return f"No hay información suficiente para analizar {nombre_categoria}."
-
-
 def prioridad_por_score(score):
     if score is None:
         return "sin_datos"
+
     score = float(score)
 
-    if score <= 2:
+    if score < 2.5:
         return "alta"
     if score < 4:
         return "media"
     return "baja"
+
+
+def texto_analisis_categoria(nombre_categoria, nivel):
+    if nivel == "ALTO":
+        return f"{nombre_categoria} es una fortaleza clara del creador."
+    if nivel == "MEDIO":
+        return f"{nombre_categoria} muestra potencial entrenable y requiere seguimiento."
+    if nivel == "BAJO":
+        return f"{nombre_categoria} requiere fortalecimiento prioritario."
+    return f"No hay información suficiente para analizar {nombre_categoria}."
 
 
 def recomendacion_capacitacion(nombre_variable, campo_db, nivel):
@@ -1371,7 +1270,7 @@ def recomendacion_capacitacion(nombre_variable, campo_db, nivel):
     recomendaciones = {
         "kpi_compliance_real": "Reforzar normas de comunidad, políticas de contenido y prevención de infracciones.",
         "kpi_monetizacion_live": "Capacitar en dinámicas de monetización, regalos, retención y activación de audiencia.",
-        "kpi_uso_operativo": "Capacitar en herramientas LIVE, funciones de TikTok, OBS, Live Studio o Tikfinity.",
+        "kpi_uso_operativo": "Capacitar en herramientas LIVE, funciones de TikTok, OBS, TikTok Live Studio o Tikfinity.",
         "kpi_calidad_tecnica": "Fortalecer setup, iluminación, encuadre, audio y producción básica del entorno."
     }
 
@@ -1383,13 +1282,18 @@ def recomendacion_capacitacion(nombre_variable, campo_db, nivel):
 
 def normalizar_respuesta(row, opciones_map=None):
     """
-    Devuelve respuesta en formato estándar para React.
+    Normaliza la respuesta para que React la pueda pintar sin lógica compleja.
+    Importante:
+    - Para boton usa respuesta_valor_id.
+    - respuesta_valor_id corrige también casos viejos donde el ID quedó en valor_texto.
     """
 
-    if row.get("valor_id") is not None:
+    respuesta_valor_id = row.get("respuesta_valor_id")
+
+    if respuesta_valor_id is not None:
         return {
             "tipo": "opcion",
-            "valor_id": row["valor_id"],
+            "valor_id": respuesta_valor_id,
             "label": row.get("valor_label"),
             "score": row.get("valor_score"),
             "nivel": row.get("valor_nivel")
@@ -1398,16 +1302,17 @@ def normalizar_respuesta(row, opciones_map=None):
     if row.get("valor_json") is not None:
         raw = parse_jsonb(row["valor_json"])
 
-        if isinstance(raw, list) and opciones_map:
+        if isinstance(raw, list):
             opciones = []
 
-            for item in raw:
-                try:
-                    item_id = int(item)
-                    if item_id in opciones_map:
-                        opciones.append(opciones_map[item_id])
-                except Exception:
-                    pass
+            if opciones_map:
+                for item in raw:
+                    try:
+                        item_id = int(item)
+                        if item_id in opciones_map:
+                            opciones.append(opciones_map[item_id])
+                    except Exception:
+                        pass
 
             return {
                 "tipo": "multiple",
@@ -1444,22 +1349,45 @@ def normalizar_respuesta(row, opciones_map=None):
     }
 
 
-def calcular_score_categoria(categoria):
-    suma_ponderada = categoria.get("_suma_ponderada", 0)
-    suma_pesos = categoria.get("_suma_pesos", 0)
-
-    if suma_pesos <= 0:
-        return None
-
-    return round(suma_ponderada / suma_pesos, 2)
+def construir_variable_payload(row, opciones_map=None):
+    return {
+        "variable_id": row["variable_id"],
+        "nombre": row["variable_nombre"],
+        "campo_db": row["campo_db"],
+        "pregunta": row["pregunta"],
+        "tipo": row["tipo"],
+        "tipo_form": row["tipo_form"],
+        "peso_variable": float(row["peso_variable"] or 0),
+        "orden": row["variable_orden"],
+        "respuesta": normalizar_respuesta(row, opciones_map)
+    }
 
 
 # ============================================================
-# QUERY BASE
+# QUERY BASE FILTRABLE
 # ============================================================
 
-def obtener_rows_perfil_creador(cur, creador_id: int, encuesta_id: int):
-    cur.execute("""
+def obtener_rows_por_tipos_categoria(
+    cur,
+    creador_id: int,
+    encuesta_id: int,
+    tipos_categoria: Optional[List[str]] = None
+):
+    """
+    Si tipos_categoria es None, trae todas las categorías.
+    Si tipos_categoria tiene valores, filtra desde SQL.
+    """
+
+    params = [creador_id, encuesta_id]
+    filtro_tipo = ""
+
+    if tipos_categoria:
+        tipos_normalizados = [t.upper() for t in tipos_categoria]
+        placeholders = ", ".join(["%s"] * len(tipos_normalizados))
+        filtro_tipo = f" AND UPPER(c.tipo) IN ({placeholders}) "
+        params.extend(tipos_normalizados)
+
+    cur.execute(f"""
         SELECT
             c.id AS categoria_id,
             c.nombre AS categoria_nombre,
@@ -1483,6 +1411,16 @@ def obtener_rows_perfil_creador(cur, creador_id: int, encuesta_id: int):
             r.valor_json,
             r.valor_id,
 
+            COALESCE(
+                r.valor_id,
+                CASE
+                    WHEN v.tipo_form = 'boton'
+                     AND r.valor_texto ~ '^[0-9]+$'
+                    THEN r.valor_texto::integer
+                    ELSE NULL
+                END
+            ) AS respuesta_valor_id,
+
             val.label AS valor_label,
             val.score AS valor_score,
             val.nivel AS valor_nivel
@@ -1493,12 +1431,21 @@ def obtener_rows_perfil_creador(cur, creador_id: int, encuesta_id: int):
             ON r.variable_id = v.id
            AND r.creador_id = %s
         LEFT JOIN creadores_perfil_valor val
-            ON val.id = r.valor_id
+            ON val.id = COALESCE(
+                r.valor_id,
+                CASE
+                    WHEN v.tipo_form = 'boton'
+                     AND r.valor_texto ~ '^[0-9]+$'
+                    THEN r.valor_texto::integer
+                    ELSE NULL
+                END
+            )
         WHERE v.encuesta_id = %s
           AND COALESCE(v.activa, true) = true
           AND COALESCE(c.activa, true) = true
+          {filtro_tipo}
         ORDER BY c.orden ASC NULLS LAST, v.orden ASC NULLS LAST, v.id ASC
-    """, (creador_id, encuesta_id))
+    """, params)
 
     return cur.fetchall()
 
@@ -1540,309 +1487,87 @@ def obtener_opciones_multiple_map(cur, rows):
     return opciones_map
 
 
-# ============================================================
-# BUILDER PRINCIPAL
-# ============================================================
-
-def construir_talent_card_payload(creador_id: int, encuesta_id: int):
-    with get_connection_context() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-
-            cur.execute("""
-                SELECT id
-                FROM creadores
-                WHERE id = %s
-                LIMIT 1
-            """, (creador_id,))
-
-            creador = cur.fetchone()
-
-            if not creador:
-                raise HTTPException(status_code=404, detail="No se encontró el creador")
-
-            rows = obtener_rows_perfil_creador(cur, creador_id, encuesta_id)
-            opciones_map = obtener_opciones_multiple_map(cur, rows)
-
-    perfil_basico = {}
-    detalle_categorias = {}
-    diagnostico_map = {}
-    capacitacion_map = {}
+def agrupar_rows_por_categoria(rows, opciones_map=None):
+    categorias_map = {}
 
     for row in rows:
         categoria_id = row["categoria_id"]
-        categoria_tipo = row["categoria_tipo"]
 
-        respuesta = normalizar_respuesta(row, opciones_map)
-
-        variable_payload = {
-            "variable_id": row["variable_id"],
-            "nombre": row["variable_nombre"],
-            "campo_db": row["campo_db"],
-            "pregunta": row["pregunta"],
-            "tipo": row["tipo"],
-            "tipo_form": row["tipo_form"],
-            "peso_variable": float(row["peso_variable"] or 0),
-            "orden": row["variable_orden"],
-            "respuesta": respuesta
-        }
-
-        # ----------------------------
-        # Perfil básico
-        # ----------------------------
-        if categoria_tipo == "DATOS_BASICOS":
-            campo = row["campo_db"] or f"variable_{row['variable_id']}"
-            perfil_basico[campo] = variable_payload
-
-        # ----------------------------
-        # Detalle completo
-        # ----------------------------
-        if categoria_id not in detalle_categorias:
-            detalle_categorias[categoria_id] = {
+        if categoria_id not in categorias_map:
+            categorias_map[categoria_id] = {
                 "categoria_id": categoria_id,
                 "nombre": row["categoria_nombre"],
                 "nombre_natural": row["nombre_natural"],
                 "descripcion": row["categoria_descripcion"],
-                "tipo": categoria_tipo,
+                "tipo": row["categoria_tipo"],
                 "orden": row["categoria_orden"],
                 "variables": []
             }
 
-        detalle_categorias[categoria_id]["variables"].append(variable_payload)
+        categorias_map[categoria_id]["variables"].append(
+            construir_variable_payload(row, opciones_map)
+        )
 
-        # ----------------------------
-        # Diagnóstico
-        # ----------------------------
-        if categoria_tipo == "DIAGNOSTICO":
-            if categoria_id not in diagnostico_map:
-                diagnostico_map[categoria_id] = {
-                    "categoria_id": categoria_id,
-                    "nombre": row["categoria_nombre"],
-                    "nombre_natural": row["nombre_natural"],
-                    "descripcion": row["categoria_descripcion"],
-                    "tipo": categoria_tipo,
-                    "orden": row["categoria_orden"],
-                    "variables": [],
-                    "_suma_ponderada": 0,
-                    "_suma_pesos": 0,
-                    "_respondidas": 0
-                }
-
-            peso = float(row["peso_variable"] or 0)
-            score = row["valor_score"]
-
-            if score is not None and peso > 0:
-                diagnostico_map[categoria_id]["_suma_ponderada"] += float(score) * peso
-                diagnostico_map[categoria_id]["_suma_pesos"] += peso
-                diagnostico_map[categoria_id]["_respondidas"] += 1
-
-            diagnostico_map[categoria_id]["variables"].append(variable_payload)
-
-        # ----------------------------
-        # Capacitación
-        # ----------------------------
-        if categoria_tipo == "CAPACITACION":
-            if categoria_id not in capacitacion_map:
-                capacitacion_map[categoria_id] = {
-                    "categoria_id": categoria_id,
-                    "nombre": row["categoria_nombre"],
-                    "nombre_natural": row["nombre_natural"],
-                    "descripcion": row["categoria_descripcion"],
-                    "tipo": categoria_tipo,
-                    "orden": row["categoria_orden"],
-                    "variables": [],
-                    "_suma_ponderada": 0,
-                    "_suma_pesos": 0,
-                    "_respondidas": 0
-                }
-
-            peso = float(row["peso_variable"] or 0)
-            score = row["valor_score"]
-
-            if score is not None and peso > 0:
-                capacitacion_map[categoria_id]["_suma_ponderada"] += float(score) * peso
-                capacitacion_map[categoria_id]["_suma_pesos"] += peso
-                capacitacion_map[categoria_id]["_respondidas"] += 1
-
-            capacitacion_map[categoria_id]["variables"].append(variable_payload)
-
-    # ========================================================
-    # ARMAR DIAGNÓSTICO
-    # ========================================================
-
-    diagnostico_categorias = []
-    total_ponderado = 0
-    total_pesos = 0
-
-    for cat in diagnostico_map.values():
-        suma_pesos = cat.pop("_suma_pesos")
-        suma_ponderada = cat.pop("_suma_ponderada")
-        respondidas = cat.pop("_respondidas")
-
-        score_categoria = round(suma_ponderada / suma_pesos, 2) if suma_pesos > 0 else None
-        nivel = nivel_por_score(score_categoria)
-
-        cat["analisis"] = {
-            "score": score_categoria,
-            "nivel": nivel,
-            "color": color_por_nivel(nivel),
-            "variables_respondidas": respondidas,
-            "total_variables": len(cat["variables"]),
-            "porcentaje_respuesta": round(
-                (respondidas / len(cat["variables"])) * 100, 2
-            ) if cat["variables"] else 0,
-            "texto": texto_analisis_categoria(cat["nombre"], nivel)
-        }
-
-        if score_categoria is not None:
-            total_ponderado += score_categoria * suma_pesos
-            total_pesos += suma_pesos
-
-        diagnostico_categorias.append(cat)
-
-    score_general = round(total_ponderado / total_pesos, 2) if total_pesos > 0 else None
-    nivel_general = nivel_por_score(score_general)
-
-    diagnostico = {
-        "score_general": score_general,
-        "nivel_general": nivel_general,
-        "color": color_por_nivel(nivel_general),
-        "texto_general": texto_analisis_categoria("Diagnóstico general", nivel_general),
-        "categorias": diagnostico_categorias
-    }
-
-    # ========================================================
-    # ARMAR CAPACITACIÓN
-    # ========================================================
-
-    capacitacion_categorias = []
-    necesidades = []
-
-    cap_total_ponderado = 0
-    cap_total_pesos = 0
-
-    for cat in capacitacion_map.values():
-        suma_pesos = cat.pop("_suma_pesos")
-        suma_ponderada = cat.pop("_suma_ponderada")
-        respondidas = cat.pop("_respondidas")
-
-        score_categoria = round(suma_ponderada / suma_pesos, 2) if suma_pesos > 0 else None
-        nivel_categoria = nivel_por_score(score_categoria)
-
-        for variable in cat["variables"]:
-            respuesta = variable.get("respuesta") or {}
-            score_variable = respuesta.get("score")
-            nivel_variable = nivel_por_score(score_variable)
-
-            prioridad = prioridad_por_score(score_variable)
-
-            variable["capacitacion"] = {
-                "score": score_variable,
-                "nivel": nivel_variable,
-                "color": color_por_nivel(nivel_variable),
-                "prioridad": prioridad,
-                "requiere_capacitacion": prioridad in ["alta", "media"],
-                "recomendacion": recomendacion_capacitacion(
-                    variable["nombre"],
-                    variable["campo_db"],
-                    nivel_variable
-                )
-            }
-
-            if prioridad in ["alta", "media"]:
-                necesidades.append({
-                    "variable_id": variable["variable_id"],
-                    "nombre": variable["nombre"],
-                    "campo_db": variable["campo_db"],
-                    "score": score_variable,
-                    "nivel": nivel_variable,
-                    "prioridad": prioridad,
-                    "color": color_por_nivel(nivel_variable),
-                    "recomendacion": variable["capacitacion"]["recomendacion"]
-                })
-
-        cat["analisis"] = {
-            "score": score_categoria,
-            "nivel": nivel_categoria,
-            "color": color_por_nivel(nivel_categoria),
-            "variables_respondidas": respondidas,
-            "total_variables": len(cat["variables"]),
-            "porcentaje_respuesta": round(
-                (respondidas / len(cat["variables"])) * 100, 2
-            ) if cat["variables"] else 0,
-            "texto": texto_analisis_categoria(cat["nombre"], nivel_categoria)
-        }
-
-        if score_categoria is not None:
-            cap_total_ponderado += score_categoria * suma_pesos
-            cap_total_pesos += suma_pesos
-
-        capacitacion_categorias.append(cat)
-
-    score_capacitacion = (
-        round(cap_total_ponderado / cap_total_pesos, 2)
-        if cap_total_pesos > 0
-        else None
-    )
-
-    nivel_capacitacion = nivel_por_score(score_capacitacion)
-
-    necesidades_ordenadas = sorted(
-        necesidades,
-        key=lambda x: {"alta": 1, "media": 2, "baja": 3, "sin_datos": 4}.get(x["prioridad"], 5)
-    )
-
-    capacitacion = {
-        "score_general": score_capacitacion,
-        "nivel_general": nivel_capacitacion,
-        "color": color_por_nivel(nivel_capacitacion),
-        "texto_general": texto_analisis_categoria("Core Capacitación", nivel_capacitacion),
-        "resumen": {
-            "total_necesidades": len(necesidades_ordenadas),
-            "prioridad_alta": len([n for n in necesidades_ordenadas if n["prioridad"] == "alta"]),
-            "prioridad_media": len([n for n in necesidades_ordenadas if n["prioridad"] == "media"]),
-            "sin_necesidades": len(necesidades_ordenadas) == 0
-        },
-        "necesidades": necesidades_ordenadas,
-        "categorias": capacitacion_categorias
-    }
-
-    return {
-        "ok": True,
-        "creador_id": creador_id,
-        "encuesta_id": encuesta_id,
-        "perfil_basico": perfil_basico,
-        "diagnostico": diagnostico,
-        "capacitacion": capacitacion,
-        "detalle_categorias": list(detalle_categorias.values())
-    }
+    return list(categorias_map.values())
 
 
 # ============================================================
-# ENDPOINT 1: TALENT CARD COMPLETA
+# ENDPOINT 1: DETALLE GENERAL DE TODAS LAS VARIABLES
 # ============================================================
 
-@router.get("/api/creadores/{creador_id}/talent-card")
-def obtener_talent_card_creador(
+@router.get("/api/creadores/{creador_id}/perfil-detalle")
+def obtener_perfil_detalle_completo(
     creador_id: int,
     encuesta_id: int = Query(2)
 ):
+    """
+    Muestra todo el detalle de todas las variables de todas las categorías.
+    Este sí es el endpoint general.
+    """
+
     try:
-        return construir_talent_card_payload(creador_id, encuesta_id)
+        with get_connection_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT id
+                    FROM creadores
+                    WHERE id = %s
+                    LIMIT 1
+                """, (creador_id,))
+
+                if not cur.fetchone():
+                    raise HTTPException(status_code=404, detail="No se encontró el creador")
+
+                rows = obtener_rows_por_tipos_categoria(
+                    cur,
+                    creador_id,
+                    encuesta_id,
+                    tipos_categoria=None
+                )
+
+                opciones_map = obtener_opciones_multiple_map(cur, rows)
+
+        return {
+            "ok": True,
+            "creador_id": creador_id,
+            "encuesta_id": encuesta_id,
+            "categorias": agrupar_rows_por_categoria(rows, opciones_map)
+        }
 
     except HTTPException:
         raise
 
     except Exception as e:
-        print("❌ Error obteniendo Talent Card:", e)
+        print("❌ Error obteniendo perfil detalle completo:", e)
         traceback.print_exc()
         raise HTTPException(
             status_code=500,
-            detail="Error obteniendo Talent Card del creador"
+            detail="Error obteniendo detalle completo del perfil"
         )
 
 
 # ============================================================
-# ENDPOINT 2: PERFIL BÁSICO
+# ENDPOINT 2: SOLO DATOS BÁSICOS
 # ============================================================
 
 @router.get("/api/creadores/{creador_id}/perfil-basico")
@@ -1850,14 +1575,44 @@ def obtener_perfil_basico_creador(
     creador_id: int,
     encuesta_id: int = Query(2)
 ):
+    """
+    Solo trae categoría tipo DATOS_BASICOS.
+    Filtra directo en SQL.
+    """
+
     try:
-        data = construir_talent_card_payload(creador_id, encuesta_id)
+        with get_connection_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT id
+                    FROM creadores
+                    WHERE id = %s
+                    LIMIT 1
+                """, (creador_id,))
+
+                if not cur.fetchone():
+                    raise HTTPException(status_code=404, detail="No se encontró el creador")
+
+                rows = obtener_rows_por_tipos_categoria(
+                    cur,
+                    creador_id,
+                    encuesta_id,
+                    tipos_categoria=["DATOS_BASICOS"]
+                )
+
+                opciones_map = obtener_opciones_multiple_map(cur, rows)
+
+        perfil_basico = {}
+
+        for row in rows:
+            campo = row["campo_db"] or f"variable_{row['variable_id']}"
+            perfil_basico[campo] = construir_variable_payload(row, opciones_map)
 
         return {
             "ok": True,
             "creador_id": creador_id,
             "encuesta_id": encuesta_id,
-            "perfil_basico": data["perfil_basico"]
+            "perfil_basico": perfil_basico
         }
 
     except HTTPException:
@@ -1868,119 +1623,1073 @@ def obtener_perfil_basico_creador(
         traceback.print_exc()
         raise HTTPException(
             status_code=500,
-            detail="Error obteniendo perfil básico del creador"
+            detail="Error obteniendo perfil básico"
         )
 
 
 # ============================================================
-# ENDPOINT 3: DIAGNÓSTICO
+# ENDPOINT 3: ANÁLISIS ESTADÍSTICO DIAGNÓSTICO
 # ============================================================
 
-@router.get("/api/creadores/{creador_id}/diagnostico")
-def obtener_diagnostico_creador(
+@router.get("/api/creadores/{creador_id}/talent-card/analisis-diagnostico")
+def obtener_analisis_estadistico_diagnostico(
     creador_id: int,
     encuesta_id: int = Query(2)
-):
-    try:
-        data = construir_talent_card_payload(creador_id, encuesta_id)
-
-        return {
-            "ok": True,
-            "creador_id": creador_id,
-            "encuesta_id": encuesta_id,
-            "diagnostico": data["diagnostico"]
-        }
-
-    except HTTPException:
-        raise
-
-    except Exception as e:
-        print("❌ Error obteniendo diagnóstico:", e)
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=500,
-            detail="Error obteniendo diagnóstico del creador"
-        )
-
-
-# ============================================================
-# ENDPOINT 4: CORE CAPACITACIÓN
-# ============================================================
-
-@router.get("/api/creadores/{creador_id}/capacitacion-core")
-def obtener_capacitacion_core_creador(
-    creador_id: int,
-    encuesta_id: int = Query(2)
-):
-    try:
-        data = construir_talent_card_payload(creador_id, encuesta_id)
-
-        return {
-            "ok": True,
-            "creador_id": creador_id,
-            "encuesta_id": encuesta_id,
-            "capacitacion": data["capacitacion"]
-        }
-
-    except HTTPException:
-        raise
-
-    except Exception as e:
-        print("❌ Error obteniendo capacitación core:", e)
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=500,
-            detail="Error obteniendo capacitación core del creador"
-        )
-
-
-# ============================================================
-# ENDPOINT 5: DETALLE POR CATEGORÍAS
-# ============================================================
-
-@router.get("/api/creadores/{creador_id}/perfil-detalle-categorias")
-def obtener_detalle_categorias_creador(
-    creador_id: int,
-    encuesta_id: int = Query(2),
-    tipo_categoria: str | None = Query(None)
 ):
     """
-    tipo_categoria opcional:
-    - DATOS_BASICOS
+    Endpoint pensado para Talent Card.
+    No devuelve todo el detalle pesado.
+    Devuelve métricas, score ponderado, distribución y decisiones.
+    Solo categorías tipo DIAGNOSTICO.
+    """
+
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT id
+                    FROM creadores
+                    WHERE id = %s
+                    LIMIT 1
+                """, (creador_id,))
+
+                if not cur.fetchone():
+                    raise HTTPException(status_code=404, detail="No se encontró el creador")
+
+                rows = obtener_rows_por_tipos_categoria(
+                    cur,
+                    creador_id,
+                    encuesta_id,
+                    tipos_categoria=["DIAGNOSTICO"]
+                )
+
+                opciones_map = obtener_opciones_multiple_map(cur, rows)
+
+        categorias_map = {}
+        fortalezas = []
+        oportunidades = []
+        riesgos = []
+
+        total_ponderado = 0
+        total_pesos = 0
+        total_variables = 0
+        total_respondidas = 0
+
+        distribucion = {
+            "BAJO": 0,
+            "MEDIO": 0,
+            "ALTO": 0,
+            "SIN_DATOS": 0
+        }
+
+        for row in rows:
+            categoria_id = row["categoria_id"]
+
+            if categoria_id not in categorias_map:
+                categorias_map[categoria_id] = {
+                    "categoria_id": categoria_id,
+                    "nombre": row["categoria_nombre"],
+                    "nombre_natural": row["nombre_natural"],
+                    "descripcion": row["categoria_descripcion"],
+                    "orden": row["categoria_orden"],
+                    "_suma_ponderada": 0,
+                    "_suma_pesos": 0,
+                    "_respondidas": 0,
+                    "_total_variables": 0,
+                    "variables_resumen": []
+                }
+
+            peso = float(row["peso_variable"] or 0)
+            score = row["valor_score"]
+            nivel = nivel_por_score(score)
+
+            total_variables += 1
+            categorias_map[categoria_id]["_total_variables"] += 1
+
+            if score is not None:
+                total_respondidas += 1
+                categorias_map[categoria_id]["_respondidas"] += 1
+                distribucion[nivel] += 1
+
+                if peso > 0:
+                    categorias_map[categoria_id]["_suma_ponderada"] += float(score) * peso
+                    categorias_map[categoria_id]["_suma_pesos"] += peso
+                    total_ponderado += float(score) * peso
+                    total_pesos += peso
+
+                variable_resumen = {
+                    "variable_id": row["variable_id"],
+                    "nombre": row["variable_nombre"],
+                    "campo_db": row["campo_db"],
+                    "pregunta": row["pregunta"],
+                    "peso_variable": peso,
+                    "score": score,
+                    "nivel": nivel,
+                    "color": color_por_nivel(nivel),
+                    "respuesta": normalizar_respuesta(row, opciones_map)
+                }
+
+                categorias_map[categoria_id]["variables_resumen"].append(variable_resumen)
+
+                if float(score) >= 4:
+                    fortalezas.append(variable_resumen)
+                elif float(score) < 2.5:
+                    riesgos.append(variable_resumen)
+                else:
+                    oportunidades.append(variable_resumen)
+
+            else:
+                distribucion["SIN_DATOS"] += 1
+
+        categorias = []
+
+        for cat in categorias_map.values():
+            suma_pesos = cat.pop("_suma_pesos")
+            suma_ponderada = cat.pop("_suma_ponderada")
+            respondidas = cat.pop("_respondidas")
+            total_cat = cat.pop("_total_variables")
+
+            score_categoria = round(suma_ponderada / suma_pesos, 2) if suma_pesos > 0 else None
+            nivel_categoria = nivel_por_score(score_categoria)
+
+            cat["analisis"] = {
+                "score": score_categoria,
+                "nivel": nivel_categoria,
+                "color": color_por_nivel(nivel_categoria),
+                "variables_respondidas": respondidas,
+                "total_variables": total_cat,
+                "porcentaje_respuesta": round((respondidas / total_cat) * 100, 2) if total_cat else 0,
+                "texto": texto_analisis_categoria(cat["nombre"], nivel_categoria)
+            }
+
+            categorias.append(cat)
+
+        score_general = round(total_ponderado / total_pesos, 2) if total_pesos > 0 else None
+        nivel_general = nivel_por_score(score_general)
+
+        decision = {
+            "nivel": nivel_general,
+            "color": color_por_nivel(nivel_general),
+            "resumen": texto_analisis_categoria("Diagnóstico general", nivel_general),
+            "accion_sugerida": (
+                "Priorizar acompañamiento antes de escalarlo."
+                if nivel_general == "BAJO"
+                else "Mantener seguimiento y plan de mejora."
+                if nivel_general == "MEDIO"
+                else "Perfil con alto potencial para escalar resultados."
+                if nivel_general == "ALTO"
+                else "Completar respuestas para generar análisis."
+            )
+        }
+
+        return {
+            "ok": True,
+            "creador_id": creador_id,
+            "encuesta_id": encuesta_id,
+            "tipo": "DIAGNOSTICO",
+            "score_general": score_general,
+            "nivel_general": nivel_general,
+            "color": color_por_nivel(nivel_general),
+            "porcentaje_respuesta": round((total_respondidas / total_variables) * 100, 2) if total_variables else 0,
+            "estadisticas": {
+                "total_variables": total_variables,
+                "variables_respondidas": total_respondidas,
+                "distribucion_niveles": distribucion,
+                "total_fortalezas": len(fortalezas),
+                "total_oportunidades": len(oportunidades),
+                "total_riesgos": len(riesgos)
+            },
+            "decision": decision,
+            "categorias": categorias,
+            "insights": {
+                "fortalezas": sorted(fortalezas, key=lambda x: x["score"], reverse=True)[:5],
+                "oportunidades": sorted(oportunidades, key=lambda x: x["score"])[:5],
+                "riesgos": sorted(riesgos, key=lambda x: x["score"])[:5]
+            }
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        print("❌ Error obteniendo análisis diagnóstico:", e)
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail="Error obteniendo análisis diagnóstico"
+        )
+
+
+# ============================================================
+# ENDPOINT 4: DETALLE DIAGNÓSTICO + CAPACITACIÓN
+# ============================================================
+
+@router.get("/api/creadores/{creador_id}/talent-card/detalle")
+def obtener_detalle_diagnostico_capacitacion(
+    creador_id: int,
+    encuesta_id: int = Query(2)
+):
+    """
+    Devuelve detalle de variables para Talent Card:
     - DIAGNOSTICO
     - CAPACITACION
+    No incluye DATOS_BASICOS.
     """
 
     try:
-        data = construir_talent_card_payload(creador_id, encuesta_id)
+        with get_connection_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT id
+                    FROM creadores
+                    WHERE id = %s
+                    LIMIT 1
+                """, (creador_id,))
 
-        categorias = data["detalle_categorias"]
+                if not cur.fetchone():
+                    raise HTTPException(status_code=404, detail="No se encontró el creador")
 
-        if tipo_categoria:
-            categorias = [
-                cat for cat in categorias
-                if (cat.get("tipo") or "").upper() == tipo_categoria.upper()
-            ]
+                rows = obtener_rows_por_tipos_categoria(
+                    cur,
+                    creador_id,
+                    encuesta_id,
+                    tipos_categoria=["DIAGNOSTICO", "CAPACITACION"]
+                )
+
+                opciones_map = obtener_opciones_multiple_map(cur, rows)
+
+        categorias = agrupar_rows_por_categoria(rows, opciones_map)
+
+        capacitacion_necesidades = []
+
+        for categoria in categorias:
+            if (categoria.get("tipo") or "").upper() != "CAPACITACION":
+                continue
+
+            for variable in categoria["variables"]:
+                respuesta = variable.get("respuesta") or {}
+                score = respuesta.get("score")
+                nivel = nivel_por_score(score)
+                prioridad = prioridad_por_score(score)
+
+                variable["capacitacion"] = {
+                    "score": score,
+                    "nivel": nivel,
+                    "color": color_por_nivel(nivel),
+                    "prioridad": prioridad,
+                    "requiere_capacitacion": prioridad in ["alta", "media"],
+                    "recomendacion": recomendacion_capacitacion(
+                        variable["nombre"],
+                        variable["campo_db"],
+                        nivel
+                    )
+                }
+
+                if prioridad in ["alta", "media"]:
+                    capacitacion_necesidades.append({
+                        "variable_id": variable["variable_id"],
+                        "nombre": variable["nombre"],
+                        "campo_db": variable["campo_db"],
+                        "score": score,
+                        "nivel": nivel,
+                        "prioridad": prioridad,
+                        "color": color_por_nivel(nivel),
+                        "recomendacion": variable["capacitacion"]["recomendacion"]
+                    })
+
+        capacitacion_necesidades = sorted(
+            capacitacion_necesidades,
+            key=lambda x: {"alta": 1, "media": 2, "baja": 3, "sin_datos": 4}.get(x["prioridad"], 5)
+        )
 
         return {
             "ok": True,
             "creador_id": creador_id,
             "encuesta_id": encuesta_id,
-            "tipo_categoria": tipo_categoria,
-            "categorias": categorias
+            "categorias": categorias,
+            "capacitacion_resumen": {
+                "total_necesidades": len(capacitacion_necesidades),
+                "prioridad_alta": len([n for n in capacitacion_necesidades if n["prioridad"] == "alta"]),
+                "prioridad_media": len([n for n in capacitacion_necesidades if n["prioridad"] == "media"]),
+                "sin_necesidades": len(capacitacion_necesidades) == 0,
+                "necesidades": capacitacion_necesidades
+            }
         }
 
     except HTTPException:
         raise
 
     except Exception as e:
-        print("❌ Error obteniendo detalle por categorías:", e)
+        print("❌ Error obteniendo detalle Talent Card:", e)
         traceback.print_exc()
         raise HTTPException(
             status_code=500,
-            detail="Error obteniendo detalle por categorías del creador"
+            detail="Error obteniendo detalle de Talent Card"
         )
 
+
+
+
+
+# =========================================================
+# RESUMEN PLANO PARA FRONTEND
+# =========================================================
+
+# @router.get("/api/creadores/{creador_id}/perfil-resumen")
+# def obtener_resumen_perfil_creador(
+#     creador_id: int,
+#     encuesta_id: int = Query(2)
+# ):
+#     """
+#     Devuelve las respuestas en formato plano por campo_db.
+#     Útil para mostrar ficha/resumen en React.
+#     """
+#
+#     try:
+#         with get_connection_context() as conn:
+#             with conn.cursor(cursor_factory=RealDictCursor) as cur:
+#                 cur.execute("""
+#                     SELECT
+#                         v.campo_db,
+#                         v.nombre,
+#                         v.tipo,
+#                         v.tipo_form,
+#                         r.valor_integer,
+#                         r.valor_numeric,
+#                         r.valor_texto,
+#                         r.valor_json,
+#                         r.valor_id,
+#                         val.label AS valor_label,
+#                         val.score AS valor_score
+#                     FROM creadores_perfil_respuesta r
+#                     INNER JOIN creadores_perfil_variable v
+#                         ON v.id = r.variable_id
+#                     LEFT JOIN creadores_perfil_valor val
+#                         ON val.id = r.valor_id
+#                     WHERE r.creador_id = %s
+#                       AND v.encuesta_id = %s
+#                     ORDER BY v.orden ASC
+#                 """, (creador_id, encuesta_id))
+#
+#                 rows = cur.fetchall()
+#
+#         resumen = {}
+#
+#         for row in rows:
+#             campo = row["campo_db"]
+#
+#             if row["valor_json"] is not None:
+#                 valor = row["valor_json"]
+#             elif row["valor_texto"] is not None:
+#                 valor = row["valor_texto"]
+#             elif row["valor_numeric"] is not None:
+#                 valor = row["valor_numeric"]
+#             elif row["valor_label"] is not None:
+#                 valor = {
+#                     "valor_id": row["valor_id"],
+#                     "score": row["valor_score"],
+#                     "label": row["valor_label"]
+#                 }
+#             else:
+#                 valor = row["valor_integer"]
+#
+#             resumen[campo] = {
+#                 "nombre": row["nombre"],
+#                 "tipo": row["tipo"],
+#                 "tipo_form": row["tipo_form"],
+#                 "valor": valor
+#             }
+#
+#         return {
+#             "ok": True,
+#             "creador_id": creador_id,
+#             "resumen": resumen
+#         }
+#
+#     except Exception as e:
+#         print("❌ Error obteniendo resumen perfil creador:", e)
+#         traceback.print_exc()
+#         raise HTTPException(status_code=500, detail="Error obteniendo resumen del creador")
+#
+#
+# # ============================================================
+# # HELPERS
+# # ============================================================
+#
+# def parse_jsonb(value):
+#     if value is None:
+#         return None
+#
+#     if isinstance(value, (dict, list)):
+#         return value
+#
+#     try:
+#         return json.loads(value)
+#     except Exception:
+#         return value
+#
+#
+# def nivel_por_score(score):
+#     if score is None:
+#         return "SIN_DATOS"
+#
+#     score = float(score)
+#
+#     if score < 2.5:
+#         return "BAJO"
+#     if score < 4:
+#         return "MEDIO"
+#     return "ALTO"
+#
+#
+# def color_por_nivel(nivel):
+#     return {
+#         "BAJO": "red",
+#         "MEDIO": "yellow",
+#         "ALTO": "green",
+#         "SIN_DATOS": "gray"
+#     }.get(nivel, "gray")
+#
+#
+# def texto_analisis_categoria(nombre_categoria, nivel):
+#     if nivel == "ALTO":
+#         return f"{nombre_categoria} es una fortaleza clara del creador."
+#     if nivel == "MEDIO":
+#         return f"{nombre_categoria} muestra una base entrenable, pero requiere seguimiento."
+#     if nivel == "BAJO":
+#         return f"{nombre_categoria} requiere fortalecimiento prioritario."
+#     return f"No hay información suficiente para analizar {nombre_categoria}."
+#
+#
+# def prioridad_por_score(score):
+#     if score is None:
+#         return "sin_datos"
+#     score = float(score)
+#
+#     if score <= 2:
+#         return "alta"
+#     if score < 4:
+#         return "media"
+#     return "baja"
+#
+#
+# def recomendacion_capacitacion(nombre_variable, campo_db, nivel):
+#     if nivel == "ALTO":
+#         return f"{nombre_variable} está en buen nivel. Se recomienda mantener seguimiento."
+#
+#     recomendaciones = {
+#         "kpi_compliance_real": "Reforzar normas de comunidad, políticas de contenido y prevención de infracciones.",
+#         "kpi_monetizacion_live": "Capacitar en dinámicas de monetización, regalos, retención y activación de audiencia.",
+#         "kpi_uso_operativo": "Capacitar en herramientas LIVE, funciones de TikTok, OBS, Live Studio o Tikfinity.",
+#         "kpi_calidad_tecnica": "Fortalecer setup, iluminación, encuadre, audio y producción básica del entorno."
+#     }
+#
+#     return recomendaciones.get(
+#         campo_db,
+#         f"Requiere capacitación en {nombre_variable}."
+#     )
+#
+#
+# def normalizar_respuesta(row, opciones_map=None):
+#     """
+#     Devuelve respuesta en formato estándar para React.
+#     """
+#
+#     if row.get("valor_id") is not None:
+#         return {
+#             "tipo": "opcion",
+#             "valor_id": row["valor_id"],
+#             "label": row.get("valor_label"),
+#             "score": row.get("valor_score"),
+#             "nivel": row.get("valor_nivel")
+#         }
+#
+#     if row.get("valor_json") is not None:
+#         raw = parse_jsonb(row["valor_json"])
+#
+#         if isinstance(raw, list) and opciones_map:
+#             opciones = []
+#
+#             for item in raw:
+#                 try:
+#                     item_id = int(item)
+#                     if item_id in opciones_map:
+#                         opciones.append(opciones_map[item_id])
+#                 except Exception:
+#                     pass
+#
+#             return {
+#                 "tipo": "multiple",
+#                 "valor": raw,
+#                 "opciones": opciones
+#             }
+#
+#         return {
+#             "tipo": "json",
+#             "valor": raw
+#         }
+#
+#     if row.get("valor_texto") is not None:
+#         return {
+#             "tipo": "texto",
+#             "valor": row["valor_texto"]
+#         }
+#
+#     if row.get("valor_numeric") is not None:
+#         return {
+#             "tipo": "numeric",
+#             "valor": float(row["valor_numeric"])
+#         }
+#
+#     if row.get("valor_integer") is not None:
+#         return {
+#             "tipo": "integer",
+#             "valor": row["valor_integer"]
+#         }
+#
+#     return {
+#         "tipo": "sin_respuesta",
+#         "valor": None
+#     }
+#
+#
+# def calcular_score_categoria(categoria):
+#     suma_ponderada = categoria.get("_suma_ponderada", 0)
+#     suma_pesos = categoria.get("_suma_pesos", 0)
+#
+#     if suma_pesos <= 0:
+#         return None
+#
+#     return round(suma_ponderada / suma_pesos, 2)
+#
+#
+# # ============================================================
+# # QUERY BASE
+# # ============================================================
+#
+# def obtener_rows_perfil_creador(cur, creador_id: int, encuesta_id: int):
+#     cur.execute("""
+#         SELECT
+#             c.id AS categoria_id,
+#             c.nombre AS categoria_nombre,
+#             c.nombre_natural,
+#             c.descripcion AS categoria_descripcion,
+#             c.orden AS categoria_orden,
+#             c.tipo AS categoria_tipo,
+#
+#             v.id AS variable_id,
+#             v.nombre AS variable_nombre,
+#             v.campo_db,
+#             v.texto AS pregunta,
+#             v.tipo,
+#             v.tipo_form,
+#             COALESCE(v.peso_variable, 0) AS peso_variable,
+#             v.orden AS variable_orden,
+#
+#             r.valor_integer,
+#             r.valor_numeric,
+#             r.valor_texto,
+#             r.valor_json,
+#             r.valor_id,
+#
+#             val.label AS valor_label,
+#             val.score AS valor_score,
+#             val.nivel AS valor_nivel
+#         FROM creadores_perfil_variable v
+#         INNER JOIN creadores_perfil_categoria c
+#             ON c.id = v.categoria_id
+#         LEFT JOIN creadores_perfil_respuesta r
+#             ON r.variable_id = v.id
+#            AND r.creador_id = %s
+#         LEFT JOIN creadores_perfil_valor val
+#             ON val.id = r.valor_id
+#         WHERE v.encuesta_id = %s
+#           AND COALESCE(v.activa, true) = true
+#           AND COALESCE(c.activa, true) = true
+#         ORDER BY c.orden ASC NULLS LAST, v.orden ASC NULLS LAST, v.id ASC
+#     """, (creador_id, encuesta_id))
+#
+#     return cur.fetchall()
+#
+#
+# def obtener_opciones_multiple_map(cur, rows):
+#     multiple_ids = set()
+#
+#     for row in rows:
+#         valor_json = parse_jsonb(row.get("valor_json"))
+#
+#         if isinstance(valor_json, list):
+#             for item in valor_json:
+#                 if str(item).isdigit():
+#                     multiple_ids.add(int(item))
+#
+#     opciones_map = {}
+#
+#     if multiple_ids:
+#         cur.execute("""
+#             SELECT
+#                 id,
+#                 variable_id,
+#                 label,
+#                 score,
+#                 nivel
+#             FROM creadores_perfil_valor
+#             WHERE id = ANY(%s)
+#         """, (list(multiple_ids),))
+#
+#         for opt in cur.fetchall():
+#             opciones_map[opt["id"]] = {
+#                 "valor_id": opt["id"],
+#                 "variable_id": opt["variable_id"],
+#                 "label": opt["label"],
+#                 "score": opt["score"],
+#                 "nivel": opt["nivel"]
+#             }
+#
+#     return opciones_map
+#
+#
+# # ============================================================
+# # BUILDER PRINCIPAL
+# # ============================================================
+#
+# def construir_talent_card_payload(creador_id: int, encuesta_id: int):
+#     with get_connection_context() as conn:
+#         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+#
+#             cur.execute("""
+#                 SELECT id
+#                 FROM creadores
+#                 WHERE id = %s
+#                 LIMIT 1
+#             """, (creador_id,))
+#
+#             creador = cur.fetchone()
+#
+#             if not creador:
+#                 raise HTTPException(status_code=404, detail="No se encontró el creador")
+#
+#             rows = obtener_rows_perfil_creador(cur, creador_id, encuesta_id)
+#             opciones_map = obtener_opciones_multiple_map(cur, rows)
+#
+#     perfil_basico = {}
+#     detalle_categorias = {}
+#     diagnostico_map = {}
+#     capacitacion_map = {}
+#
+#     for row in rows:
+#         categoria_id = row["categoria_id"]
+#         categoria_tipo = row["categoria_tipo"]
+#
+#         respuesta = normalizar_respuesta(row, opciones_map)
+#
+#         variable_payload = {
+#             "variable_id": row["variable_id"],
+#             "nombre": row["variable_nombre"],
+#             "campo_db": row["campo_db"],
+#             "pregunta": row["pregunta"],
+#             "tipo": row["tipo"],
+#             "tipo_form": row["tipo_form"],
+#             "peso_variable": float(row["peso_variable"] or 0),
+#             "orden": row["variable_orden"],
+#             "respuesta": respuesta
+#         }
+#
+#         # ----------------------------
+#         # Perfil básico
+#         # ----------------------------
+#         if categoria_tipo == "DATOS_BASICOS":
+#             campo = row["campo_db"] or f"variable_{row['variable_id']}"
+#             perfil_basico[campo] = variable_payload
+#
+#         # ----------------------------
+#         # Detalle completo
+#         # ----------------------------
+#         if categoria_id not in detalle_categorias:
+#             detalle_categorias[categoria_id] = {
+#                 "categoria_id": categoria_id,
+#                 "nombre": row["categoria_nombre"],
+#                 "nombre_natural": row["nombre_natural"],
+#                 "descripcion": row["categoria_descripcion"],
+#                 "tipo": categoria_tipo,
+#                 "orden": row["categoria_orden"],
+#                 "variables": []
+#             }
+#
+#         detalle_categorias[categoria_id]["variables"].append(variable_payload)
+#
+#         # ----------------------------
+#         # Diagnóstico
+#         # ----------------------------
+#         if categoria_tipo == "DIAGNOSTICO":
+#             if categoria_id not in diagnostico_map:
+#                 diagnostico_map[categoria_id] = {
+#                     "categoria_id": categoria_id,
+#                     "nombre": row["categoria_nombre"],
+#                     "nombre_natural": row["nombre_natural"],
+#                     "descripcion": row["categoria_descripcion"],
+#                     "tipo": categoria_tipo,
+#                     "orden": row["categoria_orden"],
+#                     "variables": [],
+#                     "_suma_ponderada": 0,
+#                     "_suma_pesos": 0,
+#                     "_respondidas": 0
+#                 }
+#
+#             peso = float(row["peso_variable"] or 0)
+#             score = row["valor_score"]
+#
+#             if score is not None and peso > 0:
+#                 diagnostico_map[categoria_id]["_suma_ponderada"] += float(score) * peso
+#                 diagnostico_map[categoria_id]["_suma_pesos"] += peso
+#                 diagnostico_map[categoria_id]["_respondidas"] += 1
+#
+#             diagnostico_map[categoria_id]["variables"].append(variable_payload)
+#
+#         # ----------------------------
+#         # Capacitación
+#         # ----------------------------
+#         if categoria_tipo == "CAPACITACION":
+#             if categoria_id not in capacitacion_map:
+#                 capacitacion_map[categoria_id] = {
+#                     "categoria_id": categoria_id,
+#                     "nombre": row["categoria_nombre"],
+#                     "nombre_natural": row["nombre_natural"],
+#                     "descripcion": row["categoria_descripcion"],
+#                     "tipo": categoria_tipo,
+#                     "orden": row["categoria_orden"],
+#                     "variables": [],
+#                     "_suma_ponderada": 0,
+#                     "_suma_pesos": 0,
+#                     "_respondidas": 0
+#                 }
+#
+#             peso = float(row["peso_variable"] or 0)
+#             score = row["valor_score"]
+#
+#             if score is not None and peso > 0:
+#                 capacitacion_map[categoria_id]["_suma_ponderada"] += float(score) * peso
+#                 capacitacion_map[categoria_id]["_suma_pesos"] += peso
+#                 capacitacion_map[categoria_id]["_respondidas"] += 1
+#
+#             capacitacion_map[categoria_id]["variables"].append(variable_payload)
+#
+#     # ========================================================
+#     # ARMAR DIAGNÓSTICO
+#     # ========================================================
+#
+#     diagnostico_categorias = []
+#     total_ponderado = 0
+#     total_pesos = 0
+#
+#     for cat in diagnostico_map.values():
+#         suma_pesos = cat.pop("_suma_pesos")
+#         suma_ponderada = cat.pop("_suma_ponderada")
+#         respondidas = cat.pop("_respondidas")
+#
+#         score_categoria = round(suma_ponderada / suma_pesos, 2) if suma_pesos > 0 else None
+#         nivel = nivel_por_score(score_categoria)
+#
+#         cat["analisis"] = {
+#             "score": score_categoria,
+#             "nivel": nivel,
+#             "color": color_por_nivel(nivel),
+#             "variables_respondidas": respondidas,
+#             "total_variables": len(cat["variables"]),
+#             "porcentaje_respuesta": round(
+#                 (respondidas / len(cat["variables"])) * 100, 2
+#             ) if cat["variables"] else 0,
+#             "texto": texto_analisis_categoria(cat["nombre"], nivel)
+#         }
+#
+#         if score_categoria is not None:
+#             total_ponderado += score_categoria * suma_pesos
+#             total_pesos += suma_pesos
+#
+#         diagnostico_categorias.append(cat)
+#
+#     score_general = round(total_ponderado / total_pesos, 2) if total_pesos > 0 else None
+#     nivel_general = nivel_por_score(score_general)
+#
+#     diagnostico = {
+#         "score_general": score_general,
+#         "nivel_general": nivel_general,
+#         "color": color_por_nivel(nivel_general),
+#         "texto_general": texto_analisis_categoria("Diagnóstico general", nivel_general),
+#         "categorias": diagnostico_categorias
+#     }
+#
+#     # ========================================================
+#     # ARMAR CAPACITACIÓN
+#     # ========================================================
+#
+#     capacitacion_categorias = []
+#     necesidades = []
+#
+#     cap_total_ponderado = 0
+#     cap_total_pesos = 0
+#
+#     for cat in capacitacion_map.values():
+#         suma_pesos = cat.pop("_suma_pesos")
+#         suma_ponderada = cat.pop("_suma_ponderada")
+#         respondidas = cat.pop("_respondidas")
+#
+#         score_categoria = round(suma_ponderada / suma_pesos, 2) if suma_pesos > 0 else None
+#         nivel_categoria = nivel_por_score(score_categoria)
+#
+#         for variable in cat["variables"]:
+#             respuesta = variable.get("respuesta") or {}
+#             score_variable = respuesta.get("score")
+#             nivel_variable = nivel_por_score(score_variable)
+#
+#             prioridad = prioridad_por_score(score_variable)
+#
+#             variable["capacitacion"] = {
+#                 "score": score_variable,
+#                 "nivel": nivel_variable,
+#                 "color": color_por_nivel(nivel_variable),
+#                 "prioridad": prioridad,
+#                 "requiere_capacitacion": prioridad in ["alta", "media"],
+#                 "recomendacion": recomendacion_capacitacion(
+#                     variable["nombre"],
+#                     variable["campo_db"],
+#                     nivel_variable
+#                 )
+#             }
+#
+#             if prioridad in ["alta", "media"]:
+#                 necesidades.append({
+#                     "variable_id": variable["variable_id"],
+#                     "nombre": variable["nombre"],
+#                     "campo_db": variable["campo_db"],
+#                     "score": score_variable,
+#                     "nivel": nivel_variable,
+#                     "prioridad": prioridad,
+#                     "color": color_por_nivel(nivel_variable),
+#                     "recomendacion": variable["capacitacion"]["recomendacion"]
+#                 })
+#
+#         cat["analisis"] = {
+#             "score": score_categoria,
+#             "nivel": nivel_categoria,
+#             "color": color_por_nivel(nivel_categoria),
+#             "variables_respondidas": respondidas,
+#             "total_variables": len(cat["variables"]),
+#             "porcentaje_respuesta": round(
+#                 (respondidas / len(cat["variables"])) * 100, 2
+#             ) if cat["variables"] else 0,
+#             "texto": texto_analisis_categoria(cat["nombre"], nivel_categoria)
+#         }
+#
+#         if score_categoria is not None:
+#             cap_total_ponderado += score_categoria * suma_pesos
+#             cap_total_pesos += suma_pesos
+#
+#         capacitacion_categorias.append(cat)
+#
+#     score_capacitacion = (
+#         round(cap_total_ponderado / cap_total_pesos, 2)
+#         if cap_total_pesos > 0
+#         else None
+#     )
+#
+#     nivel_capacitacion = nivel_por_score(score_capacitacion)
+#
+#     necesidades_ordenadas = sorted(
+#         necesidades,
+#         key=lambda x: {"alta": 1, "media": 2, "baja": 3, "sin_datos": 4}.get(x["prioridad"], 5)
+#     )
+#
+#     capacitacion = {
+#         "score_general": score_capacitacion,
+#         "nivel_general": nivel_capacitacion,
+#         "color": color_por_nivel(nivel_capacitacion),
+#         "texto_general": texto_analisis_categoria("Core Capacitación", nivel_capacitacion),
+#         "resumen": {
+#             "total_necesidades": len(necesidades_ordenadas),
+#             "prioridad_alta": len([n for n in necesidades_ordenadas if n["prioridad"] == "alta"]),
+#             "prioridad_media": len([n for n in necesidades_ordenadas if n["prioridad"] == "media"]),
+#             "sin_necesidades": len(necesidades_ordenadas) == 0
+#         },
+#         "necesidades": necesidades_ordenadas,
+#         "categorias": capacitacion_categorias
+#     }
+#
+#     return {
+#         "ok": True,
+#         "creador_id": creador_id,
+#         "encuesta_id": encuesta_id,
+#         "perfil_basico": perfil_basico,
+#         "diagnostico": diagnostico,
+#         "capacitacion": capacitacion,
+#         "detalle_categorias": list(detalle_categorias.values())
+#     }
+#
+#
+# # ============================================================
+# # ENDPOINT 1: TALENT CARD COMPLETA
+# # ============================================================
+#
+# @router.get("/api/creadores/{creador_id}/talent-card")
+# def obtener_talent_card_creador(
+#     creador_id: int,
+#     encuesta_id: int = Query(2)
+# ):
+#     try:
+#         return construir_talent_card_payload(creador_id, encuesta_id)
+#
+#     except HTTPException:
+#         raise
+#
+#     except Exception as e:
+#         print("❌ Error obteniendo Talent Card:", e)
+#         traceback.print_exc()
+#         raise HTTPException(
+#             status_code=500,
+#             detail="Error obteniendo Talent Card del creador"
+#         )
+#
+#
+# # ============================================================
+# # ENDPOINT 2: PERFIL BÁSICO
+# # ============================================================
+#
+# @router.get("/api/creadores/{creador_id}/perfil-basico")
+# def obtener_perfil_basico_creador(
+#     creador_id: int,
+#     encuesta_id: int = Query(2)
+# ):
+#     try:
+#         data = construir_talent_card_payload(creador_id, encuesta_id)
+#
+#         return {
+#             "ok": True,
+#             "creador_id": creador_id,
+#             "encuesta_id": encuesta_id,
+#             "perfil_basico": data["perfil_basico"]
+#         }
+#
+#     except HTTPException:
+#         raise
+#
+#     except Exception as e:
+#         print("❌ Error obteniendo perfil básico:", e)
+#         traceback.print_exc()
+#         raise HTTPException(
+#             status_code=500,
+#             detail="Error obteniendo perfil básico del creador"
+#         )
+#
+#
+# # ============================================================
+# # ENDPOINT 3: DIAGNÓSTICO
+# # ============================================================
+#
+# @router.get("/api/creadores/{creador_id}/diagnostico")
+# def obtener_diagnostico_creador(
+#     creador_id: int,
+#     encuesta_id: int = Query(2)
+# ):
+#     try:
+#         data = construir_talent_card_payload(creador_id, encuesta_id)
+#
+#         return {
+#             "ok": True,
+#             "creador_id": creador_id,
+#             "encuesta_id": encuesta_id,
+#             "diagnostico": data["diagnostico"]
+#         }
+#
+#     except HTTPException:
+#         raise
+#
+#     except Exception as e:
+#         print("❌ Error obteniendo diagnóstico:", e)
+#         traceback.print_exc()
+#         raise HTTPException(
+#             status_code=500,
+#             detail="Error obteniendo diagnóstico del creador"
+#         )
+#
+#
+# # ============================================================
+# # ENDPOINT 4: CORE CAPACITACIÓN
+# # ============================================================
+#
+# @router.get("/api/creadores/{creador_id}/capacitacion-core")
+# def obtener_capacitacion_core_creador(
+#     creador_id: int,
+#     encuesta_id: int = Query(2)
+# ):
+#     try:
+#         data = construir_talent_card_payload(creador_id, encuesta_id)
+#
+#         return {
+#             "ok": True,
+#             "creador_id": creador_id,
+#             "encuesta_id": encuesta_id,
+#             "capacitacion": data["capacitacion"]
+#         }
+#
+#     except HTTPException:
+#         raise
+#
+#     except Exception as e:
+#         print("❌ Error obteniendo capacitación core:", e)
+#         traceback.print_exc()
+#         raise HTTPException(
+#             status_code=500,
+#             detail="Error obteniendo capacitación core del creador"
+#         )
+#
+#
+# # ============================================================
+# # ENDPOINT 5: DETALLE POR CATEGORÍAS
+# # ============================================================
+#
+# @router.get("/api/creadores/{creador_id}/perfil-detalle-categorias")
+# def obtener_detalle_categorias_creador(
+#     creador_id: int,
+#     encuesta_id: int = Query(2),
+#     tipo_categoria: str | None = Query(None)
+# ):
+#     """
+#     tipo_categoria opcional:
+#     - DATOS_BASICOS
+#     - DIAGNOSTICO
+#     - CAPACITACION
+#     """
+#
+#     try:
+#         data = construir_talent_card_payload(creador_id, encuesta_id)
+#
+#         categorias = data["detalle_categorias"]
+#
+#         if tipo_categoria:
+#             categorias = [
+#                 cat for cat in categorias
+#                 if (cat.get("tipo") or "").upper() == tipo_categoria.upper()
+#             ]
+#
+#         return {
+#             "ok": True,
+#             "creador_id": creador_id,
+#             "encuesta_id": encuesta_id,
+#             "tipo_categoria": tipo_categoria,
+#             "categorias": categorias
+#         }
+#
+#     except HTTPException:
+#         raise
+#
+#     except Exception as e:
+#         print("❌ Error obteniendo detalle por categorías:", e)
+#         traceback.print_exc()
+#         raise HTTPException(
+#             status_code=500,
+#             detail="Error obteniendo detalle por categorías del creador"
+#         )
+#
 
 
 
@@ -2090,3 +2799,199 @@ def obtener_detalle_categorias_creador(
 #         raise HTTPException(status_code=500, detail=str(e))
 
 
+
+
+# @router.post("/api/creadores/encuesta/consolidar")
+# def consolidar_encuesta_creador(data: ConsolidarEncuestaCreadorInput):
+#     try:
+#         if not data.creador_id:
+#             return JSONResponse(
+#                 {"error": "creador_id es obligatorio"},
+#                 status_code=400
+#             )
+#
+#         if not data.respuestas:
+#             return JSONResponse(
+#                 {"error": "No se recibieron respuestas"},
+#                 status_code=400
+#             )
+#
+#         respuestas_dict = {}
+#
+#         for key, valor in data.respuestas.items():
+#             if isinstance(key, str) and key.isdigit():
+#                 key = int(key)
+#
+#             respuestas_dict[key] = valor
+#
+#         with get_connection_context() as conn:
+#             with conn.cursor(cursor_factory=RealDictCursor) as cur:
+#
+#                 # -------------------------------
+#                 # Validar creador
+#                 # -------------------------------
+#                 cur.execute("""
+#                     SELECT id
+#                     FROM creadores
+#                     WHERE id = %s
+#                     LIMIT 1
+#                 """, (data.creador_id,))
+#
+#                 creador = cur.fetchone()
+#
+#                 if not creador:
+#                     return JSONResponse(
+#                         {"error": "No se encontró creador"},
+#                         status_code=404
+#                     )
+#
+#                 # -------------------------------
+#                 # Obtener variables activas
+#                 # -------------------------------
+#                 cur.execute("""
+#                     SELECT
+#                         id,
+#                         campo_db,
+#                         tipo,
+#                         tipo_form
+#                     FROM creadores_perfil_variable
+#                     WHERE COALESCE(activa, true) = true
+#                 """)
+#
+#                 variables = {
+#                     row["id"]: row
+#                     for row in cur.fetchall()
+#                 }
+#
+#                 preguntas_guardadas = 0
+#                 preguntas_omitidas = []
+#
+#                 for pregunta_id, valor in respuestas_dict.items():
+#                     variable = variables.get(pregunta_id)
+#
+#                     if not variable:
+#                         print(f"⚠️ Variable no encontrada o inactiva: {pregunta_id}")
+#                         preguntas_omitidas.append(pregunta_id)
+#                         continue
+#
+#                     tipo = (variable.get("tipo") or "").lower().strip()
+#                     tipo_form = (variable.get("tipo_form") or "").lower().strip()
+#
+#                     valor_integer = None
+#                     valor_id = None
+#                     valor_numeric = None
+#                     valor_texto = None
+#                     valor_json = None
+#
+#                     # -------------------------------
+#                     # Clasificación del valor
+#                     # -------------------------------
+#
+#                     if valor is None or valor == "":
+#                         valor_texto = None
+#
+#                     elif tipo_form == "multiple":
+#                         # Ejemplo: [749, 750, 751]
+#                         valor_json = json.dumps(valor, ensure_ascii=False)
+#
+#                     elif tipo_form == "boton":
+#                         # El botón representa una opción seleccionada
+#                         try:
+#                             valor_id = int(valor)
+#                         except Exception:
+#                             valor_texto = str(valor).strip()
+#
+#                     elif tipo_form == "number":
+#                         # Si quieres guardar enteros exactos en valor_integer
+#                         # y decimales en valor_numeric
+#                         try:
+#                             numero = float(valor)
+#
+#                             if numero.is_integer():
+#                                 valor_integer = int(numero)
+#                             else:
+#                                 valor_numeric = numero
+#
+#                         except Exception:
+#                             valor_texto = str(valor).strip()
+#
+#                     elif tipo_form == "text":
+#                         valor_texto = str(valor).strip()
+#
+#                     # -------------------------------
+#                     # Fallback por tipo
+#                     # -------------------------------
+#
+#                     elif tipo in ["json", "jsonb"] or isinstance(valor, (dict, list)):
+#                         valor_json = json.dumps(valor, ensure_ascii=False)
+#
+#                     elif tipo in ["integer", "int", "numero_entero"]:
+#                         try:
+#                             valor_integer = int(valor)
+#                         except Exception:
+#                             valor_texto = str(valor).strip()
+#
+#                     elif tipo in ["numeric", "decimal", "float", "number"]:
+#                         try:
+#                             valor_numeric = float(valor)
+#                         except Exception:
+#                             valor_texto = str(valor).strip()
+#
+#                     else:
+#                         valor_texto = str(valor).strip()
+#
+#                     # -------------------------------
+#                     # Guardar respuesta
+#                     # -------------------------------
+#                     cur.execute("""
+#                         INSERT INTO creadores_perfil_respuesta (
+#                             creador_id,
+#                             variable_id,
+#                             valor_integer,
+#                             valor_id,
+#                             valor_numeric,
+#                             valor_texto,
+#                             valor_json,
+#                             created_at,
+#                             updated_at
+#                         )
+#                         VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, now(), now())
+#                         ON CONFLICT (creador_id, variable_id)
+#                         DO UPDATE SET
+#                             valor_integer = EXCLUDED.valor_integer,
+#                             valor_id = EXCLUDED.valor_id,
+#                             valor_numeric = EXCLUDED.valor_numeric,
+#                             valor_texto = EXCLUDED.valor_texto,
+#                             valor_json = EXCLUDED.valor_json,
+#                             updated_at = now()
+#                     """, (
+#                         data.creador_id,
+#                         pregunta_id,
+#                         valor_integer,
+#                         valor_id,
+#                         valor_numeric,
+#                         valor_texto,
+#                         valor_json
+#                     ))
+#
+#                     preguntas_guardadas += 1
+#
+#             conn.commit()
+#
+#         return {
+#             "ok": True,
+#             "msg": "Encuesta de creador consolidada correctamente",
+#             "creador_id": data.creador_id,
+#             "preguntas_guardadas": preguntas_guardadas,
+#             "preguntas_omitidas": preguntas_omitidas
+#         }
+#
+#     except Exception as e:
+#         print(f"❌ Error en consolidar_encuesta_creador: {e}")
+#         return JSONResponse(
+#             {
+#                 "error": "Error al consolidar encuesta del creador",
+#                 "detalle": str(e)
+#             },
+#             status_code=500
+#         )
