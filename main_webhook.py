@@ -2340,13 +2340,13 @@ def enviar_inicio_portal(numero: str):
         # ---------------------------------------------------------
         # 3. MENSAJE CONFIGURABLE
         # ---------------------------------------------------------
-        plantilla = obtener_configuracion_agencia(
-            clave="mensaje_portal_whatsapp",
-            default=(
+        plantilla = obtener_configuracion_agencia("mensaje_portal_whatsapp")
+
+        if not plantilla:
+            plantilla = (
                 "Hola {nombre}, puedes ingresar al siguiente link para consultar tu proceso:\n\n"
                 "{url_portal}"
             )
-        )
 
         mensaje = (
             plantilla
@@ -3377,14 +3377,14 @@ async def procesar_flujo_aspirante(
             origen="whatsapp"
         )
 
-        plantilla = obtener_configuracion_agencia(
-            clave="mensaje_portal_whatsapp",
-            default=(
+        plantilla = obtener_configuracion_agencia("mensaje_portal_whatsapp")
+
+        if not plantilla:
+            plantilla = (
                 "Hola {nombre}, puedes ingresar al siguiente link "
                 "para consultar tu proceso:\n\n"
                 "{url_portal}"
             )
-        )
 
         mensaje_portal = (
             plantilla
@@ -6002,3 +6002,81 @@ def iniciar_encuesta_inicial(data: IniciarEncuestaInput):
 #         return {"status": "ok"}
 #
 #     return None
+
+
+
+
+# def enviar_inicio_portal(numero: str):
+#     """
+#     Envía el acceso al portal por WhatsApp.
+#
+#     Detecta automáticamente si el número es:
+#     - Aspirante
+#     - Creador
+#     """
+#
+#     try:
+#         print(f"\n📤 [PORTAL] Enviando inicio a {numero}")
+#
+#         # ---------------------------------------------------------
+#         # 1. IDENTIFICAR PERSONA
+#         # ---------------------------------------------------------
+#         persona = obtener_persona_portal_por_telefono(numero)
+#
+#         if not persona:
+#             print(f"❌ [PORTAL] Número no registrado: {numero}")
+#             return False
+#
+#         tipo_portal = persona.get("tipo_portal")
+#         aspirante_id = persona.get("aspirante_id")
+#         creador_id = persona.get("creador_id")
+#         nombre = persona.get("nombre") or ""
+#
+#         print(
+#             f"✅ [PORTAL] Detectado -> tipo={tipo_portal} | "
+#             f"aspirante_id={aspirante_id} | creador_id={creador_id}"
+#         )
+#
+#         # ---------------------------------------------------------
+#         # 2. GENERAR URL PORTAL
+#         # ---------------------------------------------------------
+#         portal_data = generar_url_portal(
+#             tipo_portal=tipo_portal,
+#             aspirante_id=aspirante_id,
+#             creador_id=creador_id,
+#             origen="whatsapp_onboarding"
+#         )
+#
+#         url_portal = portal_data["url"]
+#
+#         # ---------------------------------------------------------
+#         # 3. MENSAJE CONFIGURABLE
+#         # ---------------------------------------------------------
+#         plantilla = obtener_configuracion_agencia(
+#             clave="mensaje_portal_whatsapp",
+#             default=(
+#                 "Hola {nombre}, puedes ingresar al siguiente link para consultar tu proceso:\n\n"
+#                 "{url_portal}"
+#             )
+#         )
+#
+#         mensaje = (
+#             plantilla
+#             .replace("{nombre}", nombre)
+#             .replace("{tipo_portal}", tipo_portal or "")
+#             .replace("{url_portal}", url_portal)
+#         )
+#
+#         # ---------------------------------------------------------
+#         # 4. ENVIAR MENSAJE
+#         # ---------------------------------------------------------
+#         enviar_mensaje(numero, mensaje)
+#
+#         print(f"🔗 [PORTAL] Enviado correctamente a {numero}: {url_portal}")
+#
+#         return True
+#
+#     except Exception as e:
+#         print(f"❌ [PORTAL] Error enviando inicio portal: {e}")
+#         return False
+
