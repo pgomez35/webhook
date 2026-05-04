@@ -56,7 +56,8 @@ from utils_aspirantes import obtener_status_24hrs, \
     enviar_plantilla_estado_evaluacion, buscar_estado_creador, \
     accion_menu_estado_evaluacion, _handle_statuses, enviar_confirmacion_interactiva, manejar_input_link_tiktok, \
     registrar_cambio_estado, construir_url_actualizar_perfil, iniciar_trazabilidad_encuesta_inicial, \
-    habilitar_trazabilidad_encuesta_inicial, obtener_persona_portal_por_telefono
+    habilitar_trazabilidad_encuesta_inicial, obtener_persona_portal_por_telefono, obtener_plantilla_mensaje_portal, \
+    construir_mensaje_portal
 
 # from utils_aspirantes import guardar_estado_eval, obtener_status_24hrs, Enviar_msg_estado, \
 #     enviar_plantilla_estado_evaluacion, obtener_aspirante_id_por_telefono, buscar_estado_creador, Enviar_menu_quickreply, \
@@ -2340,25 +2341,24 @@ def enviar_inicio_portal(numero: str):
         # ---------------------------------------------------------
         # 3. MENSAJE CONFIGURABLE
         # ---------------------------------------------------------
-        plantilla = obtener_configuracion_agencia("mensaje_portal_whatsapp")
+        plantilla = obtener_plantilla_mensaje_portal(tipo_portal)
 
-        if not plantilla:
-            plantilla = (
-                "Hola {nombre}, puedes ingresar al siguiente link para consultar tu proceso:\n\n"
-                "{url_portal}"
-            )
-
-        mensaje = (
-            plantilla
-            .replace("{nombre}", nombre)
-            .replace("{tipo_portal}", tipo_portal or "")
-            .replace("{url_portal}", url_portal)
+        mensaje_portal = construir_mensaje_portal(
+            plantilla=plantilla,
+            nombre=nombre,
+            url_portal=url_portal,
+            tipo_portal=tipo_portal
         )
+
+        # 🔒 Validación simple (evita enviar mensajes vacíos)
+        if not mensaje_portal.strip():
+            raise ValueError("El mensaje del portal quedó vacío.")
+
 
         # ---------------------------------------------------------
         # 4. ENVIAR MENSAJE
         # ---------------------------------------------------------
-        enviar_mensaje(numero, mensaje)
+        enviar_mensaje(numero, mensaje_portal)
 
         print(f"🔗 [PORTAL] Enviado correctamente a {numero}: {url_portal}")
 
@@ -2367,6 +2367,9 @@ def enviar_inicio_portal(numero: str):
     except Exception as e:
         print(f"❌ [PORTAL] Error enviando inicio portal: {e}")
         return False
+
+
+
 
 
 
@@ -3377,21 +3380,18 @@ async def procesar_flujo_aspirante(
             origen="whatsapp"
         )
 
-        plantilla = obtener_configuracion_agencia("mensaje_portal_whatsapp")
+        plantilla = obtener_plantilla_mensaje_portal(tipo_portal)
 
-        if not plantilla:
-            plantilla = (
-                "Hola {nombre}, puedes ingresar al siguiente link "
-                "para consultar tu proceso:\n\n"
-                "{url_portal}"
-            )
-
-        mensaje_portal = (
-            plantilla
-            .replace("{nombre}", nombre)
-            .replace("{tipo_portal}", tipo_portal or "")
-            .replace("{url_portal}", url_portal)
+        mensaje_portal = construir_mensaje_portal(
+            plantilla=plantilla,
+            nombre=nombre,
+            url_portal=url_portal,
+            tipo_portal=tipo_portal
         )
+
+        # 🔒 Validación simple (evita enviar mensajes vacíos)
+        if not mensaje_portal.strip():
+            raise ValueError("El mensaje del portal quedó vacío.")
 
         codigo_api, respuesta_api = enviar_mensaje_texto_simple(
             token=token_cliente,

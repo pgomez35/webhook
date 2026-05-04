@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 import logging
 
 from DataBase import get_connection_context, guardar_mensaje_nuevo, paso_limite_24h, buscar_usuario_por_telefono, \
-    actualizar_phone_info_db
+    actualizar_phone_info_db, obtener_configuracion_agencia
 from enviar_msg_wp import enviar_mensaje_texto_simple, enviar_plantilla_generica
 from tenant import current_business_name
 
@@ -2465,3 +2465,92 @@ def obtener_persona_portal_por_telefono(telefono: str) -> Optional[dict]:
         return None
 
 
+def obtener_plantilla_mensaje_portal(tipo_portal: str) -> str:
+    """
+    Retorna la plantilla de mensaje según el tipo de portal.
+    Usa configuración en DB y fallback por defecto.
+    """
+
+    tipo = (tipo_portal or "").strip().lower()
+
+    try:
+        if tipo == "aspirante":
+            plantilla = obtener_configuracion_agencia("mensaje_portal_aspirante")
+
+            if plantilla:
+                return plantilla
+
+            return (
+                "Hola {nombre}, puedes consultar tu proceso en el siguiente portal:\n\n"
+                "{url_portal}"
+            )
+
+        elif tipo == "creador":
+            plantilla = obtener_configuracion_agencia("mensaje_portal_creador")
+
+            if plantilla:
+                return plantilla
+
+            return (
+                "Hola {nombre}, puedes acceder a tu portal para gestionar tus funcionalidades:\n\n"
+                "{url_portal}"
+            )
+
+        else:
+            # fallback genérico
+            return (
+                "Hola {nombre}, puedes ingresar al siguiente link:\n\n"
+                "{url_portal}"
+            )
+
+    except Exception as e:
+        print(f"⚠️ Error obteniendo plantilla portal ({tipo_portal}): {e}")
+
+        # fallback seguro
+        return (
+            "Hola {nombre}, puedes ingresar al siguiente link:\n\n"
+            "{url_portal}"
+        )
+
+
+def construir_mensaje_portal(
+    plantilla: str,
+    nombre: str = "",
+    url_portal: str = "",
+    tipo_portal: str = "",
+    estado_nombre: str = "",
+    proxima_cita: str = "",
+    nombre_agencia: str = "",
+    extra: dict | None = None,
+) -> str:
+    """
+    Construye el mensaje del portal reemplazando variables dinámicas.
+
+    Variables soportadas:
+    {nombre}
+    {url_portal}
+    {tipo_portal}
+    {estado_nombre}
+    {proxima_cita}
+    {nombre_agencia}
+    """
+
+    variables = {
+        "nombre": nombre or "",
+        "url_portal": url_portal or "",
+        "tipo_portal": tipo_portal or "",
+        "estado_nombre": estado_nombre or "",
+        "proxima_cita": proxima_cita or "",
+        "nombre_agencia": nombre_agencia or "",
+    }
+
+    if extra and isinstance(extra, dict):
+        for key, value in extra.items():
+            variables[str(key)] = "" if value is None else str(value)
+
+    mensaje = plantilla or ""
+
+    for key, value in variables.items():
+        mensaje = mensaje.replace("{" + key + "}", str(value))
+
+    return mensaje
