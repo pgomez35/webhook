@@ -2535,22 +2535,59 @@ def construir_mensaje_portal(
     {nombre_agencia}
     """
 
-    variables = {
-        "nombre": nombre or "",
-        "url_portal": url_portal or "",
-        "tipo_portal": tipo_portal or "",
-        "estado_nombre": estado_nombre or "",
-        "proxima_cita": proxima_cita or "",
-        "nombre_agencia": nombre_agencia or "",
-    }
+    import re
 
-    if extra and isinstance(extra, dict):
-        for key, value in extra.items():
-            variables[str(key)] = "" if value is None else str(value)
+    try:
+        # -------------------------------
+        # 1. Variables base
+        # -------------------------------
+        variables = {
+            "nombre": nombre or "",
+            "url_portal": url_portal or "",
+            "tipo_portal": tipo_portal or "",
+            "estado_nombre": estado_nombre or "",
+            "proxima_cita": proxima_cita or "",
+            "nombre_agencia": nombre_agencia or "",
+        }
 
-    mensaje = plantilla or ""
+        # Variables extra dinámicas
+        if extra and isinstance(extra, dict):
+            for key, value in extra.items():
+                variables[str(key)] = "" if value is None else str(value)
 
-    for key, value in variables.items():
-        mensaje = mensaje.replace("{" + key + "}", str(value))
+        mensaje = plantilla or ""
 
-    return mensaje
+        # -------------------------------
+        # 2. Reemplazo de variables
+        # -------------------------------
+        for key, value in variables.items():
+            mensaje = mensaje.replace("{" + key + "}", str(value))
+
+        # -------------------------------
+        # 3. Convertir escapes de DB
+        # -------------------------------
+        mensaje = (
+            mensaje
+            .replace("\\n", "\n")
+            .replace("\\t", "\t")
+        )
+
+        # -------------------------------
+        # 4. Limpiar placeholders no usados
+        # -------------------------------
+        mensaje = re.sub(r"\{.*?\}", "", mensaje)
+
+        # -------------------------------
+        # 5. Normalizar espacios
+        # -------------------------------
+        mensaje = re.sub(r"\n{3,}", "\n\n", mensaje)
+
+        return mensaje.strip()
+
+    except Exception as e:
+        print(f"❌ Error construyendo mensaje portal: {e}")
+
+        # Fallback seguro
+        return (
+            f"Hola {nombre}, puedes ingresar al siguiente link:\n\n{url_portal}"
+        )
