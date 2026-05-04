@@ -43,7 +43,7 @@ from enviar_msg_wp import (
 )
 from main_diagnostico import obtener_estado_aspirante
 from main_mensajeria_whatsapp import reenviar_ultimo_mensaje, enviar_mensaje_whatsapp_texto
-from main_portal_aspirantes import generar_url_portal, generar_url_portal_para_aspirante
+from main_portal_usuarios import generar_url_portal_para_aspirante, generar_url_portal, generar_url_portal_usuario
 from tenant import (
     current_business_name,
     current_phone_id,
@@ -56,7 +56,7 @@ from utils_aspirantes import obtener_status_24hrs, \
     enviar_plantilla_estado_evaluacion, buscar_estado_creador, \
     accion_menu_estado_evaluacion, _handle_statuses, enviar_confirmacion_interactiva, manejar_input_link_tiktok, \
     registrar_cambio_estado, construir_url_actualizar_perfil, iniciar_trazabilidad_encuesta_inicial, \
-    habilitar_trazabilidad_encuesta_inicial
+    habilitar_trazabilidad_encuesta_inicial, obtener_persona_portal_por_telefono
 
 # from utils_aspirantes import guardar_estado_eval, obtener_status_24hrs, Enviar_msg_estado, \
 #     enviar_plantilla_estado_evaluacion, obtener_aspirante_id_por_telefono, buscar_estado_creador, Enviar_menu_quickreply, \
@@ -2294,242 +2294,81 @@ def _process_new_user_onboardingV1(
 
     return None
 
-def enviar_inicio_portal(numero: str, aspirante_id: int):
-    tenant_name = current_tenant.get() or "default"
+def enviar_inicio_portal(numero: str):
+    """
+    Envía el acceso al portal por WhatsApp.
 
-    portal_data = generar_url_portal(
-        aspirante_id=aspirante_id,
-        origen="whatsapp_onboarding"
-    )
+    Detecta automáticamente si el número es:
+    - Aspirante
+    - Creador
+    """
 
-    url_portal = portal_data["url"]
+    try:
+        print(f"\n📤 [PORTAL] Enviando inicio a {numero}")
 
-    mensaje = (
-        f"{mensaje_inicio_encuesta()}\n\n"
-        "🔗 *Ingresa aquí a tu portal:*\n"
-        f"{url_portal}\n\n"
-        "Desde allí podrás completar tu encuesta, revisar preguntas frecuentes "
-        "y conocer el proceso general.\n\n"
-        "Puedes hacerlo desde tu celular o computadora."
-    )
+        # ---------------------------------------------------------
+        # 1. IDENTIFICAR PERSONA
+        # ---------------------------------------------------------
+        persona = obtener_persona_portal_por_telefono(numero)
 
-    enviar_mensaje(numero, mensaje)
+        if not persona:
+            print(f"❌ [PORTAL] Número no registrado: {numero}")
+            return False
 
-    print(f"🔗 Enviado portal de onboarding a {numero}: {url_portal}")
+        tipo_portal = persona.get("tipo_portal")
+        aspirante_id = persona.get("aspirante_id")
+        creador_id = persona.get("creador_id")
+        nombre = persona.get("nombre") or ""
+
+        print(
+            f"✅ [PORTAL] Detectado -> tipo={tipo_portal} | "
+            f"aspirante_id={aspirante_id} | creador_id={creador_id}"
+        )
+
+        # ---------------------------------------------------------
+        # 2. GENERAR URL PORTAL
+        # ---------------------------------------------------------
+        portal_data = generar_url_portal(
+            tipo_portal=tipo_portal,
+            aspirante_id=aspirante_id,
+            creador_id=creador_id,
+            origen="whatsapp_onboarding"
+        )
+
+        url_portal = portal_data["url"]
+
+        # ---------------------------------------------------------
+        # 3. MENSAJE CONFIGURABLE
+        # ---------------------------------------------------------
+        plantilla = obtener_configuracion_agencia(
+            clave="mensaje_portal_whatsapp",
+            default=(
+                "Hola {nombre}, puedes ingresar al siguiente link para consultar tu proceso:\n\n"
+                "{url_portal}"
+            )
+        )
+
+        mensaje = (
+            plantilla
+            .replace("{nombre}", nombre)
+            .replace("{tipo_portal}", tipo_portal or "")
+            .replace("{url_portal}", url_portal)
+        )
+
+        # ---------------------------------------------------------
+        # 4. ENVIAR MENSAJE
+        # ---------------------------------------------------------
+        enviar_mensaje(numero, mensaje)
+
+        print(f"🔗 [PORTAL] Enviado correctamente a {numero}: {url_portal}")
+
+        return True
+
+    except Exception as e:
+        print(f"❌ [PORTAL] Error enviando inicio portal: {e}")
+        return False
 
 
-# def _process_new_user_onboarding(
-#     mensaje: dict,
-#     numero: str,
-#     texto: str,
-#     texto_lower: str,
-#     payload: str,
-#     paso: Optional[str | int],
-#     tenant_name: str,
-#     phone_id: str = None,
-#     token: str = None
-# ) -> Optional[dict]:
-#     """
-#     Flujo de onboarding para nuevos usuarios vía WhatsApp.
-#     Pide usuario TikTok → confirma nickname → envía encuesta.
-#     """
-#
-#     tipo = mensaje.get("type")
-#
-#     # -----------------------------------------------------
-#     # VALIDACIÓN DE TIPO DE MENSAJE
-#     # -----------------------------------------------------
-#     if tipo not in ["text", "interactive"]:
-#         return None
-#
-#     # Extraer payload si es botón
-#     if not payload and tipo == "interactive":
-#         payload = (
-#             mensaje.get("interactive", {})
-#             .get("button_reply", {})
-#             .get("id")
-#         )
-#
-#     # -----------------------------------------------------
-#     # VALIDACIÓN DE PASO (ANTI-CORRUPCIÓN DE FLUJO)
-#     # -----------------------------------------------------
-#     pasos_validos = [
-#         None,
-#         "esperando_usuario_tiktok",
-#         "confirmando_nickname",
-#         "esperando_inicio_encuesta",
-#     ]
-#
-#     if paso not in pasos_validos:
-#         print(f"⚠️ Reiniciando flujo para {numero}, paso inválido: {paso}")
-#         eliminar_flujo(numero)
-#         paso = None
-#
-#     # =====================================================
-#     # PASO 0 – INICIO
-#     # =====================================================
-#     if paso is None:
-#         enviar_mensaje(
-#             numero,
-#             "¡Hola! 👋 Bienvenido.\n"
-#             "Para comenzar, por favor escribe tu *usuario de TikTok* "
-#             "(sin @)."
-#         )
-#         actualizar_flujo(numero, "esperando_usuario_tiktok")
-#         return {"status": "ok"}
-#
-#     # =====================================================
-#     # PASO 1 – ESPERANDO USUARIO TIKTOK
-#     # =====================================================
-#     if paso == "esperando_usuario_tiktok":
-#
-#         if tipo != "text":
-#             enviar_mensaje(numero, "✍️ Por favor escribe tu usuario de TikTok.")
-#             return {"status": "ok"}
-#
-#         input_usuario = texto.strip()
-#         aspirante = buscar_aspirante_por_usuario_tiktok(input_usuario)
-#
-#         if not aspirante:
-#             enviar_mensaje(
-#                 numero,
-#                 "❌ No encontramos ese usuario.\n"
-#                 "Verifica e inténtalo nuevamente."
-#             )
-#             return {"status": "ok"}
-#
-#         # 🔑 NICKNAME REAL (LO ÚNICO QUE SE CONFIRMA)
-#         nickname_tiktok = (
-#             aspirante.get("usuario_tiktok")
-#             or aspirante.get("nickname")
-#         )
-#
-#         if not nickname_tiktok:
-#             enviar_mensaje(
-#                 numero,
-#                 "⚠️ Encontramos el perfil, pero no pudimos obtener "
-#                 "el usuario de TikTok. Escríbelo nuevamente."
-#             )
-#             return {"status": "ok"}
-#
-#         # Guardar aspirante temporal
-#         try:
-#             redis_set_temp(numero, aspirante, ttl=900)
-#         except Exception as e:
-#             print(f"⚠️ Redis falló, usando memoria: {e}")
-#             usuarios_temp[numero] = aspirante
-#
-#         # Confirmación con botones
-#         if phone_id and token:
-#             enviar_confirmacion_interactiva(
-#                 numero=numero,
-#                 nickname=nickname_tiktok,  # ✅ SIEMPRE EL NICKNAME
-#                 phone_id=phone_id,
-#                 token=token
-#             )
-#         else:
-#             enviar_mensaje(
-#                 numero,
-#                 f"Encontramos el usuario: *{nickname_tiktok}*.\n"
-#                 "¿Eres tú? (Responde SÍ o NO)"
-#             )
-#
-#         actualizar_flujo(numero, "confirmando_nickname")
-#         return {"status": "ok"}
-#
-#     # =====================================================
-#     # PASO 2 – CONFIRMANDO NICKNAME
-#     # =====================================================
-#     if paso == "confirmando_nickname":
-#
-#         es_si = (
-#             payload == "BTN_CONFIRM_YES"
-#             or (tipo == "text" and texto_lower in ["si", "sí", "s", "y", "yes"])
-#         )
-#
-#         es_no = (
-#             payload == "BTN_CONFIRM_NO"
-#             or (tipo == "text" and texto_lower in ["no", "n"])
-#         )
-#
-#         # -------------------------
-#         # CONFIRMA QUE SÍ
-#         # -------------------------
-#         if es_si:
-#             aspirante = redis_get_temp(numero) or usuarios_temp.get(numero)
-#
-#             if not aspirante:
-#                 enviar_mensaje(
-#                     numero,
-#                     "⏳ La sesión expiró. "
-#                     "Por favor escribe nuevamente tu usuario de TikTok."
-#                 )
-#                 actualizar_flujo(numero, "esperando_usuario_tiktok")
-#                 return {"status": "ok"}
-#
-#             # Asociar teléfono
-#             actualizar_telefono_aspirante(aspirante["id"], numero)
-#
-#             # Limpiar temporales
-#             try:
-#                 redis_delete_temp(numero)
-#             except:
-#                 pass
-#             usuarios_temp.pop(numero, None)
-#
-#             # Enviar encuesta
-#             enviar_inicio_encuesta(numero)
-#             actualizar_flujo(numero, "esperando_inicio_encuesta")
-#             return {"status": "ok"}
-#
-#         # -------------------------
-#         # CONFIRMA QUE NO
-#         # -------------------------
-#         if es_no:
-#             enviar_mensaje(
-#                 numero,
-#                 "👌 Entendido.\n"
-#                 "Por favor escribe nuevamente tu *usuario de TikTok* correcto."
-#             )
-#
-#             try:
-#                 redis_delete_temp(numero)
-#             except:
-#                 pass
-#             usuarios_temp.pop(numero, None)
-#
-#             actualizar_flujo(numero, "esperando_usuario_tiktok")
-#             return {"status": "ok"}
-#
-#         # -------------------------
-#         # INPUT INVÁLIDO
-#         # -------------------------
-#         enviar_mensaje(
-#             numero,
-#             "⚠️ No te entendí.\n"
-#             "Por favor selecciona una de las opciones."
-#         )
-#         return {"status": "ok"}
-#
-#     # =====================================================
-#     # PASO 3 – REENVÍO DE LINK DE ENCUESTA
-#     # =====================================================
-#     if paso == "esperando_inicio_encuesta":
-#         tenant_actual = tenant_name or current_tenant.get() or "default"
-#         url_web = construir_url_actualizar_perfil(
-#             numero,
-#             tenant_name=tenant_actual
-#         )
-#
-#         enviar_mensaje(
-#             numero,
-#             "📋 Para comenzar la encuesta, haz clic aquí:\n\n"
-#             f"{url_web}\n\n"
-#             "Puedes hacerlo desde tu celular o computadora."
-#         )
-#         return {"status": "ok"}
-#
-#     return None
 
 def _process_aspirante_message(mensaje: dict, numero: str, texto_lower: str, rol: str, tenant_name: str) -> dict:
     """
@@ -3416,63 +3255,89 @@ async def procesar_flujo_aspirante(
     payload_id
 ):
     """
-    Flujo principal para aspirantes.
+    Flujo principal para acceso al portal por WhatsApp.
+
+    Atiende:
+    - Aspirantes
+    - Creadores
 
     Prioridad:
-    1. Verificar que el número sí pertenece a un aspirante
-    2. Interceptor temporal (Redis / captura de datos esperados)
-    3. Botón de reconexión "Continuar"
-    4. Enviar siempre el link del portal para consulta del proceso
+    1. Verificar si el número pertenece a creador o aspirante.
+    2. Si es aspirante, ejecutar interceptor temporal.
+    3. Procesar botón de reconexión "Continuar".
+    4. Enviar link del portal según tipo_portal.
 
     Retorna:
-    - True  -> si el mensaje fue atendido por este flujo
-    - False -> si no corresponde a un aspirante y debe seguir al flujo general
+    - True  -> si el mensaje fue atendido por este flujo.
+    - False -> si no corresponde a aspirante ni creador.
     """
 
     print(
-        f"\n📨 [ASPIRANTE] Recibido de: {wa_id} | "
-        f"Tipo: {tipo} | Payload: {payload_id} | Texto: '{texto}'"
+        f"\n📨 [PORTAL] Recibido de: {wa_id} | "
+        f"Tenant: {tenant} | Tipo: {tipo} | "
+        f"Payload: {payload_id} | Texto: '{texto}'"
     )
 
     # ---------------------------------------------------------
-    # 1. VALIDAR SI ES ASPIRANTE
+    # 1. VALIDAR SI ES CREADOR O ASPIRANTE
     # ---------------------------------------------------------
-    aspirante_id = obtener_aspirante_id_por_telefono(wa_id)
-
-    if not aspirante_id:
-        print(f"❌ [ASPIRANTE] El teléfono {wa_id} no está registrado como aspirante.")
+    try:
+        persona = obtener_persona_portal_por_telefono(wa_id)
+    except Exception as e:
+        print(f"❌ [PORTAL] Error buscando persona por teléfono {wa_id}: {e}")
         return False
 
-    print(f"✅ [ASPIRANTE] Aspirante identificado: {aspirante_id}")
+    if not persona:
+        print(
+            f"❌ [PORTAL] El teléfono {wa_id} no está registrado "
+            f"como aspirante ni creador."
+        )
+        return False
 
-    # Token del contexto actual WABA
+    tipo_portal = persona.get("tipo_portal")
+    aspirante_id = persona.get("aspirante_id")
+    creador_id = persona.get("creador_id")
+    nombre = persona.get("nombre") or ""
+
+    print(
+        f"✅ [PORTAL] Persona identificada | "
+        f"tipo_portal={tipo_portal} | "
+        f"aspirante_id={aspirante_id} | "
+        f"creador_id={creador_id} | "
+        f"nombre={nombre}"
+    )
+
+    # ---------------------------------------------------------
+    # TOKEN WABA DEL CONTEXTO
+    # ---------------------------------------------------------
     token_cliente = current_token.get()
 
     if not token_cliente:
-        print("❌ [ASPIRANTE] No hay token de cliente en contexto.")
+        print("❌ [PORTAL] No hay token de cliente en contexto.")
         return True
 
     # ---------------------------------------------------------
-    # 2. INTERCEPTOR TEMPORAL (ej. link TikTok, dato puntual)
+    # 2. INTERCEPTOR TEMPORAL SOLO PARA ASPIRANTES
     # ---------------------------------------------------------
-    try:
-        capturado_por_interceptor = manejar_input_link_tiktok(
-            aspirante_id,
-            wa_id,
-            tipo,
-            texto,
-            payload_id,
-            token_cliente,
-            phone_number_id
-        )
+    if tipo_portal == "aspirante" and aspirante_id:
+        try:
+            capturado_por_interceptor = manejar_input_link_tiktok(
+                aspirante_id,
+                wa_id,
+                tipo,
+                texto,
+                payload_id,
+                token_cliente,
+                phone_number_id
+            )
 
-        if capturado_por_interceptor:
-            print("⚡ [ASPIRANTE] Mensaje capturado por interceptor temporal.")
-            return True
+            if capturado_por_interceptor:
+                print("⚡ [ASPIRANTE] Mensaje capturado por interceptor temporal.")
+                return True
 
-    except Exception as e:
-        print(f"❌ [ASPIRANTE] Error en interceptor temporal: {e}")
-        # No detenemos flujo; sigue al portal
+        except Exception as e:
+            print(f"❌ [ASPIRANTE] Error en interceptor temporal: {e}")
+            # No detenemos el flujo; sigue al portal.
 
     # ---------------------------------------------------------
     # 3. BOTÓN DE RECONEXIÓN
@@ -3480,36 +3345,52 @@ async def procesar_flujo_aspirante(
     try:
         if payload_id:
             payload_limpio = payload_id.strip()
-            print(f"🔘 [ASPIRANTE] Payload recibido: '{payload_limpio}'")
+            print(f"🔘 [PORTAL] Payload recibido: '{payload_limpio}'")
 
             if payload_limpio == "Continuar":
-                print(f"✅ [ASPIRANTE] Usuario {wa_id} hizo clic en Continuar.")
+                print(f"✅ [PORTAL] Usuario {wa_id} hizo clic en Continuar.")
 
                 try:
                     await reenviar_ultimo_mensaje(wa_id)
-                    print(f"🚀 [ASPIRANTE] Último mensaje reenviado correctamente a {wa_id}")
+                    print(
+                        f"🚀 [PORTAL] Último mensaje reenviado correctamente "
+                        f"a {wa_id}"
+                    )
                     return True
 
                 except Exception as e:
-                    print(f"❌ [ASPIRANTE] Falló el reenvío tras reconexión: {e}")
+                    print(f"❌ [PORTAL] Falló el reenvío tras reconexión: {e}")
                     return True
 
     except Exception as e:
-        print(f"❌ [ASPIRANTE] Error procesando botón de reconexión: {e}")
+        print(f"❌ [PORTAL] Error procesando botón de reconexión: {e}")
         return True
 
     # ---------------------------------------------------------
-    # 4. ENVIAR SIEMPRE LINK DEL PORTAL
+    # 4. ENVIAR LINK DEL PORTAL
     # ---------------------------------------------------------
     try:
-        url_portal = generar_url_portal_para_aspirante(
+        url_portal = generar_url_portal_usuario(
+            tipo_portal=tipo_portal,
             aspirante_id=aspirante_id,
+            creador_id=creador_id,
             origen="whatsapp"
         )
 
+        plantilla = obtener_configuracion_agencia(
+            clave="mensaje_portal_whatsapp",
+            default=(
+                "Hola {nombre}, puedes ingresar al siguiente link "
+                "para consultar tu proceso:\n\n"
+                "{url_portal}"
+            )
+        )
+
         mensaje_portal = (
-            "Puedes ingresar al siguiente link para consultar tu proceso:\n"
-            f"{url_portal}"
+            plantilla
+            .replace("{nombre}", nombre)
+            .replace("{tipo_portal}", tipo_portal or "")
+            .replace("{url_portal}", url_portal)
         )
 
         codigo_api, respuesta_api = enviar_mensaje_texto_simple(
@@ -3520,17 +3401,20 @@ async def procesar_flujo_aspirante(
         )
 
         print(
-            f"📤 [ASPIRANTE] Envío portal -> código={codigo_api} "
-            f"| wa_id={wa_id} | aspirante_id={aspirante_id}"
+            f"📤 [PORTAL] Envío portal -> código={codigo_api} "
+            f"| wa_id={wa_id} "
+            f"| tipo_portal={tipo_portal} "
+            f"| aspirante_id={aspirante_id} "
+            f"| creador_id={creador_id}"
         )
 
         message_id_meta = None
+
         if isinstance(respuesta_api, dict):
             mensajes = respuesta_api.get("messages") or []
             if mensajes:
                 message_id_meta = mensajes[0].get("id")
 
-        # Guardar como mensaje enviado
         try:
             guardar_mensaje_nuevo(
                 telefono=wa_id,
@@ -3540,14 +3424,328 @@ async def procesar_flujo_aspirante(
                 message_id_meta=message_id_meta,
                 estado="sent" if codigo_api == 200 else "error"
             )
+
         except Exception as e:
-            print(f"⚠️ [ASPIRANTE] No se pudo guardar log del mensaje enviado: {e}")
+            print(f"⚠️ [PORTAL] No se pudo guardar log del mensaje enviado: {e}")
 
         return True
 
     except Exception as e:
-        print(f"❌ [ASPIRANTE] Error enviando link del portal: {e}")
+        print(f"❌ [PORTAL] Error enviando link del portal: {e}")
         return True
+
+
+# async def procesar_flujo_aspirante(
+#     tenant,
+#     phone_number_id,
+#     wa_id,
+#     tipo,
+#     texto,
+#     payload_id
+# ):
+#     """
+#     Flujo principal para portal de aspirantes y creadores.
+#
+#     Prioridad:
+#     1. Verificar si el número pertenece a creador o aspirante
+#     2. Si es aspirante, ejecutar interceptor temporal
+#     3. Procesar botón de reconexión "Continuar"
+#     4. Enviar siempre link del portal según tipo_portal
+#
+#     Retorna:
+#     - True  -> si el mensaje fue atendido por este flujo
+#     - False -> si no corresponde a aspirante ni creador y debe seguir al flujo general
+#     """
+#
+#     print(
+#         f"\n📨 [PORTAL] Recibido de: {wa_id} | "
+#         f"Tipo: {tipo} | Payload: {payload_id} | Texto: '{texto}'"
+#     )
+#
+#     # ---------------------------------------------------------
+#     # 1. VALIDAR SI ES CREADOR O ASPIRANTE
+#     # ---------------------------------------------------------
+#     persona = obtener_persona_portal_por_telefono(wa_id)
+#
+#     if not persona:
+#         print(f"❌ [PORTAL] El teléfono {wa_id} no está registrado como aspirante ni creador.")
+#         return False
+#
+#     tipo_portal = persona.get("tipo_portal")
+#     aspirante_id = persona.get("aspirante_id")
+#     creador_id = persona.get("creador_id")
+#     nombre = persona.get("nombre") or ""
+#
+#     print(
+#         f"✅ [PORTAL] Persona identificada | "
+#         f"tipo_portal={tipo_portal} | "
+#         f"aspirante_id={aspirante_id} | "
+#         f"creador_id={creador_id}"
+#     )
+#
+#     # Token del contexto actual WABA
+#     token_cliente = current_token.get()
+#
+#     if not token_cliente:
+#         print("❌ [PORTAL] No hay token de cliente en contexto.")
+#         return True
+#
+#     # ---------------------------------------------------------
+#     # 2. INTERCEPTOR TEMPORAL SOLO PARA ASPIRANTES
+#     # ---------------------------------------------------------
+#     if tipo_portal == "aspirante" and aspirante_id:
+#         try:
+#             capturado_por_interceptor = manejar_input_link_tiktok(
+#                 aspirante_id,
+#                 wa_id,
+#                 tipo,
+#                 texto,
+#                 payload_id,
+#                 token_cliente,
+#                 phone_number_id
+#             )
+#
+#             if capturado_por_interceptor:
+#                 print("⚡ [ASPIRANTE] Mensaje capturado por interceptor temporal.")
+#                 return True
+#
+#         except Exception as e:
+#             print(f"❌ [ASPIRANTE] Error en interceptor temporal: {e}")
+#             # No detenemos flujo; sigue al portal
+#
+#     # ---------------------------------------------------------
+#     # 3. BOTÓN DE RECONEXIÓN
+#     # ---------------------------------------------------------
+#     try:
+#         if payload_id:
+#             payload_limpio = payload_id.strip()
+#             print(f"🔘 [PORTAL] Payload recibido: '{payload_limpio}'")
+#
+#             if payload_limpio == "Continuar":
+#                 print(f"✅ [PORTAL] Usuario {wa_id} hizo clic en Continuar.")
+#
+#                 try:
+#                     await reenviar_ultimo_mensaje(wa_id)
+#                     print(f"🚀 [PORTAL] Último mensaje reenviado correctamente a {wa_id}")
+#                     return True
+#
+#                 except Exception as e:
+#                     print(f"❌ [PORTAL] Falló el reenvío tras reconexión: {e}")
+#                     return True
+#
+#     except Exception as e:
+#         print(f"❌ [PORTAL] Error procesando botón de reconexión: {e}")
+#         return True
+#
+#     # ---------------------------------------------------------
+#     # 4. ENVIAR SIEMPRE LINK DEL PORTAL
+#     # ---------------------------------------------------------
+#     try:
+#         url_portal = generar_url_portal_persona(
+#             tipo_portal=tipo_portal,
+#             aspirante_id=aspirante_id,
+#             creador_id=creador_id,
+#             origen="whatsapp"
+#         )
+#
+#         plantilla = obtener_configuracion_agencia(
+#             clave="mensaje_portal_whatsapp",
+#             default=(
+#                 "Hola {nombre}, puedes ingresar al siguiente link para consultar tu proceso:\n\n"
+#                 "{url_portal}"
+#             )
+#         )
+#
+#         mensaje_portal = (
+#             plantilla
+#             .replace("{nombre}", nombre)
+#             .replace("{tipo_portal}", tipo_portal or "")
+#             .replace("{url_portal}", url_portal)
+#         )
+#
+#         codigo_api, respuesta_api = enviar_mensaje_texto_simple(
+#             token=token_cliente,
+#             numero_id=phone_number_id,
+#             telefono_destino=wa_id,
+#             texto=mensaje_portal
+#         )
+#
+#         print(
+#             f"📤 [PORTAL] Envío portal -> código={codigo_api} "
+#             f"| wa_id={wa_id} "
+#             f"| tipo_portal={tipo_portal} "
+#             f"| aspirante_id={aspirante_id} "
+#             f"| creador_id={creador_id}"
+#         )
+#
+#         message_id_meta = None
+#
+#         if isinstance(respuesta_api, dict):
+#             mensajes = respuesta_api.get("messages") or []
+#             if mensajes:
+#                 message_id_meta = mensajes[0].get("id")
+#
+#         try:
+#             guardar_mensaje_nuevo(
+#                 telefono=wa_id,
+#                 contenido=mensaje_portal,
+#                 direccion="enviado",
+#                 tipo="text",
+#                 message_id_meta=message_id_meta,
+#                 estado="sent" if codigo_api == 200 else "error"
+#             )
+#
+#         except Exception as e:
+#             print(f"⚠️ [PORTAL] No se pudo guardar log del mensaje enviado: {e}")
+#
+#         return True
+#
+#     except Exception as e:
+#         print(f"❌ [PORTAL] Error enviando link del portal: {e}")
+#         return True
+
+
+# async def procesar_flujo_aspirante(
+#     tenant,
+#     phone_number_id,
+#     wa_id,
+#     tipo,
+#     texto,
+#     payload_id
+# ):
+#     """
+#     Flujo principal para aspirantes.
+#
+#     Prioridad:
+#     1. Verificar que el número sí pertenece a un aspirante
+#     2. Interceptor temporal (Redis / captura de datos esperados)
+#     3. Botón de reconexión "Continuar"
+#     4. Enviar siempre el link del portal para consulta del proceso
+#
+#     Retorna:
+#     - True  -> si el mensaje fue atendido por este flujo
+#     - False -> si no corresponde a un aspirante y debe seguir al flujo general
+#     """
+#
+#     print(
+#         f"\n📨 [ASPIRANTE] Recibido de: {wa_id} | "
+#         f"Tipo: {tipo} | Payload: {payload_id} | Texto: '{texto}'"
+#     )
+#
+#     # ---------------------------------------------------------
+#     # 1. VALIDAR SI ES ASPIRANTE
+#     # ---------------------------------------------------------
+#     aspirante_id = obtener_aspirante_id_por_telefono(wa_id)
+#
+#     if not aspirante_id:
+#         print(f"❌ [ASPIRANTE] El teléfono {wa_id} no está registrado como aspirante.")
+#         return False
+#
+#     print(f"✅ [ASPIRANTE] Aspirante identificado: {aspirante_id}")
+#
+#     # Token del contexto actual WABA
+#     token_cliente = current_token.get()
+#
+#     if not token_cliente:
+#         print("❌ [ASPIRANTE] No hay token de cliente en contexto.")
+#         return True
+#
+#     # ---------------------------------------------------------
+#     # 2. INTERCEPTOR TEMPORAL (ej. link TikTok, dato puntual)
+#     # ---------------------------------------------------------
+#     try:
+#         capturado_por_interceptor = manejar_input_link_tiktok(
+#             aspirante_id,
+#             wa_id,
+#             tipo,
+#             texto,
+#             payload_id,
+#             token_cliente,
+#             phone_number_id
+#         )
+#
+#         if capturado_por_interceptor:
+#             print("⚡ [ASPIRANTE] Mensaje capturado por interceptor temporal.")
+#             return True
+#
+#     except Exception as e:
+#         print(f"❌ [ASPIRANTE] Error en interceptor temporal: {e}")
+#         # No detenemos flujo; sigue al portal
+#
+#     # ---------------------------------------------------------
+#     # 3. BOTÓN DE RECONEXIÓN
+#     # ---------------------------------------------------------
+#     try:
+#         if payload_id:
+#             payload_limpio = payload_id.strip()
+#             print(f"🔘 [ASPIRANTE] Payload recibido: '{payload_limpio}'")
+#
+#             if payload_limpio == "Continuar":
+#                 print(f"✅ [ASPIRANTE] Usuario {wa_id} hizo clic en Continuar.")
+#
+#                 try:
+#                     await reenviar_ultimo_mensaje(wa_id)
+#                     print(f"🚀 [ASPIRANTE] Último mensaje reenviado correctamente a {wa_id}")
+#                     return True
+#
+#                 except Exception as e:
+#                     print(f"❌ [ASPIRANTE] Falló el reenvío tras reconexión: {e}")
+#                     return True
+#
+#     except Exception as e:
+#         print(f"❌ [ASPIRANTE] Error procesando botón de reconexión: {e}")
+#         return True
+#
+#     # ---------------------------------------------------------
+#     # 4. ENVIAR SIEMPRE LINK DEL PORTAL
+#     # ---------------------------------------------------------
+#     try:
+#         url_portal = generar_url_portal_para_aspirante(
+#             aspirante_id=aspirante_id,
+#             origen="whatsapp"
+#         )
+#
+#         mensaje_portal = (
+#             "Puedes ingresar al siguiente link para consultar tu proceso:\n"
+#             f"{url_portal}"
+#         )
+#
+#         codigo_api, respuesta_api = enviar_mensaje_texto_simple(
+#             token=token_cliente,
+#             numero_id=phone_number_id,
+#             telefono_destino=wa_id,
+#             texto=mensaje_portal
+#         )
+#
+#         print(
+#             f"📤 [ASPIRANTE] Envío portal -> código={codigo_api} "
+#             f"| wa_id={wa_id} | aspirante_id={aspirante_id}"
+#         )
+#
+#         message_id_meta = None
+#         if isinstance(respuesta_api, dict):
+#             mensajes = respuesta_api.get("messages") or []
+#             if mensajes:
+#                 message_id_meta = mensajes[0].get("id")
+#
+#         # Guardar como mensaje enviado
+#         try:
+#             guardar_mensaje_nuevo(
+#                 telefono=wa_id,
+#                 contenido=mensaje_portal,
+#                 direccion="enviado",
+#                 tipo="text",
+#                 message_id_meta=message_id_meta,
+#                 estado="sent" if codigo_api == 200 else "error"
+#             )
+#         except Exception as e:
+#             print(f"⚠️ [ASPIRANTE] No se pudo guardar log del mensaje enviado: {e}")
+#
+#         return True
+#
+#     except Exception as e:
+#         print(f"❌ [ASPIRANTE] Error enviando link del portal: {e}")
+#         return True
 
 
 async def procesar_flujo_aspiranteV0(tenant, phone_number_id, wa_id, tipo, texto, payload_id):
@@ -4851,7 +5049,7 @@ def consolidar_perfil_web(
                 respuestas_dict[VARIABLE_PAIS_ID] = str(pais_id)
 
         # -------------------------------
-        # Obtener usuario
+        # Obtener usuario / aspirante
         # -------------------------------
         try:
             usuario_bd = buscar_usuario_por_telefono(data.numero)
@@ -4874,131 +5072,137 @@ def consolidar_perfil_web(
         # -------------------------------
         if aspirante_id and respuestas_dict:
             with get_connection_context() as conn:
-                cur = conn.cursor()
+                with conn.cursor() as cur:
 
-                cur.execute("""
-                    SELECT id, campo_db
-                    FROM diagnostico_variable
-                    WHERE migrado = true
-                      AND COALESCE(activa, true) = true
-                """)
+                    cur.execute("""
+                        SELECT id, campo_db
+                        FROM diagnostico_variable
+                        WHERE migrado = true
+                          AND COALESCE(activa, true) = true
+                    """)
 
-                variables = {row[0]: row[1] for row in cur.fetchall()}
+                    variables = {row[0]: row[1] for row in cur.fetchall()}
 
-                for pregunta_id, valor in respuestas_dict.items():
-                    campo_db = variables.get(pregunta_id)
+                    for pregunta_id, valor in respuestas_dict.items():
+                        campo_db = variables.get(pregunta_id)
 
-                    # Guardar score solo si es número
-                    if valor.isdigit():
-                        valor_int = int(valor)
+                        # Guardar score solo si es número
+                        if isinstance(valor, str) and valor.isdigit():
+                            valor_int = int(valor)
 
+                            cur.execute("""
+                                INSERT INTO diagnostico_score_variable
+                                    (aspirante_id, variable_id, valor_id)
+                                VALUES (%s, %s, %s)
+                                ON CONFLICT (aspirante_id, variable_id)
+                                DO UPDATE SET
+                                    valor_id = EXCLUDED.valor_id
+                            """, (
+                                aspirante_id,
+                                pregunta_id,
+                                valor_int
+                            ))
+
+                        # Actualizar aspirantes_perfil según campo_db
+                        if campo_db:
+                            if not campo_db.replace("_", "").isalnum():
+                                continue
+
+                            query = f"""
+                                UPDATE aspirantes_perfil
+                                SET {campo_db} = %s
+                                WHERE aspirante_id = %s
+                            """
+
+                            cur.execute(query, (valor, aspirante_id))
+
+                            if campo_db == "nombre":
+                                nombre_usuario = valor
+
+                    # Guardar pais_texto
+                    if pais_texto:
                         cur.execute("""
-                            INSERT INTO diagnostico_score_variable
-                                (aspirante_id, variable_id, valor_id)
-                            VALUES (%s, %s, %s)
-                            ON CONFLICT (aspirante_id, variable_id)
-                            DO UPDATE SET
-                                valor_id = EXCLUDED.valor_id
-                        """, (
-                            aspirante_id,
-                            pregunta_id,
-                            valor_int
-                        ))
-
-                    # Actualizar aspirantes_perfil según campo_db
-                    if campo_db:
-                        if not campo_db.replace("_", "").isalnum():
-                            continue
-
-                        query = f"""
                             UPDATE aspirantes_perfil
-                            SET {campo_db} = %s
+                            SET pais_texto = %s
                             WHERE aspirante_id = %s
-                        """
+                        """, (pais_texto, aspirante_id))
 
-                        cur.execute(query, (valor, aspirante_id))
+                    # Guardar zona_horaria
+                    zona_horaria = None
+                    if data.meta and isinstance(data.meta, dict):
+                        zona_horaria = data.meta.get("zona_horaria")
 
-                        if campo_db == "nombre":
-                            nombre_usuario = valor
+                    if zona_horaria:
+                        cur.execute("""
+                            UPDATE aspirantes_perfil
+                            SET zona_horaria = %s
+                            WHERE aspirante_id = %s
+                        """, (zona_horaria, aspirante_id))
 
-                # Guardar pais_texto
-                if pais_texto:
+                    # -------------------------------
+                    # Guardar trazabilidad encuesta inicial
+                    # -------------------------------
                     cur.execute("""
-                        UPDATE aspirantes_perfil
-                        SET pais_texto = %s
-                        WHERE aspirante_id = %s
-                    """, (pais_texto, aspirante_id))
-
-                # Guardar zona_horaria
-                zona_horaria = None
-                if data.meta and isinstance(data.meta, dict):
-                    zona_horaria = data.meta.get("zona_horaria")
-
-                if zona_horaria:
-                    cur.execute("""
-                        UPDATE aspirantes_perfil
-                        SET zona_horaria = %s
-                        WHERE aspirante_id = %s
-                    """, (zona_horaria, aspirante_id))
-
-                # -------------------------------
-                # Guardar trazabilidad encuesta inicial
-                # -------------------------------
-                cur.execute("""
-                    INSERT INTO aspirantes_encuesta_inicial (
+                        INSERT INTO aspirantes_encuesta_inicial (
+                            aspirante_id,
+                            respuestas_json,
+                            fecha_inicio,
+                            fecha_fin,
+                            completada,
+                            abandonada,
+                            preguntas_respondidas,
+                            sincronizado,
+                            fecha_sincronizacion,
+                            created_at,
+                            updated_at
+                        )
+                        VALUES (
+                            %s,
+                            %s::jsonb,
+                            now(),
+                            now(),
+                            true,
+                            false,
+                            %s,
+                            true,
+                            now(),
+                            now(),
+                            now()
+                        )
+                    """, (
                         aspirante_id,
-                        respuestas_json,
-                        fecha_inicio,
-                        fecha_fin,
-                        completada,
-                        abandonada,
-                        preguntas_respondidas,
-                        sincronizado,
-                        fecha_sincronizacion,
-                        created_at,
-                        updated_at
-                    )
-                    VALUES (
-                        %s,
-                        %s::jsonb,
-                        now(),
-                        now(),
-                        true,
-                        false,
-                        %s,
-                        true,
-                        now(),
-                        now(),
-                        now()
-                    )
-                """, (
-                    aspirante_id,
-                    json.dumps(respuestas_dict, ensure_ascii=False),
-                    len(respuestas_dict)
-                ))
+                        json.dumps(respuestas_dict, ensure_ascii=False),
+                        len(respuestas_dict)
+                    ))
 
-                conn.commit()
+                    conn.commit()
 
             # -------------------------------
             # Pasar aspirante a Evaluación
             # -------------------------------
             registrar_cambio_estado(
                 aspirante_id=aspirante_id,
-                nuevo_estado_id=3,  # Evaluación
+                nuevo_estado_id=3,
                 usuario_id=None,
                 origen_cambio="encuesta_link",
                 observacion="Aspirante pasa a Evaluación al completar la encuesta inicial"
             )
 
         # -------------------------------
-        # URL del portal con token
+        # URL del portal con token universal
         # -------------------------------
-        portal_data = generar_url_portal(
-            aspirante_id=aspirante_id,
-            origen="encuesta"
-        ) if aspirante_id else None
+        portal_data = None
+        url_info = None
 
-        url_info = portal_data["url"] if portal_data else None
+        if aspirante_id:
+            portal_data = generar_url_portal(
+                tipo_portal="aspirante",
+                aspirante_id=aspirante_id,
+                creador_id=None,
+                origen="encuesta"
+            )
+
+            url_info = portal_data["url"]
 
         # -------------------------------
         # Mensaje final
@@ -5026,8 +5230,10 @@ def consolidar_perfil_web(
         return {
             "ok": True,
             "msg": "Perfil consolidado correctamente",
+            "aspirante_id": aspirante_id,
             "pais_texto": pais_texto,
             "zona_horaria": data.meta.get("zona_horaria") if data.meta else None,
+            "url_portal": url_info,
             "mensaje_enviado": enviar_mensaje
         }
 
@@ -5035,9 +5241,256 @@ def consolidar_perfil_web(
         print(f"❌ Error en consolidar_perfil_web: {e}")
 
         return JSONResponse(
-            {"error": "Error al consolidar el perfil"},
+            {
+                "error": "Error al consolidar el perfil",
+                "detail": str(e)
+            },
             status_code=500
         )
+
+
+# @router.post("/consolidar")
+# def consolidar_perfil_web(
+#     data: ConsolidarInput,
+#     background_tasks: BackgroundTasks
+# ):
+#     try:
+#         subdominio = current_tenant.get()
+#
+#         cuenta = obtener_cuenta_por_subdominio(subdominio)
+#         if not cuenta:
+#             return JSONResponse(
+#                 {"error": f"No se encontraron credenciales para {subdominio}"},
+#                 status_code=404
+#             )
+#
+#         token_cliente = cuenta["access_token"]
+#         phone_id_cliente = cuenta["phone_number_id"]
+#         business_name = cuenta.get("business_name", "la agencia")
+#
+#         current_token.set(token_cliente)
+#         current_phone_id.set(phone_id_cliente)
+#         current_business_name.set(business_name)
+#
+#         # -------------------------------
+#         # Procesar respuestas
+#         # -------------------------------
+#         respuestas_dict = {}
+#
+#         if data.respuestas:
+#             for key, valor in data.respuestas.items():
+#                 if isinstance(key, str) and key.isdigit():
+#                     key = int(key)
+#
+#                 respuestas_dict[key] = str(valor).strip() if valor is not None else ""
+#
+#         # -------------------------------
+#         # Detectar país
+#         # -------------------------------
+#         datos_pais = obtener_datos_pais(data.numero)
+#
+#         pais_id = None
+#         pais_texto = None
+#
+#         if not datos_pais.get("error"):
+#             pais_id = datos_pais.get("id_pais")
+#
+#             if datos_pais.get("es_otro"):
+#                 pais_texto = datos_pais.get("pais_real_detectado") or datos_pais.get("nombre_pais")
+#             else:
+#                 pais_texto = datos_pais.get("nombre_pais")
+#
+#             if pais_id is not None:
+#                 respuestas_dict[VARIABLE_PAIS_ID] = str(pais_id)
+#
+#         # -------------------------------
+#         # Obtener usuario
+#         # -------------------------------
+#         try:
+#             usuario_bd = buscar_usuario_por_telefono(data.numero)
+#
+#             nombre_usuario = usuario_bd.get("nombre") if usuario_bd else None
+#             aspirante_id = usuario_bd.get("id") if usuario_bd else None
+#
+#         except Exception as e:
+#             print(f"⚠️ Error obteniendo usuario {data.numero}: {e}")
+#             nombre_usuario = None
+#             aspirante_id = None
+#
+#         # -------------------------------
+#         # Marcar encuesta completada
+#         # -------------------------------
+#         marcar_encuesta_completada(data.numero)
+#
+#         # -------------------------------
+#         # Guardar diagnóstico
+#         # -------------------------------
+#         if aspirante_id and respuestas_dict:
+#             with get_connection_context() as conn:
+#                 cur = conn.cursor()
+#
+#                 cur.execute("""
+#                     SELECT id, campo_db
+#                     FROM diagnostico_variable
+#                     WHERE migrado = true
+#                       AND COALESCE(activa, true) = true
+#                 """)
+#
+#                 variables = {row[0]: row[1] for row in cur.fetchall()}
+#
+#                 for pregunta_id, valor in respuestas_dict.items():
+#                     campo_db = variables.get(pregunta_id)
+#
+#                     # Guardar score solo si es número
+#                     if valor.isdigit():
+#                         valor_int = int(valor)
+#
+#                         cur.execute("""
+#                             INSERT INTO diagnostico_score_variable
+#                                 (aspirante_id, variable_id, valor_id)
+#                             VALUES (%s, %s, %s)
+#                             ON CONFLICT (aspirante_id, variable_id)
+#                             DO UPDATE SET
+#                                 valor_id = EXCLUDED.valor_id
+#                         """, (
+#                             aspirante_id,
+#                             pregunta_id,
+#                             valor_int
+#                         ))
+#
+#                     # Actualizar aspirantes_perfil según campo_db
+#                     if campo_db:
+#                         if not campo_db.replace("_", "").isalnum():
+#                             continue
+#
+#                         query = f"""
+#                             UPDATE aspirantes_perfil
+#                             SET {campo_db} = %s
+#                             WHERE aspirante_id = %s
+#                         """
+#
+#                         cur.execute(query, (valor, aspirante_id))
+#
+#                         if campo_db == "nombre":
+#                             nombre_usuario = valor
+#
+#                 # Guardar pais_texto
+#                 if pais_texto:
+#                     cur.execute("""
+#                         UPDATE aspirantes_perfil
+#                         SET pais_texto = %s
+#                         WHERE aspirante_id = %s
+#                     """, (pais_texto, aspirante_id))
+#
+#                 # Guardar zona_horaria
+#                 zona_horaria = None
+#                 if data.meta and isinstance(data.meta, dict):
+#                     zona_horaria = data.meta.get("zona_horaria")
+#
+#                 if zona_horaria:
+#                     cur.execute("""
+#                         UPDATE aspirantes_perfil
+#                         SET zona_horaria = %s
+#                         WHERE aspirante_id = %s
+#                     """, (zona_horaria, aspirante_id))
+#
+#                 # -------------------------------
+#                 # Guardar trazabilidad encuesta inicial
+#                 # -------------------------------
+#                 cur.execute("""
+#                     INSERT INTO aspirantes_encuesta_inicial (
+#                         aspirante_id,
+#                         respuestas_json,
+#                         fecha_inicio,
+#                         fecha_fin,
+#                         completada,
+#                         abandonada,
+#                         preguntas_respondidas,
+#                         sincronizado,
+#                         fecha_sincronizacion,
+#                         created_at,
+#                         updated_at
+#                     )
+#                     VALUES (
+#                         %s,
+#                         %s::jsonb,
+#                         now(),
+#                         now(),
+#                         true,
+#                         false,
+#                         %s,
+#                         true,
+#                         now(),
+#                         now(),
+#                         now()
+#                     )
+#                 """, (
+#                     aspirante_id,
+#                     json.dumps(respuestas_dict, ensure_ascii=False),
+#                     len(respuestas_dict)
+#                 ))
+#
+#                 conn.commit()
+#
+#             # -------------------------------
+#             # Pasar aspirante a Evaluación
+#             # -------------------------------
+#             registrar_cambio_estado(
+#                 aspirante_id=aspirante_id,
+#                 nuevo_estado_id=3,  # Evaluación
+#                 usuario_id=None,
+#                 origen_cambio="encuesta_link",
+#                 observacion="Aspirante pasa a Evaluación al completar la encuesta inicial"
+#             )
+#
+#         # -------------------------------
+#         # URL del portal con token
+#         # -------------------------------
+#         portal_data = generar_url_portal(
+#             aspirante_id=aspirante_id,
+#             origen="encuesta"
+#         ) if aspirante_id else None
+#
+#         url_info = portal_data["url"] if portal_data else None
+#
+#         # -------------------------------
+#         # Mensaje final
+#         # -------------------------------
+#         mensaje_final = mensaje_encuesta_final(
+#             nombre=nombre_usuario,
+#             url_info=url_info
+#         )
+#
+#         origen = (data.origen or "").strip().lower()
+#         enviar_mensaje = origen != ORIGEN_PORTAL
+#
+#         if enviar_mensaje:
+#             background_tasks.add_task(
+#                 enviar_mensaje_whatsapp_texto,
+#                 data.numero,
+#                 mensaje_final,
+#                 token_cliente,
+#                 phone_id_cliente
+#             )
+#             print(f"✅ Perfil consolidado y mensaje enviado a {data.numero}")
+#         else:
+#             print(f"✅ Perfil consolidado sin envío de mensaje (origen={origen})")
+#
+#         return {
+#             "ok": True,
+#             "msg": "Perfil consolidado correctamente",
+#             "pais_texto": pais_texto,
+#             "zona_horaria": data.meta.get("zona_horaria") if data.meta else None,
+#             "mensaje_enviado": enviar_mensaje
+#         }
+#
+#     except Exception as e:
+#         print(f"❌ Error en consolidar_perfil_web: {e}")
+#
+#         return JSONResponse(
+#             {"error": "Error al consolidar el perfil"},
+#             status_code=500
+#         )
 
 
 
@@ -5116,6 +5569,10 @@ def iniciar_encuesta_inicial(data: IniciarEncuestaInput):
             {"error": "Error al iniciar la encuesta"},
             status_code=500
         )
+
+
+
+
 
 
 # @router.post("/consolidar")
@@ -5309,3 +5766,239 @@ def iniciar_encuesta_inicial(data: IniciarEncuestaInput):
 #             status_code=500
 #         )
 
+# def enviar_inicio_portal(numero: str, aspirante_id: int):
+#     tenant_name = current_tenant.get() or "default"
+#
+#     portal_data = generar_url_portal(
+#         aspirante_id=aspirante_id,
+#         origen="whatsapp_onboarding"
+#     )
+#
+#     url_portal = portal_data["url"]
+#
+#     mensaje = (
+#         f"{mensaje_inicio_encuesta()}\n\n"
+#         "🔗 *Ingresa aquí a tu portal:*\n"
+#         f"{url_portal}\n\n"
+#         "Desde allí podrás completar tu encuesta, revisar preguntas frecuentes "
+#         "y conocer el proceso general.\n\n"
+#         "Puedes hacerlo desde tu celular o computadora."
+#     )
+#
+#     enviar_mensaje(numero, mensaje)
+#
+#     print(f"🔗 Enviado portal de onboarding a {numero}: {url_portal}")
+
+
+# def _process_new_user_onboarding(
+#     mensaje: dict,
+#     numero: str,
+#     texto: str,
+#     texto_lower: str,
+#     payload: str,
+#     paso: Optional[str | int],
+#     tenant_name: str,
+#     phone_id: str = None,
+#     token: str = None
+# ) -> Optional[dict]:
+#     """
+#     Flujo de onboarding para nuevos usuarios vía WhatsApp.
+#     Pide usuario TikTok → confirma nickname → envía encuesta.
+#     """
+#
+#     tipo = mensaje.get("type")
+#
+#     # -----------------------------------------------------
+#     # VALIDACIÓN DE TIPO DE MENSAJE
+#     # -----------------------------------------------------
+#     if tipo not in ["text", "interactive"]:
+#         return None
+#
+#     # Extraer payload si es botón
+#     if not payload and tipo == "interactive":
+#         payload = (
+#             mensaje.get("interactive", {})
+#             .get("button_reply", {})
+#             .get("id")
+#         )
+#
+#     # -----------------------------------------------------
+#     # VALIDACIÓN DE PASO (ANTI-CORRUPCIÓN DE FLUJO)
+#     # -----------------------------------------------------
+#     pasos_validos = [
+#         None,
+#         "esperando_usuario_tiktok",
+#         "confirmando_nickname",
+#         "esperando_inicio_encuesta",
+#     ]
+#
+#     if paso not in pasos_validos:
+#         print(f"⚠️ Reiniciando flujo para {numero}, paso inválido: {paso}")
+#         eliminar_flujo(numero)
+#         paso = None
+#
+#     # =====================================================
+#     # PASO 0 – INICIO
+#     # =====================================================
+#     if paso is None:
+#         enviar_mensaje(
+#             numero,
+#             "¡Hola! 👋 Bienvenido.\n"
+#             "Para comenzar, por favor escribe tu *usuario de TikTok* "
+#             "(sin @)."
+#         )
+#         actualizar_flujo(numero, "esperando_usuario_tiktok")
+#         return {"status": "ok"}
+#
+#     # =====================================================
+#     # PASO 1 – ESPERANDO USUARIO TIKTOK
+#     # =====================================================
+#     if paso == "esperando_usuario_tiktok":
+#
+#         if tipo != "text":
+#             enviar_mensaje(numero, "✍️ Por favor escribe tu usuario de TikTok.")
+#             return {"status": "ok"}
+#
+#         input_usuario = texto.strip()
+#         aspirante = buscar_aspirante_por_usuario_tiktok(input_usuario)
+#
+#         if not aspirante:
+#             enviar_mensaje(
+#                 numero,
+#                 "❌ No encontramos ese usuario.\n"
+#                 "Verifica e inténtalo nuevamente."
+#             )
+#             return {"status": "ok"}
+#
+#         # 🔑 NICKNAME REAL (LO ÚNICO QUE SE CONFIRMA)
+#         nickname_tiktok = (
+#             aspirante.get("usuario_tiktok")
+#             or aspirante.get("nickname")
+#         )
+#
+#         if not nickname_tiktok:
+#             enviar_mensaje(
+#                 numero,
+#                 "⚠️ Encontramos el perfil, pero no pudimos obtener "
+#                 "el usuario de TikTok. Escríbelo nuevamente."
+#             )
+#             return {"status": "ok"}
+#
+#         # Guardar aspirante temporal
+#         try:
+#             redis_set_temp(numero, aspirante, ttl=900)
+#         except Exception as e:
+#             print(f"⚠️ Redis falló, usando memoria: {e}")
+#             usuarios_temp[numero] = aspirante
+#
+#         # Confirmación con botones
+#         if phone_id and token:
+#             enviar_confirmacion_interactiva(
+#                 numero=numero,
+#                 nickname=nickname_tiktok,  # ✅ SIEMPRE EL NICKNAME
+#                 phone_id=phone_id,
+#                 token=token
+#             )
+#         else:
+#             enviar_mensaje(
+#                 numero,
+#                 f"Encontramos el usuario: *{nickname_tiktok}*.\n"
+#                 "¿Eres tú? (Responde SÍ o NO)"
+#             )
+#
+#         actualizar_flujo(numero, "confirmando_nickname")
+#         return {"status": "ok"}
+#
+#     # =====================================================
+#     # PASO 2 – CONFIRMANDO NICKNAME
+#     # =====================================================
+#     if paso == "confirmando_nickname":
+#
+#         es_si = (
+#             payload == "BTN_CONFIRM_YES"
+#             or (tipo == "text" and texto_lower in ["si", "sí", "s", "y", "yes"])
+#         )
+#
+#         es_no = (
+#             payload == "BTN_CONFIRM_NO"
+#             or (tipo == "text" and texto_lower in ["no", "n"])
+#         )
+#
+#         # -------------------------
+#         # CONFIRMA QUE SÍ
+#         # -------------------------
+#         if es_si:
+#             aspirante = redis_get_temp(numero) or usuarios_temp.get(numero)
+#
+#             if not aspirante:
+#                 enviar_mensaje(
+#                     numero,
+#                     "⏳ La sesión expiró. "
+#                     "Por favor escribe nuevamente tu usuario de TikTok."
+#                 )
+#                 actualizar_flujo(numero, "esperando_usuario_tiktok")
+#                 return {"status": "ok"}
+#
+#             # Asociar teléfono
+#             actualizar_telefono_aspirante(aspirante["id"], numero)
+#
+#             # Limpiar temporales
+#             try:
+#                 redis_delete_temp(numero)
+#             except:
+#                 pass
+#             usuarios_temp.pop(numero, None)
+#
+#             # Enviar encuesta
+#             enviar_inicio_encuesta(numero)
+#             actualizar_flujo(numero, "esperando_inicio_encuesta")
+#             return {"status": "ok"}
+#
+#         # -------------------------
+#         # CONFIRMA QUE NO
+#         # -------------------------
+#         if es_no:
+#             enviar_mensaje(
+#                 numero,
+#                 "👌 Entendido.\n"
+#                 "Por favor escribe nuevamente tu *usuario de TikTok* correcto."
+#             )
+#
+#             try:
+#                 redis_delete_temp(numero)
+#             except:
+#                 pass
+#             usuarios_temp.pop(numero, None)
+#
+#             actualizar_flujo(numero, "esperando_usuario_tiktok")
+#             return {"status": "ok"}
+#
+#         # -------------------------
+#         # INPUT INVÁLIDO
+#         # -------------------------
+#         enviar_mensaje(
+#             numero,
+#             "⚠️ No te entendí.\n"
+#             "Por favor selecciona una de las opciones."
+#         )
+#         return {"status": "ok"}
+#
+#     # =====================================================
+#     # PASO 3 – REENVÍO DE LINK DE ENCUESTA
+#     # =====================================================
+#     if paso == "esperando_inicio_encuesta":
+#         tenant_actual = tenant_name or current_tenant.get() or "default"
+#         url_web = construir_url_actualizar_perfil(
+#             numero,
+#             tenant_name=tenant_actual
+#         )
+#
+#         enviar_mensaje(
+#             numero,
+#             "📋 Para comenzar la encuesta, haz clic aquí:\n\n"
+#             f"{url_web}\n\n"
+#             "Puedes hacerlo desde tu celular o computadora."
+#         )
+#         return {"status": "ok"}
+#
+#     return None

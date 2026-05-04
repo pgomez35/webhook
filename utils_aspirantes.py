@@ -2375,3 +2375,93 @@ def obtener_creadores_activos_db():
     except Exception as e:
         print(f"❌ Error al obtener creadores activos: {e}")
         return []
+
+
+def obtener_persona_portal_por_telefono(telefono: str) -> Optional[dict]:
+    """
+    Busca si un teléfono pertenece a un creador o aspirante.
+
+    Prioridad:
+    1. Creador activo
+    2. Aspirante
+
+    Retorna:
+    {
+        "tipo_portal": "creador" | "aspirante",
+        "creador_id": int | None,
+        "aspirante_id": int | None,
+        "nombre": str
+    }
+    """
+
+    try:
+        telefono = (telefono or "").strip()
+
+        if not telefono:
+            return None
+
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+
+                # =====================================================
+                # 1. BUSCAR EN CREADORES
+                # =====================================================
+                cur.execute("""
+                    SELECT
+                        c.id,
+                        c.aspirante_id,
+                        COALESCE(c.nombre, c.usuario_tiktok, 'creador') AS nombre
+                    FROM creadores c
+                    WHERE c.telefono = %s
+                      AND COALESCE(c.estado, 'activo') = 'activo'
+                    LIMIT 1
+                """, (telefono,))
+
+                row = cur.fetchone()
+
+                if row:
+                    print(f"👤 [PORTAL] Detectado como CREADOR -> id={row[0]}")
+
+                    return {
+                        "tipo_portal": "creador",
+                        "creador_id": row[0],
+                        "aspirante_id": row[1],
+                        "nombre": row[2],
+                    }
+
+                # =====================================================
+                # 2. BUSCAR EN ASPIRANTES
+                # =====================================================
+                cur.execute("""
+                    SELECT
+                        a.id,
+                        COALESCE(a.nombre_real, a.nickname, a.usuario, 'aspirante') AS nombre
+                    FROM aspirantes a
+                    WHERE a.telefono = %s
+                       OR a.whatsapp = %s
+                    LIMIT 1
+                """, (telefono, telefono))
+
+                row = cur.fetchone()
+
+                if row:
+                    print(f"👤 [PORTAL] Detectado como ASPIRANTE -> id={row[0]}")
+
+                    return {
+                        "tipo_portal": "aspirante",
+                        "aspirante_id": row[0],
+                        "creador_id": None,
+                        "nombre": row[1],
+                    }
+
+                # =====================================================
+                # 3. NO ENCONTRADO
+                # =====================================================
+                print(f"❌ [PORTAL] Teléfono no encontrado: {telefono}")
+                return None
+
+    except Exception as e:
+        print(f"❌ Error buscando persona por teléfono {telefono}: {e}")
+        return None
+
+
