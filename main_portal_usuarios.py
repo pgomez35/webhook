@@ -1544,7 +1544,6 @@ def validar_portal_general(token: str = Query(..., min_length=10)):
             "features": {
                 "portal_aspirante": info["tipo_portal"] == "aspirante",
                 "portal_creador": info["tipo_portal"] == "creador",
-                "encuesta_creador": info.get("creador_id") is not None,
             }
         }
 
