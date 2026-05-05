@@ -108,13 +108,39 @@ def habilitar_trazabilidad_encuesta_creador(
 ) -> bool:
     try:
         respuestas_json = respuestas_json or {}
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO creadores_encuesta_inicial (
+                        creador_id,
+                        respuestas_json,
+                        fecha_inicio,
+                        completada,
+                        abandonada,
+                        preguntas_respondidas,
+                        sincronizado,
+                        updated_at
+                    )
+                    VALUES (%s, %s::jsonb, now(), false, false, 0, false, now())
+                    ON CONFLICT (creador_id)
+                    DO UPDATE SET
+                        respuestas_json = COALESCE(EXCLUDED.respuestas_json, creadores_encuesta_inicial.respuestas_json),
+                        fecha_inicio = COALESCE(creadores_encuesta_inicial.fecha_inicio, now()),
+                        completada = false,
+                        abandonada = false,
+                        updated_at = now()
+                """, (
+                    creador_id,
+                    json.dumps(respuestas_json, ensure_ascii=False)
+                ))
+            conn.commit()
 
-        # Esta función queda preparada, pero lo ideal es crear tabla de trazabilidad.
         print(f"✅ Encuesta de creador habilitada para creador_id={creador_id}")
         return True
 
     except Exception as e:
         print(f"❌ Error habilitando encuesta creador: {e}")
+        traceback.print_exc()
         return False
 
 
@@ -317,6 +343,34 @@ def consolidar_encuesta_creador(data: ConsolidarEncuestaCreadorInput):
                     ))
 
                     preguntas_guardadas += 1
+
+                cur.execute("""
+                    INSERT INTO creadores_encuesta_inicial (
+                        creador_id,
+                        respuestas_json,
+                        fecha_inicio,
+                        fecha_fin,
+                        completada,
+                        abandonada,
+                        preguntas_respondidas,
+                        sincronizado,
+                        updated_at
+                    )
+                    VALUES (%s, %s::jsonb, now(), now(), true, false, %s, false, now())
+                    ON CONFLICT (creador_id)
+                    DO UPDATE SET
+                        respuestas_json = EXCLUDED.respuestas_json,
+                        fecha_inicio = COALESCE(creadores_encuesta_inicial.fecha_inicio, now()),
+                        fecha_fin = now(),
+                        completada = true,
+                        abandonada = false,
+                        preguntas_respondidas = EXCLUDED.preguntas_respondidas,
+                        updated_at = now()
+                """, (
+                    data.creador_id,
+                    json.dumps(respuestas_dict, ensure_ascii=False),
+                    preguntas_guardadas
+                ))
 
             conn.commit()
 
