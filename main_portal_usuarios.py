@@ -326,6 +326,139 @@ def obtener_token_portal_activo(
     }
 
 
+def duracion_portal_por_tipo(tipo_portal: str, duracion_minutos: Optional[int] = None) -> int:
+    if duracion_minutos and duracion_minutos > 0:
+        return duracion_minutos
+
+    if tipo_portal == "creador":
+        return 90 * 24 * 60  # 90 dias
+
+    return TOKEN_DURACION_MINUTOS  # 7 dias aspirante
+
+
+def obtener_token_portal_existente(
+    cur,
+    tipo_portal: str,
+    aspirante_id: Optional[int] = None,
+    creador_id: Optional[int] = None,
+) -> Optional[dict]:
+    tipo_portal = validar_identidad_portal(
+        tipo_portal=tipo_portal,
+        aspirante_id=aspirante_id,
+        creador_id=creador_id,
+    )
+
+    cur.execute(
+        """
+        SELECT
+            id,
+            token,
+            expiracion,
+            creado_en,
+            duracion_minutos,
+            creado_por,
+            origen,
+            aspirante_id,
+            creador_id,
+            tipo_portal
+        FROM portal_access_tokens
+        WHERE tipo_portal = %s
+          AND (
+                (%s IS NOT NULL AND aspirante_id = %s)
+             OR (%s IS NOT NULL AND creador_id = %s)
+          )
+        ORDER BY
+            CASE WHEN estado = 'activo' THEN 0 ELSE 1 END,
+            creado_en DESC,
+            id DESC
+        LIMIT 1
+        """,
+        (
+            tipo_portal,
+            aspirante_id,
+            aspirante_id,
+            creador_id,
+            creador_id,
+        ),
+    )
+
+    row = cur.fetchone()
+
+    if not row:
+        return None
+
+    return {
+        "id": row[0],
+        "token": row[1],
+        "expiracion": row[2],
+        "creado_en": row[3],
+        "duracion_minutos": row[4],
+        "creado_por": row[5],
+        "origen": row[6],
+        "aspirante_id": row[7],
+        "creador_id": row[8],
+        "tipo_portal": row[9],
+        "reutilizado": True,
+    }
+
+
+def renovar_token_portal(
+    cur,
+    token_id: int,
+    duracion_minutos: int,
+    creado_por: Optional[int] = None,
+    origen: str = "whatsapp",
+) -> dict:
+    expiracion = datetime.now() + timedelta(minutes=duracion_minutos)
+
+    cur.execute(
+        """
+        UPDATE portal_access_tokens
+        SET
+            expiracion = %s,
+            estado = 'activo',
+            duracion_minutos = %s,
+            creado_por = COALESCE(%s, creado_por),
+            origen = COALESCE(%s, origen)
+        WHERE id = %s
+        RETURNING
+            id,
+            token,
+            expiracion,
+            creado_en,
+            duracion_minutos,
+            creado_por,
+            origen,
+            aspirante_id,
+            creador_id,
+            tipo_portal
+        """,
+        (
+            expiracion,
+            duracion_minutos,
+            creado_por,
+            origen,
+            token_id,
+        ),
+    )
+
+    row = cur.fetchone()
+
+    return {
+        "id": row[0],
+        "token": row[1],
+        "expiracion": row[2],
+        "creado_en": row[3],
+        "duracion_minutos": row[4],
+        "creado_por": row[5],
+        "origen": row[6],
+        "aspirante_id": row[7],
+        "creador_id": row[8],
+        "tipo_portal": row[9],
+        "reutilizado": True,
+    }
+
+
 def revocar_tokens_activos(
     cur,
     tipo_portal: str,
@@ -455,6 +588,7 @@ def obtener_o_crear_token_portal(
         aspirante_id=aspirante_id,
         creador_id=creador_id,
     )
+    duracion_final = duracion_portal_por_tipo(tipo_portal, duracion_minutos)
 
     if forzar_nuevo:
         revocar_tokens_activos(
@@ -469,27 +603,33 @@ def obtener_o_crear_token_portal(
             tipo_portal=tipo_portal,
             aspirante_id=aspirante_id,
             creador_id=creador_id,
-            duracion_minutos=duracion_minutos,
+            duracion_minutos=duracion_final,
             creado_por=creado_por,
             origen=origen,
         )
 
-    token_activo = obtener_token_portal_activo(
+    token_existente = obtener_token_portal_existente(
         cur=cur,
         tipo_portal=tipo_portal,
         aspirante_id=aspirante_id,
         creador_id=creador_id,
     )
 
-    if token_activo:
-        return token_activo
+    if token_existente:
+        return renovar_token_portal(
+            cur=cur,
+            token_id=token_existente["id"],
+            duracion_minutos=duracion_final,
+            creado_por=creado_por,
+            origen=origen,
+        )
 
     return crear_token_portal(
         cur=cur,
         tipo_portal=tipo_portal,
         aspirante_id=aspirante_id,
         creador_id=creador_id,
-        duracion_minutos=duracion_minutos,
+        duracion_minutos=duracion_final,
         creado_por=creado_por,
         origen=origen,
     )

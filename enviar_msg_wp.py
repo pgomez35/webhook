@@ -2,7 +2,13 @@ import requests
 
 import json
 
-def enviar_mensaje_texto_simple(token: str, numero_id: str, telefono_destino: str, texto: str):
+
+def enviar_mensaje_texto_simple(
+    token: str,
+    numero_id: str,
+    telefono_destino: str,
+    texto: str
+):
     url = f"https://graph.facebook.com/v19.0/{numero_id}/messages"
 
     headers = {
@@ -19,8 +25,87 @@ def enviar_mensaje_texto_simple(token: str, numero_id: str, telefono_destino: st
         }
     }
 
+    # ---------------------------------------------------------
+    # LOGS SEGUROS
+    # ---------------------------------------------------------
+    telefono_safe = (
+        telefono_destino[:4] + "****" + telefono_destino[-2:]
+        if len(telefono_destino) >= 6
+        else telefono_destino
+    )
+
+    preview_texto = (
+        texto[:120] + "..."
+        if len(texto) > 120
+        else texto
+    )
+
+    print(f"📤 Enviando mensaje a: {telefono_safe}")
+    print(f"📝 Preview mensaje: {preview_texto}")
+
+    try:
+        response = requests.post(
+            url,
+            headers=headers,
+            json=mensaje,
+            timeout=15
+        )
+
+        print(f"✅ Código de estado: {response.status_code}")
+
+        try:
+            respuesta_json = response.json()
+
+        except json.JSONDecodeError:
+            respuesta_json = {
+                "error": "Respuesta no válida en formato JSON",
+                "contenido": response.text[:300]
+            }
+
+        # ---------------------------------------------------------
+        # LOG RESPONSE SEGURA
+        # ---------------------------------------------------------
+        response_preview = str(respuesta_json)
+
+        if len(response_preview) > 500:
+            response_preview = response_preview[:500] + "..."
+
+        print(f"📡 Respuesta API: {response_preview}")
+
+        return response.status_code, respuesta_json
+
+    except requests.Timeout:
+        print("⏳ Timeout enviando mensaje WhatsApp")
+
+        return 408, {
+            "error": "Timeout enviando mensaje"
+        }
+
+    except requests.RequestException as e:
+        print(f"❌ Error HTTP enviando mensaje: {e}")
+
+        return 500, {
+            "error": str(e)
+        }
+
+
+def enviar_mensaje_texto_simpleV0(token: str, numero_id: str, telefono_destino: str, texto: str):
+    url = f"https://graph.facebook.com/v19.0/{numero_id}/messages"
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    mensaje = {
+        "messaging_product": "whatsapp",
+        "to": telefono_destino,
+        "type": "text",
+        "text": {"body": texto}
+    }
+
     print("📤 Enviando mensaje a:", telefono_destino)
-    print("📝 Contenido:", texto)
+    print("📝 Contenido:", texto[:120])
 
     response = requests.post(url, headers=headers, json=mensaje)
 
@@ -28,10 +113,10 @@ def enviar_mensaje_texto_simple(token: str, numero_id: str, telefono_destino: st
 
     try:
         respuesta_json = response.json()
-    except json.JSONDecodeError:
-        respuesta_json = {"error": "Respuesta no válida en formato JSON", "contenido": response.text}
+    except:
+        respuesta_json = {"contenido": response.text}
 
-    print("📡 Respuesta de la API:", respuesta_json)
+    print("📡 Respuesta API:", respuesta_json)
 
     return response.status_code, respuesta_json
 
