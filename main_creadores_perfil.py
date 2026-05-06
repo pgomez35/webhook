@@ -679,25 +679,25 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
 @router.post("/api/seguimiento_creadores/", response_model=SeguimientoCreadorDB)
 def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
     try:
-        if not seg.creador_activo_id:
-            raise HTTPException(status_code=400, detail="creador_activo_id es requerido")
+        if not seg.creador_id:
+            raise HTTPException(status_code=400, detail="creador_id es requerido")
 
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT manager_id FROM creadores WHERE id = %s
-                """, (seg.creador_activo_id,))
+                """, (seg.creador_id,))
                 result = cur.fetchone()
                 if not result:
-                    raise HTTPException(status_code=404, detail="No se encontró el creador activo")
+                    raise HTTPException(status_code=404, detail="No se encontró el creador")
                 manager_id = result[0]
 
                 cur.execute("""
                     INSERT INTO creadores_seguimiento (
-                        aspirante_id, creador_activo_id, manager_id, fecha_seguimiento,
+                        aspirante_id, creador_id, manager_id, fecha_seguimiento,
                         estrategias_mejora, compromisos
                     ) VALUES (
-                        %(aspirante_id)s, %(creador_activo_id)s, %(manager_id)s, %(fecha_seguimiento)s,
+                        %(aspirante_id)s, %(creador_id)s, %(manager_id)s, %(fecha_seguimiento)s,
                         %(estrategias_mejora)s, %(compromisos)s
                     )
                     RETURNING *;
@@ -716,8 +716,9 @@ def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/api/seguimiento_creadores/creador_activo/{creador_activo_id}", response_model=List[SeguimientoCreadorConManager])
-def listar_seguimientos_por_creador_activo(creador_activo_id: int):
+@router.get("/api/seguimiento_creadores/creador/{creador_id}", response_model=List[SeguimientoCreadorConManager])
+@router.get("/api/seguimiento_creadores/creador_activo/{creador_id}", response_model=List[SeguimientoCreadorConManager])
+def listar_seguimientos_por_creador(creador_id: int):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
@@ -725,9 +726,9 @@ def listar_seguimientos_por_creador_activo(creador_activo_id: int):
                     SELECT sc.*, au.nombre_completo AS manager_nombre
                     FROM creadores_seguimiento sc
                     LEFT JOIN administradores au ON sc.manager_id = au.id
-                    WHERE sc.creador_activo_id = %s
+                    WHERE sc.creador_id = %s
                     ORDER BY sc.fecha_seguimiento DESC
-                """, (creador_activo_id,))
+                """, (creador_id,))
                 rows = cur.fetchall()
                 columns = [desc[0] for desc in cur.description]
                 return [dict(zip(columns, row)) for row in rows]

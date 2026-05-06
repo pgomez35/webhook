@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field,field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, AliasChoices
 from typing import Optional, Union, Dict, List, Literal
 from datetime import datetime, date
 
@@ -683,7 +683,10 @@ class CreadorActivoAutoCreate(BaseModel):
 # Modelo base: para creación y actualización (entrada)
 class SeguimientoCreadorBase(BaseModel):
     aspirante_id: int
-    creador_activo_id: Optional[int] = None
+    creador_id: int = Field(
+        ...,
+        validation_alias=AliasChoices("creador_id", "creador_activo_id"),
+    )
     fecha_seguimiento: date
     estrategias_mejora: str
     compromisos: str
