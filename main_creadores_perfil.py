@@ -675,10 +675,10 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al crear creador activo: {e}")
 
-
 @router.post("/api/seguimiento_creadores/", response_model=SeguimientoCreadorDB)
 def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
     try:
+
         if not seg.creador_id:
             raise HTTPException(
                 status_code=400,
@@ -688,7 +688,7 @@ def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
         with get_connection_context() as conn:
             with conn.cursor() as cur:
 
-                # Obtener manager desde creadores_detalle
+                # Obtener manager asignado al creador
                 cur.execute("""
                     SELECT manager_id
                     FROM creadores_detalle
@@ -700,7 +700,7 @@ def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
                 if not result:
                     raise HTTPException(
                         status_code=404,
-                        detail="No se encontró detalle del creador"
+                        detail="No se encontró el detalle del creador"
                     )
 
                 manager_id = result[0]
@@ -708,7 +708,6 @@ def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
                 # Insertar seguimiento
                 cur.execute("""
                     INSERT INTO creadores_seguimiento (
-                        aspirante_id,
                         creador_id,
                         manager_id,
                         fecha_seguimiento,
@@ -716,7 +715,6 @@ def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
                         compromisos
                     )
                     VALUES (
-                        %(aspirante_id)s,
                         %(creador_id)s,
                         %(manager_id)s,
                         %(fecha_seguimiento)s,
@@ -725,8 +723,11 @@ def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
                     )
                     RETURNING *;
                 """, {
-                    **seg.dict(),
-                    "manager_id": manager_id
+                    "creador_id": seg.creador_id,
+                    "manager_id": manager_id,
+                    "fecha_seguimiento": seg.fecha_seguimiento,
+                    "estrategias_mejora": seg.estrategias_mejora,
+                    "compromisos": seg.compromisos
                 })
 
                 row = cur.fetchone()
