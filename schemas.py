@@ -680,16 +680,22 @@ class CreadorActivoAutoCreate(BaseModel):
     manager_id: Optional[int] = None
 
 # ESQUEMAS PARA SEGUIMIENTO
+
 # Modelo base: para creación y actualización (entrada)
 class SeguimientoCreadorBase(BaseModel):
-    aspirante_id: int
+
     creador_id: int = Field(
         ...,
-        validation_alias=AliasChoices("creador_id", "creador_activo_id"),
+        validation_alias=AliasChoices(
+            "creador_id",
+            "creador_activo_id"
+        ),
     )
+
     fecha_seguimiento: date
     estrategias_mejora: str
     compromisos: str
+
 
 # Modelo extendido: para respuesta (salida)
 class SeguimientoCreadorConManager(SeguimientoCreadorBase):
@@ -697,11 +703,17 @@ class SeguimientoCreadorConManager(SeguimientoCreadorBase):
     manager_id: int
     manager_nombre: Optional[str] = None
 
+
+# Modelo para creación
 class SeguimientoCreadorCreate(SeguimientoCreadorBase):
     pass
 
+
+# Modelo DB
 class SeguimientoCreadorDB(SeguimientoCreadorBase):
     id: int
+    manager_id: int
+
     class Config:
         orm_mode = True
 
