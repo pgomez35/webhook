@@ -709,17 +709,62 @@ def _upsert_insight(cur, reporte: Dict[str, Any], textos: Dict[str, str]) -> Non
 @router.post("/api/creadores/performance/validar-reporte")
 def validar_reporte_creadores_excel(file: UploadFile = File(...)):
     try:
+
         content = file.file.read()
+
         df = pd.read_excel(io.BytesIO(content))
+
         _validar_columnas_excel(df)
 
         periodos = []
+
         for value in df["Periodo de datos"].dropna().unique().tolist():
+
             try:
                 inicio, fin = _parse_periodo(value)
-                periodos.append({"periodo_inicio": inicio, "periodo_fin": fin})
+
+                periodos.append({
+                    "periodo_inicio": inicio,
+                    "periodo_fin": fin
+                })
+
             except Exception:
                 pass
+
+        # Validar solapamientos en DB
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+
+                for periodo in periodos:
+
+                    cur.execute("""
+                        SELECT
+                            periodo_inicio,
+                            periodo_fin
+                        FROM creadores_reporte_integral
+                        WHERE
+                            %s <= periodo_fin
+                            AND
+                            %s >= periodo_inicio
+                        LIMIT 1
+                    """, (
+                        periodo["periodo_inicio"],
+                        periodo["periodo_fin"]
+                    ))
+
+                    conflicto = cur.fetchone()
+
+                    if conflicto:
+
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                f"Ya existe un reporte cargado que se "
+                                f"solapa con el periodo "
+                                f"{periodo['periodo_inicio']} "
+                                f"a {periodo['periodo_fin']}."
+                            )
+                        )
 
         return {
             "ok": True,
@@ -727,15 +772,21 @@ def validar_reporte_creadores_excel(file: UploadFile = File(...)):
             "filas": len(df),
             "columnas": list(df.columns),
             "periodos_detectados": periodos,
-            "mensaje": "El archivo tiene la estructura esperada."
+            "mensaje": "El archivo tiene la estructura esperada y no presenta solapamientos."
         }
 
     except HTTPException:
         raise
+
     except Exception as e:
         print("❌ Error validando reporte:", e)
+
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Error validando el reporte de creadores")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Error validando el reporte de creadores"
+        )
 
 
 # =========================================================
