@@ -411,23 +411,39 @@ def _upsert_reporte_integral(cur, data: Dict[str, Any], creador_id: Optional[int
     )
     return cur.fetchone()["id_reporte"]
 
-
 def _actualizar_creador_activo(cur, creador_id: int, data: Dict[str, Any]) -> None:
+    # 1. Actualizar datos base en creadores (solo lo que corresponde)
     cur.execute(
         """
-        UPDATE creadores_activos
+        UPDATE creadores
         SET
             usuario_tiktok = COALESCE(usuario_tiktok, %s),
+            updated_at = NOW()
+        WHERE id = %s
+        """,
+        (
+            data.get("usuario_tiktok"),
+            creador_id,
+        ),
+    )
+
+    # 2. Actualizar / acumular métricas en creadores_detalle
+    cur.execute(
+        """
+        UPDATE creadores_detalle
+        SET
             fecha_incorporacion = COALESCE(fecha_incorporacion, %s),
-            diamantes = %s,
-            horas_live = %s,
-            numero_partidas = %s,
-            dias_emision = %s
+
+            diamantes = COALESCE(diamantes, 0) + COALESCE(%s, 0),
+            horas_live = COALESCE(horas_live, 0) + COALESCE(%s, 0),
+            numero_partidas = COALESCE(numero_partidas, 0) + COALESCE(%s, 0),
+            dias_emision = COALESCE(dias_emision, 0) + COALESCE(%s, 0),
+
+            updated_at = NOW()
         WHERE creador_id = %s
         """,
         (
-            data["usuario_tiktok"],
-            data["hora_incorporacion"].date() if data.get("hora_incorporacion") else None,
+            data.get("hora_incorporacion").date() if data.get("hora_incorporacion") else None,
             data.get("diamantes_totales"),
             _minutes_to_hours_int(data.get("duracion_live_minutos")),
             data.get("partidas"),
@@ -435,6 +451,30 @@ def _actualizar_creador_activo(cur, creador_id: int, data: Dict[str, Any]) -> No
             creador_id,
         ),
     )
+
+# def _actualizar_creador_activo(cur, creador_id: int, data: Dict[str, Any]) -> None:
+#     cur.execute(
+#         """
+#         UPDATE creadores
+#         SET
+#             usuario_tiktok = COALESCE(usuario_tiktok, %s),
+#             fecha_incorporacion = COALESCE(fecha_incorporacion, %s),
+#             diamantes = %s,
+#             horas_live = %s,
+#             numero_partidas = %s,
+#             dias_emision = %s
+#         WHERE creador_id = %s
+#         """,
+#         (
+#             data["usuario_tiktok"],
+#             data["hora_incorporacion"].date() if data.get("hora_incorporacion") else None,
+#             data.get("diamantes_totales"),
+#             _minutes_to_hours_int(data.get("duracion_live_minutos")),
+#             data.get("partidas"),
+#             data.get("dias_validos_emisiones_live"),
+#             creador_id,
+#         ),
+#     )
 
 
 # =========================================================

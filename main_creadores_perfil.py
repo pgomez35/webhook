@@ -717,7 +717,6 @@ def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
 
 
 @router.get("/api/seguimiento_creadores/creador/{creador_id}", response_model=List[SeguimientoCreadorConManager])
-@router.get("/api/seguimiento_creadores/creador_activo/{creador_id}", response_model=List[SeguimientoCreadorConManager])
 def listar_seguimientos_por_creador(creador_id: int):
     try:
         with get_connection_context() as conn:
