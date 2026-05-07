@@ -680,40 +680,73 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
 def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
     try:
         if not seg.creador_id:
-            raise HTTPException(status_code=400, detail="creador_id es requerido")
+            raise HTTPException(
+                status_code=400,
+                detail="creador_id es requerido"
+            )
 
         with get_connection_context() as conn:
             with conn.cursor() as cur:
+
+                # Obtener manager desde creadores_detalle
                 cur.execute("""
-                    SELECT manager_id FROM creadores WHERE id = %s
+                    SELECT manager_id
+                    FROM creadores_detalle
+                    WHERE creador_id = %s
                 """, (seg.creador_id,))
+
                 result = cur.fetchone()
+
                 if not result:
-                    raise HTTPException(status_code=404, detail="No se encontró el creador")
+                    raise HTTPException(
+                        status_code=404,
+                        detail="No se encontró detalle del creador"
+                    )
+
                 manager_id = result[0]
 
+                # Insertar seguimiento
                 cur.execute("""
                     INSERT INTO creadores_seguimiento (
-                        aspirante_id, creador_id, manager_id, fecha_seguimiento,
-                        estrategias_mejora, compromisos
-                    ) VALUES (
-                        %(aspirante_id)s, %(creador_id)s, %(manager_id)s, %(fecha_seguimiento)s,
-                        %(estrategias_mejora)s, %(compromisos)s
+                        aspirante_id,
+                        creador_id,
+                        manager_id,
+                        fecha_seguimiento,
+                        estrategias_mejora,
+                        compromisos
+                    )
+                    VALUES (
+                        %(aspirante_id)s,
+                        %(creador_id)s,
+                        %(manager_id)s,
+                        %(fecha_seguimiento)s,
+                        %(estrategias_mejora)s,
+                        %(compromisos)s
                     )
                     RETURNING *;
                 """, {
                     **seg.dict(),
                     "manager_id": manager_id
                 })
+
                 row = cur.fetchone()
-                conn.commit()
+
                 columns = [desc[0] for desc in cur.description]
+
+                conn.commit()
+
                 return dict(zip(columns, row))
+
     except HTTPException:
         raise
+
     except Exception as e:
         print("ERROR:", e)
-        raise HTTPException(status_code=500, detail=str(e))
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
 
 
 @router.get("/api/seguimiento_creadores/creador/{creador_id}", response_model=List[SeguimientoCreadorConManager])
