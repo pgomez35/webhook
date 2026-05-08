@@ -42,6 +42,7 @@ from enviar_msg_wp import (
     enviar_plantilla_generica_parametros
 )
 from main_diagnostico import obtener_estado_aspirante
+from main_configuracion import get_config
 from main_mensajeria_whatsapp import reenviar_ultimo_mensaje, enviar_mensaje_whatsapp_texto
 from main_portal_usuarios import generar_url_portal_para_aspirante, generar_url_portal, generar_url_portal_usuario
 from tenant import (
@@ -134,6 +135,28 @@ def enviar_mensaje(numero: str, texto: str):
         print(f"❌ Error enviando mensaje a {numero}: {e}")
         traceback.print_exc()
         raise
+
+
+def obtener_mensaje_bienvenida_onboarding() -> str:
+    """
+    Obtiene el mensaje inicial de onboarding desde configuración.
+    Si la clave no existe o viene vacía, retorna el mensaje por defecto.
+    """
+    mensaje_default = (
+        "¡Hola! 👋 Bienvenido.\n"
+        "Para comenzar, por favor escribe tu *usuario de TikTok* "
+        "(sin @)."
+    )
+
+    try:
+        valor = get_config("mensaje_bienvenida_onboarding")
+        if valor is None:
+            return mensaje_default
+
+        valor_str = str(valor).strip()
+        return valor_str if valor_str else mensaje_default
+    except Exception:
+        return mensaje_default
 
 def enviar_boton_iniciar(numero: str, texto: str):
     """
@@ -1855,12 +1878,7 @@ def _process_new_user_onboarding(
     # PASO 0 – INICIO
     # =====================================================
     if paso is None:
-        enviar_mensaje(
-            numero,
-            "¡Hola! 👋 Bienvenido.\n"
-            "Para comenzar, por favor escribe tu *usuario de TikTok* "
-            "(sin @)."
-        )
+        enviar_mensaje(numero, obtener_mensaje_bienvenida_onboarding())
         actualizar_flujo(numero, "esperando_usuario_tiktok")
         return {"status": "ok"}
 
@@ -2093,12 +2111,7 @@ def _process_new_user_onboardingV1(
     # PASO 0 – INICIO
     # =====================================================
     if paso is None:
-        enviar_mensaje(
-            numero,
-            "¡Hola! 👋 Bienvenido.\n"
-            "Para comenzar, por favor escribe tu *usuario de TikTok* "
-            "(sin @)."
-        )
+        enviar_mensaje(numero, obtener_mensaje_bienvenida_onboarding())
         actualizar_flujo(numero, "esperando_usuario_tiktok")
         return {"status": "ok"}
 
