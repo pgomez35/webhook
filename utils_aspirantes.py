@@ -2452,6 +2452,70 @@ def obtener_persona_portal_por_telefono(telefono: str) -> Optional[dict]:
         return None
 
 
+def obtener_aspirante_portal_por_telefono(telefono: str) -> Optional[dict]:
+    """
+    Resuelve solo portal tipo aspirante: id y nombre del aspirante asociado al número.
+
+    Orden:
+    1. Fila en aspirantes (telefono o whatsapp).
+    2. Creador activo con el mismo teléfono y aspirante_id vinculado (mismo enlace portal aspirante).
+
+    Retorna {"aspirante_id": int, "nombre": str} o None.
+    """
+    try:
+        telefono = (telefono or "").strip()
+
+        if not telefono:
+            return None
+
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                        a.id,
+                        COALESCE(a.nombre_real, a.nickname, a.usuario, 'aspirante') AS nombre
+                    FROM aspirantes a
+                    WHERE a.telefono = %s
+                       OR a.whatsapp = %s
+                    LIMIT 1
+                    """,
+                    (telefono, telefono),
+                )
+                row = cur.fetchone()
+                if row:
+                    print(f"👤 [PORTAL-ASPIRANTE] Por tabla aspirantes -> id={row[0]}")
+                    return {"aspirante_id": row[0], "nombre": row[1]}
+
+                cur.execute(
+                    """
+                    SELECT
+                        c.aspirante_id,
+                        COALESCE(a.nombre_real, a.nickname, a.usuario, 'aspirante') AS nombre
+                    FROM creadores c
+                    LEFT JOIN aspirantes a ON a.id = c.aspirante_id
+                    WHERE c.telefono = %s
+                      AND COALESCE(c.estado, 'activo') = 'activo'
+                      AND c.aspirante_id IS NOT NULL
+                    LIMIT 1
+                    """,
+                    (telefono,),
+                )
+                row = cur.fetchone()
+                if row:
+                    print(
+                        f"👤 [PORTAL-ASPIRANTE] Por creador vinculado -> aspirante_id={row[0]}"
+                    )
+                    return {"aspirante_id": row[0], "nombre": row[1] or "aspirante"}
+
+                print(f"❌ [PORTAL-ASPIRANTE] Sin aspirante para teléfono: {telefono}")
+                return None
+
+    except Exception as e:
+        print(f"❌ Error buscando aspirante portal por teléfono {telefono}: {e}")
+        return None
+
+
 def obtener_plantilla_mensaje_portal(tipo_portal: str) -> str:
     """
     Retorna la plantilla de mensaje según el tipo de portal.
