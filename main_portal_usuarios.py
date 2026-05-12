@@ -142,6 +142,12 @@ class SiguientePasoOut(BaseModel):
     agendamiento_id: Optional[int] = None
 
 
+class DiagnosticoPortalOut(BaseModel):
+    existe: bool = False
+    puntaje_total: Optional[float] = None
+    diagnostico_resumen: Optional[str] = None
+
+
 class PortalSoporteConfigOut(BaseModel):
     texto: Optional[str] = None
     telefono: Optional[str] = None
@@ -181,6 +187,7 @@ class PortalResumenOut(BaseModel):
     encuesta_terminada: bool = False
     paso_actual: int
     total_pasos: int = TOTAL_PASOS_PORTAL
+    diagnostico: DiagnosticoPortalOut
     modulos: dict
     siguiente_paso: SiguientePasoOut
     expiracion_token: datetime
@@ -944,11 +951,15 @@ def obtener_diagnostico_portal(cur, aspirante_id: int) -> Dict[str, Any]:
         }
 
     puntaje = float(row[0]) if row[0] is not None else None
+    resumen_raw = row[1]
+    resumen_txt = resumen_raw if isinstance(resumen_raw, str) else (str(resumen_raw) if resumen_raw is not None else "")
+    resumen_ok = resumen_txt.strip() != ""
+    tiene_contenido = puntaje is not None or resumen_ok
 
     return {
-        "existe": True,
+        "existe": tiene_contenido,
         "puntaje_total": puntaje,
-        "diagnostico_resumen": row[1],
+        "diagnostico_resumen": resumen_raw if resumen_ok else None,
     }
 
 
@@ -1091,11 +1102,19 @@ def obtener_paso_actual(estado_id: Optional[int], encuesta_terminada: bool = Fal
     return 1
 
 
-def construir_modulos(estado_id: Optional[int], tiene_agendamiento_pendiente: bool = False) -> dict:
+def construir_modulos(
+    estado_id: Optional[int],
+    tiene_agendamiento_pendiente: bool = False,
+    diagnostico_existe: bool = False,
+) -> dict:
+    diagnostico_visible = estado_id in (3, 4, 5, 6, 7)
     return {
         "proceso": True,
         "faq": True,
-        "diagnostico": estado_id in (3, 4, 5, 6, 7),
+        "diagnostico": {
+            "visible": diagnostico_visible,
+            "existe": diagnostico_existe,
+        },
         "citas": estado_id == 4 or tiene_agendamiento_pendiente,
         "invitacion": estado_id in (5, 6, 7),
         "incorporacion": estado_id == 6,
@@ -1209,12 +1228,12 @@ def construir_siguiente_paso_portal(
 
         return {
             "codigo": "esperar_evaluacion",
-            "titulo": "Esperar evaluación",
-            "descripcion": "Estamos revisando tu perfil. Esta etapa normalmente tarda entre 7 y 10 días.",
-            "cta_label": "Ver proceso",
+            "titulo": "Estamos evaluando tu perfil",
+            "descripcion": "Tu diagnóstico estará disponible próximamente.",
+            "cta_label": None,
             "cta_url": None,
             "cta_externa": False,
-            "modulo_destino": "proceso",
+            "modulo_destino": None,
             "entrevista_id": None,
             "agendamiento_id": None,
         }
@@ -1554,9 +1573,11 @@ def resumen_portal(token: str = Query(..., min_length=10)):
             encuesta_terminada=info["encuesta_terminada"],
         ),
         total_pasos=TOTAL_PASOS_PORTAL,
+        diagnostico=DiagnosticoPortalOut(**diagnostico),
         modulos=construir_modulos(
             estado_id=info["estado_id"],
             tiene_agendamiento_pendiente=agendamiento_pendiente is not None,
+            diagnostico_existe=bool(diagnostico.get("existe")),
         ),
         siguiente_paso=SiguientePasoOut(**siguiente_paso),
         expiracion_token=info["expiracion"],
