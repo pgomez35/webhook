@@ -2524,21 +2524,21 @@ def _process_single_message(mensaje: dict, tenant_name: str, datos_normalizados:
     return {"status": "ok_fallback"}
 
 
-def mensaje_inicio_encuesta() -> str:
-    nombre_agencia = current_business_name.get() or "nuestra agencia"
-
-    mensaje_db = obtener_configuracion_agencia("mensaje_inicio_encuesta_chat")
-
-    if mensaje_db:
-        return mensaje_db.replace("{nombre_agencia}", nombre_agencia)
-
-    return (
-        f"🔐 *Perfil de creador – {nombre_agencia}*\n\n"
-        f"Queremos conocerte mejor para identificar tu potencial como creador LIVE en TikTok.\n\n"
-        f"⏱️ Te tomará menos de 1 minuto.\n"
-        f"🔒 Tu información será tratada de forma privada y segura.\n\n"
-        "Ingresa aquí para comenzar 👇"
-    )
+# def mensaje_inicio_encuesta() -> str:
+#     nombre_agencia = current_business_name.get() or "nuestra agencia"
+#
+#     mensaje_db = obtener_configuracion_agencia("mensaje_inicio_encuesta_chat")
+#
+#     if mensaje_db:
+#         return mensaje_db.replace("{nombre_agencia}", nombre_agencia)
+#
+#     return (
+#         f"🔐 *Perfil de creador – {nombre_agencia}*\n\n"
+#         f"Queremos conocerte mejor para identificar tu potencial como creador LIVE en TikTok.\n\n"
+#         f"⏱️ Te tomará menos de 1 minuto.\n"
+#         f"🔒 Tu información será tratada de forma privada y segura.\n\n"
+#         "Ingresa aquí para comenzar 👇"
+#     )
 
 def enviar_inicio_encuesta(numero: str):
     """

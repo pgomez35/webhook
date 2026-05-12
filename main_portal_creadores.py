@@ -2,12 +2,16 @@ import json
 import traceback
 from typing import Optional, Any, Dict
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query, HTTPException
 from fastapi.responses import JSONResponse
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel
 
 from DataBase import get_connection_context
+from main_portal_usuarios import (
+    obtener_configuracion_soporte_portal,
+    PortalConfiguracionOut,
+)
 
 router = APIRouter()
 
@@ -393,9 +397,6 @@ def consolidar_encuesta_creador(data: ConsolidarEncuestaCreadorInput):
             status_code=500
         )
 
-from fastapi import APIRouter, Query, HTTPException
-from fastapi.responses import JSONResponse
-
 @router.get("/api/portal/creador/inicio")
 def portal_creador_inicio(creador_id: int = Query(..., gt=0)):
     try:
@@ -440,6 +441,8 @@ def portal_creador_inicio(creador_id: int = Query(..., gt=0)):
                     else "encuesta_inicial"
                 )
 
+                cfg_portal = obtener_configuracion_soporte_portal()
+
                 return {
                     "valid": True,
                     "tipo_portal": "creador",
@@ -452,7 +455,10 @@ def portal_creador_inicio(creador_id: int = Query(..., gt=0)):
                     "encuesta_inicial": {
                         "completada": encuesta_inicial_completada
                     },
-                    "pantalla": pantalla
+                    "pantalla": pantalla,
+                    "configuracion_portal": PortalConfiguracionOut.model_validate(
+                        cfg_portal
+                    ).model_dump(),
                 }
 
     except HTTPException as e:

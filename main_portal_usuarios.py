@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from DataBase import get_connection_context
-from tenant import current_tenant
+from tenant import current_tenant, current_business_name
 from main_invitacion import obtener_invitacion_portal_por_aspirante, InvitacionPortalOut
 from utils_aspirantes import (
     construir_url_actualizar_perfil,
@@ -142,6 +142,31 @@ class SiguientePasoOut(BaseModel):
     agendamiento_id: Optional[int] = None
 
 
+class PortalSoporteConfigOut(BaseModel):
+    texto: Optional[str] = None
+    telefono: Optional[str] = None
+    mensaje_whatsapp: Optional[str] = None
+
+
+class PortalBrandingConfigOut(BaseModel):
+    nombre_agencia: Optional[str] = None
+    logo_url: Optional[str] = None
+    color_primario: Optional[str] = None
+    color_secundario: Optional[str] = None
+
+
+class PortalFaqConfigOut(BaseModel):
+    """Texto general FAQ si existe clave faq_texto en configuracion_agencia."""
+
+    texto: Optional[str] = None
+
+
+class PortalConfiguracionOut(BaseModel):
+    soporte: PortalSoporteConfigOut
+    branding: PortalBrandingConfigOut
+    faq: PortalFaqConfigOut
+
+
 class PortalResumenOut(BaseModel):
     aspirante_id: int
     nombre: str
@@ -161,6 +186,7 @@ class PortalResumenOut(BaseModel):
     expiracion_token: datetime
     agendamiento_pendiente: Optional[AgendamientoPendienteOut] = None
     invitacion: Optional[InvitacionPortalOut] = None
+    configuracion_portal: PortalConfiguracionOut
 
 
 class LinkPortalOut(BaseModel):
@@ -1335,8 +1361,116 @@ def construir_siguiente_paso_portal(
 
 
 # =========================================================
+# CONFIGURACIÓN PORTAL (configuracion_agencia del tenant)
+# =========================================================
+
+_CLAVES_PORTAL_SOPORTE = (
+    "texto_soporte_portal",
+    "telefono_soporte_portal",
+    "mensaje_whatsapp_soporte",
+)
+_CLAVES_PORTAL_BRANDING = (
+    "logo_url",
+    "color_primario",
+    "color_secundario",
+)
+_CLAVES_PORTAL_FAQ = ("faq_texto",)
+
+
+def _normalizar_texto_config(val: Optional[str]) -> Optional[str]:
+    if val is None:
+        return None
+    s = str(val).strip()
+    if not s:
+        return None
+    return s.replace("\\n", "\n")
+
+
+def _map_configuracion_agencia(claves: tuple[str, ...]) -> Dict[str, Optional[str]]:
+    """Lee varias claves en una sola consulta (schema del tenant actual)."""
+    if not claves:
+        return {}
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                placeholders = ",".join(["%s"] * len(claves))
+                cur.execute(
+                    f"""
+                    SELECT clave, valor
+                    FROM configuracion_agencia
+                    WHERE clave IN ({placeholders})
+                    """,
+                    tuple(claves),
+                )
+                rows = cur.fetchall()
+        return {row[0]: row[1] for row in rows}
+    except Exception as e:
+        print(f"⚠️ Error leyendo configuracion_agencia (portal): {e}")
+        return {}
+
+
+def obtener_configuracion_soporte_portal(
+    nombre_agencia: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Agrupa soporte, branding y FAQ del portal desde configuracion_agencia del tenant.
+
+    Claves esperadas (tenant):
+    - Soporte: texto_soporte_portal, telefono_soporte_portal, mensaje_whatsapp_soporte
+    - Branding: logo_url, color_primario, color_secundario
+    - FAQ: faq_texto (opcional)
+
+    nombre_agencia: si no se pasa, intenta current_business_name (contexto request).
+    """
+    nombre = nombre_agencia
+    if nombre is None:
+        try:
+            nombre = current_business_name.get()
+        except LookupError:
+            nombre = None
+
+    todas = _CLAVES_PORTAL_SOPORTE + _CLAVES_PORTAL_BRANDING + _CLAVES_PORTAL_FAQ
+    valores = _map_configuracion_agencia(todas)
+
+    def pick(key: str) -> Optional[str]:
+        raw = valores.get(key)
+        return _normalizar_texto_config(raw) if raw is not None else None
+
+    return {
+        "soporte": {
+            "texto": pick("texto_soporte_portal"),
+            "telefono": pick("telefono_soporte_portal"),
+            "mensaje_whatsapp": pick("mensaje_whatsapp_soporte"),
+        },
+        "branding": {
+            "nombre_agencia": nombre,
+            "logo_url": pick("logo_url"),
+            "color_primario": pick("color_primario"),
+            "color_secundario": pick("color_secundario"),
+        },
+        "faq": {
+            "texto": pick("faq_texto"),
+        },
+    }
+
+
+# =========================================================
 # ENDPOINTS BASE PORTAL ASPIRANTE
 # =========================================================
+
+@router.get("/api/portal/configuracion", response_model=PortalConfiguracionOut)
+def portal_configuracion():
+    """
+    Configuración pública del portal (soporte, branding, FAQ) para el tenant actual.
+    No requiere token; usa el schema configuracion_agencia del tenant (host/subdominio).
+    """
+    data = obtener_configuracion_soporte_portal()
+    return PortalConfiguracionOut(
+        soporte=PortalSoporteConfigOut(**data["soporte"]),
+        branding=PortalBrandingConfigOut(**data["branding"]),
+        faq=PortalFaqConfigOut(**data["faq"]),
+    )
+
 
 @router.get("/api/portal/aspirantes/validar", response_model=PortalValidarOut)
 def validar_portal(token: str = Query(..., min_length=10)):
@@ -1401,6 +1535,8 @@ def resumen_portal(token: str = Query(..., min_length=10)):
                 ultima_prueba=ultima_prueba,
             )
 
+    cfg_portal = obtener_configuracion_soporte_portal()
+
     return PortalResumenOut(
         aspirante_id=info["aspirante_id"],
         nombre=info["nombre"],
@@ -1430,6 +1566,7 @@ def resumen_portal(token: str = Query(..., min_length=10)):
             else AgendamientoPendienteOut(pendiente=False)
         ),
         invitacion=invitacion,
+        configuracion_portal=PortalConfiguracionOut.model_validate(cfg_portal),
     )
 
 
