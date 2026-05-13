@@ -550,49 +550,66 @@ def construir_mensaje_invitacion_portal(
 ) -> str:
     if estado_invitacion == ESTADO_INVITACION_RECHAZADA:
         return (
-            f"La invitación para unirte a {agencia_nombre} no continuó en esta etapa. "
-            "Si tienes dudas, comunícate con la agencia."
+            f"Has decidido no continuar con la invitación para unirte a {agencia_nombre}. "
+            "Tu proceso quedó finalizado por el momento. "
+            "Si en el futuro deseas retomarlo o tienes alguna duda, puedes comunicarte nuevamente con la agencia."
         )
 
     if estado_tiktok == ESTADO_TIKTOK_RECHAZADO:
         return (
-            "Tu proceso de incorporación no continuó porque TikTok no aprobó la vinculación "
-            "en esta etapa. Si tienes dudas, comunícate con la agencia."
+            "La validación de TikTok no pudo completarse en esta etapa del proceso. "
+            "En algunos casos puede deberse a requisitos técnicos o configuraciones de la cuenta. "
+            "La agencia podrá orientarte sobre cómo continuar."
         )
 
     if estado_invitacion == ESTADO_INVITACION_PENDIENTE_ENVIO:
         return (
-            f"Tu invitación a {agencia_nombre} está en preparación. "
-            "Te avisaremos cuando ya esté disponible para revisarla en TikTok."
+            f"📨 {agencia_nombre} está preparando tu invitación oficial. "
+            "Cuando esté lista, la agencia podrá enviártela por WhatsApp y también podrás consultarla desde este portal."
         )
 
-    if estado_invitacion in {ESTADO_INVITACION_ENVIADA, ESTADO_INVITACION_EN_ESPERA} and estado_tiktok == ESTADO_TIKTOK_PENDIENTE:
+    if estado_invitacion == ESTADO_INVITACION_EN_ESPERA and estado_tiktok == ESTADO_TIKTOK_PENDIENTE:
         return (
-            f"Ya tienes una invitación de {agencia_nombre}. "
-            "El siguiente paso es revisarla y aceptarla desde TikTok para continuar con tu incorporación."
+            f"{agencia_nombre} tiene una invitación pendiente de tu revisión. "
+            "El siguiente paso es abrirla en TikTok y aceptarla para continuar con tu incorporación. "
+            "Puedes abrirla con el botón \"Aceptar invitación en TikTok\" en esta pantalla."
         )
 
-    if estado_invitacion in {ESTADO_INVITACION_ENVIADA, ESTADO_INVITACION_EN_ESPERA} and estado_tiktok == ESTADO_TIKTOK_ENVIADO:
+    if estado_invitacion == ESTADO_INVITACION_ENVIADA and estado_tiktok == ESTADO_TIKTOK_PENDIENTE:
         return (
-            f"Tu invitación de {agencia_nombre} ya fue enviada y el proceso con TikTok está en curso. "
-            "Revisa tu invitación en TikTok y completa tu aceptación si aún está pendiente."
+            f"{agencia_nombre} ya envió tu invitación formal. "
+            "Revisa la invitación en TikTok y acéptala para seguir con tu incorporación; "
+            "usa el botón \"Aceptar invitación en TikTok\" que aparece abajo."
+        )
+
+    if estado_invitacion == ESTADO_INVITACION_EN_ESPERA and estado_tiktok == ESTADO_TIKTOK_ENVIADO:
+        return (
+            f"Tu invitación con {agencia_nombre} sigue activa: TikTok está revisando tu perfil. "
+            "Si aún debes completar algún paso en la app de TikTok, vuelve a entrar con el botón "
+            "\"Aceptar invitación en TikTok\"."
+        )
+
+    if estado_invitacion == ESTADO_INVITACION_ENVIADA and estado_tiktok == ESTADO_TIKTOK_ENVIADO:
+        return (
+            f"Tu invitación con {agencia_nombre} está activa y TikTok ya recibió la solicitud para validar tu perfil. "
+            "Para volver a ver la invitación en TikTok, usa el botón \"Aceptar invitación en TikTok\"."
         )
 
     if estado_invitacion == ESTADO_INVITACION_ACEPTADA and estado_tiktok in {ESTADO_TIKTOK_PENDIENTE, ESTADO_TIKTOK_ENVIADO}:
         return (
-            "Ya aceptaste la invitación de la agencia. "
-            "Ahora estamos a la espera de la validación final por parte de TikTok."
+            f"Ya aceptaste la invitación de {agencia_nombre}. "
+            "Estamos a la espera de la validación final por parte de TikTok."
         )
 
     if estado_invitacion == ESTADO_INVITACION_ACEPTADA and estado_tiktok == ESTADO_TIKTOK_APROBADO:
         return (
-            "¡Tu incorporación fue aprobada! "
-            "Ahora solo falta completar la asignación final dentro de la agencia."
+            f"🎉 Tu incorporación con {agencia_nombre} fue aprobada exitosamente. "
+            "Ya haces parte de la agencia como creador TikTok LIVE."
         )
 
     return (
-        f"Tienes una invitación de {agencia_nombre}. "
-        "Revisa el estado actual y sigue los pasos indicados en TikTok para continuar."
+        f"Tienes una invitación activa con {agencia_nombre}. "
+        "Revisa el estado en este portal y sigue los pasos que indique TikTok para continuar."
     )
 
 

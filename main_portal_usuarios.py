@@ -196,7 +196,6 @@ class PortalResumenOut(BaseModel):
     expiracion_token: datetime
     agendamiento_pendiente: Optional[AgendamientoPendienteOut] = None
     invitacion: Optional[InvitacionPortalOut] = None
-    texto_etapa_invitacion: str
     configuracion_portal: PortalConfiguracionOut
 
 
@@ -1477,190 +1476,6 @@ def obtener_configuracion_soporte_portal(
     }
 
 
-
-ESTADO_INVITACION_PENDIENTE_ENVIO = "pendiente_envio"
-ESTADO_INVITACION_ENVIADA = "enviada"
-ESTADO_INVITACION_EN_ESPERA = "en_espera"
-ESTADO_INVITACION_ACEPTADA = "aceptada"
-ESTADO_INVITACION_RECHAZADA = "rechazada"
-
-ESTADO_TIKTOK_PENDIENTE = "pendiente"
-ESTADO_TIKTOK_ENVIADO = "enviado"
-ESTADO_TIKTOK_APROBADO = "aprobado"
-ESTADO_TIKTOK_RECHAZADO = "rechazado"
-
-
-def nombre_agencia_desde_contexto() -> str:
-    """
-    Nombre comercial de la agencia desde el contexto del request (tenant.py).
-    Orden: current_business_name → slug de tenant legible → genérico.
-    """
-    try:
-        n = current_business_name.get()
-        if n is not None and str(n).strip():
-            return str(n).strip()
-    except LookupError:
-        pass
-
-    tenant = (current_tenant.get() or "public").strip().lower()
-    if tenant and tenant != "public":
-        return tenant.replace("-", " ").replace("_", " ").title()
-
-    return "la agencia"
-
-
-def texto_etapa_invitacion_portal(
-    estado_id: Optional[int],
-    invitacion_portal: Optional[Dict[str, Any]],
-) -> str:
-    """
-    Texto descriptivo, empático y motivador para el portal sobre el estado
-    actual del proceso de invitación/incorporación.
-    """
-
-    if estado_id not in (
-        ESTADO_ASPIRANTE_INVITACION,
-        ESTADO_ASPIRANTE_INCORPORADO,
-        ESTADO_ASPIRANTE_RECHAZADO,
-    ):
-        agencia = nombre_agencia_desde_contexto()
-        return (
-            "¡Estás en la recta final! La etapa de invitación es el último paso. "
-            f"Cuando completes tus pruebas, {agencia} te enviará una invitación "
-            "oficial para unirte como creador de TikTok LIVE. Aquí mismo podrás seguir "
-            "todo tu avance."
-        )
-
-    if not invitacion_portal:
-        return (
-            "¡Avanzaste a la etapa de invitación! 🎉 "
-            "Estamos preparando los detalles. En breve verás aquí la actualización "
-            "para que puedas unirte oficialmente."
-        )
-
-    # Mensaje manual/personalizado desde DB
-    previo = invitacion_portal.get("mensaje_portal")
-
-    if isinstance(previo, str) and previo.strip():
-        return previo.strip()
-
-    return construir_mensaje_invitacion_portal_texto(
-        estado_invitacion=invitacion_portal.get("estado_invitacion"),
-        estado_tiktok=invitacion_portal.get("estado_tiktok"),
-        agencia_nombre=(
-            invitacion_portal.get("agencia_nombre") or nombre_agencia_desde_contexto()
-        ),
-    )
-
-
-def construir_mensaje_invitacion_portal_texto(
-    estado_invitacion: Optional[str],
-    estado_tiktok: Optional[str],
-    agencia_nombre: str,
-) -> str:
-    """
-    Construye un mensaje inteligente, humano y lleno de energía para el portal
-    según la combinación de estados entre la Agencia y TikTok.
-    """
-
-    estado_invitacion = (estado_invitacion or "").strip().lower()
-    estado_tiktok = (estado_tiktok or "").strip().lower()
-
-    # =========================
-    # RECHAZOS (Empatía y claridad)
-    # =========================
-
-    if estado_invitacion == ESTADO_INVITACION_RECHAZADA:
-        return (
-            f"Lamentablemente, la invitación de {agencia_nombre} no avanzó en esta etapa. 😔 "
-            "Sabemos que no es la noticia que esperabas, pero no te desanimes. "
-            "Si tienes dudas o quieres saber cómo mejorar, ¡comunícate con la agencia!"
-        )
-
-    if estado_tiktok == ESTADO_TIKTOK_RECHAZADO:
-        return (
-            "La validación de TikTok no pudo completarse en esta etapa del proceso. "
-            "En algunos casos puede deberse a requisitos técnicos o configuraciones de la cuenta. "
-            "La agencia podrá orientarte sobre cómo continuar."
-        )
-
-    # =========================
-    # PENDIENTE ENVÍO
-    # =========================
-
-    if estado_invitacion == ESTADO_INVITACION_PENDIENTE_ENVIO:
-        return (
-            f"¡Buenas noticias! 🎉 {agencia_nombre} está preparando tu invitación oficial. "
-            "Mantente atento/a, porque pronto te aparecerá en tu app de TikTok para que la aceptes."
-        )
-
-    # =========================
-    # ENVIADA + TIKTOK PENDIENTE/ENVIADO
-    # =========================
-
-    if (
-        estado_invitacion in {ESTADO_INVITACION_ENVIADA, ESTADO_INVITACION_EN_ESPERA}
-        and estado_tiktok in {ESTADO_TIKTOK_PENDIENTE, ESTADO_TIKTOK_ENVIADO}
-    ):
-        return (
-            f"🚀 Tu proceso sigue avanzando. {agencia_nombre} ya envió la invitación "
-            "y TikTok está revisando tu perfil para aprobar la incorporación. "
-            "Te notificaremos apenas haya una actualización."
-        )
-
-    # =========================
-    # ENVIADA + TIKTOK APROBADO
-    # =========================
-
-    if (
-        estado_invitacion in {ESTADO_INVITACION_ENVIADA, ESTADO_INVITACION_EN_ESPERA}
-        and estado_tiktok == ESTADO_TIKTOK_APROBADO
-    ):
-        return (
-            f"🎉 TikTok ya aprobó tu incorporación a {agencia_nombre}. "
-            "Ahora entra a tu app de TikTok y acepta la invitación para comenzar esta nueva etapa como creador LIVE."
-        )
-
-    # =========================
-    # ACEPTADA + TIKTOK PENDIENTE/ENVIADO
-    # =========================
-
-    if (
-        estado_invitacion == ESTADO_INVITACION_ACEPTADA
-        and estado_tiktok in {ESTADO_TIKTOK_PENDIENTE, ESTADO_TIKTOK_ENVIADO}
-    ):
-        return (
-            "¡Genial, ya aceptaste la invitación! 🤝 "
-            "Solo estamos esperando el 'OK' final de TikTok para cerrar el proceso. "
-            "Ya casi eres parte oficial del equipo."
-        )
-
-    # =========================
-    # ACEPTADA + APROBADO
-    # =========================
-
-    if (
-        estado_invitacion == ESTADO_INVITACION_ACEPTADA
-        and estado_tiktok == ESTADO_TIKTOK_APROBADO
-    ):
-        return (
-            f"🎉 ¡Ya haces parte de {agencia_nombre}! "
-            "Tu incorporación fue completada exitosamente. "
-            "Ahora comienza una nueva etapa para crecer como creador TikTok LIVE."
-        )
-
-    # =========================
-    # FALLBACK (Por si ocurre algún estado intermedio no previsto)
-    # =========================
-
-    return (
-        f"Tu proceso con {agencia_nombre} sigue avanzando paso a paso. ⏳ "
-        "Revisa los detalles aquí mismo y pronto tendrás nuevas actualizaciones."
-    )
-
-
-
-
 # =========================================================
 # ENDPOINTS BASE PORTAL ASPIRANTE
 # =========================================================
@@ -1775,10 +1590,6 @@ def resumen_portal(token: str = Query(..., min_length=10)):
             else AgendamientoPendienteOut(pendiente=False)
         ),
         invitacion=invitacion,
-        texto_etapa_invitacion=texto_etapa_invitacion_portal(
-            estado_id=info["estado_id"],
-            invitacion_portal=invitacion_data,
-        ),
         configuracion_portal=PortalConfiguracionOut.model_validate(cfg_portal),
     )
 
