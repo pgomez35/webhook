@@ -9,7 +9,14 @@ import logging
 from DataBase import get_connection_context, guardar_mensaje_nuevo, paso_limite_24h, buscar_usuario_por_telefono, \
     actualizar_phone_info_db, obtener_configuracion_agencia
 from enviar_msg_wp import enviar_mensaje_texto_simple, enviar_plantilla_generica
-from tenant import current_business_name
+from tenant import current_business_name, current_token, current_phone_id
+from portal_access_tokens import (
+    ESTADO_ASPIRANTE_RECHAZADO_ID,
+    generar_url_portal,
+    migrar_token_portal_aspirante_a_creador,
+    obtener_url_portal_token_existente,
+    revocar_tokens_portal_por_aspirante_id,
+)
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -1731,6 +1738,9 @@ def registrar_cambio_estado_con_cursor(
         observacion
     ))
 
+    if nuevo_estado_id == ESTADO_ASPIRANTE_RECHAZADO_ID:
+        revocar_tokens_portal_por_aspirante_id(cur, aspirante_id)
+
     return True
 
 def registrar_cambio_estado(
@@ -1749,55 +1759,18 @@ def registrar_cambio_estado(
     """
     try:
         with get_connection_context() as conn:
-            cur = conn.cursor()
-
-            # Obtener estado actual
-            cur.execute("""
-                SELECT estado_id
-                FROM aspirantes
-                WHERE id = %s
-            """, (aspirante_id,))
-            row = cur.fetchone()
-
-            if not row:
-                return False
-
-            estado_actual = row[0]
-
-            # Si ya está en ese estado, no hacer nada
-            if estado_actual == nuevo_estado_id:
-                return False
-
-            # Actualizar estado
-            cur.execute("""
-                UPDATE aspirantes
-                SET estado_id = %s,
-                    actualizado_en = now()
-                WHERE id = %s
-            """, (nuevo_estado_id, aspirante_id))
-
-            # Insertar historial
-            cur.execute("""
-                INSERT INTO aspirantes_estado_historial (
-                    aspirante_id,
-                    estado_id,
-                    fecha_cambio,
-                    usuario_id,
-                    origen_cambio,
-                    observacion,
-                    created_at
+            with conn.cursor() as cur:
+                cambio = registrar_cambio_estado_con_cursor(
+                    cur=cur,
+                    aspirante_id=aspirante_id,
+                    nuevo_estado_id=nuevo_estado_id,
+                    usuario_id=usuario_id,
+                    origen_cambio=origen_cambio,
+                    observacion=observacion,
                 )
-                VALUES (%s, %s, now(), %s, %s, %s, now())
-            """, (
-                aspirante_id,
-                nuevo_estado_id,
-                usuario_id,
-                origen_cambio,
-                observacion
-            ))
-
-            conn.commit()
-            return True
+                if cambio:
+                    conn.commit()
+                return cambio
 
     except Exception as e:
         print(f"❌ Error en registrar_cambio_estado: {e}")
@@ -2095,6 +2068,21 @@ def resolver_token_portal_general_o_error(token: str) -> dict:
                     detail="El token existe, pero ya expiró."
                 )
 
+            if aspirante_id:
+                cur.execute(
+                    "SELECT estado_id FROM aspirantes WHERE id = %s LIMIT 1",
+                    (aspirante_id,),
+                )
+                estado_asp_row = cur.fetchone()
+                if estado_asp_row and estado_asp_row[0] == ESTADO_ASPIRANTE_RECHAZADO_ID:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=(
+                            "Tu proceso fue rechazado. "
+                            "El acceso al portal ya no está disponible."
+                        ),
+                    )
+
             if tipo_portal == "aspirante" and not aspirante_id:
                 raise HTTPException(
                     status_code=409,
@@ -2330,6 +2318,13 @@ def crear_o_actualizar_creador_desde_aspirante(
         horas_live,
         dias_emision
     ))
+
+    migrar_token_portal_aspirante_a_creador(
+        cur=cur,
+        aspirante_id=aspirante_id,
+        creador_id=creador_id,
+        origen="incorporacion",
+    )
 
     return creador_id
 
@@ -2642,6 +2637,156 @@ def construir_mensaje_portal(
         return (
             f"Hola {nombre}, puedes ingresar al siguiente link:\n\n{url_portal}"
         )
+
+
+def enviar_inicio_portal(numero: str) -> bool:
+    """
+    Envía el acceso al portal por WhatsApp (aspirante o creador).
+    Usa contexto de tenant (token / phone_id) y la API de texto simple.
+    """
+    try:
+        print(f"\n📤 [PORTAL] Enviando inicio a {numero}")
+
+        persona = obtener_persona_portal_por_telefono(numero)
+
+        if not persona:
+            print(f"❌ [PORTAL] Número no registrado: {numero}")
+            return False
+
+        tipo_portal = persona.get("tipo_portal")
+        aspirante_id = persona.get("aspirante_id")
+        creador_id = persona.get("creador_id")
+        nombre = persona.get("nombre") or ""
+
+        print(
+            f"✅ [PORTAL] Detectado -> tipo={tipo_portal} | "
+            f"aspirante_id={aspirante_id} | creador_id={creador_id}"
+        )
+
+        portal_data = generar_url_portal(
+            tipo_portal=tipo_portal,
+            aspirante_id=aspirante_id,
+            creador_id=creador_id,
+            origen="whatsapp_onboarding",
+        )
+
+        url_portal = portal_data["url"]
+
+        plantilla = obtener_plantilla_mensaje_portal(tipo_portal)
+
+        mensaje_portal = construir_mensaje_portal(
+            plantilla=plantilla,
+            nombre=nombre,
+            url_portal=url_portal,
+            tipo_portal=tipo_portal,
+        )
+
+        if not mensaje_portal.strip():
+            raise ValueError("El mensaje del portal quedó vacío.")
+
+        try:
+            token = current_token.get()
+            phone_id = current_phone_id.get()
+        except LookupError as e:
+            print(f"❌ [PORTAL] Contexto de tenant no disponible: {e}")
+            return False
+
+        enviar_mensaje_texto_simple(
+            token=token,
+            numero_id=phone_id,
+            telefono_destino=numero.strip(),
+            texto=mensaje_portal,
+        )
+
+        print(f"🔗 [PORTAL] Enviado correctamente a {numero}: {url_portal}")
+
+        return True
+
+    except Exception as e:
+        print(f"❌ [PORTAL] Error enviando inicio portal: {e}")
+        return False
+
+
+def enviar_portal_bienvenida_incorporacion(numero: str) -> bool:
+    """
+    Envía por WhatsApp el link al portal tras incorporación aprobada
+    (p. ej. flujo en main_invitacion). Plantilla configurable en agencia
+    (mensaje_whatsapp_bienvenida_incorporacion) o texto por defecto.
+    """
+    try:
+        print(f"\n📤 [PORTAL] Enviando bienvenida incorporación a {numero}")
+
+        persona = obtener_persona_portal_por_telefono(numero)
+
+        if not persona:
+            print(f"❌ [PORTAL] Número no registrado: {numero}")
+            return False
+
+        tipo_portal = persona.get("tipo_portal")
+        aspirante_id = persona.get("aspirante_id")
+        creador_id = persona.get("creador_id")
+        nombre = persona.get("nombre") or ""
+
+        print(
+            f"✅ [PORTAL] Detectado -> tipo={tipo_portal} | "
+            f"aspirante_id={aspirante_id} | creador_id={creador_id}"
+        )
+
+        portal_data = obtener_url_portal_token_existente(
+            aspirante_id=aspirante_id,
+            creador_id=creador_id,
+        )
+
+        if not portal_data:
+            print(
+                f"❌ [PORTAL] Sin token activo para bienvenida incorporación | "
+                f"aspirante_id={aspirante_id} | creador_id={creador_id}"
+            )
+            return False
+
+        url_portal = portal_data["url"]
+        tipo_portal = portal_data.get("tipo_portal") or tipo_portal
+
+        plantilla = obtener_configuracion_agencia(
+            "mensaje_incorporacion"
+        )
+        if not plantilla:
+            plantilla = (
+                "🎉 ¡Felicitaciones {nombre}! Tu incorporación fue aprobada. "
+                "Accede a tu portal para ver los siguientes pasos:\n\n{url_portal}"
+            )
+
+        mensaje_portal = construir_mensaje_portal(
+            plantilla=plantilla,
+            nombre=nombre,
+            url_portal=url_portal,
+            tipo_portal=tipo_portal,
+        )
+
+        if not mensaje_portal.strip():
+            raise ValueError("El mensaje del portal quedó vacío.")
+
+        try:
+            token = current_token.get()
+            phone_id = current_phone_id.get()
+        except LookupError as e:
+            print(f"❌ [PORTAL] Contexto de tenant no disponible: {e}")
+            return False
+
+        enviar_mensaje_texto_simple(
+            token=token,
+            numero_id=phone_id,
+            telefono_destino=numero.strip(),
+            texto=mensaje_portal,
+        )
+
+        print(f"🔗 [PORTAL] Bienvenida incorporación enviada a {numero}: {url_portal}")
+
+        return True
+
+    except Exception as e:
+        print(f"❌ [PORTAL] Error enviando bienvenida incorporación: {e}")
+        return False
 
 
 # def resolver_token_portal_general_o_error(token: str) -> dict:

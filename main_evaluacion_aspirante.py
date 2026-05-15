@@ -21,6 +21,7 @@ from typing import Optional
 from main_auth import obtener_usuario_actual
 from enviar_msg_wp import enviar_plantilla_generica_parametros, enviar_plantilla_generica
 from DataBase import get_connection_context, obtener_cuenta_por_subdominio
+from utils_aspirantes import registrar_cambio_estado
 from evaluaciones import evaluar_perfil_pre, diagnostico_aspirantes_perfil_pre, obtener_guardar_pre_resumen
 # from main import crear_evento_google
 from main_webhook import  enviar_mensaje
@@ -139,27 +140,13 @@ def actualizar_estado_creador_preevaluacion(aspirante_id: int, estado: str):
     elif estado_id == 5:
         id_chatbot = 15
 
-    with get_connection_context() as conn:
-        cur = conn.cursor()
-
-        # A. Update original (Tabla aspirantes)
-        cur.execute("""
-                    UPDATE aspirantes
-                    SET estado_id = %s
-                    WHERE id = %s
-                    """, (estado_id, aspirante_id))
-
-        # B. Nuevo Update (Tabla aspirantes_perfil)
-        # Sincronizamos el estado del bot
-        # cur.execute("""
-        #             UPDATE aspirantes_perfil
-        #             SET id_chatbot_estado = %s,
-        #                 actualizado_en    = NOW()
-        #             WHERE aspirante_id = %s
-        #             """, (id_chatbot, aspirante_id))
-
-        # Confirmamos ambas transacciones
-        conn.commit()
+    registrar_cambio_estado(
+        aspirante_id=aspirante_id,
+        nuevo_estado_id=estado_id,
+        usuario_id=None,
+        origen_cambio="preevaluacion",
+        observacion=f"Estado actualizado desde pre-evaluación ({estado})",
+    )
 
     print(f"✅ Creador {aspirante_id} actualizado: Negocio={estado_id}, Chatbot={id_chatbot}")
 
