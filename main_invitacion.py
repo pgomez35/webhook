@@ -138,6 +138,7 @@ class InvitacionAsignacionUpdate(BaseModel):
     manager_id: int
     fecha_incorporacion: date
     observaciones: Optional[constr(max_length=300)] = None
+    reenviar_mensaje_incorporacion: bool = False
 
 
 class InvitacionDecisionFinalUpdate(BaseModel):
@@ -353,8 +354,13 @@ def ejecutar_incorporacion_invitacion(
         fecha_incorporacion=fecha_incorporacion,
     )
 
-    debe_enviar_whatsapp = reclamar_envio_mensaje_incorporacion(cur, invitacion_id)
-    telefono = obtener_numero_invitacion(invitacion) if debe_enviar_whatsapp else None
+    telefono = resolver_telefono_incorporacion(cur, invitacion)
+    debe_enviar_whatsapp = bool(telefono)
+
+    print(
+        f"📩 [INCORPORACION] invitacion_id={invitacion_id} | "
+        f"debe_enviar_whatsapp={debe_enviar_whatsapp} | telefono={telefono}"
+    )
 
     return {
         "creador_id": creador_id,
@@ -368,16 +374,28 @@ def procesar_bienvenida_incorporacion(
     telefono: Optional[str],
     debe_enviar: bool,
 ) -> bool:
-    """Envía WhatsApp de bienvenida tras commit; resetea flag si falla."""
+    """Envía WhatsApp de bienvenida tras commit; marca enviado solo si Meta responde OK."""
+    print(
+        f"📩 [INCORPORACION] procesar_bienvenida | "
+        f"invitacion_id={invitacion_id} | debe_enviar={debe_enviar} | telefono={telefono}"
+    )
+
     if not debe_enviar:
+        print("⚠️ [INCORPORACION] No se intenta WhatsApp (sin teléfono o flag desactivada)")
         return False
 
     enviado = enviar_mensaje_incorporacion_si_aplica(
         invitacion_id=invitacion_id,
         telefono=telefono,
     )
-    if not enviado:
+
+    if enviado:
+        marcar_mensaje_incorporacion_enviado(invitacion_id)
+        print(f"✅ [INCORPORACION] WhatsApp enviado y marcado invitacion_id={invitacion_id}")
+    else:
         resetear_envio_mensaje_incorporacion(invitacion_id)
+        print(f"⚠️ [INCORPORACION] WhatsApp no enviado; flag reseteado invitacion_id={invitacion_id}")
+
     return enviado
 
 
@@ -1152,10 +1170,56 @@ def obtener_numero_invitacion(invitacion: Dict[str, Any]) -> Optional[str]:
     )
 
 
+def resolver_telefono_incorporacion(cur, invitacion: Dict[str, Any]) -> Optional[str]:
+    """Teléfono/WhatsApp del aspirante para bienvenida por incorporación."""
+    telefono = obtener_numero_invitacion(invitacion)
+    if telefono and str(telefono).strip():
+        return str(telefono).strip()
+
+    aspirante_id = invitacion.get("aspirante_id")
+    if not aspirante_id:
+        return None
+
+    cur.execute(
+        """
+        SELECT whatsapp, telefono
+        FROM aspirantes
+        WHERE id = %s
+        LIMIT 1
+        """,
+        (aspirante_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+
+    return (row[0] or row[1] or "").strip() or None
+
+
+def marcar_mensaje_incorporacion_enviado(invitacion_id: int) -> None:
+    """Marca envío exitoso (después de WhatsApp, no antes)."""
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE invitaciones
+                    SET
+                        mensaje_incorporacion_enviado = true,
+                        fecha_mensaje_incorporacion = now(),
+                        actualizado_en = now()
+                    WHERE id = %s
+                    """,
+                    (invitacion_id,),
+                )
+                conn.commit()
+    except Exception as e:
+        print(f"⚠️ Error marcando mensaje incorporación enviado: {e}")
+
+
 def reclamar_envio_mensaje_incorporacion(cur, invitacion_id: int) -> bool:
     """
-    Marca el mensaje de incorporación como reclamado para evitar doble envío.
-    Solo devuelve True una vez.
+    Legado: reserva envío antes de WhatsApp. Ya no se usa para bloquear asignar-manager.
     """
     cur.execute("""
         UPDATE invitaciones
@@ -1171,6 +1235,20 @@ def reclamar_envio_mensaje_incorporacion(cur, invitacion_id: int) -> bool:
     return cur.fetchone() is not None
 
 
+def resetear_envio_mensaje_incorporacion_en_cursor(cur, invitacion_id: int) -> None:
+    cur.execute(
+        """
+        UPDATE invitaciones
+        SET
+            mensaje_incorporacion_enviado = false,
+            fecha_mensaje_incorporacion = NULL,
+            actualizado_en = now()
+        WHERE id = %s
+        """,
+        (invitacion_id,),
+    )
+
+
 def resetear_envio_mensaje_incorporacion(invitacion_id: int) -> None:
     """
     Si falla el envío por WhatsApp, permite reintentar luego.
@@ -1178,14 +1256,7 @@ def resetear_envio_mensaje_incorporacion(invitacion_id: int) -> None:
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                    UPDATE invitaciones
-                    SET
-                        mensaje_incorporacion_enviado = false,
-                        fecha_mensaje_incorporacion = NULL,
-                        actualizado_en = now()
-                    WHERE id = %s
-                """, (invitacion_id,))
+                resetear_envio_mensaje_incorporacion_en_cursor(cur, invitacion_id)
                 conn.commit()
 
     except Exception as e:
@@ -1639,8 +1710,19 @@ def asignar_manager_e_incorporacion(invitacion_id: int, data: InvitacionAsignaci
             )
 
             creador_id = incorporacion["creador_id"]
-            debe_enviar_whatsapp = incorporacion["debe_enviar_whatsapp"]
             telefono_bienvenida = incorporacion["telefono"]
+
+            if data.reenviar_mensaje_incorporacion:
+                resetear_envio_mensaje_incorporacion_en_cursor(cur, invitacion_id)
+
+            # Guardar incorporación = intentar WhatsApp si hay teléfono (no bloquear por flag viejo del PUT)
+            debe_enviar_whatsapp = bool(telefono_bienvenida)
+
+            print(
+                f"📩 [INCORPORACION] asignar-manager | "
+                f"reenviar={data.reenviar_mensaje_incorporacion} | "
+                f"debe_enviar_whatsapp={debe_enviar_whatsapp}"
+            )
 
             conn.commit()
 
