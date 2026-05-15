@@ -306,6 +306,81 @@ def puede_incorporarse(invitacion: Dict[str, Any]) -> bool:
     )
 
 
+def ejecutar_incorporacion_invitacion(
+    cur,
+    invitacion: Dict[str, Any],
+    invitacion_id: int,
+    manager_id: int,
+    fecha_incorporacion: date,
+    *,
+    estado_aspirante_id_anterior: Optional[int] = None,
+    usuario_id: Optional[int] = None,
+    origen_cambio: str = "asignar_manager",
+) -> Dict[str, Any]:
+    """
+    Incorporación completa (solo si puede_incorporarse):
+    estado aspirante → Incorporado, creadores, token portal, marca envío WhatsApp.
+    El mensaje se envía después del commit (ver procesar_bienvenida_incorporacion).
+    """
+    if not puede_incorporarse(invitacion):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No se puede incorporar: la invitación debe estar aceptada, "
+                "TikTok aprobado, y tener manager y fecha de incorporación."
+            ),
+        )
+
+    ya_estaba_incorporado = estado_aspirante_id_anterior == ESTADO_CREADOR_INCORPORADO
+
+    if not ya_estaba_incorporado:
+        registrar_cambio_estado_con_cursor(
+            cur=cur,
+            aspirante_id=invitacion["aspirante_id"],
+            nuevo_estado_id=ESTADO_CREADOR_INCORPORADO,
+            usuario_id=usuario_id,
+            origen_cambio=origen_cambio,
+            observacion=(
+                "Aspirante pasa a Incorporado tras asignación de manager "
+                "y fecha de incorporación"
+            ),
+        )
+
+    creador_id = crear_o_actualizar_creador_desde_aspirante(
+        cur=cur,
+        aspirante_id=invitacion["aspirante_id"],
+        manager_id=manager_id,
+        fecha_incorporacion=fecha_incorporacion,
+    )
+
+    debe_enviar_whatsapp = reclamar_envio_mensaje_incorporacion(cur, invitacion_id)
+    telefono = obtener_numero_invitacion(invitacion) if debe_enviar_whatsapp else None
+
+    return {
+        "creador_id": creador_id,
+        "debe_enviar_whatsapp": debe_enviar_whatsapp,
+        "telefono": telefono,
+    }
+
+
+def procesar_bienvenida_incorporacion(
+    invitacion_id: int,
+    telefono: Optional[str],
+    debe_enviar: bool,
+) -> bool:
+    """Envía WhatsApp de bienvenida tras commit; resetea flag si falla."""
+    if not debe_enviar:
+        return False
+
+    enviado = enviar_mensaje_incorporacion_si_aplica(
+        invitacion_id=invitacion_id,
+        telefono=telefono,
+    )
+    if not enviado:
+        resetear_envio_mensaje_incorporacion(invitacion_id)
+    return enviado
+
+
 def actualizar_estado_creador_según_invitacion(
     cur,
     aspirante_id: int,
@@ -955,10 +1030,11 @@ def listar_invitaciones(
 
 @router.put("/api/invitaciones/{invitacion_id}")
 def actualizar_invitacion(invitacion_id: int, data: InvitacionUpdate):
-    creador_id = None
-    enviar_bienvenida_incorporacion = False
-    telefono_bienvenida = None
-
+    """
+    Actualización general de la invitación (estados, fechas, observaciones).
+    La incorporación (creadores, token portal, WhatsApp) es solo vía
+    PATCH /api/invitaciones/{id}/asignar-manager.
+    """
     with get_connection_context() as conn:
         with conn.cursor() as cur:
             actual = obtener_invitacion_por_id(cur, invitacion_id)
@@ -1054,57 +1130,20 @@ def actualizar_invitacion(invitacion_id: int, data: InvitacionUpdate):
             ))
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
-
-            if puede_incorporarse(invitacion):
-                ya_estaba_incorporado = (
-                    actual.get("estado_aspirante_id") == ESTADO_CREADOR_INCORPORADO
-                )
-
-                if not ya_estaba_incorporado:
-                    registrar_cambio_estado_con_cursor(
-                        cur=cur,
-                        aspirante_id=invitacion["aspirante_id"],
-                        nuevo_estado_id=ESTADO_CREADOR_INCORPORADO,
-                        usuario_id=usuario_invita,
-                        origen_cambio="actualizar_invitacion",
-                        observacion=(
-                            "Aspirante pasa a Incorporado tras aceptación "
-                            "de invitación y aprobación TikTok"
-                        ),
-                    )
-
-                creador_id = crear_o_actualizar_creador_desde_aspirante(
-                    cur=cur,
-                    aspirante_id=invitacion["aspirante_id"],
-                    manager_id=manager_id,
-                    fecha_incorporacion=fecha_incorporacion,
-                )
-
-                if reclamar_envio_mensaje_incorporacion(cur, invitacion_id):
-                    enviar_bienvenida_incorporacion = True
-                    telefono_bienvenida = obtener_numero_invitacion(invitacion)
+            actualizar_estado_creador_según_invitacion(
+                cur, invitacion["aspirante_id"], invitacion
+            )
 
             conn.commit()
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
 
-    mensaje_incorporacion_enviado = False
-    if enviar_bienvenida_incorporacion:
-        mensaje_incorporacion_enviado = enviar_mensaje_incorporacion_si_aplica(
-            invitacion_id=invitacion_id,
-            telefono=telefono_bienvenida,
-        )
-
-        if not mensaje_incorporacion_enviado:
-            resetear_envio_mensaje_incorporacion(invitacion_id)
-
     return {
         "success": True,
         "message": "Invitación actualizada correctamente",
         "data": invitacion,
-        "creador_id": creador_id,
-        "mensaje_incorporacion_enviado": mensaje_incorporacion_enviado,
     }
+
 
 def obtener_numero_invitacion(invitacion: Dict[str, Any]) -> Optional[str]:
     return (
@@ -1551,11 +1590,19 @@ def rechazar_tiktok(invitacion_id: int, data: InvitacionDecisionFinalUpdate):
 
 
 # =========================================================
-# ENDPOINT 14: ASIGNAR MANAGER E INCORPORAR
+# ENDPOINT 14: ASIGNAR MANAGER E INCORPORAR (flujo dedicado)
 # =========================================================
 
 @router.patch("/api/invitaciones/{invitacion_id}/asignar-manager")
 def asignar_manager_e_incorporacion(invitacion_id: int, data: InvitacionAsignacionUpdate):
+    """
+    Guardar manager y fecha de incorporación.
+    Ejecuta incorporación: creadores, migración de token portal y WhatsApp de bienvenida.
+    """
+    creador_id = None
+    debe_enviar_whatsapp = False
+    telefono_bienvenida = None
+
     with get_connection_context() as conn:
         with conn.cursor() as cur:
             actual = obtener_invitacion_por_id(cur, invitacion_id)
@@ -1575,20 +1622,44 @@ def asignar_manager_e_incorporacion(invitacion_id: int, data: InvitacionAsignaci
                 data.manager_id,
                 data.fecha_incorporacion,
                 data.observaciones if data.observaciones is not None else actual["observaciones"],
-                invitacion_id
+                invitacion_id,
             ))
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
-            actualizar_estado_creador_según_invitacion(cur, invitacion["aspirante_id"], invitacion)
+
+            incorporacion = ejecutar_incorporacion_invitacion(
+                cur=cur,
+                invitacion=invitacion,
+                invitacion_id=invitacion_id,
+                manager_id=data.manager_id,
+                fecha_incorporacion=data.fecha_incorporacion,
+                estado_aspirante_id_anterior=actual.get("estado_aspirante_id"),
+                usuario_id=actual.get("usuario_invita"),
+                origen_cambio="asignar_manager",
+            )
+
+            creador_id = incorporacion["creador_id"]
+            debe_enviar_whatsapp = incorporacion["debe_enviar_whatsapp"]
+            telefono_bienvenida = incorporacion["telefono"]
+
             conn.commit()
 
             invitacion = obtener_invitacion_por_id(cur, invitacion_id)
 
-            return {
-                "success": True,
-                "message": "Manager asignado e incorporación actualizada correctamente",
-                "data": invitacion
-            }
+    mensaje_incorporacion_enviado = procesar_bienvenida_incorporacion(
+        invitacion_id=invitacion_id,
+        telefono=telefono_bienvenida,
+        debe_enviar=debe_enviar_whatsapp,
+    )
+
+    return {
+        "success": True,
+        "message": "Manager asignado e incorporación completada correctamente",
+        "data": invitacion,
+        "creador_id": creador_id,
+        "mensaje_incorporacion_enviado": mensaje_incorporacion_enviado,
+        "puede_incorporarse": puede_incorporarse(invitacion),
+    }
 
 # =========================================================
 # ENDPOINT 6: ACTUALIZACIÓN GENERAL
