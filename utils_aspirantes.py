@@ -8,6 +8,7 @@ import logging
 
 from DataBase import get_connection_context, guardar_mensaje_nuevo, paso_limite_24h, buscar_usuario_por_telefono, \
     actualizar_phone_info_db, obtener_configuracion_agencia
+from creadores_catalogo import SQL_CREADOR_ESTADO_ID_ACTIVO, CREADOR_ESTADO_NOMBRE_ACTIVO
 from enviar_msg_wp import enviar_mensaje_texto_simple, enviar_plantilla_generica
 from tenant import current_business_name, current_token, current_phone_id
 from portal_access_tokens import (
@@ -2115,7 +2116,7 @@ def resolver_token_portal_general_o_error(token: str) -> dict:
 
                     c.nombre AS creador_nombre,
                     c.usuario_tiktok AS creador_usuario_tiktok,
-                    c.estado AS creador_estado,
+                    ce_creador.nombre AS creador_estado,
                     c.categoria AS creador_categoria
 
                 FROM portal_access_tokens pat
@@ -2125,6 +2126,8 @@ def resolver_token_portal_general_o_error(token: str) -> dict:
                     ON ae.id = a.estado_id
                 LEFT JOIN creadores c
                     ON c.id = pat.creador_id
+                LEFT JOIN creadores_estados ce_creador
+                    ON ce_creador.id = c.estado_id
                 WHERE pat.token = %s
                 LIMIT 1
             """, (token,))
@@ -2238,7 +2241,7 @@ def crear_o_actualizar_creador_desde_aspirante(
     # -------------------------------
     # 3. INSERT / UPDATE en creadores (CORE)
     # -------------------------------
-    cur.execute("""
+    cur.execute(f"""
         INSERT INTO creadores (
             aspirante_id,
             nombre,
@@ -2247,12 +2250,12 @@ def crear_o_actualizar_creador_desde_aspirante(
             telefono,
             foto,
             categoria,
-            estado
+            estado_id
         )
         VALUES (
             %s, %s, %s, %s, %s, %s,
             NULL,
-            'activo'
+            {SQL_CREADOR_ESTADO_ID_ACTIVO}
         )
         ON CONFLICT (aspirante_id)
         DO UPDATE SET
@@ -2261,7 +2264,7 @@ def crear_o_actualizar_creador_desde_aspirante(
             email = EXCLUDED.email,
             telefono = EXCLUDED.telefono,
             foto = EXCLUDED.foto,
-            estado = 'activo'
+            estado_id = EXCLUDED.estado_id
         RETURNING id
     """, (
         aspirante_id,
@@ -2342,12 +2345,13 @@ def obtener_creadores_activos_db():
                         c.nombre,
                         c.usuario_tiktok,
                         COALESCE(c.categoria, 'Sin categoría') AS categoria,
-                        COALESCE(c.estado, 'activo') AS estado
+                        ce.nombre AS estado
                     FROM creadores c
-                    WHERE COALESCE(c.estado, 'activo') = 'activo'
-                    ORDER BY 
-                        c.id DESC;
-                """)
+                    INNER JOIN creadores_estados ce ON ce.id = c.estado_id
+                    WHERE ce.nombre = %s
+                      AND COALESCE(ce.activo, true) = true
+                    ORDER BY c.id DESC;
+                """, (CREADOR_ESTADO_NOMBRE_ACTIVO,))
 
                 rows = cur.fetchall()
                 columns = [desc[0] for desc in cur.description]
@@ -2394,10 +2398,12 @@ def obtener_persona_portal_por_telefono(telefono: str) -> Optional[dict]:
                         c.aspirante_id,
                         COALESCE(c.nombre, c.usuario_tiktok, 'creador') AS nombre
                     FROM creadores c
+                    INNER JOIN creadores_estados ce ON ce.id = c.estado_id
                     WHERE c.telefono = %s
-                      AND COALESCE(c.estado, 'activo') = 'activo'
+                      AND ce.nombre = %s
+                      AND COALESCE(ce.activo, true) = true
                     LIMIT 1
-                """, (telefono,))
+                """, (telefono, CREADOR_ESTADO_NOMBRE_ACTIVO))
 
                 row = cur.fetchone()
 
@@ -2489,12 +2495,14 @@ def obtener_aspirante_portal_por_telefono(telefono: str) -> Optional[dict]:
                         COALESCE(a.nombre_real, a.nickname, a.usuario, 'aspirante') AS nombre
                     FROM creadores c
                     LEFT JOIN aspirantes a ON a.id = c.aspirante_id
+                    INNER JOIN creadores_estados ce ON ce.id = c.estado_id
                     WHERE c.telefono = %s
-                      AND COALESCE(c.estado, 'activo') = 'activo'
+                      AND ce.nombre = %s
+                      AND COALESCE(ce.activo, true) = true
                       AND c.aspirante_id IS NOT NULL
                     LIMIT 1
                     """,
-                    (telefono,),
+                    (telefono, CREADOR_ESTADO_NOMBRE_ACTIVO),
                 )
                 row = cur.fetchone()
                 if row:

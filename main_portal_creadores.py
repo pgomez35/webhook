@@ -408,9 +408,10 @@ def portal_creador_inicio(creador_id: int = Query(..., gt=0)):
                         c.id,
                         c.nombre,
                         c.usuario_tiktok,
-                        c.estado,
+                        ce.nombre AS estado,
                         COALESCE(cei.completada, false) AS encuesta_inicial_completada
                     FROM creadores c
+                    LEFT JOIN creadores_estados ce ON ce.id = c.estado_id
                     LEFT JOIN creadores_encuesta_inicial cei
                         ON cei.creador_id = c.id
                     WHERE c.id = %s

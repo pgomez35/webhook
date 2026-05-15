@@ -22,8 +22,61 @@ from schemas import (
     SeguimientoCreadorConManager,
 )
 from utils_aspirantes import obtener_creadores_activos_db
+from creadores_catalogo import CREADOR_ESTADO_NOMBRE_ACTIVO
 
 router = APIRouter()
+
+
+def _resolver_estado_id_creador(
+    cur,
+    estado_id: Optional[int],
+    estado_legacy: Optional[str],
+) -> int:
+    if estado_id is not None:
+        cur.execute(
+            "SELECT id FROM creadores_estados WHERE id = %s "
+            "AND COALESCE(activo, true) = true LIMIT 1",
+            (estado_id,),
+        )
+        if not cur.fetchone():
+            raise HTTPException(
+                status_code=400,
+                detail=f"estado_id de creador no válido o inactivo: {estado_id}",
+            )
+        return estado_id
+
+    if estado_legacy and str(estado_legacy).strip():
+        leg = str(estado_legacy).strip()
+        if leg.lower() in ("activo", "active"):
+            cur.execute(
+                "SELECT id FROM creadores_estados WHERE nombre = %s LIMIT 1",
+                (CREADOR_ESTADO_NOMBRE_ACTIVO,),
+            )
+        else:
+            cur.execute(
+                "SELECT id FROM creadores_estados WHERE nombre ILIKE %s "
+                "AND COALESCE(activo, true) = true LIMIT 1",
+                (leg,),
+            )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Estado de creador no reconocido: {estado_legacy}",
+            )
+        return row[0]
+
+    cur.execute(
+        "SELECT id FROM creadores_estados WHERE nombre = %s LIMIT 1",
+        (CREADOR_ESTADO_NOMBRE_ACTIVO,),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(
+            status_code=500,
+            detail="Falta catálogo creadores_estados (ej. fila 'Activo').",
+        )
+    return row[0]
 
 
 # =========================================================
@@ -312,7 +365,7 @@ def obtener_creador_activo(id: int):
                         c.telefono,
                         c.foto,
                         c.categoria,
-                        c.estado,
+                        ce.nombre AS estado,
 
                         d.manager_id,
                         au.nombre_completo AS manager_nombre,
@@ -334,6 +387,7 @@ def obtener_creador_activo(id: int):
                         ON d.creador_id = c.id
                     LEFT JOIN administradores au
                         ON au.id = d.manager_id
+                    LEFT JOIN creadores_estados ce ON ce.id = c.estado_id
                     WHERE c.id = %s
                     LIMIT 1
                 """, (id,))
@@ -365,6 +419,10 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
         with get_connection_context() as conn:
             with conn.cursor() as cur:
 
+                estado_id = _resolver_estado_id_creador(
+                    cur, data.get("estado_id"), data.get("estado")
+                )
+
                 # 1. Insertar datos base en creadores
                 cur.execute("""
                     INSERT INTO creadores (
@@ -375,7 +433,7 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
                         telefono,
                         foto,
                         categoria,
-                        estado
+                        estado_id
                     )
                     VALUES (
                         %(aspirante_id)s,
@@ -385,10 +443,10 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
                         %(telefono)s,
                         %(foto)s,
                         %(categoria)s,
-                        COALESCE(%(estado)s, 'activo')
+                        %(estado_id)s
                     )
                     RETURNING id;
-                """, data)
+                """, {**data, "estado_id": estado_id})
 
                 creador_id = cur.fetchone()[0]
 
@@ -443,7 +501,7 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
                         c.telefono,
                         c.foto,
                         c.categoria,
-                        c.estado,
+                        ce.nombre AS estado,
 
                         d.manager_id,
                         d.horario_lives,
@@ -461,6 +519,7 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
                     FROM creadores c
                     LEFT JOIN creadores_detalle d
                         ON d.creador_id = c.id
+                    LEFT JOIN creadores_estados ce ON ce.id = c.estado_id
                     WHERE c.id = %s
                 """, (creador_id,))
 
@@ -496,6 +555,9 @@ def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
                     )
 
                 # 2. Actualizar tabla principal
+                estado_id = _resolver_estado_id_creador(
+                    cur, data.get("estado_id"), data.get("estado")
+                )
                 cur.execute("""
                     UPDATE creadores
                     SET
@@ -506,10 +568,10 @@ def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
                         telefono = %(telefono)s,
                         foto = %(foto)s,
                         categoria = %(categoria)s,
-                        estado = %(estado)s,
+                        estado_id = %(estado_id)s,
                         updated_at = now()
                     WHERE id = %(id)s
-                """, {**data, "id": id})
+                """, {**data, "id": id, "estado_id": estado_id})
 
                 # 3. Insertar o actualizar detalle
                 cur.execute("""
@@ -575,7 +637,7 @@ def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
                         c.telefono,
                         c.foto,
                         c.categoria,
-                        c.estado,
+                        ce.nombre AS estado,
 
                         d.manager_id,
                         d.horario_lives,
@@ -593,6 +655,7 @@ def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
                     FROM creadores c
                     LEFT JOIN creadores_detalle d
                         ON d.creador_id = c.id
+                    LEFT JOIN creadores_estados ce ON ce.id = c.estado_id
                     WHERE c.id = %s
                 """, (id,))
 
@@ -619,8 +682,6 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
                         id,
                         usuario AS usuario_tiktok,
                         foto_url AS foto,
-                        NULL AS categoria,
-                        'activo' AS estado,
                         nickname AS nombre
                     FROM aspirantes
                     WHERE id = %s
@@ -629,21 +690,42 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
                 if not row:
                     raise HTTPException(status_code=404, detail="Creador no encontrado")
 
-                creador = dict(zip([desc[0] for desc in cur.description], row))
+                aspirante_id, usuario_tiktok, foto, nombre = row
+                estado_id = _resolver_estado_id_creador(cur, None, None)
 
-                valores = {
-                    "aspirante_id": creador["id"],
-                    "usuario_tiktok": creador["usuario_tiktok"],
-                    "email": None,
-                    "telefono": None,
-                    "foto": creador["foto"],
-                    "categoria": creador["categoria"],
-                    "estado": creador["estado"],
-                    "nombre": creador["nombre"],
+                cur.execute(
+                    """
+                    INSERT INTO creadores (
+                        aspirante_id,
+                        nombre,
+                        usuario_tiktok,
+                        email,
+                        telefono,
+                        foto,
+                        categoria,
+                        estado_id
+                    )
+                    VALUES (
+                        %s, %s, %s, NULL, NULL, %s, NULL, %s
+                    )
+                    ON CONFLICT (aspirante_id)
+                    DO UPDATE SET
+                        nombre = EXCLUDED.nombre,
+                        usuario_tiktok = EXCLUDED.usuario_tiktok,
+                        foto = EXCLUDED.foto,
+                        estado_id = EXCLUDED.estado_id,
+                        updated_at = now()
+                    RETURNING id
+                    """,
+                    (aspirante_id, nombre, usuario_tiktok, foto, estado_id),
+                )
+                creador_id = cur.fetchone()[0]
+
+                detalle = {
                     "manager_id": data.manager_id,
-                    "fecha_incorporacion": data.fecha_incorporacion or date.today(),
                     "horario_lives": None,
                     "tiempo_disponible": None,
+                    "fecha_incorporacion": data.fecha_incorporacion or date.today(),
                     "fecha_graduacion": None,
                     "seguidores": None,
                     "videos": None,
@@ -653,21 +735,101 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
                     "numero_partidas": None,
                     "dias_emision": None,
                 }
-
-                cur.execute("""
-                    INSERT INTO creadores (
-                        aspirante_id, usuario_tiktok, email, telefono, foto, categoria, estado, nombre,
-                        manager_id, horario_lives, tiempo_disponible, fecha_incorporacion, fecha_graduacion,
-                        seguidores, videos, me_gusta, diamantes, horas_live, numero_partidas, dias_emision
-                    ) VALUES (
-                        %(aspirante_id)s, %(usuario_tiktok)s, %(email)s, %(telefono)s, %(foto)s, %(categoria)s, %(estado)s, %(nombre)s,
-                        %(manager_id)s, %(horario_lives)s, %(tiempo_disponible)s, %(fecha_incorporacion)s, %(fecha_graduacion)s,
-                        %(seguidores)s, %(videos)s, %(me_gusta)s, %(diamantes)s, %(horas_live)s, %(numero_partidas)s, %(dias_emision)s
+                cur.execute(
+                    """
+                    INSERT INTO creadores_detalle (
+                        creador_id,
+                        manager_id,
+                        horario_lives,
+                        tiempo_disponible,
+                        fecha_incorporacion,
+                        fecha_graduacion,
+                        seguidores,
+                        videos,
+                        me_gusta,
+                        diamantes,
+                        horas_live,
+                        numero_partidas,
+                        dias_emision,
+                        created_at,
+                        updated_at
                     )
-                    RETURNING *;
-                """, valores)
-                new_row = cur.fetchone()
+                    VALUES (
+                        %s,
+                        %(manager_id)s,
+                        %(horario_lives)s,
+                        %(tiempo_disponible)s,
+                        %(fecha_incorporacion)s,
+                        %(fecha_graduacion)s,
+                        %(seguidores)s,
+                        %(videos)s,
+                        %(me_gusta)s,
+                        %(diamantes)s,
+                        %(horas_live)s,
+                        %(numero_partidas)s,
+                        %(dias_emision)s,
+                        now(),
+                        now()
+                    )
+                    ON CONFLICT (creador_id)
+                    DO UPDATE SET
+                        manager_id = COALESCE(
+                            EXCLUDED.manager_id, creadores_detalle.manager_id
+                        ),
+                        horario_lives = COALESCE(
+                            EXCLUDED.horario_lives, creadores_detalle.horario_lives
+                        ),
+                        tiempo_disponible = COALESCE(
+                            EXCLUDED.tiempo_disponible,
+                            creadores_detalle.tiempo_disponible,
+                        ),
+                        fecha_incorporacion = COALESCE(
+                            creadores_detalle.fecha_incorporacion,
+                            EXCLUDED.fecha_incorporacion,
+                        ),
+                        fecha_graduacion = COALESCE(
+                            EXCLUDED.fecha_graduacion,
+                            creadores_detalle.fecha_graduacion,
+                        ),
+                        updated_at = now()
+                    """,
+                    {"creador_id": creador_id, **detalle},
+                )
+
                 conn.commit()
+
+                cur.execute(
+                    """
+                    SELECT
+                        c.id,
+                        c.aspirante_id,
+                        c.nombre,
+                        c.usuario_tiktok,
+                        c.email,
+                        c.telefono,
+                        c.foto,
+                        c.categoria,
+                        ce.nombre AS estado,
+                        d.manager_id,
+                        d.horario_lives,
+                        d.tiempo_disponible,
+                        d.fecha_incorporacion,
+                        d.fecha_graduacion,
+                        d.seguidores,
+                        d.videos,
+                        d.me_gusta,
+                        d.diamantes,
+                        d.horas_live,
+                        d.numero_partidas,
+                        d.dias_emision
+                    FROM creadores c
+                    LEFT JOIN creadores_detalle d ON d.creador_id = c.id
+                    LEFT JOIN creadores_estados ce ON ce.id = c.estado_id
+                    WHERE c.id = %s
+                    """,
+                    (creador_id,),
+                )
+                new_row = cur.fetchone()
                 columns = [desc[0] for desc in cur.description]
                 return dict(zip(columns, new_row))
     except HTTPException:
@@ -837,9 +999,9 @@ async def cargar_estadisticas_excel(file: UploadFile = File(...)):
                     creados += 1
 
                     cur.execute("""
-                        UPDATE creadores
-                        SET seguidores = %s, me_gusta = %s, videos = %s
-                        WHERE id = %s
+                        UPDATE creadores_detalle
+                        SET seguidores = %s, me_gusta = %s, videos = %s, updated_at = now()
+                        WHERE creador_id = %s
                     """, (seguidores, me_gusta, videos, creador_activo_id))
                     actualizados += 1
 

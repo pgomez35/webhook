@@ -640,7 +640,8 @@ class CreadorActivoBase(BaseModel):
     telefono: Optional[str] = None
     foto: Optional[str] = None
     categoria: Optional[str] = None
-    estado: Optional[str] = None
+    estado_id: Optional[int] = None
+    estado: Optional[str] = None  # legado: nombre en creadores_estados o 'activo'
     manager_id: Optional[int] = None
     horario_lives: Optional[str] = None
     tiempo_disponible: Optional[int] = None
