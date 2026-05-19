@@ -2329,6 +2329,17 @@ def crear_o_actualizar_creador_desde_aspirante(
         origen="incorporacion",
     )
 
+    # Ya no aparece en listados de aspirantes (mensajería / contactos)
+    cur.execute(
+        """
+        UPDATE aspirantes
+        SET activo = false,
+            actualizado_en = now()
+        WHERE id = %s
+        """,
+        (aspirante_id,),
+    )
+
     return creador_id
 
 def obtener_creadores_activos_db():

@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from psycopg2.errors import UniqueViolation
 
 from schemas import ActualizacionContactoInfo
+from creadores_catalogo import CREADOR_ESTADO_NOMBRE_ACTIVO
 from psycopg2.extras import RealDictCursor
 
 from datetime import date, datetime, timedelta, timezone
@@ -487,6 +488,7 @@ def obtener_contactos_db_nueva(tipo=None, search=None, estado=None, leidos=None)
                         ON nl.telefono = a.whatsapp
                     WHERE a.whatsapp IS NOT NULL
                       AND a.whatsapp <> ''
+                      AND COALESCE(a.activo, true) = true
                     """
                     if estado:
                         q += " AND ae.nombre = %s"
@@ -510,7 +512,7 @@ def obtener_contactos_db_nueva(tipo=None, search=None, estado=None, leidos=None)
                         ua.ultima_actividad,
                         COALESCE(nl.cantidad, 0) AS no_leidos
                     FROM creadores c
-                    LEFT JOIN creadores_estados ce
+                    INNER JOIN creadores_estados ce
                         ON ce.id = c.estado_id
                     LEFT JOIN ultima_actividad ua 
                         ON ua.telefono = c.telefono
@@ -518,7 +520,10 @@ def obtener_contactos_db_nueva(tipo=None, search=None, estado=None, leidos=None)
                         ON nl.telefono = c.telefono
                     WHERE c.telefono IS NOT NULL
                       AND c.telefono <> ''
+                      AND ce.nombre = %s
+                      AND COALESCE(ce.activo, true) = true
                     """
+                    params.append(CREADOR_ESTADO_NOMBRE_ACTIVO)
                     bloques.append(q)
 
                 # =====================
@@ -637,6 +642,7 @@ def obtener_contactos_db_nueva_Version_alternartiva(tipo=None, search=None, esta
                         ON a.estado_id = ae.id
                     WHERE a.whatsapp IS NOT NULL
                       AND a.whatsapp <> ''
+                      AND COALESCE(a.activo, true) = true
                     """
                     if estado:
                         q += " AND ae.nombre = %s"
@@ -658,11 +664,14 @@ def obtener_contactos_db_nueva_Version_alternartiva(tipo=None, search=None, esta
                         c.telefono AS telefono,
                         ce.nombre AS estado
                     FROM creadores c
-                    LEFT JOIN creadores_estados ce
+                    INNER JOIN creadores_estados ce
                         ON ce.id = c.estado_id
                     WHERE c.telefono IS NOT NULL
                       AND c.telefono <> ''
+                      AND ce.nombre = %s
+                      AND COALESCE(ce.activo, true) = true
                     """
+                    params.append(CREADOR_ESTADO_NOMBRE_ACTIVO)
                     bloques_contactos.append(q)
 
                 # =====================
