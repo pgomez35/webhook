@@ -2781,19 +2781,52 @@ def enviar_portal_bienvenida_incorporacion(numero: str) -> bool:
             print(f"❌ [PORTAL] Contexto de tenant no disponible: {e}")
             return False
 
-        enviar_mensaje_texto_simple(
+        codigo, respuesta = enviar_mensaje_texto_simple(
             token=token,
             numero_id=phone_id,
             telefono_destino=numero.strip(),
             texto=mensaje_portal,
         )
 
-        print(f"🔗 [PORTAL] Bienvenida incorporación enviada a {numero}: {url_portal}")
+        message_id_meta = None
+        if isinstance(respuesta, dict) and respuesta.get("messages"):
+            try:
+                message_id_meta = respuesta["messages"][0].get("id")
+            except Exception:
+                message_id_meta = None
 
-        return True
+        guardar_mensaje_nuevo(
+            telefono=numero.strip(),
+            contenido=mensaje_portal,
+            direccion="enviado",
+            tipo="text",
+            message_id_meta=message_id_meta,
+            estado="sent" if codigo and codigo < 300 else "error",
+        )
+
+        ok = bool(codigo and codigo < 300)
+        if ok:
+            print(f"🔗 [PORTAL] Bienvenida incorporación enviada a {numero}: {url_portal}")
+        else:
+            print(
+                f"⚠️ [PORTAL] Bienvenida incorporación con error Meta "
+                f"(código {codigo}) para {numero}"
+            )
+        return ok
 
     except Exception as e:
         print(f"❌ [PORTAL] Error enviando bienvenida incorporación: {e}")
+        try:
+            guardar_mensaje_nuevo(
+                telefono=numero.strip(),
+                contenido=f"ERROR bienvenida incorporación: {e}",
+                direccion="enviado",
+                tipo="text",
+                message_id_meta=None,
+                estado="error",
+            )
+        except Exception:
+            pass
         return False
 
 
