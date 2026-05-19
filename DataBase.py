@@ -502,20 +502,22 @@ def obtener_contactos_db_nueva(tipo=None, search=None, estado=None, leidos=None)
                     SELECT 
                         c.id,
                         'creador' AS tipo,
-                        c.usuario,
-                        c.nickname,
-                        c.nombre_real AS nombre,
-                        c.whatsapp AS telefono,
-                        c.estado_operativo AS estado,
+                        c.usuario_tiktok AS usuario,
+                        NULL AS nickname,
+                        c.nombre AS nombre,
+                        c.telefono AS telefono,
+                        ce.nombre AS estado,
                         ua.ultima_actividad,
                         COALESCE(nl.cantidad, 0) AS no_leidos
                     FROM creadores c
+                    LEFT JOIN creadores_estados ce
+                        ON ce.id = c.estado_id
                     LEFT JOIN ultima_actividad ua 
-                        ON ua.telefono = c.whatsapp
+                        ON ua.telefono = c.telefono
                     LEFT JOIN no_leidos nl 
-                        ON nl.telefono = c.whatsapp
-                    WHERE c.whatsapp IS NOT NULL
-                      AND c.whatsapp <> ''
+                        ON nl.telefono = c.telefono
+                    WHERE c.telefono IS NOT NULL
+                      AND c.telefono <> ''
                     """
                     bloques.append(q)
 
@@ -650,14 +652,16 @@ def obtener_contactos_db_nueva_Version_alternartiva(tipo=None, search=None, esta
                     SELECT 
                         c.id,
                         'creador' AS tipo,
-                        c.usuario,
-                        c.nickname,
-                        c.nombre_real AS nombre,
-                        c.whatsapp AS telefono,
-                        c.estado_operativo AS estado
+                        c.usuario_tiktok AS usuario,
+                        NULL AS nickname,
+                        c.nombre AS nombre,
+                        c.telefono AS telefono,
+                        ce.nombre AS estado
                     FROM creadores c
-                    WHERE c.whatsapp IS NOT NULL
-                      AND c.whatsapp <> ''
+                    LEFT JOIN creadores_estados ce
+                        ON ce.id = c.estado_id
+                    WHERE c.telefono IS NOT NULL
+                      AND c.telefono <> ''
                     """
                     bloques_contactos.append(q)
 
