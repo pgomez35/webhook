@@ -2,16 +2,92 @@
 Estado temporal de flujos WhatsApp por tenant (tabla whatsapp_flujos).
 Sustituye Redis / memoria para onboarding y pasos de conversación.
 """
+import os
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Dict, Optional
 import json
 
+from dotenv import load_dotenv
+
 from DataBase import get_connection_context
+
+# Cargar .env del directorio del proyecto (no depende del cwd de uvicorn)
+_ENV_FILE = Path(__file__).resolve().parent / ".env"
+load_dotenv(_ENV_FILE)
+load_dotenv()  # por si el proceso arrancó desde otra ruta
 
 # TTL onboarding (minutos de inactividad antes de reinicio)
 TTL_ONBOARDING_USUARIO_TIKTOK = 5
 TTL_ONBOARDING_CONFIRMACION = 3
 TTL_ONBOARDING_ENCUESTA = 5
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return default
+
+
+def _ttl_global_override() -> Optional[int]:
+    """WHATSAPP_ONBOARDING_TTL_MINUTOS aplica a todos los pasos (útil en tutorial/dev)."""
+    raw = os.getenv("WHATSAPP_ONBOARDING_TTL_MINUTOS")
+    if raw is None or not str(raw).strip():
+        return None
+    return _env_int("WHATSAPP_ONBOARDING_TTL_MINUTOS", TTL_ONBOARDING_USUARIO_TIKTOK)
+
+
+def ttl_onboarding_usuario() -> int:
+    g = _ttl_global_override()
+    if g is not None:
+        return g
+    return _env_int("WHATSAPP_TTL_USUARIO_TIKTOK", TTL_ONBOARDING_USUARIO_TIKTOK)
+
+
+def ttl_onboarding_confirmacion() -> int:
+    g = _ttl_global_override()
+    if g is not None:
+        return g
+    return _env_int("WHATSAPP_TTL_CONFIRMACION", TTL_ONBOARDING_CONFIRMACION)
+
+
+def ttl_onboarding_encuesta() -> int:
+    g = _ttl_global_override()
+    if g is not None:
+        return g
+    return _env_int("WHATSAPP_TTL_ENCUESTA", TTL_ONBOARDING_ENCUESTA)
+
+
+def _valor_activo(valor: Any) -> bool:
+    if valor is None:
+        return False
+    return str(valor).strip().lower() in ("1", "true", "yes", "on", "si", "sí")
+
+
+def onboarding_sin_aviso_expiracion() -> bool:
+    """
+    Oculta avisos de sesión expirada si WHATSAPP_ONBOARDING_SIN_AVISO_EXPIRACION=1 en .env.
+    """
+    return _valor_activo(os.getenv("WHATSAPP_ONBOARDING_SIN_AVISO_EXPIRACION"))
+
+
+def texto_aviso_sesion_expirada_onboarding(reinicio_corto: bool = False) -> str:
+    """
+    Texto de aviso por expiración, o cadena vacía si WHATSAPP_ONBOARDING_SIN_AVISO_EXPIRACION=1.
+    reinicio_corto: mensaje al fallar confirmación SÍ/NO (sin repetir bienvenida completa).
+    """
+    if onboarding_sin_aviso_expiracion():
+        return ""
+    if reinicio_corto:
+        return (
+            "⏳ La sesión expiró por inactividad. "
+            "Escribe nuevamente tu *usuario de TikTok* (sin @)."
+        )
+    return "⏳ Tu sesión expiró por inactividad. Empecemos de nuevo.\n\n"
 
 
 def obtener_flujo_whatsapp(numero: str) -> Optional[Dict[str, Any]]:
@@ -119,6 +195,23 @@ def eliminar_flujo_whatsapp(numero: str) -> None:
                 (numero,),
             )
             conn.commit()
+
+
+__all__ = [
+    "TTL_ONBOARDING_USUARIO_TIKTOK",
+    "TTL_ONBOARDING_CONFIRMACION",
+    "TTL_ONBOARDING_ENCUESTA",
+    "obtener_flujo_whatsapp",
+    "flujo_whatsapp_expirado",
+    "actualizar_flujo_whatsapp",
+    "eliminar_flujo_whatsapp",
+    "limpiar_flujos_whatsapp_expirados",
+    "onboarding_sin_aviso_expiracion",
+    "texto_aviso_sesion_expirada_onboarding",
+    "ttl_onboarding_usuario",
+    "ttl_onboarding_confirmacion",
+    "ttl_onboarding_encuesta",
+]
 
 
 def limpiar_flujos_whatsapp_expirados() -> int:

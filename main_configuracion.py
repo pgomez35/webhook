@@ -8,15 +8,24 @@ from datetime import datetime
 import re
 
 import cloudinary
+import cloudinary.uploader
 
 from tenant import current_tenant, current_business_name
 
-cloudinary.config(
-    cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
-    api_key=os.environ["CLOUDINARY_API_KEY"],
-    api_secret=os.environ["CLOUDINARY_API_SECRET"],
-    secure=True
-)
+_cloudinary_configured = False
+
+
+def _ensure_cloudinary_config() -> None:
+    global _cloudinary_configured
+    if _cloudinary_configured:
+        return
+    cloudinary.config(
+        cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+        api_key=os.environ["CLOUDINARY_API_KEY"],
+        api_secret=os.environ["CLOUDINARY_API_SECRET"],
+        secure=True,
+    )
+    _cloudinary_configured = True
 
 
 from DataBase import get_connection_context, get_connection_public
@@ -731,6 +740,7 @@ async def actualizar_logo_agencia(
     # 3️⃣ Subir a Cloudinary (optimizado)
     # --------------------------------------------------
     try:
+        _ensure_cloudinary_config()
         result = cloudinary.uploader.upload(
             ruta_logo,
             folder=f"branding/{TENANT}",

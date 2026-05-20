@@ -37,6 +37,17 @@ from Excel import *
 
 # 🔄 Cargar variables de entorno
 load_dotenv()
+try:
+    from utils_whatsapp_flujos import onboarding_sin_aviso_expiracion
+
+    print(
+        "[STARTUP] WHATSAPP_ONBOARDING_SIN_AVISO_EXPIRACION="
+        f"{os.getenv('WHATSAPP_ONBOARDING_SIN_AVISO_EXPIRACION')!r} "
+        f"activo={onboarding_sin_aviso_expiracion()}"
+    )
+except Exception as e:
+    print(f"[STARTUP] No se pudo leer flag onboarding sin aviso: {e}")
+
 API_KEY = os.getenv("OPENAI_API_KEY")
 
 TOKEN = os.getenv("WHATSAPP_TOKEN")
@@ -53,7 +64,12 @@ SERVICE_ACCOUNT_INFO = os.getenv("GOOGLE_CREDENTIALS_JSON")
 CALENDAR_ID = os.getenv("CALENDAR_ID")
 # CALENDAR_ID = "primary" # para que sea siempre primary, pero tambien puedo configurarlo en variables del backend
 
-from main_webhook import router as aspirantes_perfil_router
+try:
+    from main_webhook import router as aspirantes_perfil_router
+except Exception:
+    print("FATAL: error importando main_webhook (revisa utils_whatsapp_flujos.py y dependencias)")
+    traceback.print_exc()
+    raise
 from main_cargar_aspirantes import router as aspirantes_router
 from middleware_tenant import TenantMiddleware   # 👈 importa tu middleware
 # from borrar_middleware_rate_limit import RateLimitMiddleware  # 👈 Rate limiting por tenant
