@@ -57,6 +57,7 @@ from utils_whatsapp_flujos import (
     eliminar_flujo_whatsapp,
     flujo_whatsapp_expirado,
     texto_aviso_sesion_expirada_onboarding,
+    onboarding_sin_aviso_expiracion,
     ttl_onboarding_usuario,
     ttl_onboarding_confirmacion,
     ttl_onboarding_encuesta,
@@ -146,7 +147,14 @@ def obtener_mensaje_bienvenida_onboarding() -> str:
             return mensaje_default
 
         valor_str = str(valor).strip()
-        return valor_str if valor_str else mensaje_default
+        if valor_str:
+            if "expir" in valor_str.lower() and onboarding_sin_aviso_expiracion():
+                print(
+                    "⚠️ [ONBOARDING] mensaje_bienvenida_onboarding en configuracion_agencia "
+                    "contiene texto de sesion expiro. El .env no lo oculta: edita esa clave en la agencia."
+                )
+            return valor_str
+        return mensaje_default
     except Exception:
         return mensaje_default
 
@@ -1789,6 +1797,12 @@ def _process_new_user_onboarding(
     # =====================================================
     if paso is None:
         aviso = texto_aviso_sesion_expirada_onboarding() if sesion_expirada else ""
+        print(
+            f"[ONBOARDING] {numero} sesion_expirada={sesion_expirada} "
+            f"sin_aviso={onboarding_sin_aviso_expiracion()} "
+            f"env={os.getenv('WHATSAPP_ONBOARDING_SIN_AVISO_EXPIRACION')!r} "
+            f"aviso_len={len(aviso)}"
+        )
         enviar_mensaje(numero, aviso + obtener_mensaje_bienvenida_onboarding())
         actualizar_flujo_whatsapp(
             numero=numero,
