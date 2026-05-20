@@ -2472,7 +2472,7 @@ def obtener_aspirante_portal_por_telefono(telefono: str) -> Optional[dict]:
     1. Fila en aspirantes (telefono o whatsapp).
     2. Creador activo con el mismo teléfono y aspirante_id vinculado (mismo enlace portal aspirante).
 
-    Retorna {"aspirante_id": int, "nombre": str} o None.
+    Retorna dict con aspirante_id, nombre (saludo), nickname, nombre_real, usuario; o None.
     """
     try:
         telefono = (telefono or "").strip()
@@ -2486,7 +2486,15 @@ def obtener_aspirante_portal_por_telefono(telefono: str) -> Optional[dict]:
                     """
                     SELECT
                         a.id,
-                        COALESCE(a.nombre_real, a.nickname, a.usuario, 'aspirante') AS nombre
+                        a.nickname,
+                        a.nombre_real,
+                        a.usuario,
+                        COALESCE(
+                            NULLIF(TRIM(a.nickname), ''),
+                            NULLIF(TRIM(a.nombre_real), ''),
+                            NULLIF(TRIM(a.usuario), ''),
+                            'aspirante'
+                        ) AS nombre
                     FROM aspirantes a
                     WHERE a.telefono = %s
                        OR a.whatsapp = %s
@@ -2497,13 +2505,27 @@ def obtener_aspirante_portal_por_telefono(telefono: str) -> Optional[dict]:
                 row = cur.fetchone()
                 if row:
                     print(f"👤 [PORTAL-ASPIRANTE] Por tabla aspirantes -> id={row[0]}")
-                    return {"aspirante_id": row[0], "nombre": row[1]}
+                    return {
+                        "aspirante_id": row[0],
+                        "nombre": row[4],
+                        "nickname": row[1],
+                        "nombre_real": row[2],
+                        "usuario": row[3],
+                    }
 
                 cur.execute(
                     """
                     SELECT
                         c.aspirante_id,
-                        COALESCE(a.nombre_real, a.nickname, a.usuario, 'aspirante') AS nombre
+                        a.nickname,
+                        a.nombre_real,
+                        a.usuario,
+                        COALESCE(
+                            NULLIF(TRIM(a.nickname), ''),
+                            NULLIF(TRIM(a.nombre_real), ''),
+                            NULLIF(TRIM(a.usuario), ''),
+                            'aspirante'
+                        ) AS nombre
                     FROM creadores c
                     LEFT JOIN aspirantes a ON a.id = c.aspirante_id
                     INNER JOIN creadores_estados ce ON ce.id = c.estado_id
@@ -2520,7 +2542,13 @@ def obtener_aspirante_portal_por_telefono(telefono: str) -> Optional[dict]:
                     print(
                         f"👤 [PORTAL-ASPIRANTE] Por creador vinculado -> aspirante_id={row[0]}"
                     )
-                    return {"aspirante_id": row[0], "nombre": row[1] or "aspirante"}
+                    return {
+                        "aspirante_id": row[0],
+                        "nombre": row[4] or "aspirante",
+                        "nickname": row[1],
+                        "nombre_real": row[2],
+                        "usuario": row[3],
+                    }
 
                 print(f"❌ [PORTAL-ASPIRANTE] Sin aspirante para teléfono: {telefono}")
                 return None
@@ -2586,13 +2614,17 @@ def construir_mensaje_portal(
     estado_nombre: str = "",
     proxima_cita: str = "",
     nombre_agencia: str = "",
+    nickname: str = "",
+    nombre_real: str = "",
+    usuario: str = "",
     extra: dict | None = None,
 ) -> str:
     """
     Construye el mensaje del portal reemplazando variables dinámicas.
 
     Variables soportadas:
-    {nombre}
+    {nombre} — saludo: nickname, si no nombre_real, si no usuario
+    {nickname}, {nombre_real}, {usuario}
     {url_portal}
     {tipo_portal}
     {estado_nombre}
@@ -2603,11 +2635,19 @@ def construir_mensaje_portal(
     import re
 
     try:
+        nick = (nickname or "").strip()
+        nom_real = (nombre_real or "").strip()
+        user = (usuario or "").strip()
+        nombre_saludo = (nombre or "").strip() or nick or nom_real or user or "aspirante"
+
         # -------------------------------
         # 1. Variables base
         # -------------------------------
         variables = {
-            "nombre": nombre or "",
+            "nombre": nombre_saludo,
+            "nickname": nick,
+            "nombre_real": nom_real,
+            "usuario": user,
             "url_portal": url_portal or "",
             "tipo_portal": tipo_portal or "",
             "estado_nombre": estado_nombre or "",

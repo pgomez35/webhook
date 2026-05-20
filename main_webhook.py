@@ -2281,6 +2281,10 @@ def _enviar_link_portal_paso4_flujo_aspirante(
     phone_number_id: str,
     origen: str = "whatsapp",
     plantilla: Optional[str] = None,
+    nickname: str = "",
+    nombre_real: str = "",
+    usuario: str = "",
+    nombre_agencia: str = "",
 ) -> bool:
     """
     Mismo envío que el paso 4 de procesar_flujo_aspirante:
@@ -2302,11 +2306,20 @@ def _enviar_link_portal_paso4_flujo_aspirante(
         else:
             plantilla_final = obtener_plantilla_mensaje_portal(tipo_portal)
 
+        try:
+            agencia = nombre_agencia or current_business_name.get() or ""
+        except LookupError:
+            agencia = nombre_agencia or ""
+
         mensaje_portal = construir_mensaje_portal(
             plantilla=plantilla_final,
             nombre=nombre,
             url_portal=url_portal,
             tipo_portal=tipo_portal,
+            nickname=nickname,
+            nombre_real=nombre_real,
+            usuario=usuario,
+            nombre_agencia=agencia,
         )
 
         if not mensaje_portal.strip():
@@ -2518,6 +2531,9 @@ def enviar_inicio_encuesta(numero: str):
         phone_number_id=phone_number_id,
         origen="whatsapp",
         plantilla=plantilla,
+        nickname=(datos.get("nickname") or "") or "",
+        nombre_real=(datos.get("nombre_real") or "") or "",
+        usuario=(datos.get("usuario") or "") or "",
     )
     print(f"🔗 [PORTAL] enviar_inicio_encuesta (portal aspirante) enviado a {wa_id}")
 

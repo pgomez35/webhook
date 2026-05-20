@@ -86,7 +86,6 @@ def listar_grupos_config():
     return [r[0] for r in rows]
 
 
-@router.get("/api/configuracion-agencia/keys", response_model=List[ConfigKeyOut])
 def listar_config_keys():
     with get_connection_public() as conn:
         with conn.cursor() as cur:
@@ -124,7 +123,6 @@ def listar_config_keys():
     ]
 
 
-@router.get("/api/configuracion-agencia/full", response_model=List[ConfigItemFullOut])
 def obtener_config_full():
     with get_connection_context() as conn:
         with conn.cursor() as cur:
@@ -225,7 +223,6 @@ def obtener_config_full_por_grupo(grupo: str):
     return out
 
 
-@router.get("/api/configuracion-agencia", response_model=List[ConfigItemOut])
 def listar_config_tenant():
     with get_connection_context() as conn:
         with conn.cursor() as cur:
@@ -796,7 +793,6 @@ async def actualizar_logo_agencia(
     }
 
 
-@router.get("/api/form-config")
 def obtener_config_formulario():
 
     nombre = current_business_name.get()
@@ -861,7 +857,7 @@ def obtener_config_publica_formulario():
         "color_primario": config["color_primario"],
         "color_secundario": config["color_secundario"],
         "titulo_encuesta_aspirante": config["titulo_encuesta_aspirante"],
-        "mensaje_inicio_encuesta": config["mensaje_inicio_encuesta"]
+        "mensaje_inicio_encuesta": config.get("mensaje_inicio_encuesta_form")
     }
 
 # -----------------------------------------------------
@@ -869,5 +865,11 @@ def obtener_config_publica_formulario():
 # -----------------------------------------------------
 # -----------------------------------------------------
 # -----------------------------------------------------
+
+# Endpoints deshabilitados (cleanup frontend)
+# - GET /api/configuracion-agencia/keys
+# - GET /api/configuracion-agencia/full
+# - GET /api/configuracion-agencia
+# - GET /api/form-config
 
 
