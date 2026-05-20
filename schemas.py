@@ -22,7 +22,9 @@ class EventoIn(BaseModel):
     inicio: datetime
     fin: datetime
     participantes_ids: List[int] = []
-    participante_tipo: Optional[Literal["aspirante", "creador", "usuario"]] = None
+    participante_tipo: Optional[
+        Literal["aspirante", "creador", "administrador", "usuario"]
+    ] = None  # "usuario" = alias legacy de administrador
     link_meet: Optional[str] = None
     requiere_meet: Optional[bool] = True
     tipo_agendamiento: Optional[int] = 1

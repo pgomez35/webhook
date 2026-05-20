@@ -39,6 +39,7 @@ _PARTICIPANTE_TIPO_STR_A_ID = {
     "aspirante": PARTICIPANTE_TIPO_ASPIRANTE_ID,
     "creador": PARTICIPANTE_TIPO_CREADOR_ID,
     "administrador": PARTICIPANTE_TIPO_ADMINISTRADOR_ID,
+    "usuario": PARTICIPANTE_TIPO_ADMINISTRADOR_ID,  # alias legacy (schemas / lecturas antiguas)
 }
 
 _PARTICIPANTE_TIPO_ID_A_STR: Dict[int, str] = {
@@ -402,6 +403,7 @@ def editar_evento(evento_id: str, evento: EventoIn):
                 "aspirante",
                 "creador",
                 "administrador",
+                "usuario",
             ):
                 raise HTTPException(
                     status_code=400,
@@ -638,6 +640,7 @@ def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario
         "aspirante",
         "creador",
         "administrador",
+        "usuario",
     ):
         raise HTTPException(
             status_code=400,
