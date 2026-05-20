@@ -21,6 +21,10 @@ from datetime import datetime, timezone, timedelta
 # ============================
 import psycopg2
 from dotenv import load_dotenv
+
+# Cargar .env antes de módulos locales que leen os.getenv (utils_whatsapp_flujos, etc.)
+load_dotenv()
+
 from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 from phonenumbers import geocoder, region_code_for_number
@@ -70,13 +74,22 @@ from utils_aspirantes import obtener_status_24hrs, \
     obtener_aspirante_portal_por_telefono, obtener_plantilla_mensaje_portal, \
     construir_mensaje_portal, enviar_inicio_portal
 
-
-load_dotenv()
-
 # ============================
 # CONFIGURACIÓN - URLs Frontend
 # ============================
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "https://talentum-manager.com")
+
+# Onboarding WhatsApp (leídas tras load_dotenv, mismo patrón que FRONTEND_BASE_URL)
+WHATSAPP_ONBOARDING_SIN_AVISO_EXPIRACION = os.getenv(
+    "WHATSAPP_ONBOARDING_SIN_AVISO_EXPIRACION"
+)
+
+print(
+    "[main_webhook] WHATSAPP_ONBOARDING_SIN_AVISO_EXPIRACION="
+    f"{WHATSAPP_ONBOARDING_SIN_AVISO_EXPIRACION!r} "
+    f"sin_aviso={onboarding_sin_aviso_expiracion()}",
+    flush=True,
+)
 
 router = APIRouter()
 
@@ -1762,6 +1775,13 @@ def _process_new_user_onboarding(
             sesion_expirada = True
         paso = None
 
+    print(
+        f"[ONBOARDING] {numero} paso_bd={paso} sesion_expirada={sesion_expirada} "
+        f"sin_aviso={onboarding_sin_aviso_expiracion()} "
+        f"env={WHATSAPP_ONBOARDING_SIN_AVISO_EXPIRACION!r}",
+        flush=True,
+    )
+
     # -----------------------------------------------------
     # VALIDACIÓN DE TIPO DE MENSAJE
     # -----------------------------------------------------
@@ -1798,10 +1818,9 @@ def _process_new_user_onboarding(
     if paso is None:
         aviso = texto_aviso_sesion_expirada_onboarding() if sesion_expirada else ""
         print(
-            f"[ONBOARDING] {numero} sesion_expirada={sesion_expirada} "
-            f"sin_aviso={onboarding_sin_aviso_expiracion()} "
-            f"env={os.getenv('WHATSAPP_ONBOARDING_SIN_AVISO_EXPIRACION')!r} "
-            f"aviso_len={len(aviso)}"
+            f"[ONBOARDING] {numero} reinicio paso=0 aviso_len={len(aviso)} "
+            f"preview_inicio={repr((aviso + obtener_mensaje_bienvenida_onboarding())[:80])}",
+            flush=True,
         )
         enviar_mensaje(numero, aviso + obtener_mensaje_bienvenida_onboarding())
         actualizar_flujo_whatsapp(

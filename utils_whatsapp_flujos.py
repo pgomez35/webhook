@@ -4,18 +4,15 @@ Sustituye Redis / memoria para onboarding y pasos de conversación.
 """
 import os
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Any, Dict, Optional
 import json
 
 from dotenv import load_dotenv
 
-from DataBase import get_connection_context
+# Mismo patrón que main_webhook: .env local antes de leer os.getenv / importar DataBase
+load_dotenv()
 
-# Cargar .env del directorio del proyecto (no depende del cwd de uvicorn)
-_ENV_FILE = Path(__file__).resolve().parent / ".env"
-load_dotenv(_ENV_FILE)
-load_dotenv()  # por si el proceso arrancó desde otra ruta
+from DataBase import get_connection_context
 
 # TTL onboarding (minutos de inactividad antes de reinicio)
 TTL_ONBOARDING_USUARIO_TIKTOK = 5
@@ -68,11 +65,24 @@ def _valor_activo(valor: Any) -> bool:
     return str(valor).strip().lower() in ("1", "true", "yes", "on", "si", "sí")
 
 
+_ENV_SIN_AVISO = "WHATSAPP_ONBOARDING_SIN_AVISO_EXPIRACION"
+
+
 def onboarding_sin_aviso_expiracion() -> bool:
     """
-    Oculta avisos de sesión expirada si WHATSAPP_ONBOARDING_SIN_AVISO_EXPIRACION=1 en .env.
+    Oculta avisos de sesión expirada si:
+    - WHATSAPP_ONBOARDING_SIN_AVISO_EXPIRACION=1 en el entorno (Render / .env vía main_webhook),
+    - configuracion_agencia.clave = onboarding_sin_aviso_expiracion con valor activo (1/true/si).
     """
-    return _valor_activo(os.getenv("WHATSAPP_ONBOARDING_SIN_AVISO_EXPIRACION"))
+    # Lectura en tiempo de ejecución (Render inyecta en os.environ al arrancar el proceso)
+    if _valor_activo(os.environ.get(_ENV_SIN_AVISO) or os.getenv(_ENV_SIN_AVISO)):
+        return True
+    try:
+        from main_configuracion import get_config
+
+        return _valor_activo(get_config("onboarding_sin_aviso_expiracion"))
+    except Exception:
+        return False
 
 
 def texto_aviso_sesion_expirada_onboarding(reinicio_corto: bool = False) -> str:
