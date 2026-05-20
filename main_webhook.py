@@ -56,9 +56,10 @@ from utils_whatsapp_flujos import (
     actualizar_flujo_whatsapp,
     eliminar_flujo_whatsapp,
     flujo_whatsapp_expirado,
-    TTL_ONBOARDING_USUARIO_TIKTOK,
-    TTL_ONBOARDING_CONFIRMACION,
-    TTL_ONBOARDING_ENCUESTA,
+    texto_aviso_sesion_expirada_onboarding,
+    ttl_onboarding_usuario,
+    ttl_onboarding_confirmacion,
+    ttl_onboarding_encuesta,
 )
 from utils_aspirantes import obtener_status_24hrs, \
     enviar_plantilla_estado_evaluacion, buscar_estado_creador, \
@@ -1787,18 +1788,12 @@ def _process_new_user_onboarding(
     # PASO 0 – INICIO
     # =====================================================
     if paso is None:
-        if sesion_expirada:
-            enviar_mensaje(
-                numero,
-                "⏳ Tu sesión expiró por inactividad. Empecemos de nuevo.\n\n"
-                + obtener_mensaje_bienvenida_onboarding(),
-            )
-        else:
-            enviar_mensaje(numero, obtener_mensaje_bienvenida_onboarding())
+        aviso = texto_aviso_sesion_expirada_onboarding() if sesion_expirada else ""
+        enviar_mensaje(numero, aviso + obtener_mensaje_bienvenida_onboarding())
         actualizar_flujo_whatsapp(
             numero=numero,
             paso="esperando_usuario_tiktok",
-            ttl_minutos=TTL_ONBOARDING_USUARIO_TIKTOK,
+            ttl_minutos=ttl_onboarding_usuario(),
         )
         return {"status": "ok"}
 
@@ -1841,7 +1836,7 @@ def _process_new_user_onboarding(
             paso="confirmando_nickname",
             aspirante_id=aspirante.get("id"),
             payload_json=aspirante,
-            ttl_minutos=TTL_ONBOARDING_CONFIRMACION,
+            ttl_minutos=ttl_onboarding_confirmacion(),
         )
 
         # Confirmación con botones
@@ -1883,15 +1878,15 @@ def _process_new_user_onboarding(
             flujo = obtener_flujo_whatsapp(numero)
 
             if not flujo:
+                aviso = texto_aviso_sesion_expirada_onboarding(reinicio_corto=True)
                 enviar_mensaje(
                     numero,
-                    "⏳ La sesión expiró por inactividad. "
-                    "Escribe nuevamente tu *usuario de TikTok* (sin @)."
+                    aviso or obtener_mensaje_bienvenida_onboarding(),
                 )
                 actualizar_flujo_whatsapp(
                     numero=numero,
                     paso="esperando_usuario_tiktok",
-                    ttl_minutos=TTL_ONBOARDING_USUARIO_TIKTOK,
+                    ttl_minutos=ttl_onboarding_usuario(),
                 )
                 return {"status": "ok"}
 
@@ -1899,15 +1894,15 @@ def _process_new_user_onboarding(
             aspirante_id = flujo.get("aspirante_id") or aspirante.get("id")
 
             if not aspirante_id:
+                aviso = texto_aviso_sesion_expirada_onboarding(reinicio_corto=True)
                 enviar_mensaje(
                     numero,
-                    "⏳ La sesión expiró por inactividad. "
-                    "Escribe nuevamente tu *usuario de TikTok* (sin @)."
+                    aviso or obtener_mensaje_bienvenida_onboarding(),
                 )
                 actualizar_flujo_whatsapp(
                     numero=numero,
                     paso="esperando_usuario_tiktok",
-                    ttl_minutos=TTL_ONBOARDING_USUARIO_TIKTOK,
+                    ttl_minutos=ttl_onboarding_usuario(),
                 )
                 return {"status": "ok"}
 
@@ -1943,7 +1938,7 @@ def _process_new_user_onboarding(
                 paso="esperando_inicio_encuesta",
                 aspirante_id=aspirante_id,
                 payload_json={},
-                ttl_minutos=TTL_ONBOARDING_ENCUESTA,
+                ttl_minutos=ttl_onboarding_encuesta(),
             )
             return {"status": "ok"}
 
@@ -1961,7 +1956,7 @@ def _process_new_user_onboarding(
                 numero=numero,
                 paso="esperando_usuario_tiktok",
                 payload_json={},
-                ttl_minutos=TTL_ONBOARDING_USUARIO_TIKTOK,
+                ttl_minutos=ttl_onboarding_usuario(),
             )
             return {"status": "ok"}
 
@@ -1985,7 +1980,7 @@ def _process_new_user_onboarding(
             paso="esperando_inicio_encuesta",
             aspirante_id=(flujo_vigente or {}).get("aspirante_id"),
             payload_json={},
-            ttl_minutos=TTL_ONBOARDING_ENCUESTA,
+            ttl_minutos=ttl_onboarding_encuesta(),
         )
         return {"status": "ok"}
 
