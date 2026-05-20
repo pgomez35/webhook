@@ -1,5 +1,6 @@
 import json
 import traceback
+from datetime import datetime
 from typing import Optional, Any, Dict
 
 from fastapi import APIRouter, Query, HTTPException
@@ -11,6 +12,8 @@ from DataBase import get_connection_context
 from main_portal_usuarios import (
     obtener_configuracion_soporte_portal,
     PortalConfiguracionOut,
+    PortalCitasOut,
+    mapear_cita_portal,
 )
 
 router = APIRouter()
@@ -477,4 +480,117 @@ def portal_creador_inicio(creador_id: int = Query(..., gt=0)):
                 "error": "Error interno cargando el portal del creador.",
                 "detail": str(e)
             }
+        )
+
+
+@router.get("/api/portal/creadores/{creador_id}/citas", response_model=PortalCitasOut)
+def obtener_citas_portal_creador(creador_id: int):
+    """
+    Citas del creador como participante (participante_tipo_id = 2).
+    Misma forma que GET /api/portal/aspirantes/{aspirante_id}/citas.
+    """
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id FROM creadores WHERE id = %s LIMIT 1
+                    """,
+                    (creador_id,),
+                )
+                if not cur.fetchone():
+                    raise HTTPException(status_code=404, detail="No se encontró el creador.")
+
+                cur.execute(
+                    """
+                    SELECT
+                        a.id,
+                        a.titulo,
+                        a.fecha_inicio,
+                        a.fecha_fin,
+                        COALESCE(ae.nombre, 'programado') AS estado_nombre,
+                        at.nombre AS tipo_nombre,
+                        at.color AS tipo_color,
+                        at.icono AS tipo_icono,
+                        a.link_meet
+                    FROM agendamientos a
+                    INNER JOIN agendamientos_participantes ap
+                        ON ap.agendamiento_id = a.id
+                    INNER JOIN agendamientos_tipo at
+                        ON at.id = a.tipo_agendamiento
+                    LEFT JOIN agendamientos_estados ae
+                        ON ae.id = a.estado_id
+                    WHERE ap.participante_tipo_id = 2
+                      AND ap.participante_id = %s
+                      AND at.participante_tipo_id = 2
+                    ORDER BY a.fecha_inicio ASC
+                    """,
+                    (creador_id,),
+                )
+                rows = cur.fetchall()
+
+        ahora = datetime.now()
+        citas_validas = []
+
+        for row in rows:
+            (
+                _a_id,
+                _titulo_db,
+                fecha_inicio,
+                fecha_fin,
+                estado_nombre,
+                _tipo_nombre,
+                _tipo_color,
+                _tipo_icono,
+                _link_meet,
+            ) = row
+
+            estado_norm = (estado_nombre or "programado").strip().lower()
+
+            if estado_norm in ("cancelado", "cumplido"):
+                continue
+
+            if fecha_fin and fecha_fin < ahora:
+                continue
+
+            citas_validas.append(row)
+
+        if not citas_validas:
+            return PortalCitasOut(
+                proxima_cita=None,
+                otras_citas=[],
+                total_citas=0,
+                tiene_citas=False,
+            )
+
+        proxima_row = citas_validas[0]
+        otras_rows = citas_validas[1:]
+
+        proxima_cita = mapear_cita_portal(
+            row=proxima_row,
+            ahora=ahora,
+            es_proxima=True,
+        )
+
+        otras_citas = [
+            mapear_cita_portal(row=row, ahora=ahora, es_proxima=False)
+            for row in otras_rows
+        ]
+
+        return PortalCitasOut(
+            proxima_cita=proxima_cita,
+            otras_citas=otras_citas,
+            total_citas=len(citas_validas),
+            tiene_citas=True,
+        )
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        print(f"❌ Error obteniendo citas portal creador: {e}")
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail="Error obteniendo citas del creador",
         )
