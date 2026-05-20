@@ -109,8 +109,8 @@ def _cargar_participantes_por_tipo_pid(cur, participante_ids: List[int], tipo_pi
             """
             SELECT
                 id,
-                COALESCE(NULLIF(nombre_real, ''), nickname, usuario, telefono) AS nombre,
-                nickname
+                COALESCE(NULLIF(nombre, ''), usuario_tiktok, telefono) AS nombre,
+                usuario_tiktok AS nickname
             FROM creadores
             WHERE id = ANY(%s)
             """,

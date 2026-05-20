@@ -3273,29 +3273,36 @@ def obtener_participantes_por_tipo_db(tipo: str):
                     """)
 
                 elif tipo == "creador":
-                    cur.execute("""
+                    cur.execute(
+                        """
                         SELECT
                             c.id,
-                            c.usuario AS username,
-                            c.nickname,
-                            c.nombre_real,
-                            COALESCE(c.nickname, c.nombre_real, c.usuario, c.telefono) AS display_name,
+                            c.usuario_tiktok AS username,
+                            c.usuario_tiktok AS usuario,
+                            NULL AS nickname,
+                            c.nombre AS nombre_real,
+                            COALESCE(c.nombre, c.usuario_tiktok, c.telefono) AS display_name,
                             c.email,
                             c.telefono,
-                            c.whatsapp,
-                            c.foto_url,
+                            NULL AS whatsapp,
+                            c.foto AS foto_url,
                             NULL AS foto_url_mini,
                             NULL AS verificado,
-                            c.activo,
-                            c.estado_operativo AS estado_nombre,
-                            c.creado_en,
-                            c.actualizado_en,
+                            TRUE AS activo,
+                            ce.nombre AS estado_nombre,
+                            c.created_at AS creado_en,
+                            c.updated_at AS actualizado_en,
                             'creador' AS tipo_usuario,
                             NULL AS rol
                         FROM creadores c
-                        WHERE c.activo = TRUE
-                        ORDER BY c.actualizado_en DESC NULLS LAST, c.creado_en DESC
-                    """)
+                        INNER JOIN creadores_estados ce
+                            ON ce.id = c.estado_id
+                        WHERE ce.nombre = %s
+                          AND COALESCE(ce.activo, true) = true
+                        ORDER BY c.updated_at DESC NULLS LAST, c.created_at DESC
+                        """,
+                        (CREADOR_ESTADO_NOMBRE_ACTIVO,),
+                    )
 
                 elif tipo == "administrador":
                     cur.execute("""
