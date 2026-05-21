@@ -43,7 +43,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException, Query
 from openai import OpenAI
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from DataBase import get_connection_context
 
@@ -120,7 +120,10 @@ NIVELES_RENDIMIENTO = {
 # =========================================================
 
 class SeguimientoPerformanceCreate(BaseModel):
-    creador_id: int
+    creador_id: int = Field(
+        ...,
+        validation_alias=AliasChoices("creador_id", "creador_activo_id"),
+    )
     fecha_seguimiento: Optional[date] = None
     observaciones_manager: Optional[str] = ""
     resumen_compromisos: Optional[str] = ""
@@ -619,13 +622,20 @@ def openai_json_completion(
     temperature: float = 0.3,
     system: Optional[str] = None,
 ) -> Any:
+    validar_openai_habilitado()
     content = openai_chat_completion(
         prompt,
         model=model,
         temperature=temperature,
         system=system,
     )
-    return parse_json_openai(content)
+    parsed = parse_json_openai(content)
+    if isinstance(parsed, dict) and parsed.get("error_parse_json"):
+        raise HTTPException(
+            status_code=502,
+            detail="OpenAI devolvió una respuesta que no es JSON válido. Intenta de nuevo.",
+        )
+    return parsed
 
 
 # =========================================================
@@ -1715,6 +1725,13 @@ def eliminar_seguimiento_performance(seguimiento_id: int):
     if not existente:
         raise HTTPException(status_code=404, detail="Seguimiento no encontrado")
 
+    execute_no_return(
+        """
+        DELETE FROM creadores_performance_acciones
+        WHERE seguimiento_id = %s
+        """,
+        (seguimiento_id,),
+    )
     execute_no_return(
         """
         DELETE FROM creadores_performance_seguimiento
@@ -2958,17 +2975,21 @@ def ranking_score_performance(
     """
     return fetch_all(
         """
-        SELECT DISTINCT ON (s.creador_id)
-            s.*,
-            c.nombre,
-            c.usuario_tiktok,
-            cd.manager_id,
-            au.nombre_completo AS manager_nombre
-        FROM creadores_performance_score s
-        INNER JOIN creadores c ON s.creador_id = c.id
-        LEFT JOIN creadores_detalle cd ON c.id = cd.creador_id
-        LEFT JOIN administradores au ON cd.manager_id = au.id
-        ORDER BY s.creador_id, s.created_at DESC, s.id DESC
+        SELECT *
+        FROM (
+            SELECT DISTINCT ON (s.creador_id)
+                s.*,
+                c.nombre,
+                c.usuario_tiktok,
+                cd.manager_id,
+                au.nombre_completo AS manager_nombre
+            FROM creadores_performance_score s
+            INNER JOIN creadores c ON s.creador_id = c.id
+            LEFT JOIN creadores_detalle cd ON c.id = cd.creador_id
+            LEFT JOIN administradores au ON cd.manager_id = au.id
+            ORDER BY s.creador_id, s.created_at DESC, s.id DESC
+        ) ultimos
+        ORDER BY ultimos.score_general DESC NULLS LAST, ultimos.creador_id ASC
         LIMIT %s
         """,
         (limit,),
