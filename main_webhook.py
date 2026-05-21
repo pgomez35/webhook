@@ -4316,123 +4316,134 @@ def consolidar_perfil_web(
         # -------------------------------
         # Guardar diagnóstico
         # -------------------------------
-        if aspirante_id and respuestas_dict:
+        telefono_perfil = normalizar_numero(data.numero) if data.numero else None
+
+        if aspirante_id:
             with get_connection_context() as conn:
                 with conn.cursor() as cur:
 
-                    cur.execute("""
-                        SELECT id, campo_db
-                        FROM diagnostico_variable
-                        WHERE migrado = true
-                          AND COALESCE(activa, true) = true
-                    """)
+                    if telefono_perfil:
+                        cur.execute("""
+                            UPDATE aspirantes_perfil
+                            SET telefono = %s
+                            WHERE aspirante_id = %s
+                        """, (telefono_perfil, aspirante_id))
 
-                    variables = {row[0]: row[1] for row in cur.fetchall()}
+                    if respuestas_dict:
+                        cur.execute("""
+                            SELECT id, campo_db
+                            FROM diagnostico_variable
+                            WHERE migrado = true
+                              AND COALESCE(activa, true) = true
+                        """)
 
-                    for pregunta_id, valor in respuestas_dict.items():
-                        campo_db = variables.get(pregunta_id)
+                        variables = {row[0]: row[1] for row in cur.fetchall()}
 
-                        # Guardar score solo si es número
-                        if isinstance(valor, str) and valor.isdigit():
-                            valor_int = int(valor)
+                        for pregunta_id, valor in respuestas_dict.items():
+                            campo_db = variables.get(pregunta_id)
 
+                            # Guardar score solo si es número
+                            if isinstance(valor, str) and valor.isdigit():
+                                valor_int = int(valor)
+
+                                cur.execute("""
+                                    INSERT INTO diagnostico_score_variable
+                                        (aspirante_id, variable_id, valor_id)
+                                    VALUES (%s, %s, %s)
+                                    ON CONFLICT (aspirante_id, variable_id)
+                                    DO UPDATE SET
+                                        valor_id = EXCLUDED.valor_id
+                                """, (
+                                    aspirante_id,
+                                    pregunta_id,
+                                    valor_int
+                                ))
+
+                            # Actualizar aspirantes_perfil según campo_db
+                            if campo_db:
+                                if not campo_db.replace("_", "").isalnum():
+                                    continue
+
+                                query = f"""
+                                    UPDATE aspirantes_perfil
+                                    SET {campo_db} = %s
+                                    WHERE aspirante_id = %s
+                                """
+
+                                cur.execute(query, (valor, aspirante_id))
+
+                                if campo_db == "nombre":
+                                    nombre_usuario = valor
+
+                        # Guardar pais_texto
+                        if pais_texto:
                             cur.execute("""
-                                INSERT INTO diagnostico_score_variable
-                                    (aspirante_id, variable_id, valor_id)
-                                VALUES (%s, %s, %s)
-                                ON CONFLICT (aspirante_id, variable_id)
-                                DO UPDATE SET
-                                    valor_id = EXCLUDED.valor_id
-                            """, (
-                                aspirante_id,
-                                pregunta_id,
-                                valor_int
-                            ))
-
-                        # Actualizar aspirantes_perfil según campo_db
-                        if campo_db:
-                            if not campo_db.replace("_", "").isalnum():
-                                continue
-
-                            query = f"""
                                 UPDATE aspirantes_perfil
-                                SET {campo_db} = %s
+                                SET pais_texto = %s
                                 WHERE aspirante_id = %s
-                            """
+                            """, (pais_texto, aspirante_id))
 
-                            cur.execute(query, (valor, aspirante_id))
+                        # Guardar zona_horaria
+                        zona_horaria = None
+                        if data.meta and isinstance(data.meta, dict):
+                            zona_horaria = data.meta.get("zona_horaria")
 
-                            if campo_db == "nombre":
-                                nombre_usuario = valor
+                        if zona_horaria:
+                            cur.execute("""
+                                UPDATE aspirantes_perfil
+                                SET zona_horaria = %s
+                                WHERE aspirante_id = %s
+                            """, (zona_horaria, aspirante_id))
 
-                    # Guardar pais_texto
-                    if pais_texto:
+                        # -------------------------------
+                        # Guardar trazabilidad encuesta inicial
+                        # -------------------------------
                         cur.execute("""
-                            UPDATE aspirantes_perfil
-                            SET pais_texto = %s
-                            WHERE aspirante_id = %s
-                        """, (pais_texto, aspirante_id))
-
-                    # Guardar zona_horaria
-                    zona_horaria = None
-                    if data.meta and isinstance(data.meta, dict):
-                        zona_horaria = data.meta.get("zona_horaria")
-
-                    if zona_horaria:
-                        cur.execute("""
-                            UPDATE aspirantes_perfil
-                            SET zona_horaria = %s
-                            WHERE aspirante_id = %s
-                        """, (zona_horaria, aspirante_id))
-
-                    # -------------------------------
-                    # Guardar trazabilidad encuesta inicial
-                    # -------------------------------
-                    cur.execute("""
-                        INSERT INTO aspirantes_encuesta_inicial (
+                            INSERT INTO aspirantes_encuesta_inicial (
+                                aspirante_id,
+                                respuestas_json,
+                                fecha_inicio,
+                                fecha_fin,
+                                completada,
+                                abandonada,
+                                preguntas_respondidas,
+                                sincronizado,
+                                fecha_sincronizacion,
+                                created_at,
+                                updated_at
+                            )
+                            VALUES (
+                                %s,
+                                %s::jsonb,
+                                now(),
+                                now(),
+                                true,
+                                false,
+                                %s,
+                                true,
+                                now(),
+                                now(),
+                                now()
+                            )
+                        """, (
                             aspirante_id,
-                            respuestas_json,
-                            fecha_inicio,
-                            fecha_fin,
-                            completada,
-                            abandonada,
-                            preguntas_respondidas,
-                            sincronizado,
-                            fecha_sincronizacion,
-                            created_at,
-                            updated_at
-                        )
-                        VALUES (
-                            %s,
-                            %s::jsonb,
-                            now(),
-                            now(),
-                            true,
-                            false,
-                            %s,
-                            true,
-                            now(),
-                            now(),
-                            now()
-                        )
-                    """, (
-                        aspirante_id,
-                        json.dumps(respuestas_dict, ensure_ascii=False),
-                        len(respuestas_dict)
-                    ))
+                            json.dumps(respuestas_dict, ensure_ascii=False),
+                            len(respuestas_dict)
+                        ))
 
                     conn.commit()
 
-            # -------------------------------
-            # Pasar aspirante a Evaluación
-            # -------------------------------
-            registrar_cambio_estado(
-                aspirante_id=aspirante_id,
-                nuevo_estado_id=3,
-                usuario_id=None,
-                origen_cambio="encuesta_link",
-                observacion="Aspirante pasa a Evaluación al completar la encuesta inicial"
-            )
+                # -------------------------------
+                # Pasar aspirante a Evaluación
+                # -------------------------------
+                if respuestas_dict:
+                    registrar_cambio_estado(
+                        aspirante_id=aspirante_id,
+                        nuevo_estado_id=3,
+                        usuario_id=None,
+                        origen_cambio="encuesta_link",
+                        observacion="Aspirante pasa a Evaluación al completar la encuesta inicial"
+                    )
 
         # -------------------------------
         # URL del portal con token universal

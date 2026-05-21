@@ -2407,15 +2407,16 @@ def obtener_encuesta(encuesta_id: int):
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
 
                 cur.execute("""
-                    SELECT v.id AS pregunta_id, v.texto, 
-                    v.tipo_form as tipo, v.campo_db AS campo, 
-                    o.id AS opcion_id, 
-                    o.label, 
-                    o.orden AS opcion_orden 
-                    FROM diagnostico_variable v 
-                    LEFT JOIN diagnostico_variable_valor o ON o.variable_id = v.id 
-                    WHERE v.encuesta_id = %s 
-                    AND v.activa = true 
+                    SELECT v.id AS pregunta_id, v.texto,
+                    v.tipo_form as tipo, v.campo_db AS campo,
+                    v.orden AS pregunta_orden,
+                    o.id AS opcion_id,
+                    o.label,
+                    o.orden AS opcion_orden
+                    FROM diagnostico_variable v
+                    LEFT JOIN diagnostico_variable_valor o ON o.variable_id = v.id
+                    WHERE v.encuesta_id = %s
+                    AND v.activa = true
                     ORDER BY v.orden, o.orden;
                 """, (encuesta_id,))
 
@@ -2430,6 +2431,7 @@ def obtener_encuesta(encuesta_id: int):
                     if pid not in preguntas:
                         preguntas[pid] = {
                             "id": pid,
+                            "orden": row["pregunta_orden"],
                             "texto": row["texto"],
                             "tipo": row["tipo"],
                             "campo": row["campo"],
@@ -2444,10 +2446,15 @@ def obtener_encuesta(encuesta_id: int):
                             "orden": row["opcion_orden"]
                          })
 
+                lista = sorted(
+                    preguntas.values(),
+                    key=lambda p: (p.get("orden") is None, p.get("orden") or 0, p.get("id") or 0),
+                )
+
                 return {
                     "success": True,
                     "encuesta_id": encuesta_id,
-                    "preguntas": list(preguntas.values())
+                    "preguntas": lista
                 }
 
     except Exception as e:
