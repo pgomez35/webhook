@@ -1146,7 +1146,7 @@ def diagnostico_creador(aspirante_id: int):
                 SELECT
                     d.diagnostico_json,
                     a.nickname,
-                    a.nombre_real AS nombre,
+                    COALESCE(NULLIF(TRIM(a.nombre_real), ''), a.nickname) AS nombre,
                     ae.id AS estado_id,
                     ae.nombre AS estado_nombre
                 FROM diagnostico_score_general d
@@ -1199,7 +1199,7 @@ def diagnostico_aspirante_ui(aspirante_id: int):
                     d.diagnostico_resumen,
                     d.texto_whatsapp,
                     a.nickname,
-                    a.nombre_real AS nombre
+                    COALESCE(NULLIF(TRIM(a.nombre_real), ''), a.nickname) AS nombre
                 FROM diagnostico_score_general d
                 JOIN aspirantes a
                     ON a.id = d.aspirante_id
