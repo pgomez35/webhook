@@ -597,7 +597,7 @@ def openai_chat_completion(
 
     try:
         client = get_openai_client()
-        response = client.chat.completions.create(
+        response = client.with_options(timeout=60).chat.completions.create(
             model=model or OPENAI_MODEL_DEFAULT,
             messages=messages,
             temperature=temperature,
