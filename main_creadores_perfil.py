@@ -19,7 +19,10 @@ from schemas import (
     CreadorActivoAutoCreate,
 )
 from utils_aspirantes import obtener_creadores_activos_db
-from creadores_catalogo import CREADOR_ESTADO_NOMBRE_ACTIVO
+from creadores_catalogo import (
+    CREADOR_ESTADO_NOMBRE_ACTIVO,
+    resolver_categoria_id_creador,
+)
 
 router = APIRouter()
 
@@ -74,6 +77,10 @@ def _resolver_estado_id_creador(
             detail="Falta catálogo creadores_estados (ej. fila 'Activo').",
         )
     return row[0]
+
+
+def _resolver_categoria_id_creador(cur, categoria_id, categoria_legacy):
+    return resolver_categoria_id_creador(cur, categoria_id, categoria_legacy)
 
 
 # =========================================================
@@ -361,7 +368,8 @@ def obtener_creador_activo(id: int):
                         c.email,
                         c.telefono,
                         c.foto,
-                        c.categoria,
+                        c.categoria_id,
+                        COALESCE(cat.nombre, 'Sin categoría') AS categoria,
                         ce.nombre AS estado,
 
                         d.manager_id,
@@ -380,6 +388,7 @@ def obtener_creador_activo(id: int):
                         d.dias_emision
 
                     FROM creadores c
+                    LEFT JOIN creadores_categoria cat ON cat.id = c.categoria_id
                     LEFT JOIN creadores_detalle d
                         ON d.creador_id = c.id
                     LEFT JOIN administradores au
@@ -419,6 +428,9 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
                 estado_id = _resolver_estado_id_creador(
                     cur, data.get("estado_id"), data.get("estado")
                 )
+                categoria_id = _resolver_categoria_id_creador(
+                    cur, data.get("categoria_id"), data.get("categoria")
+                )
 
                 # 1. Insertar datos base en creadores
                 cur.execute("""
@@ -429,7 +441,7 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
                         email,
                         telefono,
                         foto,
-                        categoria,
+                        categoria_id,
                         estado_id
                     )
                     VALUES (
@@ -439,11 +451,11 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
                         %(email)s,
                         %(telefono)s,
                         %(foto)s,
-                        %(categoria)s,
+                        %(categoria_id)s,
                         %(estado_id)s
                     )
                     RETURNING id;
-                """, {**data, "estado_id": estado_id})
+                """, {**data, "estado_id": estado_id, "categoria_id": categoria_id})
 
                 creador_id = cur.fetchone()[0]
 
@@ -497,7 +509,8 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
                         c.email,
                         c.telefono,
                         c.foto,
-                        c.categoria,
+                        c.categoria_id,
+                        COALESCE(cat.nombre, 'Sin categoría') AS categoria,
                         ce.nombre AS estado,
 
                         d.manager_id,
@@ -514,6 +527,7 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
                         d.dias_emision
 
                     FROM creadores c
+                    LEFT JOIN creadores_categoria cat ON cat.id = c.categoria_id
                     LEFT JOIN creadores_detalle d
                         ON d.creador_id = c.id
                     LEFT JOIN creadores_estados ce ON ce.id = c.estado_id
@@ -555,6 +569,9 @@ def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
                 estado_id = _resolver_estado_id_creador(
                     cur, data.get("estado_id"), data.get("estado")
                 )
+                categoria_id = _resolver_categoria_id_creador(
+                    cur, data.get("categoria_id"), data.get("categoria")
+                )
                 cur.execute("""
                     UPDATE creadores
                     SET
@@ -564,11 +581,11 @@ def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
                         email = %(email)s,
                         telefono = %(telefono)s,
                         foto = %(foto)s,
-                        categoria = %(categoria)s,
+                        categoria_id = %(categoria_id)s,
                         estado_id = %(estado_id)s,
                         updated_at = now()
                     WHERE id = %(id)s
-                """, {**data, "id": id, "estado_id": estado_id})
+                """, {**data, "id": id, "estado_id": estado_id, "categoria_id": categoria_id})
 
                 # 3. Insertar o actualizar detalle
                 cur.execute("""
@@ -633,7 +650,8 @@ def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
                         c.email,
                         c.telefono,
                         c.foto,
-                        c.categoria,
+                        c.categoria_id,
+                        COALESCE(cat.nombre, 'Sin categoría') AS categoria,
                         ce.nombre AS estado,
 
                         d.manager_id,
@@ -650,6 +668,7 @@ def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
                         d.dias_emision
 
                     FROM creadores c
+                    LEFT JOIN creadores_categoria cat ON cat.id = c.categoria_id
                     LEFT JOIN creadores_detalle d
                         ON d.creador_id = c.id
                     LEFT JOIN creadores_estados ce ON ce.id = c.estado_id
@@ -699,7 +718,7 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
                         email,
                         telefono,
                         foto,
-                        categoria,
+                        categoria_id,
                         estado_id
                     )
                     VALUES (
@@ -805,7 +824,8 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
                         c.email,
                         c.telefono,
                         c.foto,
-                        c.categoria,
+                        c.categoria_id,
+                        COALESCE(cat.nombre, 'Sin categoría') AS categoria,
                         ce.nombre AS estado,
                         d.manager_id,
                         d.horario_lives,
@@ -820,6 +840,7 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
                         d.numero_partidas,
                         d.dias_emision
                     FROM creadores c
+                    LEFT JOIN creadores_categoria cat ON cat.id = c.categoria_id
                     LEFT JOIN creadores_detalle d ON d.creador_id = c.id
                     LEFT JOIN creadores_estados ce ON ce.id = c.estado_id
                     WHERE c.id = %s

@@ -641,7 +641,8 @@ class CreadorActivoBase(BaseModel):
     email: Optional[str] = None
     telefono: Optional[str] = None
     foto: Optional[str] = None
-    categoria: Optional[str] = None
+    categoria_id: Optional[int] = None
+    categoria: Optional[str] = None  # legado: nombre en creadores_categoria
     estado_id: Optional[int] = None
     estado: Optional[str] = None  # legado: nombre en creadores_estados o 'activo'
     manager_id: Optional[int] = None

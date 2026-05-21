@@ -2117,7 +2117,7 @@ def resolver_token_portal_general_o_error(token: str) -> dict:
                     c.nombre AS creador_nombre,
                     c.usuario_tiktok AS creador_usuario_tiktok,
                     ce_creador.nombre AS creador_estado,
-                    c.categoria AS creador_categoria
+                    cat.nombre AS creador_categoria
 
                 FROM portal_access_tokens pat
                 LEFT JOIN aspirantes a
@@ -2126,6 +2126,8 @@ def resolver_token_portal_general_o_error(token: str) -> dict:
                     ON ae.id = a.estado_id
                 LEFT JOIN creadores c
                     ON c.id = pat.creador_id
+                LEFT JOIN creadores_categoria cat
+                    ON cat.id = c.categoria_id
                 LEFT JOIN creadores_estados ce_creador
                     ON ce_creador.id = c.estado_id
                 WHERE pat.token = %s
@@ -2249,7 +2251,7 @@ def crear_o_actualizar_creador_desde_aspirante(
             email,
             telefono,
             foto,
-            categoria,
+            categoria_id,
             estado_id
         )
         VALUES (
@@ -2355,9 +2357,11 @@ def obtener_creadores_activos_db():
                         c.id,
                         c.nombre,
                         c.usuario_tiktok,
-                        COALESCE(c.categoria, 'Sin categoría') AS categoria,
+                        c.categoria_id,
+                        COALESCE(cat.nombre, 'Sin categoría') AS categoria,
                         ce.nombre AS estado
                     FROM creadores c
+                    LEFT JOIN creadores_categoria cat ON cat.id = c.categoria_id
                     INNER JOIN creadores_estados ce ON ce.id = c.estado_id
                     WHERE ce.nombre = %s
                       AND COALESCE(ce.activo, true) = true

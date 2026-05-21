@@ -288,6 +288,7 @@ class DashboardPerformanceResponse(BaseModel):
     ok: bool
     creador: Optional[Dict[str, Any]] = None
     detalle: Optional[Dict[str, Any]] = None
+    categoria_creador: Optional[Dict[str, Any]] = None
     ultimo_reporte: Optional[Dict[str, Any]] = None
     metas: Optional[Dict[str, Any]] = None
     insights: Optional[Dict[str, Any]] = None
@@ -297,6 +298,8 @@ class DashboardPerformanceResponse(BaseModel):
     seguimientos: List[Dict[str, Any]] = []
     acciones_abiertas: List[Dict[str, Any]] = []
     perfil_respuestas: List[Dict[str, Any]] = []
+    perfil_estrategico: Optional[Dict[str, Any]] = None
+    performance_partidas: Optional[Dict[str, Any]] = None
 
 
 # Para compatibilidad con Pydantic forward refs
@@ -881,6 +884,368 @@ def obtener_perfil_respuestas(creador_id: int) -> List[Dict[str, Any]]:
     )
 
 
+def obtener_categoria_creador(creador_id: int) -> Optional[Dict[str, Any]]:
+    row = fetch_one(
+        """
+        SELECT
+            cc.id,
+            cc.nombre,
+            cc.meta_diamantes_objetivo,
+            cc.descripcion,
+            cc.orden,
+            cc.activa
+        FROM creadores c
+        LEFT JOIN creadores_categoria cc
+            ON c.categoria_id = cc.id
+        WHERE c.id = %s
+        LIMIT 1
+        """,
+        (creador_id,),
+    )
+    if not row or row.get("id") is None:
+        return None
+    return row
+
+
+def _ratio_seguro(numerador: Any, denominador: Any, default: float = 0.0) -> float:
+    num = safe_float(numerador)
+    den = safe_float(denominador)
+    if den <= 0:
+        return default
+    return num / den
+
+
+def performance_partidas_vacio() -> Dict[str, Any]:
+    return {
+        "partidas": 0,
+        "diamantes_de_partidas": 0,
+        "diamantes_mes": 0,
+        "diamantes_por_partida": 0,
+        "porcentaje_diamantes_por_partidas": 0,
+        "partidas_por_emision": 0,
+        "diamantes_modo_varios_invitados": 0,
+        "diamantes_modo_varios_invitados_anfitrion": 0,
+        "diamantes_modo_varios_invitados_invitado": 0,
+        "peso_modo_varios_invitados": 0,
+        "diagnostico_partidas": "Sin datos de partidas disponibles.",
+    }
+
+
+def _diagnostico_performance_partidas(
+    partidas: float,
+    diamantes_de_partidas: float,
+    diamantes_mes: float,
+    porcentaje_diamantes_por_partidas: float,
+) -> str:
+    if partidas <= 0:
+        return (
+            "No registra partidas en el período. Puede existir oportunidad de activar "
+            "batallas o dinámicas competitivas."
+        )
+    if partidas > 0 and diamantes_de_partidas <= 0:
+        return (
+            "Tiene partidas registradas, pero no generan diamantes relevantes. "
+            "Debe mejorar conversión durante partidas."
+        )
+    if porcentaje_diamantes_por_partidas >= 60:
+        return (
+            "Alta dependencia de partidas para monetización. Conviene optimizar y "
+            "escalar estrategia de batallas."
+        )
+    if porcentaje_diamantes_por_partidas >= 30:
+        return (
+            "Las partidas aportan una parte importante de los diamantes. Hay oportunidad "
+            "de mejorar eficiencia por partida."
+        )
+    if porcentaje_diamantes_por_partidas < 30 and diamantes_mes > 0:
+        return (
+            "Las partidas no son la principal fuente de diamantes. Pueden usarse como "
+            "palanca adicional."
+        )
+    return "Datos de partidas disponibles para análisis."
+
+
+def construir_performance_partidas(reporte: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not reporte:
+        return performance_partidas_vacio()
+
+    partidas = safe_float(reporte.get("partidas"))
+    diamantes_de_partidas = safe_float(reporte.get("diamantes_de_partidas"))
+    diamantes_mes = safe_float(reporte.get("diamantes_mes"))
+    emisiones_live_mes = safe_float(reporte.get("emisiones_live_mes"))
+    diam_modo_varios = safe_float(reporte.get("diamantes_modo_varios_invitados"))
+    diam_anfitrion = safe_float(reporte.get("diamantes_modo_varios_invitados_anfitrion"))
+    diam_invitado = safe_float(reporte.get("diamantes_modo_varios_invitados_invitado"))
+
+    diamantes_por_partida = _ratio_seguro(diamantes_de_partidas, partidas)
+    porcentaje_diamantes_por_partidas = _ratio_seguro(diamantes_de_partidas, diamantes_mes) * 100
+    partidas_por_emision = _ratio_seguro(partidas, emisiones_live_mes)
+    peso_modo_varios_invitados = _ratio_seguro(diam_modo_varios, diamantes_mes) * 100
+
+    diagnostico = _diagnostico_performance_partidas(
+        partidas,
+        diamantes_de_partidas,
+        diamantes_mes,
+        porcentaje_diamantes_por_partidas,
+    )
+
+    return {
+        "partidas": int(partidas) if partidas == int(partidas) else partidas,
+        "diamantes_de_partidas": diamantes_de_partidas,
+        "diamantes_mes": diamantes_mes,
+        "diamantes_por_partida": round(diamantes_por_partida, 2),
+        "porcentaje_diamantes_por_partidas": round(porcentaje_diamantes_por_partidas, 2),
+        "partidas_por_emision": round(partidas_por_emision, 2),
+        "diamantes_modo_varios_invitados": diam_modo_varios,
+        "diamantes_modo_varios_invitados_anfitrion": diam_anfitrion,
+        "diamantes_modo_varios_invitados_invitado": diam_invitado,
+        "peso_modo_varios_invitados": round(peso_modo_varios_invitados, 2),
+        "diagnostico_partidas": diagnostico,
+    }
+
+
+def _parse_valor_json_perfil(valor_json: Any) -> Any:
+    if valor_json is None:
+        return None
+    if isinstance(valor_json, (dict, list)):
+        return valor_json
+    if isinstance(valor_json, str):
+        texto = valor_json.strip()
+        if not texto:
+            return None
+        try:
+            return json.loads(texto)
+        except Exception:
+            return texto
+    return valor_json
+
+
+def obtener_valor_perfil(perfil_respuestas: List[Dict[str, Any]], campo_db: str) -> Any:
+    """Obtiene el valor crudo de un campo_db en la lista perfil_respuestas."""
+    if not perfil_respuestas or not campo_db:
+        return None
+
+    campo_buscado = str(campo_db).strip()
+    for row in perfil_respuestas:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("campo_db") or "").strip() != campo_buscado:
+            continue
+        for key in ("valor_json", "valor_texto", "valor_numeric", "valor_integer", "valor_id"):
+            if row.get(key) is not None:
+                if key == "valor_json":
+                    return _parse_valor_json_perfil(row.get(key))
+                return row.get(key)
+        return None
+    return None
+
+
+def normalizar_respuesta_perfil(valor: Any) -> Any:
+    """Normaliza dict/list/string/number de respuestas de perfil a texto o lista legible."""
+    if valor is None:
+        return None
+
+    if isinstance(valor, str):
+        texto = valor.strip()
+        if not texto:
+            return None
+        try:
+            return normalizar_respuesta_perfil(json.loads(texto))
+        except Exception:
+            return texto
+
+    if isinstance(valor, (int, float, bool)):
+        return valor
+
+    if isinstance(valor, list):
+        normalizados: List[Any] = []
+        for item in valor:
+            n = normalizar_respuesta_perfil(item)
+            if n is None:
+                continue
+            if isinstance(n, list):
+                normalizados.extend(n)
+            else:
+                normalizados.append(n)
+        return normalizados or None
+
+    if isinstance(valor, dict):
+        if valor.get("label") not in (None, ""):
+            return str(valor["label"]).strip()
+
+        opciones = valor.get("opciones") or valor.get("options")
+        if opciones is not None:
+            return normalizar_respuesta_perfil(opciones)
+
+        if str(valor.get("tipo") or "").lower() == "multiple":
+            return normalizar_respuesta_perfil(
+                valor.get("opciones") or valor.get("valor") or valor.get("value")
+            )
+
+        if valor.get("valor") is not None:
+            return normalizar_respuesta_perfil(valor.get("valor"))
+        if valor.get("value") is not None:
+            return normalizar_respuesta_perfil(valor.get("value"))
+
+        labels: List[str] = []
+        for item in valor.values():
+            if isinstance(item, dict) and item.get("label") not in (None, ""):
+                labels.append(str(item["label"]).strip())
+        if labels:
+            return labels
+
+        return valor
+
+    return valor
+
+
+def perfil_estrategico_vacio() -> Dict[str, Any]:
+    return {
+        "arquetipo_definicion": None,
+        "arquetipo_valor": None,
+        "intereses": [],
+        "horario_preferido": None,
+        "nivel_estudios": None,
+        "idiomas_dominio": None,
+        "categoria_actual": None,
+        "meta_categoria_diamantes": None,
+        "descripcion_categoria": None,
+        "perfil_resumen": None,
+    }
+
+
+def _valor_a_texto_resumen(valor: Any) -> Optional[str]:
+    if valor is None:
+        return None
+    if isinstance(valor, list):
+        partes = [str(v).strip() for v in valor if v is not None and str(v).strip()]
+        return ", ".join(partes) if partes else None
+    texto = str(valor).strip()
+    return texto or None
+
+
+def _campos_categoria_en_perfil(categoria_creador: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not categoria_creador or categoria_creador.get("id") is None:
+        return {
+            "categoria_actual": None,
+            "meta_categoria_diamantes": None,
+            "descripcion_categoria": None,
+        }
+    meta = categoria_creador.get("meta_diamantes_objetivo")
+    meta_num = None
+    if meta is not None:
+        try:
+            meta_num = int(meta)
+        except (TypeError, ValueError):
+            meta_num = safe_int(meta, default=0) or None
+
+    return {
+        "categoria_actual": categoria_creador.get("nombre"),
+        "meta_categoria_diamantes": meta_num,
+        "descripcion_categoria": categoria_creador.get("descripcion"),
+    }
+
+
+def construir_perfil_estrategico(
+    perfil_respuestas: Optional[List[Dict[str, Any]]],
+    categoria_creador: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    campos_cat = _campos_categoria_en_perfil(categoria_creador)
+
+    if not perfil_respuestas:
+        resultado = perfil_estrategico_vacio()
+        resultado.update(campos_cat)
+        partes_cat: List[str] = []
+        if campos_cat.get("categoria_actual"):
+            partes_cat.append(f"Categoría: {campos_cat['categoria_actual']}")
+        if campos_cat.get("meta_categoria_diamantes") is not None:
+            partes_cat.append(f"Meta categoría: {campos_cat['meta_categoria_diamantes']} diamantes")
+        if partes_cat:
+            resultado["perfil_resumen"] = ". ".join(partes_cat) + "."
+        return resultado
+
+    arquetipo_definicion = normalizar_respuesta_perfil(
+        obtener_valor_perfil(perfil_respuestas, "arquetipo_definicion")
+    )
+    arquetipo_valor = normalizar_respuesta_perfil(
+        obtener_valor_perfil(perfil_respuestas, "arquetipo_valor")
+    )
+
+    intereses_raw = obtener_valor_perfil(perfil_respuestas, "intereses_multiples")
+    if intereses_raw is None:
+        intereses_raw = obtener_valor_perfil(perfil_respuestas, "intereses")
+    intereses_norm = normalizar_respuesta_perfil(intereses_raw)
+    if intereses_norm is None:
+        intereses: List[Any] = []
+    elif isinstance(intereses_norm, list):
+        intereses = intereses_norm
+    else:
+        intereses = [intereses_norm]
+
+    horario_preferido = normalizar_respuesta_perfil(
+        obtener_valor_perfil(perfil_respuestas, "horario_preferido")
+    )
+    nivel_estudios = normalizar_respuesta_perfil(
+        obtener_valor_perfil(perfil_respuestas, "nivel_estudios")
+    )
+    idiomas_norm = normalizar_respuesta_perfil(
+        obtener_valor_perfil(perfil_respuestas, "idiomas_dominio")
+    )
+    if idiomas_norm is None:
+        idiomas_dominio = None
+    elif isinstance(idiomas_norm, list):
+        idiomas_dominio = idiomas_norm
+    else:
+        idiomas_dominio = idiomas_norm
+
+    partes_resumen: List[str] = []
+    if campos_cat.get("categoria_actual"):
+        partes_resumen.append(f"Categoría: {campos_cat['categoria_actual']}")
+    if campos_cat.get("meta_categoria_diamantes") is not None:
+        partes_resumen.append(
+            f"Meta categoría: {campos_cat['meta_categoria_diamantes']} diamantes"
+        )
+
+    arq_val_txt = _valor_a_texto_resumen(arquetipo_valor)
+    if arq_val_txt:
+        partes_resumen.append(f"Arquetipo: {arq_val_txt}")
+
+    intereses_txt = _valor_a_texto_resumen(intereses)
+    if intereses_txt:
+        partes_resumen.append(f"Intereses: {intereses_txt}")
+
+    horario_txt = _valor_a_texto_resumen(horario_preferido)
+    if horario_txt:
+        partes_resumen.append(f"Horario preferido: {horario_txt}")
+
+    arq_def_txt = _valor_a_texto_resumen(arquetipo_definicion)
+    if arq_def_txt:
+        partes_resumen.append(f"Nivel de definición de estilo: {arq_def_txt}")
+
+    nivel_txt = _valor_a_texto_resumen(nivel_estudios)
+    if nivel_txt:
+        partes_resumen.append(f"Nivel de estudios: {nivel_txt}")
+
+    idiomas_txt = _valor_a_texto_resumen(idiomas_dominio)
+    if idiomas_txt:
+        partes_resumen.append(f"Idiomas: {idiomas_txt}")
+
+    perfil_resumen = ". ".join(partes_resumen) if partes_resumen else None
+    if perfil_resumen:
+        perfil_resumen = perfil_resumen + "."
+
+    return {
+        "arquetipo_definicion": arquetipo_definicion,
+        "arquetipo_valor": arquetipo_valor,
+        "intereses": intereses,
+        "horario_preferido": horario_preferido,
+        "nivel_estudios": nivel_estudios,
+        "idiomas_dominio": idiomas_dominio,
+        **campos_cat,
+        "perfil_resumen": perfil_resumen,
+    }
+
+
 def obtener_contexto_performance(
     creador_id: int,
     *,
@@ -897,9 +1262,14 @@ def obtener_contexto_performance(
     metas = obtener_metas_por_reporte(creador_id, ultimo_reporte)
     insights = obtener_insights_por_reporte(creador_id, ultimo_reporte)
 
+    perfil_respuestas = obtener_perfil_respuestas(creador_id) if incluir_perfil else []
+    categoria_creador = obtener_categoria_creador(creador_id)
+    performance_partidas = construir_performance_partidas(ultimo_reporte)
+
     contexto = {
         "creador": creador,
         "detalle": detalle,
+        "categoria_creador": categoria_creador,
         "ultimo_reporte": ultimo_reporte,
         "metas": metas,
         "insights": insights,
@@ -908,10 +1278,41 @@ def obtener_contexto_performance(
         "recomendaciones": obtener_recomendaciones_pendientes(creador_id),
         "seguimientos": obtener_ultimos_seguimientos(creador_id),
         "acciones_abiertas": obtener_acciones_abiertas(creador_id),
-        "perfil_respuestas": obtener_perfil_respuestas(creador_id) if incluir_perfil else [],
+        "perfil_respuestas": perfil_respuestas,
+        "perfil_estrategico": construir_perfil_estrategico(
+            perfil_respuestas, categoria_creador
+        ),
+        "performance_partidas": performance_partidas,
     }
 
     return contexto
+
+
+def obtener_contexto_ia_manager(
+    creador_id: int,
+    *,
+    id_reporte: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    Contexto reducido para prompts IA: prioriza perfil_estrategico y limita listas.
+    """
+    contexto = obtener_contexto_performance(creador_id, id_reporte=id_reporte, incluir_perfil=True)
+
+    return {
+        "creador": contexto.get("creador"),
+        "detalle": contexto.get("detalle"),
+        "categoria_creador": contexto.get("categoria_creador"),
+        "ultimo_reporte": contexto.get("ultimo_reporte"),
+        "metas": contexto.get("metas"),
+        "insights": contexto.get("insights"),
+        "score": contexto.get("score"),
+        "perfil_estrategico": contexto.get("perfil_estrategico") or perfil_estrategico_vacio(),
+        "performance_partidas": contexto.get("performance_partidas") or performance_partidas_vacio(),
+        "alertas": (contexto.get("alertas") or [])[:5],
+        "recomendaciones": (contexto.get("recomendaciones") or [])[:5],
+        "seguimientos": (contexto.get("seguimientos") or [])[:3],
+        "acciones_abiertas": (contexto.get("acciones_abiertas") or [])[:5],
+    }
 
 
 # =========================================================
@@ -1197,6 +1598,45 @@ def generar_recomendaciones_basicas(contexto: Dict[str, Any]) -> List[Dict[str, 
             "media",
             "Planificar una parrilla de emisiones con horarios fijos y recordatorios.",
             "La frecuencia de emisiones está por debajo de la meta.",
+        )
+
+    partidas_ctx = contexto.get("performance_partidas") or performance_partidas_vacio()
+    partidas = safe_float(partidas_ctx.get("partidas"))
+    diamantes_por_partida = safe_float(partidas_ctx.get("diamantes_por_partida"))
+    pct_partidas = safe_float(partidas_ctx.get("porcentaje_diamantes_por_partidas"))
+    perfil_est = contexto.get("perfil_estrategico") or {}
+    arquetipo = str(perfil_est.get("arquetipo_valor") or "").upper()
+
+    if partidas <= 0 and p_diamantes < 70:
+        agregar(
+            "monetizacion",
+            "alta",
+            "Activar estrategia de partidas o batallas con metas visibles de diamantes por tramo.",
+            "No registra partidas y el cumplimiento de diamantes está por debajo del 70%.",
+        )
+
+    if partidas > 0 and diamantes_por_partida > 0 and diamantes_por_partida < 2000:
+        agregar(
+            "monetizacion",
+            "media",
+            "Mejorar conversión durante partidas: narrativa, retos, selección de rivales y cierre de regalos.",
+            f"Diamantes por partida bajos ({round(diamantes_por_partida, 0)}).",
+        )
+
+    if pct_partidas >= 60:
+        agregar(
+            "monetizacion",
+            "media",
+            "Optimizar selección de rivales, narrativa competitiva y metas por tramos en batallas.",
+            f"Las partidas concentran {round(pct_partidas, 1)}% de los diamantes del mes.",
+        )
+
+    if arquetipo == "BATALLISTA" and partidas < 5:
+        agregar(
+            "contenido",
+            "alta",
+            "Probar dinámica competitiva o batallas alineadas al arquetipo BATALLISTA en horario preferido.",
+            "Arquetipo BATALLISTA con pocas partidas registradas en el período.",
         )
 
     if not recomendaciones:
@@ -1556,10 +1996,12 @@ def insights_performance_creador(creador_id: int):
 
 @router.get("/api/creadores/performance/{creador_id}/perfil-respuestas")
 def perfil_respuestas_performance_creador(creador_id: int):
+    perfil_respuestas = obtener_perfil_respuestas(creador_id)
     return {
         "ok": True,
         "creador_id": creador_id,
-        "perfil_respuestas": obtener_perfil_respuestas(creador_id),
+        "perfil_respuestas": perfil_respuestas,
+        "perfil_estrategico": construir_perfil_estrategico(perfil_respuestas),
     }
 
 
@@ -2445,6 +2887,12 @@ Contexto:
 
 {extra}
 
+IMPORTANTE:
+Considera si la categoría actual, el arquetipo y el rendimiento en partidas son coherentes
+con el desempeño del creador.
+Usa obligatoriamente estos bloques si existen: `categoria_creador`, `perfil_estrategico`,
+`performance_partidas`.
+
 Devuelve exactamente este JSON:
 {{
   "diagnostico": "texto breve de máximo 900 caracteres",
@@ -2474,6 +2922,33 @@ Contexto:
 {contexto_para_prompt(contexto)}
 
 {extra}
+
+IMPORTANTE:
+Usa obligatoriamente estos bloques si existen:
+- categoria_creador
+- perfil_estrategico
+- performance_partidas
+
+La categoría define el nivel de exigencia:
+- Bronce: enfoque en constancia, hábitos, primeras metas y disciplina.
+- Plata: enfoque en crecimiento, consistencia básica y mejora de monetización.
+- Oro: enfoque en optimización, formatos ganadores y monetización estable.
+- Diamante: enfoque en escalamiento, alto rendimiento, retención y monetización avanzada.
+
+El perfil estratégico define el estilo: arquetipo, intereses y horario preferido.
+
+Las partidas son una palanca clave para generar diamantes. Analiza:
+- número de partidas
+- diamantes generados por partidas
+- diamantes por partida
+- peso de partidas sobre diamantes del mes
+- desempeño en modo varios invitados
+- rol como anfitrión o invitado
+
+Si el arquetipo es BATALLISTA, prioriza estrategias de partidas, batallas, retos,
+dinámicas competitivas y metas por tramos.
+
+Evita recomendaciones genéricas.
 
 Devuelve JSON válido con este formato:
 {{
@@ -2513,6 +2988,17 @@ Tipos de acción sugeridos:
 
 {extra}
 
+IMPORTANTE:
+Las acciones deben combinar:
+- categoría del creador (categoria_creador)
+- arquetipo, intereses y horario (perfil_estrategico)
+- desempeño de partidas (performance_partidas)
+- cumplimiento de metas
+
+No generar acciones genéricas como "mejorar contenido".
+Generar acciones específicas como:
+"Probar 3 lives nocturnos con dinámica de batalla fitness, metas por tramos y selección de rivales con buena interacción."
+
 Devuelve JSON válido:
 {{
   "acciones": [
@@ -2545,6 +3031,11 @@ Contexto:
 {contexto_para_prompt(contexto)}
 
 {extra}
+
+IMPORTANTE:
+El scoring debe considerar si el creador está aprovechando o desaprovechando las partidas
+como palanca de diamantes.
+Usa `categoria_creador`, `perfil_estrategico` y `performance_partidas` si existen.
 
 Devuelve JSON válido:
 {{
@@ -2598,6 +3089,10 @@ Compromisos iniciales:
 
 {extra}
 
+IMPORTANTE:
+Usa categoría, perfil estratégico y partidas (`categoria_creador`, `perfil_estrategico`,
+`performance_partidas`) para crear observaciones y compromisos personalizados.
+
 Devuelve JSON válido:
 {{
   "observaciones_manager": "texto mejorado para guardar en observaciones_manager, máximo 1200 caracteres",
@@ -2622,7 +3117,7 @@ def generar_diagnostico_ia(
     creador_id: int,
     data: IARequest = IARequest(),
 ):
-    contexto = obtener_contexto_performance(creador_id, id_reporte=data.id_reporte)
+    contexto = obtener_contexto_ia_manager(creador_id, id_reporte=data.id_reporte)
     prompt = prompt_diagnostico_performance(contexto, data.instrucciones_extra)
 
     resultado = openai_json_completion(
@@ -2646,7 +3141,7 @@ def generar_seguimiento_ia(
     creador_id: int,
     data: GenerarSeguimientoIARequest,
 ):
-    contexto = obtener_contexto_performance(creador_id)
+    contexto = obtener_contexto_ia_manager(creador_id)
     prompt = prompt_generar_seguimiento(
         contexto,
         data.observaciones_manager or "",
@@ -2675,7 +3170,7 @@ def generar_recomendaciones_ia(
     creador_id: int,
     data: GenerarRecomendacionesIARequest = GenerarRecomendacionesIARequest(),
 ):
-    contexto = obtener_contexto_performance(creador_id)
+    contexto = obtener_contexto_ia_manager(creador_id)
     prompt = prompt_recomendaciones_manager(
         contexto,
         data.max_recomendaciones,
@@ -2725,7 +3220,7 @@ def generar_acciones_ia(
     creador_id: int,
     data: GenerarAccionesIARequest = GenerarAccionesIARequest(),
 ):
-    contexto = obtener_contexto_performance(creador_id)
+    contexto = obtener_contexto_ia_manager(creador_id)
     prompt = prompt_acciones_manager(
         contexto,
         data.max_acciones,
@@ -2803,7 +3298,7 @@ def generar_alertas_score_ia(
     creador_id: int,
     data: GenerarAlertasScoreIARequest = GenerarAlertasScoreIARequest(),
 ):
-    contexto = obtener_contexto_performance(creador_id)
+    contexto = obtener_contexto_ia_manager(creador_id)
     prompt = prompt_alertas_score_ia(contexto, data.instrucciones_extra)
 
     resultado = openai_json_completion(
@@ -2875,7 +3370,7 @@ def generar_analisis_completo_ia(
     3) Genera score + alertas IA.
     Puede guardar recomendaciones, score y alertas.
     """
-    contexto = obtener_contexto_performance(creador_id)
+    contexto = obtener_contexto_ia_manager(creador_id)
 
     diagnostico = openai_json_completion(
         prompt_diagnostico_performance(contexto, data.instrucciones_extra),
@@ -3046,7 +3541,8 @@ def resumen_performance_manager(
             c.nombre,
             c.usuario_tiktok,
             c.foto,
-            c.categoria,
+            c.categoria_id,
+            COALESCE(cat.nombre, 'Sin categoría') AS categoria,
             cd.manager_id,
             s.score_general,
             s.nivel_rendimiento,
@@ -3056,6 +3552,7 @@ def resumen_performance_manager(
             COALESCE(alertas.alertas_activas, 0) AS alertas_activas,
             COALESCE(acciones.acciones_abiertas, 0) AS acciones_abiertas
         FROM creadores c
+        LEFT JOIN creadores_categoria cat ON cat.id = c.categoria_id
         INNER JOIN creadores_detalle cd ON c.id = cd.creador_id
         LEFT JOIN LATERAL (
             SELECT *

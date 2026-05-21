@@ -177,14 +177,13 @@ def detalle_creador_estado(
 # ---------- CRUD creadores_categoria ----------
 
 
-def _count_creadores_con_nombre_categoria(cur, nombre: str) -> int:
-    """creadores.categoria guarda el nombre (varchar), no FK."""
+def _count_creadores_con_categoria_id(cur, categoria_id: int) -> int:
     cur.execute(
         """
         SELECT COUNT(*) FROM creadores
-        WHERE categoria IS NOT NULL AND TRIM(categoria) = TRIM(%s)
+        WHERE categoria_id = %s
         """,
-        (nombre,),
+        (categoria_id,),
     )
     return cur.fetchone()[0]
 
@@ -290,19 +289,8 @@ def actualizar_creador_categoria(
                 if not sets:
                     return {"ok": True, "categoria": actual}
 
-                nombre_anterior = actual["nombre"]
                 sql = f"UPDATE creadores_categoria SET {', '.join(sets)} WHERE id = %s"
                 cur.execute(sql, vals + [categoria_id])
-
-                if payload.nombre is not None and payload.nombre.strip() != nombre_anterior:
-                    cur.execute(
-                        """
-                        UPDATE creadores
-                        SET categoria = %s, updated_at = now()
-                        WHERE categoria IS NOT NULL AND TRIM(categoria) = TRIM(%s)
-                        """,
-                        (payload.nombre.strip(), nombre_anterior),
-                    )
 
                 conn.commit()
                 return {"ok": True, "categoria": _get_categoria_or_404(cur, categoria_id)}
@@ -325,7 +313,7 @@ def eliminar_creador_categoria(
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 actual = _get_categoria_or_404(cur, categoria_id)
-                n = _count_creadores_con_nombre_categoria(cur, actual["nombre"])
+                n = _count_creadores_con_categoria_id(cur, categoria_id)
                 if n > 0:
                     raise HTTPException(
                         status_code=409,
