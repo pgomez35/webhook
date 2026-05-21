@@ -1065,6 +1065,73 @@ def generar_insights_periodo(payload: GenerarInsightsPeriodoIn):
         raise HTTPException(status_code=500, detail="Error generando insights mensuales")
 
 
+def _insight_tiene_contenido(insight: Optional[Dict[str, Any]]) -> bool:
+    if not insight:
+        return False
+    for key in (
+        "insight_general",
+        "recomendacion_1",
+        "recomendacion_2",
+        "recomendacion_3",
+        "nivel_rendimiento",
+    ):
+        val = insight.get(key)
+        if val is not None and str(val).strip():
+            return True
+    return False
+
+
+def _cargar_o_generar_insight(cur, conn, reporte: Dict[str, Any], meta: Optional[Dict[str, Any]], creador_id: int):
+    """
+    Devuelve insight de creadores_insights_mensuales.
+    Si no existe (p. ej. reporte importado sin generar_insights), lo calcula y persiste.
+    """
+    cur.execute(
+        """
+        SELECT *
+        FROM creadores_insights_mensuales
+        WHERE creador_id = %s
+          AND id_reporte = %s
+        LIMIT 1
+        """,
+        (creador_id, reporte["id_reporte"]),
+    )
+    insight = cur.fetchone()
+
+    if not _insight_tiene_contenido(insight):
+        cur.execute(
+            """
+            SELECT *
+            FROM creadores_insights_mensuales
+            WHERE creador_id = %s
+              AND periodo_inicio = %s
+              AND periodo_fin = %s
+            ORDER BY created_at DESC NULLS LAST
+            LIMIT 1
+            """,
+            (creador_id, reporte["periodo_inicio"], reporte["periodo_fin"]),
+        )
+        insight = cur.fetchone()
+
+    if not _insight_tiene_contenido(insight) and reporte.get("creador_id"):
+        textos = _generar_textos_insight(reporte, meta)
+        _upsert_insight(cur, reporte, textos)
+        conn.commit()
+        cur.execute(
+            """
+            SELECT *
+            FROM creadores_insights_mensuales
+            WHERE creador_id = %s
+              AND id_reporte = %s
+            LIMIT 1
+            """,
+            (creador_id, reporte["id_reporte"]),
+        )
+        insight = cur.fetchone()
+
+    return insight
+
+
 # =========================================================
 # ENDPOINT: RESUMEN PERFORMANCE DE UN CREADOR
 # =========================================================
@@ -1120,17 +1187,7 @@ def obtener_resumen_performance_creador(
                 )
                 meta = cur.fetchone()
 
-                cur.execute(
-                    """
-                    SELECT *
-                    FROM creadores_insights_mensuales
-                    WHERE creador_id = %s
-                      AND id_reporte = %s
-                    LIMIT 1
-                    """,
-                    (creador_id, reporte["id_reporte"]),
-                )
-                insight = cur.fetchone()
+                insight = _cargar_o_generar_insight(cur, conn, reporte, meta, creador_id)
 
         return {
             "ok": True,
