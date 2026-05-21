@@ -696,8 +696,14 @@ class SeguimientoCreadorBase(BaseModel):
     )
 
     fecha_seguimiento: date
-    estrategias_mejora: str
-    compromisos: str
+    observaciones_manager: str = Field(
+        ...,
+        validation_alias=AliasChoices("observaciones_manager", "estrategias_mejora"),
+    )
+    resumen_compromisos: str = Field(
+        ...,
+        validation_alias=AliasChoices("resumen_compromisos", "compromisos"),
+    )
 
 
 # Modelo extendido: para respuesta (salida)

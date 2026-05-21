@@ -17,9 +17,6 @@ from schemas import (
     CreadorActivoUpdate,
     CreadorActivoConManager,
     CreadorActivoAutoCreate,
-    SeguimientoCreadorDB,
-    SeguimientoCreadorCreate,
-    SeguimientoCreadorConManager,
 )
 from utils_aspirantes import obtener_creadores_activos_db
 from creadores_catalogo import CREADOR_ESTADO_NOMBRE_ACTIVO
@@ -836,100 +833,6 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al crear creador activo: {e}")
-
-@router.post("/api/seguimiento_creadores/", response_model=SeguimientoCreadorDB)
-def crear_seguimiento_creador(seg: SeguimientoCreadorCreate):
-    try:
-
-        if not seg.creador_id:
-            raise HTTPException(
-                status_code=400,
-                detail="creador_id es requerido"
-            )
-
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-
-                # Obtener manager asignado al creador
-                cur.execute("""
-                    SELECT manager_id
-                    FROM creadores_detalle
-                    WHERE creador_id = %s
-                """, (seg.creador_id,))
-
-                result = cur.fetchone()
-
-                if not result:
-                    raise HTTPException(
-                        status_code=404,
-                        detail="No se encontró el detalle del creador"
-                    )
-
-                manager_id = result[0]
-
-                # Insertar seguimiento
-                cur.execute("""
-                    INSERT INTO creadores_seguimiento (
-                        creador_id,
-                        manager_id,
-                        fecha_seguimiento,
-                        estrategias_mejora,
-                        compromisos
-                    )
-                    VALUES (
-                        %(creador_id)s,
-                        %(manager_id)s,
-                        %(fecha_seguimiento)s,
-                        %(estrategias_mejora)s,
-                        %(compromisos)s
-                    )
-                    RETURNING *;
-                """, {
-                    "creador_id": seg.creador_id,
-                    "manager_id": manager_id,
-                    "fecha_seguimiento": seg.fecha_seguimiento,
-                    "estrategias_mejora": seg.estrategias_mejora,
-                    "compromisos": seg.compromisos
-                })
-
-                row = cur.fetchone()
-
-                columns = [desc[0] for desc in cur.description]
-
-                conn.commit()
-
-                return dict(zip(columns, row))
-
-    except HTTPException:
-        raise
-
-    except Exception as e:
-        print("ERROR:", e)
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
-
-
-@router.get("/api/seguimiento_creadores/creador/{creador_id}", response_model=List[SeguimientoCreadorConManager])
-def listar_seguimientos_por_creador(creador_id: int):
-    try:
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT sc.*, au.nombre_completo AS manager_nombre
-                    FROM creadores_seguimiento sc
-                    LEFT JOIN administradores au ON sc.manager_id = au.id
-                    WHERE sc.creador_id = %s
-                    ORDER BY sc.fecha_seguimiento DESC
-                """, (creador_id,))
-                rows = cur.fetchall()
-                columns = [desc[0] for desc in cur.description]
-                return [dict(zip(columns, row)) for row in rows]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 def obtener_estadisticas_por_creador(creador_activo_id: int):
     with get_connection_context() as conn:
