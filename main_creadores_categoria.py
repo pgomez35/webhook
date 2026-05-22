@@ -10,12 +10,14 @@ Requiere JWT de administrador (mismo patrón que main_creadores_perfil_config).
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from DataBase import get_connection_context
+from DataBase import get_connection_context, obtener_todos_manager
 from main_auth import obtener_usuario_actual
 
 logger = logging.getLogger("uvicorn.error")
@@ -45,6 +47,11 @@ _SELECT_CATEGORIA = """
     FROM creadores_categoria
 """
 
+_SELECT_ARQUETIPO = """
+    SELECT id, codigo, nombre, descripcion_operativa, orden, activo
+    FROM creadores_arquetipo
+"""
+
 _UPDATABLE = frozenset(
     {
         "nombre",
@@ -70,6 +77,66 @@ def fetchall_dict(cur) -> List[Dict[str, Any]]:
         return []
     cols = [d[0] for d in cur.description]
     return [dict(zip(cols, r)) for r in rows]
+
+
+def obtener_creadores_categorias_catalogo(solo_activas: bool = False) -> List[Dict[str, Any]]:
+    """Misma consulta que GET /api/creadores/categorias."""
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            where = "1=1"
+            if solo_activas:
+                where = "COALESCE(activa, true) = true"
+            cur.execute(
+                f"""
+                {_SELECT_CATEGORIA}
+                WHERE {where}
+                ORDER BY orden NULLS LAST, id ASC
+                """
+            )
+            return fetchall_dict(cur)
+
+
+def obtener_creadores_estados_catalogo(solo_activos: bool = False) -> List[Dict[str, Any]]:
+    """Misma consulta que GET /api/creadores/estados."""
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            where = "1=1"
+            if solo_activos:
+                where = "activo = true"
+            cur.execute(
+                f"""
+                {_SELECT_ESTADO}
+                WHERE {where}
+                ORDER BY orden ASC, id ASC
+                """
+            )
+            return fetchall_dict(cur)
+
+
+def obtener_arquetipos_creador_catalogo(solo_activos: bool = True) -> List[Dict[str, Any]]:
+    """Misma consulta que GET /api/creadores/arquetipos."""
+    with get_connection_context() as conn:
+        with conn.cursor() as cur:
+            sql = f"{_SELECT_ARQUETIPO}"
+            if solo_activos:
+                sql += " WHERE COALESCE(activo, true) = true"
+            sql += " ORDER BY orden NULLS LAST, nombre ASC, id ASC"
+            cur.execute(sql)
+            return fetchall_dict(cur)
+
+
+def obtener_managers_catalogo() -> List[Dict[str, Any]]:
+    """Mismo conjunto que GET /api/admin-usuario_manager (schema AdminUsuarioManagerResponse)."""
+    return [
+        {
+            "id": u["id"],
+            "username": u["username"],
+            "nombre_completo": u["nombre_completo"],
+            "grupo": u["grupo"],
+            "activo": u["activo"],
+        }
+        for u in obtener_todos_manager()
+    ]
 
 
 def _build_update(payload: BaseModel) -> tuple[List[str], List[Any]]:
@@ -140,19 +207,7 @@ def listar_creadores_estados(
     Lista el catálogo creadores_estados (para selects en formularios de creador).
     """
     try:
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-                where = "1=1"
-                if solo_activos:
-                    where = "activo = true"
-                cur.execute(
-                    f"""
-                    {_SELECT_ESTADO}
-                    WHERE {where}
-                    ORDER BY orden ASC, id ASC
-                    """
-                )
-                return {"ok": True, "estados": fetchall_dict(cur)}
+        return {"ok": True, "estados": obtener_creadores_estados_catalogo(solo_activos)}
     except Exception as e:
         logger.exception("listar creadores_estados: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
@@ -194,23 +249,67 @@ def listar_creadores_categorias(
     _usuario: dict = Depends(obtener_usuario_actual),
 ):
     try:
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-                where = "1=1"
-                params: List[Any] = []
-                if solo_activas:
-                    where = "COALESCE(activa, true) = true"
-                cur.execute(
-                    f"""
-                    {_SELECT_CATEGORIA}
-                    WHERE {where}
-                    ORDER BY orden NULLS LAST, id ASC
-                    """,
-                    params,
-                )
-                return {"ok": True, "categorias": fetchall_dict(cur)}
+        return {"ok": True, "categorias": obtener_creadores_categorias_catalogo(solo_activas)}
     except Exception as e:
         logger.exception("listar creadores_categoria: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------- Catálogos unificados (Creadores Activos) ----------
+
+
+@router.get(
+    "/api/creadores/activos/catalogos",
+    tags=["Creadores"],
+    response_model=None,
+    responses={
+        200: {
+            "description": "Catálogos para selects del panel Creadores Activos",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "ok": True,
+                        "generado_en": "2026-05-19T12:00:00+00:00",
+                        "categorias": [],
+                        "estados": [],
+                        "arquetipos": [],
+                        "managers": [],
+                    }
+                }
+            },
+        }
+    },
+)
+def catalogos_creadores_activos(
+    solo_activas: bool = Query(
+        False,
+        description="Si true, solo categorías con activa = true (igual que /api/creadores/categorias)",
+    ),
+    solo_activos: bool = Query(
+        False,
+        description="Si true, filtra estados y arquetipos con activo = true",
+    ),
+    _usuario: dict = Depends(obtener_usuario_actual),
+):
+    """
+    Agrega categorías, estados, arquetipos y managers en una sola respuesta cacheable.
+    Reutiliza la misma lógica que los endpoints individuales; no incluye listado ni detalle de creador.
+    """
+    try:
+        body = {
+            "ok": True,
+            "generado_en": datetime.now(timezone.utc).isoformat(),
+            "categorias": obtener_creadores_categorias_catalogo(solo_activas),
+            "estados": obtener_creadores_estados_catalogo(solo_activos),
+            "arquetipos": obtener_arquetipos_creador_catalogo(solo_activos),
+            "managers": obtener_managers_catalogo(),
+        }
+        return JSONResponse(
+            content=body,
+            headers={"Cache-Control": "private, max-age=300"},
+        )
+    except Exception as e:
+        logger.exception("catalogos creadores activos: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 

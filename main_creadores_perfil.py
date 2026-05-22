@@ -26,6 +26,7 @@ from creadores_catalogo import (
     resolver_arquetipo_id_creador,
     resolver_categoria_id_creador,
 )
+from main_creadores_categoria import obtener_arquetipos_creador_catalogo
 
 router = APIRouter()
 
@@ -366,21 +367,15 @@ def guardar_respuestas_perfil_creador(data: GuardarPerfilCreadorIn):
 # =========================================================
 
 @router.get("/api/creadores/arquetipos", tags=["Creadores"])
-def listar_arquetipos_creador(solo_activos: bool = Query(True)):
+def listar_arquetipos_creador(
+    solo_activos: bool = Query(
+        True,
+        description="Si true, solo filas con activo = true",
+    ),
+):
     """Catálogo creadores_arquetipo para selects en el panel de creadores activos."""
     try:
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-                sql = """
-                    SELECT id, codigo, nombre, descripcion_operativa, orden, activo
-                    FROM creadores_arquetipo
-                """
-                if solo_activos:
-                    sql += " WHERE COALESCE(activo, true) = true"
-                sql += " ORDER BY orden NULLS LAST, nombre ASC, id ASC"
-                cur.execute(sql)
-                columns = [desc[0] for desc in cur.description]
-                return [dict(zip(columns, row)) for row in cur.fetchall()]
+        return obtener_arquetipos_creador_catalogo(solo_activos)
     except Exception as e:
         print(f"❌ [creadores/arquetipos] {e}", flush=True)
         traceback.print_exc()
