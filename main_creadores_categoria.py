@@ -13,8 +13,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from DataBase import get_connection_context, obtener_todos_manager
@@ -281,6 +280,7 @@ def listar_creadores_categorias(
     },
 )
 def catalogos_creadores_activos(
+    response: Response,
     solo_activas: bool = Query(
         False,
         description="Si true, solo categorías con activa = true (igual que /api/creadores/categorias)",
@@ -296,7 +296,8 @@ def catalogos_creadores_activos(
     Reutiliza la misma lógica que los endpoints individuales; no incluye listado ni detalle de creador.
     """
     try:
-        body = {
+        response.headers["Cache-Control"] = "private, max-age=300"
+        return {
             "ok": True,
             "generado_en": datetime.now(timezone.utc).isoformat(),
             "categorias": obtener_creadores_categorias_catalogo(solo_activas),
@@ -304,10 +305,6 @@ def catalogos_creadores_activos(
             "arquetipos": obtener_arquetipos_creador_catalogo(solo_activos),
             "managers": obtener_managers_catalogo(),
         }
-        return JSONResponse(
-            content=body,
-            headers={"Cache-Control": "private, max-age=300"},
-        )
     except Exception as e:
         logger.exception("catalogos creadores activos: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
