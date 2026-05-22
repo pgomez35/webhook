@@ -58,10 +58,13 @@ class LinkAgendamientoOut(BaseModel):
 
 
 
-# class ActualizarPreEvaluacionIn(BaseModel):
-#     estado_evaluacion: Optional[str] = None  # "No apto" | "Entrevista" | "Invitar a TikTok"
-#     usuario_evalua: Optional[str] = None
-#     observaciones_finales: Optional[str] = None
+class ActualizarPreEvaluacionIn(BaseModel):
+    estado_evaluacion: Optional[str] = Field(
+        None,
+        description='Decisión de pre-evaluación: "No apto", "Entrevista", "Invitar a TikTok", etc.',
+    )
+    usuario_evalua: Optional[str] = None
+    observaciones_finales: Optional[str] = None
 
 
 class EventoIn(BaseModel):
@@ -126,6 +129,10 @@ def actualizar_preevaluacion_perfil(aspirante_id: int, payload: dict):
 
 
 def actualizar_estado_creador_preevaluacion(aspirante_id: int, estado: str):
+    """
+    Legacy: cambia estado en aspirantes vía registrar_cambio_estado.
+    No lo usa PUT /preevaluacion; los envíos WhatsApp aplican el estado.
+    """
 
     # 1. Mapeo de Estado de Negocio (Tu lógica actual)
     # Ejemplo: "APROBADO" -> 100
@@ -164,40 +171,54 @@ def actualizar_estado_creador_preevaluacion(aspirante_id: int, estado: str):
 #         """, (estado_id, aspirante_id))
 
 
-# legacy: PUT preevaluacion (handler comentado; no hay ruta registrada)
-# def actualizar_preevaluacion(
-#     aspirante_id: int,
-#     datos: ActualizarPreEvaluacionIn,
-#     usuario_actual: dict = Depends(obtener_usuario_actual),
-# ):
-#     try:
-#         print("➡️ Payload recibido:", datos.dict())
-#
-#         payload = {
-#             "estado_evaluacion": datos.estado_evaluacion,
-#             "usuario_evalua": datos.usuario_evalua,
-#             # "observaciones_finales": datos.observaciones_finales,
-#         }
-#
-#         print("➡️ Actualizando aspirantes_perfil con:", payload)
-#         actualizar_preevaluacion_perfil(aspirante_id, payload)
-#
-#         if datos.estado_evaluacion:
-#             print("➡️ Actualizando tabla aspirantes.estado_id con:", datos.estado_evaluacion)
-#             actualizar_estado_creador_preevaluacion(aspirante_id, datos.estado_evaluacion)
-#
-#         print("✔️ Pre-evaluación actualizada correctamente")
-#
-#         return {
-#             "status": "ok",
-#             "mensaje": "Pre-evaluación actualizada correctamente",
-#             "aspirante_id": aspirante_id,
-#             "estado_evaluacion": datos.estado_evaluacion,
-#         }
-#
-#     except Exception as e:
-#         print("❌ ERROR en actualizar_preevaluacion:", str(e))
-#         raise HTTPException(status_code=500, detail=str(e))
+@router.put(
+    "/api/aspirantes_perfil/{aspirante_id}/preevaluacion",
+    tags=["Evaluacion Aspirante"],
+)
+def actualizar_preevaluacion(
+    aspirante_id: int,
+    datos: ActualizarPreEvaluacionIn,
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
+    """
+    Stub para el front: acepta la pre-evaluación pero no persiste en BD.
+    El estado y el perfil se actualizan al enviar mensajes (no_apto / invitacion / auto_agendamientos).
+    """
+    try:
+        payload = {
+            k: v
+            for k, v in {
+                "estado_evaluacion": datos.estado_evaluacion,
+                "usuario_evalua": datos.usuario_evalua,
+                "observaciones_finales": datos.observaciones_finales,
+            }.items()
+            if v is not None
+        }
+
+        # --- Persistencia en BD desactivada (el front solo necesita 200 OK) ---
+        # if not payload:
+        #     raise HTTPException(
+        #         status_code=400,
+        #         detail="Debe enviar al menos un campo: estado_evaluacion, usuario_evalua u observaciones_finales",
+        #     )
+        # actualizar_preevaluacion_perfil(aspirante_id, payload)
+        # if datos.estado_evaluacion:
+        #     actualizar_estado_creador_preevaluacion(aspirante_id, datos.estado_evaluacion)
+
+        return {
+            "status": "ok",
+            "mensaje": "Pre-evaluación recibida (sin escritura en BD)",
+            "aspirante_id": aspirante_id,
+            "estado_evaluacion": datos.estado_evaluacion,
+            "usuario_evalua": datos.usuario_evalua,
+            "payload_recibido": payload,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error en PUT preevaluacion aspirante_id=%s: %s", aspirante_id, e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # services/db_service.py
