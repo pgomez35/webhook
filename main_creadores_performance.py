@@ -4316,7 +4316,7 @@ def _construir_recomendacion_personalizada_fallback(
         "otro": {
             "recomendacion": (
                 f"Para {nombre}, probar 3 lives en {horario} esta semana.\n\n"
-                f"{dinamicas_mon}\n\n"
+                f"{dinamicas_intereses_mon}\n\n"
                 f"{resumen_arq} Meta {meta_txt}."
             ),
             "justificacion": (
