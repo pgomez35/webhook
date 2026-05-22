@@ -644,6 +644,8 @@ class CreadorActivoBase(BaseModel):
     foto: Optional[str] = None
     categoria_id: Optional[int] = None
     categoria: Optional[str] = None  # legado: nombre en creadores_categoria
+    arquetipo_id: Optional[int] = None
+    arquetipo: Optional[str] = None  # nombre en creadores_arquetipo (lectura / legado)
     estado_id: Optional[int] = None
     estado: Optional[str] = None  # legado: nombre en creadores_estados o 'activo'
     manager_id: Optional[int] = None

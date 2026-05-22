@@ -2347,21 +2347,28 @@ def crear_o_actualizar_creador_desde_aspirante(
 def obtener_creadores_activos_db():
     """
     Lista creadores activos para la vista de listado (panel izquierdo).
-    No usa joins para mantener velocidad y simplicidad.
+    Incluye nombre de arquetipo vía creadores_arquetipo.
     """
+    from creadores_catalogo import (
+        SQL_JOIN_CREADOR_ARQUETIPO,
+        SQL_SELECT_CREADOR_ARQUETIPO,
+    )
+
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(f"""
                     SELECT
                         c.id,
                         COALESCE(NULLIF(TRIM(c.nombre), ''), NULLIF(TRIM(c.usuario_tiktok), ''), 'Sin nombre') AS nombre,
                         COALESCE(NULLIF(TRIM(c.usuario_tiktok), ''), '') AS usuario_tiktok,
                         c.categoria_id,
                         COALESCE(cat.nombre, 'Sin categoría') AS categoria,
+                        {SQL_SELECT_CREADOR_ARQUETIPO}
                         ce.nombre AS estado
                     FROM creadores c
                     LEFT JOIN creadores_categoria cat ON cat.id = c.categoria_id
+                    {SQL_JOIN_CREADOR_ARQUETIPO}
                     INNER JOIN creadores_estados ce ON ce.id = c.estado_id
                     WHERE ce.nombre = %s
                       AND COALESCE(ce.activo, true) = true

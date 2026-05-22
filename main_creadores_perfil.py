@@ -21,6 +21,9 @@ from schemas import (
 from utils_aspirantes import obtener_creadores_activos_db
 from creadores_catalogo import (
     CREADOR_ESTADO_NOMBRE_ACTIVO,
+    SQL_JOIN_CREADOR_ARQUETIPO,
+    SQL_SELECT_CREADOR_ARQUETIPO,
+    resolver_arquetipo_id_creador,
     resolver_categoria_id_creador,
 )
 
@@ -92,6 +95,10 @@ def _resolver_estado_id_creador(
 
 def _resolver_categoria_id_creador(cur, categoria_id, categoria_legacy):
     return resolver_categoria_id_creador(cur, categoria_id, categoria_legacy)
+
+
+def _resolver_arquetipo_id_creador(cur, arquetipo_id, arquetipo_legacy):
+    return resolver_arquetipo_id_creador(cur, arquetipo_id, arquetipo_legacy)
 
 
 # =========================================================
@@ -358,6 +365,28 @@ def guardar_respuestas_perfil_creador(data: GuardarPerfilCreadorIn):
 # CREADORES (antes creadores_activos; tabla: creadores)
 # =========================================================
 
+@router.get("/api/creadores/arquetipos", tags=["Creadores"])
+def listar_arquetipos_creador(solo_activos: bool = Query(True)):
+    """Catálogo creadores_arquetipo para selects en el panel de creadores activos."""
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                sql = """
+                    SELECT id, codigo, nombre, descripcion_operativa, orden, activo
+                    FROM creadores_arquetipo
+                """
+                if solo_activos:
+                    sql += " WHERE COALESCE(activo, true) = true"
+                sql += " ORDER BY orden NULLS LAST, nombre ASC, id ASC"
+                cur.execute(sql)
+                columns = [desc[0] for desc in cur.description]
+                return [dict(zip(columns, row)) for row in cur.fetchall()]
+    except Exception as e:
+        print(f"❌ [creadores/arquetipos] {e}", flush=True)
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/api/creadores/activos", tags=["Creadores"])
 def listar_creadores_activos():
     try:
@@ -374,7 +403,7 @@ def obtener_creador_activo(id: int):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(f"""
                     SELECT
                         c.id,
                         c.aspirante_id,
@@ -385,6 +414,7 @@ def obtener_creador_activo(id: int):
                         c.foto,
                         c.categoria_id,
                         COALESCE(cat.nombre, 'Sin categoría') AS categoria,
+                        {SQL_SELECT_CREADOR_ARQUETIPO}
                         c.estado_id,
                         ce.nombre AS estado,
 
@@ -405,6 +435,7 @@ def obtener_creador_activo(id: int):
 
                     FROM creadores c
                     LEFT JOIN creadores_categoria cat ON cat.id = c.categoria_id
+                    {SQL_JOIN_CREADOR_ARQUETIPO}
                     LEFT JOIN creadores_detalle d
                         ON d.creador_id = c.id
                     LEFT JOIN administradores au
@@ -447,6 +478,9 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
                 categoria_id = _resolver_categoria_id_creador(
                     cur, data.get("categoria_id"), data.get("categoria")
                 )
+                arquetipo_id = _resolver_arquetipo_id_creador(
+                    cur, data.get("arquetipo_id"), data.get("arquetipo")
+                )
 
                 # 1. Insertar datos base en creadores
                 cur.execute("""
@@ -458,6 +492,7 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
                         telefono,
                         foto,
                         categoria_id,
+                        arquetipo_id,
                         estado_id
                     )
                     VALUES (
@@ -468,10 +503,16 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
                         %(telefono)s,
                         %(foto)s,
                         %(categoria_id)s,
+                        %(arquetipo_id)s,
                         %(estado_id)s
                     )
                     RETURNING id;
-                """, {**data, "estado_id": estado_id, "categoria_id": categoria_id})
+                """, {
+                    **data,
+                    "estado_id": estado_id,
+                    "categoria_id": categoria_id,
+                    "arquetipo_id": arquetipo_id,
+                })
 
                 creador_id = cur.fetchone()[0]
 
@@ -516,7 +557,7 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
                 conn.commit()
 
                 # 3. Retornar creador completo
-                cur.execute("""
+                cur.execute(f"""
                     SELECT
                         c.id,
                         c.aspirante_id,
@@ -527,6 +568,7 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
                         c.foto,
                         c.categoria_id,
                         COALESCE(cat.nombre, 'Sin categoría') AS categoria,
+                        {SQL_SELECT_CREADOR_ARQUETIPO}
                         ce.nombre AS estado,
 
                         d.manager_id,
@@ -544,6 +586,7 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
 
                     FROM creadores c
                     LEFT JOIN creadores_categoria cat ON cat.id = c.categoria_id
+                    {SQL_JOIN_CREADOR_ARQUETIPO}
                     LEFT JOIN creadores_detalle d
                         ON d.creador_id = c.id
                     LEFT JOIN creadores_estados ce ON ce.id = c.estado_id
@@ -553,7 +596,7 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
                 row = cur.fetchone()
                 columns = [desc[0] for desc in cur.description]
 
-                return dict(zip(columns, row))
+                return _normalizar_respuesta_creador_activo(dict(zip(columns, row)))
 
     except Exception as e:
         print(f"❌ Error creando creador activo: {e}")
@@ -588,6 +631,9 @@ def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
                 categoria_id = _resolver_categoria_id_creador(
                     cur, data.get("categoria_id"), data.get("categoria")
                 )
+                arquetipo_id = _resolver_arquetipo_id_creador(
+                    cur, data.get("arquetipo_id"), data.get("arquetipo")
+                )
                 cur.execute("""
                     UPDATE creadores
                     SET
@@ -598,10 +644,17 @@ def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
                         telefono = %(telefono)s,
                         foto = %(foto)s,
                         categoria_id = %(categoria_id)s,
+                        arquetipo_id = %(arquetipo_id)s,
                         estado_id = %(estado_id)s,
                         updated_at = now()
                     WHERE id = %(id)s
-                """, {**data, "id": id, "estado_id": estado_id, "categoria_id": categoria_id})
+                """, {
+                    **data,
+                    "id": id,
+                    "estado_id": estado_id,
+                    "categoria_id": categoria_id,
+                    "arquetipo_id": arquetipo_id,
+                })
 
                 # 3. Insertar o actualizar detalle
                 cur.execute("""
@@ -657,7 +710,7 @@ def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
                 conn.commit()
 
                 # 4. Retornar creador completo
-                cur.execute("""
+                cur.execute(f"""
                     SELECT
                         c.id,
                         c.aspirante_id,
@@ -668,6 +721,7 @@ def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
                         c.foto,
                         c.categoria_id,
                         COALESCE(cat.nombre, 'Sin categoría') AS categoria,
+                        {SQL_SELECT_CREADOR_ARQUETIPO}
                         ce.nombre AS estado,
 
                         d.manager_id,
@@ -685,6 +739,7 @@ def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
 
                     FROM creadores c
                     LEFT JOIN creadores_categoria cat ON cat.id = c.categoria_id
+                    {SQL_JOIN_CREADOR_ARQUETIPO}
                     LEFT JOIN creadores_detalle d
                         ON d.creador_id = c.id
                     LEFT JOIN creadores_estados ce ON ce.id = c.estado_id
@@ -694,7 +749,7 @@ def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
                 row = cur.fetchone()
                 columns = [desc[0] for desc in cur.description]
 
-                return dict(zip(columns, row))
+                return _normalizar_respuesta_creador_activo(dict(zip(columns, row)))
 
     except HTTPException:
         raise
@@ -831,7 +886,7 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
                 conn.commit()
 
                 cur.execute(
-                    """
+                    f"""
                     SELECT
                         c.id,
                         c.aspirante_id,
@@ -842,6 +897,7 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
                         c.foto,
                         c.categoria_id,
                         COALESCE(cat.nombre, 'Sin categoría') AS categoria,
+                        {SQL_SELECT_CREADOR_ARQUETIPO}
                         ce.nombre AS estado,
                         d.manager_id,
                         d.horario_lives,
@@ -857,6 +913,7 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
                         d.dias_emision
                     FROM creadores c
                     LEFT JOIN creadores_categoria cat ON cat.id = c.categoria_id
+                    {SQL_JOIN_CREADOR_ARQUETIPO}
                     LEFT JOIN creadores_detalle d ON d.creador_id = c.id
                     LEFT JOIN creadores_estados ce ON ce.id = c.estado_id
                     WHERE c.id = %s
@@ -865,7 +922,7 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
                 )
                 new_row = cur.fetchone()
                 columns = [desc[0] for desc in cur.description]
-                return dict(zip(columns, new_row))
+                return _normalizar_respuesta_creador_activo(dict(zip(columns, new_row)))
     except HTTPException:
         raise
     except Exception as e:
