@@ -56,7 +56,8 @@ OPENAI_MODEL_DEFAULT = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 OPENAI_CONFIG_CLAVE = "open_AI_enabled"
 
 _openai_client: Optional[OpenAI] = None
-
+# DEBUG_PERFORMANCE_IA = str(os.getenv("DEBUG_PERFORMANCE_IA", "false")).lower() in {"1", "true", "yes", "on"}
+DEBUG_PERFORMANCE_IA = True
 
 # =========================================================
 # CONSTANTES DE NEGOCIO
@@ -872,11 +873,14 @@ def obtener_perfil_respuestas(creador_id: int) -> List[Dict[str, Any]]:
             r.valor_texto,
             r.valor_json,
             r.valor_id,
+            pv.label AS valor_label,
+            pv.nivel AS valor_nivel,
             r.created_at,
             r.updated_at
         FROM creadores_perfil_respuesta r
         INNER JOIN creadores_perfil_variable v ON r.variable_id = v.id
         LEFT JOIN creadores_perfil_categoria c ON v.categoria_id = c.id
+        LEFT JOIN creadores_perfil_valor pv ON r.valor_id = pv.id
         WHERE r.creador_id = %s
         ORDER BY c.orden ASC NULLS LAST, v.orden ASC NULLS LAST, v.id ASC
         """,
@@ -927,6 +931,8 @@ def performance_partidas_vacio() -> Dict[str, Any]:
         "diamantes_modo_varios_invitados_anfitrion": 0,
         "diamantes_modo_varios_invitados_invitado": 0,
         "peso_modo_varios_invitados": 0,
+        "porcentaje_diamantes_por_partidas_visual": 0,
+        "advertencia_partidas": None,
         "diagnostico_partidas": "Sin datos de partidas disponibles.",
     }
 
@@ -989,17 +995,26 @@ def construir_performance_partidas(reporte: Optional[Dict[str, Any]]) -> Dict[st
         porcentaje_diamantes_por_partidas,
     )
 
+    advertencia_partidas = None
+    if diamantes_mes > 0 and diamantes_de_partidas > diamantes_mes:
+        advertencia_partidas = (
+            "diamantes_de_partidas supera diamantes_mes; revisar si ambos campos "
+            "corresponden al mismo período o a la misma base de cálculo."
+        )
+
     return {
         "partidas": int(partidas) if partidas == int(partidas) else partidas,
         "diamantes_de_partidas": diamantes_de_partidas,
         "diamantes_mes": diamantes_mes,
         "diamantes_por_partida": round(diamantes_por_partida, 2),
         "porcentaje_diamantes_por_partidas": round(porcentaje_diamantes_por_partidas, 2),
+        "porcentaje_diamantes_por_partidas_visual": round(clamp(porcentaje_diamantes_por_partidas), 2),
         "partidas_por_emision": round(partidas_por_emision, 2),
         "diamantes_modo_varios_invitados": diam_modo_varios,
         "diamantes_modo_varios_invitados_anfitrion": diam_anfitrion,
         "diamantes_modo_varios_invitados_invitado": diam_invitado,
         "peso_modo_varios_invitados": round(peso_modo_varios_invitados, 2),
+        "advertencia_partidas": advertencia_partidas,
         "diagnostico_partidas": diagnostico,
     }
 
@@ -1020,8 +1035,152 @@ def _parse_valor_json_perfil(valor_json: Any) -> Any:
     return valor_json
 
 
+def _es_id_opcion_perfil(valor: Any) -> bool:
+    """
+    Detecta posibles IDs de creadores_perfil_valor.
+    Evita tratar booleanos como enteros.
+    """
+    if isinstance(valor, bool):
+        return False
+
+    if isinstance(valor, int):
+        return valor > 0
+
+    if isinstance(valor, float):
+        return valor.is_integer() and valor > 0
+
+    if isinstance(valor, str):
+        texto = valor.strip()
+        return texto.isdigit()
+
+    return False
+
+
+def obtener_label_valor_por_id(valor_id: Any) -> Optional[str]:
+    """
+    Convierte un valor_id de creadores_perfil_valor en su label.
+    Respeta el search_path del tenant; no usa schema test.
+    """
+    if not _es_id_opcion_perfil(valor_id):
+        return None
+
+    try:
+        row = fetch_one(
+            """
+            SELECT label
+            FROM creadores_perfil_valor
+            WHERE id = %s
+            LIMIT 1
+            """,
+            (int(float(valor_id)),),
+        )
+        if row and row.get("label") not in (None, ""):
+            return str(row["label"]).strip()
+    except Exception as e:
+        print(f"⚠️ [PERFIL] No se pudo resolver label para valor_id={valor_id}: {e}", flush=True)
+
+    return None
+
+
+def obtener_labels_valores_por_ids(ids: List[Any]) -> List[Any]:
+    """
+    Convierte una lista de IDs de creadores_perfil_valor en labels.
+    Mantiene el orden original. Si algún ID no existe, conserva el valor original.
+    """
+    if not ids:
+        return []
+
+    ids_limpios: List[int] = []
+    for item in ids:
+        if _es_id_opcion_perfil(item):
+            try:
+                ids_limpios.append(int(float(item)))
+            except Exception:
+                pass
+
+    if not ids_limpios:
+        return ids
+
+    try:
+        rows = fetch_all(
+            """
+            SELECT id, label
+            FROM creadores_perfil_valor
+            WHERE id = ANY(%s)
+            """,
+            (ids_limpios,),
+        )
+
+        mapa = {
+            int(row["id"]): str(row["label"]).strip()
+            for row in rows
+            if row.get("id") is not None and row.get("label") not in (None, "")
+        }
+
+        resultado: List[Any] = []
+        for item in ids:
+            if _es_id_opcion_perfil(item):
+                item_int = int(float(item))
+                resultado.append(mapa.get(item_int, item))
+            else:
+                resultado.append(item)
+        return resultado
+
+    except Exception as e:
+        print(f"⚠️ [PERFIL] No se pudieron resolver labels para ids={ids_limpios}: {e}", flush=True)
+        return ids
+
+
+def _resolver_ids_en_valor_perfil(valor: Any) -> Any:
+    """
+    Reemplaza IDs numéricos por labels cuando correspondan a creadores_perfil_valor.
+    Si no hay label, conserva el valor original.
+    """
+    if valor is None:
+        return None
+
+    if isinstance(valor, list):
+        if valor and all(_es_id_opcion_perfil(v) for v in valor):
+            return obtener_labels_valores_por_ids(valor)
+
+        resultado: List[Any] = []
+        for item in valor:
+            resuelto = _resolver_ids_en_valor_perfil(item)
+            if resuelto is None:
+                continue
+            if isinstance(resuelto, list):
+                resultado.extend(resuelto)
+            else:
+                resultado.append(resuelto)
+        return resultado
+
+    if isinstance(valor, dict):
+        return {
+            key: _resolver_ids_en_valor_perfil(item)
+            for key, item in valor.items()
+        }
+
+    if _es_id_opcion_perfil(valor):
+        label = obtener_label_valor_por_id(valor)
+        return label if label else valor
+
+    return valor
+
+
 def obtener_valor_perfil(perfil_respuestas: List[Dict[str, Any]], campo_db: str) -> Any:
-    """Obtiene el valor crudo de un campo_db en la lista perfil_respuestas."""
+    """
+    Obtiene y normaliza el valor de un campo_db en perfil_respuestas.
+
+    Prioridad:
+    1. valor_json normalizado y con IDs resueltos a labels.
+    2. valor_texto.
+    3. valor_label, traído desde creadores_perfil_valor.
+    4. valor_numeric.
+    5. valor_integer resuelto a label si aplica.
+    6. valor_id resuelto a label como último recurso.
+
+    Esto evita enviar a OpenAI valores como 740, 751 o 769 cuando existen labels.
+    """
     if not perfil_respuestas or not campo_db:
         return None
 
@@ -1029,14 +1188,34 @@ def obtener_valor_perfil(perfil_respuestas: List[Dict[str, Any]], campo_db: str)
     for row in perfil_respuestas:
         if not isinstance(row, dict):
             continue
+
         if str(row.get("campo_db") or "").strip() != campo_buscado:
             continue
-        for key in ("valor_json", "valor_texto", "valor_numeric", "valor_integer", "valor_id"):
-            if row.get(key) is not None:
-                if key == "valor_json":
-                    return _parse_valor_json_perfil(row.get(key))
-                return row.get(key)
+
+        valor_json = _parse_valor_json_perfil(row.get("valor_json"))
+        if valor_json is not None:
+            normalizado_json = normalizar_respuesta_perfil(valor_json)
+            return _resolver_ids_en_valor_perfil(normalizado_json)
+
+        if row.get("valor_texto") not in (None, ""):
+            return row.get("valor_texto")
+
+        if row.get("valor_label") not in (None, ""):
+            return row.get("valor_label")
+
+        if row.get("valor_numeric") is not None:
+            return row.get("valor_numeric")
+
+        if row.get("valor_integer") is not None:
+            label = obtener_label_valor_por_id(row.get("valor_integer"))
+            return label if label else row.get("valor_integer")
+
+        if row.get("valor_id") is not None:
+            label = obtener_label_valor_por_id(row.get("valor_id"))
+            return label if label else row.get("valor_id")
+
         return None
+
     return None
 
 
@@ -1054,10 +1233,24 @@ def normalizar_respuesta_perfil(valor: Any) -> Any:
         except Exception:
             return texto
 
-    if isinstance(valor, (int, float, bool)):
+    if isinstance(valor, bool):
+        return valor
+
+    if isinstance(valor, int):
+        label = obtener_label_valor_por_id(valor)
+        return label if label else valor
+
+    if isinstance(valor, float):
+        if valor.is_integer():
+            label = obtener_label_valor_por_id(int(valor))
+            return label if label else valor
         return valor
 
     if isinstance(valor, list):
+        if valor and all(_es_id_opcion_perfil(item) for item in valor):
+            labels = obtener_labels_valores_por_ids(valor)
+            return labels or None
+
         normalizados: List[Any] = []
         for item in valor:
             n = normalizar_respuesta_perfil(item)
@@ -2001,7 +2194,10 @@ def perfil_respuestas_performance_creador(creador_id: int):
         "ok": True,
         "creador_id": creador_id,
         "perfil_respuestas": perfil_respuestas,
-        "perfil_estrategico": construir_perfil_estrategico(perfil_respuestas),
+        "perfil_estrategico": construir_perfil_estrategico(
+            perfil_respuestas,
+            obtener_categoria_creador(creador_id),
+        ),
     }
 
 
@@ -3479,6 +3675,9 @@ Reglas:
 
 def _log_ia_debug_contexto(endpoint: str, creador_id: int, contexto: Dict[str, Any]) -> None:
     """Logs temporales de debug: verificar datos de perfil/categoría/partidas antes del prompt IA."""
+    if not DEBUG_PERFORMANCE_IA:
+        return
+
     print(f"🧠 [IA DEBUG] endpoint: {endpoint}", flush=True)
     print(f"🧠 [IA DEBUG] creador_id: {creador_id}", flush=True)
     print(f"🧠 [IA DEBUG] perfil_estrategico: {contexto.get('perfil_estrategico')}", flush=True)
