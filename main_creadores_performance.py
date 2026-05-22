@@ -2875,8 +2875,382 @@ def generar_analisis_basico_performance(
 # PROMPTS IA
 # =========================================================
 
+_FRASES_IA_PROHIBIDAS = (
+    "incluir temas de interés",
+    "temas de interés relacionados",
+    "mejorar contenido",
+    "alinear contenido con su arquetipo",
+    "alinear contenido con el arquetipo",
+    "aumentar interacción",
+    "aumentar la interacción",
+    "optimizar contenido",
+    "trabajar el contenido",
+    "enfocarse en intereses",
+    "dinámicas acordes a su perfil",
+)
+
+
+def _texto_campo_perfil(valor: Any) -> Optional[str]:
+    if valor is None:
+        return None
+    if isinstance(valor, dict):
+        for clave in ("label", "nombre", "valor", "texto", "value"):
+            if valor.get(clave):
+                return str(valor[clave]).strip()
+        return str(valor).strip() or None
+    if isinstance(valor, list):
+        partes = [_texto_campo_perfil(v) for v in valor]
+        partes_limpias = [p for p in partes if p]
+        return ", ".join(partes_limpias) if partes_limpias else None
+    texto = str(valor).strip()
+    return texto or None
+
+
+def _intereses_texto(perfil: Dict[str, Any]) -> List[str]:
+    raw = perfil.get("intereses") or []
+    if isinstance(raw, list):
+        resultado: List[str] = []
+        for item in raw:
+            t = _texto_campo_perfil(item)
+            if t and t not in resultado:
+                resultado.append(t)
+        return resultado
+    t = _texto_campo_perfil(raw)
+    return [t] if t else []
+
+
+def _nombre_creador_contexto(contexto: Dict[str, Any]) -> Optional[str]:
+    creador = contexto.get("creador") or {}
+    for campo in ("nombre", "nombre_real", "nickname", "usuario_tiktok", "usuario"):
+        valor = creador.get(campo)
+        if valor and str(valor).strip():
+            return str(valor).strip()
+    return None
+
+
+def _reglas_personalizacion_ia_obligatorias(contexto: Dict[str, Any]) -> str:
+    """
+    Reglas compartidas para evitar respuestas genéricas en todos los prompts IA de performance.
+    """
+    perfil = contexto.get("perfil_estrategico") or {}
+    categoria = contexto.get("categoria_creador") or {}
+    partidas = contexto.get("performance_partidas") or {}
+
+    arquetipo = _texto_campo_perfil(perfil.get("arquetipo_valor"))
+    horario = _texto_campo_perfil(perfil.get("horario_preferido"))
+    intereses = _intereses_texto(perfil)
+    cat_nombre = categoria.get("nombre")
+    cat_meta = categoria.get("meta_diamantes_objetivo")
+    nombre_creador = _nombre_creador_contexto(contexto)
+
+    checklist: List[str] = []
+    if nombre_creador:
+        checklist.append(f"- Usa el nombre del creador: {nombre_creador}")
+    if arquetipo:
+        checklist.append(
+            f"- Menciona el arquetipo por nombre exacto: {arquetipo} "
+            "(no digas solo «su arquetipo» ni «el arquetipo del creador»)."
+        )
+    if intereses:
+        lista = ", ".join(intereses[:8])
+        minimo = min(2, len(intereses))
+        checklist.append(
+            f"- Cita al menos {minimo} interés(es) concretos de perfil_estrategico.intereses: {lista}"
+        )
+    if horario:
+        checklist.append(
+            f"- Adapta horarios y frecuencia al horario_preferido: {horario}"
+        )
+    if cat_nombre:
+        linea = f"- Referencia la categoría creador: {cat_nombre}"
+        if cat_meta is not None:
+            linea += f" (meta_diamantes_objetivo: {cat_meta})"
+        checklist.append(linea)
+    elif cat_meta is not None:
+        checklist.append(f"- Referencia meta_diamantes_objetivo: {cat_meta}")
+
+    n_partidas = safe_float(partidas.get("partidas"))
+    pct_partidas = safe_float(partidas.get("porcentaje_diamantes_por_partidas"))
+    diag_part = partidas.get("diagnostico_partidas")
+    if n_partidas > 0 or pct_partidas > 0 or diag_part:
+        checklist.append(
+            "- Analiza performance_partidas: indica si las partidas son oportunidad "
+            "subutilizada o fuente principal de diamantes, citando partidas, "
+            "porcentaje_diamantes_por_partidas y diagnostico_partidas del contexto."
+        )
+
+    prohibidas = "\n".join(f'  · "{f}"' for f in _FRASES_IA_PROHIBIDAS)
+    obligatorias = (
+        "\n".join(checklist)
+        if checklist
+        else (
+            "- Si faltan datos en el contexto, indícalo explícitamente; "
+            "no rellenes con frases genéricas."
+        )
+    )
+
+    ejemplo_malo = (
+        'INCORRECTO: "Incluir temas de interés relacionados con sus arquetipos."'
+    )
+    ejemplo_bueno = (
+        'CORRECTO: "Como Nicolisita tiene arquetipo BATALLISTA y sus intereses son '
+        "Fitness, Música y Lectura, probar 3 lives nocturnos con dinámica de batalla "
+        'fitness, música energética y preguntas rápidas para aumentar comentarios, '
+        'seguidores y regalos."'
+    )
+
+    return f"""
+REGLAS OBLIGATORIAS DE PERSONALIZACIÓN (prioridad sobre cualquier otra instrucción):
+Usa obligatoriamente del JSON de contexto, si existen y no son null:
+- perfil_estrategico.arquetipo_valor
+- perfil_estrategico.intereses
+- perfil_estrategico.horario_preferido
+- categoria_creador.nombre
+- categoria_creador.meta_diamantes_objetivo
+- performance_partidas (métricas y diagnostico_partidas)
+
+Checklist para ESTE creador:
+{obligatorias}
+
+PROHIBIDO usar frases vagas como:
+{prohibidas}
+
+{ejemplo_malo}
+{ejemplo_bueno}
+
+Cada párrafo, prioridad, recomendación, acción o alerta debe incluir datos concretos del checklist.
+Si un dato no está en el contexto, escribe "sin dato de [campo]" en lugar de inventar o generalizar.
+"""
+
+
+def _extraer_datos_personalizacion_recomendaciones(contexto: Dict[str, Any]) -> Dict[str, Any]:
+    perfil = contexto.get("perfil_estrategico") or {}
+    categoria = contexto.get("categoria_creador") or {}
+    partidas = contexto.get("performance_partidas") or performance_partidas_vacio()
+    intereses_lista = _intereses_texto(perfil)
+
+    return {
+        "nombre_creador": _nombre_creador_contexto(contexto),
+        "arquetipo": _texto_campo_perfil(perfil.get("arquetipo_valor")),
+        "intereses_lista": intereses_lista,
+        "intereses": ", ".join(intereses_lista) if intereses_lista else None,
+        "horario": _texto_campo_perfil(perfil.get("horario_preferido")),
+        "categoria_nombre": categoria.get("nombre"),
+        "meta_diamantes": categoria.get("meta_diamantes_objetivo"),
+        "partidas": partidas.get("partidas"),
+        "pct_diamantes_partidas": partidas.get("porcentaje_diamantes_por_partidas"),
+        "diagnostico_partidas": partidas.get("diagnostico_partidas"),
+        "diamantes_por_partida": partidas.get("diamantes_por_partida"),
+    }
+
+
+def _bloque_datos_obligatorios_recomendaciones(contexto: Dict[str, Any]) -> str:
+    d = _extraer_datos_personalizacion_recomendaciones(contexto)
+
+    def _linea(etiqueta: str, valor: Any) -> str:
+        if valor is None or valor == "":
+            return f"- {etiqueta}: sin dato"
+        return f"- {etiqueta}: {valor}"
+
+    return "\n".join(
+        [
+            "DATOS OBLIGATORIOS DEL CREADOR (debes citarlos literalmente en cada recomendacion):",
+            _linea("nombre_creador", d.get("nombre_creador")),
+            _linea("arquetipo_valor", d.get("arquetipo")),
+            _linea("intereses", d.get("intereses")),
+            _linea("horario_preferido", d.get("horario")),
+            _linea("categoria_creador.nombre", d.get("categoria_nombre")),
+            _linea("categoria_creador.meta_diamantes_objetivo", d.get("meta_diamantes")),
+            _linea("performance_partidas.partidas", d.get("partidas")),
+            _linea("performance_partidas.porcentaje_diamantes_por_partidas", d.get("pct_diamantes_partidas")),
+            _linea("performance_partidas.diagnostico_partidas", d.get("diagnostico_partidas")),
+        ]
+    )
+
+
+def _es_texto_recomendacion_generico(texto: str) -> bool:
+    t = (texto or "").strip().lower()
+    if not t:
+        return True
+
+    patrones_vagos = list(_FRASES_IA_PROHIBIDAS) + [
+        "temas de interés",
+        "temas de interes",
+        "relacionados con sus arquetipos",
+        "relacionados con su arquetipo",
+        "relacionado con su arquetipo",
+        "según su perfil",
+        "segun su perfil",
+        "de acuerdo a su perfil",
+        "contenido acorde",
+        "dinámicas acordes",
+        "dinamicas acordes",
+    ]
+    return any(p in t for p in patrones_vagos)
+
+
+def _cumple_personalizacion_minima_recomendacion(
+    texto: str, datos: Dict[str, Any]
+) -> bool:
+    t = (texto or "").lower()
+    if not t:
+        return False
+
+    arquetipo = datos.get("arquetipo")
+    if arquetipo and str(arquetipo).lower() not in t:
+        return False
+
+    intereses = datos.get("intereses_lista") or []
+    if intereses:
+        minimo = 2 if len(intereses) >= 2 else 1
+        mencionados = sum(1 for interes in intereses if interes.lower() in t)
+        if mencionados < minimo:
+            return False
+
+    horario = datos.get("horario")
+    if horario:
+        palabras_horario = [p.strip().lower() for p in str(horario).replace(",", " ").split() if p.strip()]
+        if palabras_horario and not any(p in t for p in palabras_horario if len(p) > 3):
+            return False
+
+    return True
+
+
+def _construir_recomendacion_personalizada_fallback(
+    contexto: Dict[str, Any],
+    categoria: str = "monetizacion",
+    prioridad: str = "media",
+) -> Dict[str, str]:
+    datos = _extraer_datos_personalizacion_recomendaciones(contexto)
+    nombre = datos.get("nombre_creador") or "el creador"
+    arquetipo = datos.get("arquetipo")
+    intereses = datos.get("intereses")
+    horario = datos.get("horario")
+    cat = datos.get("categoria_nombre")
+    meta = datos.get("meta_diamantes")
+    diag_part = datos.get("diagnostico_partidas")
+
+    perfil_txt: List[str] = []
+    if arquetipo:
+        perfil_txt.append(f"arquetipo {arquetipo}")
+    if intereses:
+        perfil_txt.append(f"intereses {intereses}")
+    if horario:
+        perfil_txt.append(f"horario preferido {horario}")
+    perfil_unido = ", ".join(perfil_txt) if perfil_txt else "perfil sin arquetipo/intereses/horario"
+
+    tactica_partidas = (
+        diag_part
+        if diag_part
+        else "revisar si las partidas son palanca principal u oportunidad pendiente"
+    )
+
+    meta_txt = ""
+    if cat:
+        meta_txt = f"Categoría {cat}"
+        if meta is not None:
+            meta_txt += f" (meta {meta} diamantes). "
+
+    if arquetipo and str(arquetipo).upper() == "BATALLISTA":
+        accion = (
+            f"Programar 3 lives en {horario or 'su franja horaria'} con batallas por tramos, "
+            f"rivales con buena interacción y narrativa competitiva"
+        )
+        if intereses:
+            accion += f" enlazando {intereses}"
+    else:
+        accion = (
+            f"Programar 3 lives en {horario or 'su franja horaria'} con dinámica concreta "
+            f"alineada a {perfil_unido}"
+        )
+
+    recomendacion = (
+        f"Para {nombre}, con {perfil_unido}, {accion}. "
+        f"{meta_txt}Partidas: {tactica_partidas}."
+    ).strip()
+
+    justificacion = (
+        f"Personalizado con arquetipo, intereses, horario, categoría/meta y performance_partidas "
+        f"del contexto ({tactica_partidas})."
+    )
+
+    return {
+        "categoria": categoria,
+        "prioridad": prioridad,
+        "recomendacion": recomendacion,
+        "justificacion": justificacion,
+    }
+
+
+def _normalizar_resultado_recomendaciones_ia(
+    contexto: Dict[str, Any],
+    resultado: Any,
+    max_recomendaciones: int,
+) -> Dict[str, Any]:
+    salida: Dict[str, Any] = resultado if isinstance(resultado, dict) else {}
+    recs_raw = salida.get("recomendaciones")
+    if not isinstance(recs_raw, list):
+        recs_raw = []
+
+    datos = _extraer_datos_personalizacion_recomendaciones(contexto)
+    normalizadas: List[Dict[str, Any]] = []
+
+    for rec in recs_raw[:max_recomendaciones]:
+        if not isinstance(rec, dict):
+            continue
+
+        categoria = rec.get("categoria") or "otro"
+        prioridad = rec.get("prioridad") or "media"
+        texto_rec = str(rec.get("recomendacion") or "").strip()
+        texto_just = str(rec.get("justificacion") or "").strip()
+        texto_union = f"{texto_rec} {texto_just}"
+
+        if (
+            _es_texto_recomendacion_generico(texto_rec)
+            or _es_texto_recomendacion_generico(texto_just)
+            or not _cumple_personalizacion_minima_recomendacion(texto_union, datos)
+        ):
+            rec = _construir_recomendacion_personalizada_fallback(
+                contexto, str(categoria), str(prioridad)
+            )
+        else:
+            rec = {
+                "categoria": categoria,
+                "prioridad": prioridad,
+                "recomendacion": texto_rec,
+                "justificacion": texto_just or texto_rec,
+            }
+
+        if rec.get("recomendacion"):
+            normalizadas.append(rec)
+
+    if not normalizadas:
+        for basica in generar_recomendaciones_basicas(contexto)[:max_recomendaciones]:
+            texto_b = str(basica.get("recomendacion") or "")
+            if _es_texto_recomendacion_generico(texto_b) or not _cumple_personalizacion_minima_recomendacion(
+                texto_b, datos
+            ):
+                rec = _construir_recomendacion_personalizada_fallback(
+                    contexto,
+                    str(basica.get("categoria") or "otro"),
+                    str(basica.get("prioridad") or "media"),
+                )
+            else:
+                rec = {
+                    "categoria": basica.get("categoria"),
+                    "prioridad": basica.get("prioridad"),
+                    "recomendacion": basica.get("recomendacion"),
+                    "justificacion": basica.get("justificacion"),
+                }
+            normalizadas.append(rec)
+
+    salida["recomendaciones"] = normalizadas[:max_recomendaciones]
+    return salida
+
+
 def prompt_diagnostico_performance(contexto: Dict[str, Any], instrucciones_extra: Optional[str] = None) -> str:
     extra = f"\nInstrucciones adicionales del manager:\n{instrucciones_extra}\n" if instrucciones_extra else ""
+    reglas = _reglas_personalizacion_ia_obligatorias(contexto)
 
     return f"""
 Eres un director de performance para una agencia de TikTok LIVE en LATAM.
@@ -2885,13 +3259,13 @@ Analiza el siguiente contexto del creador y responde con JSON válido.
 Contexto:
 {contexto_para_prompt(contexto)}
 
+{reglas}
+
 {extra}
 
-IMPORTANTE:
-Considera si la categoría actual, el arquetipo y el rendimiento en partidas son coherentes
-con el desempeño del creador.
-Usa obligatoriamente estos bloques si existen: `categoria_creador`, `perfil_estrategico`,
-`performance_partidas`.
+En diagnostico, prioridades, lectura_manager y mensaje_para_creador:
+- Nombra arquetipo, intereses (mínimo 2 si existen), horario, categoría/meta y lectura de partidas.
+- No uses consejos que podrían aplicar a cualquier creador.
 
 Devuelve exactamente este JSON:
 {{
@@ -2913,42 +3287,31 @@ No uses markdown. No incluyas texto fuera del JSON.
 
 def prompt_recomendaciones_manager(contexto: Dict[str, Any], max_recomendaciones: int, instrucciones_extra: Optional[str] = None) -> str:
     extra = f"\nInstrucciones adicionales:\n{instrucciones_extra}\n" if instrucciones_extra else ""
+    reglas = _reglas_personalizacion_ia_obligatorias(contexto)
+    datos_obligatorios = _bloque_datos_obligatorios_recomendaciones(contexto)
 
     return f"""
 Eres un coach senior de creadores TikTok LIVE y asesor de managers de agencia.
-Genera recomendaciones operativas para que el manager mejore el performance del creador.
+Tu única tarea: generar recomendaciones operativas ULTRA ESPECÍFICAS para el creador del contexto.
 
-Contexto:
+{datos_obligatorios}
+
+{reglas}
+
+Contexto completo (JSON):
 {contexto_para_prompt(contexto)}
 
 {extra}
 
-IMPORTANTE:
-Usa obligatoriamente estos bloques si existen:
-- categoria_creador
-- perfil_estrategico
-- performance_partidas
+FORMATO OBLIGATORIO de cada "recomendacion" (texto único, sin frases vagas):
+1) Nombre del creador (si existe).
+2) Arquetipo por nombre exacto (si existe en datos obligatorios).
+3) Al menos 2 intereses literales separados por coma (si hay 2+ en datos obligatorios).
+4) Bloque horario concreto según horario_preferido (si existe).
+5) Decisión sobre partidas: ¿oportunidad, fuente principal o baja conversión? Cita diagnostico_partidas o métricas.
+6) Acción ejecutable esta semana (número de lives, dinámica, meta de diamantes/regalos).
 
-La categoría define el nivel de exigencia:
-- Bronce: enfoque en constancia, hábitos, primeras metas y disciplina.
-- Plata: enfoque en crecimiento, consistencia básica y mejora de monetización.
-- Oro: enfoque en optimización, formatos ganadores y monetización estable.
-- Diamante: enfoque en escalamiento, alto rendimiento, retención y monetización avanzada.
-
-El perfil estratégico define el estilo: arquetipo, intereses y horario preferido.
-
-Las partidas son una palanca clave para generar diamantes. Analiza:
-- número de partidas
-- diamantes generados por partidas
-- diamantes por partida
-- peso de partidas sobre diamantes del mes
-- desempeño en modo varios invitados
-- rol como anfitrión o invitado
-
-Si el arquetipo es BATALLISTA, prioriza estrategias de partidas, batallas, retos,
-dinámicas competitivas y metas por tramos.
-
-Evita recomendaciones genéricas.
+La "justificacion" debe citar métricas del JSON (metas, reporte, performance_partidas) y el perfil citado arriba.
 
 Devuelve JSON válido con este formato:
 {{
@@ -2963,9 +3326,9 @@ Devuelve JSON válido con este formato:
 }}
 
 Reglas:
-- Máximo {max_recomendaciones} recomendaciones.
-- No repitas recomendaciones ya existentes si aparecen en el contexto.
-- Sé concreto, no genérico.
+- Exactamente entre 1 y {max_recomendaciones} recomendaciones.
+- No repitas recomendaciones ya existentes en contexto.recomendaciones.
+- Si falta un dato obligatorio, escribe "sin dato de X" en esa recomendación; no inventes ni generalices.
 - No uses markdown.
 - No incluyas texto fuera del JSON.
 """
@@ -2973,6 +3336,7 @@ Reglas:
 
 def prompt_acciones_manager(contexto: Dict[str, Any], max_acciones: int, instrucciones_extra: Optional[str] = None) -> str:
     extra = f"\nInstrucciones adicionales:\n{instrucciones_extra}\n" if instrucciones_extra else ""
+    reglas = _reglas_personalizacion_ia_obligatorias(contexto)
 
     tipos = ", ".join(sorted(TIPOS_ACCION_SUGERIDOS))
 
@@ -2986,18 +3350,13 @@ Contexto:
 Tipos de acción sugeridos:
 {tipos}
 
+{reglas}
+
 {extra}
 
-IMPORTANTE:
-Las acciones deben combinar:
-- categoría del creador (categoria_creador)
-- arquetipo, intereses y horario (perfil_estrategico)
-- desempeño de partidas (performance_partidas)
-- cumplimiento de metas
-
-No generar acciones genéricas como "mejorar contenido".
-Generar acciones específicas como:
-"Probar 3 lives nocturnos con dinámica de batalla fitness, metas por tramos y selección de rivales con buena interacción."
+Cada titulo y descripcion debe incluir: nombre del creador (si existe), arquetipo por nombre,
+al menos 2 intereses literales (si existen), horario concreto (si existe), categoría/meta
+y decisión sobre partidas (oportunidad vs fuente principal de diamantes) según performance_partidas.
 
 Devuelve JSON válido:
 {{
@@ -3014,7 +3373,7 @@ Devuelve JSON válido:
 
 Reglas:
 - Máximo {max_acciones} acciones.
-- Deben ser acciones que un manager pueda ejecutar o revisar.
+- Deben ser acciones que un manager pueda ejecutar o revisar en la próxima semana.
 - No uses markdown.
 - No incluyas texto fuera del JSON.
 """
@@ -3022,6 +3381,7 @@ Reglas:
 
 def prompt_alertas_score_ia(contexto: Dict[str, Any], instrucciones_extra: Optional[str] = None) -> str:
     extra = f"\nInstrucciones adicionales:\n{instrucciones_extra}\n" if instrucciones_extra else ""
+    reglas = _reglas_personalizacion_ia_obligatorias(contexto)
 
     return f"""
 Eres un analista de riesgo y performance de creadores TikTok LIVE.
@@ -3030,12 +3390,13 @@ Evalúa el contexto y genera un score, alertas y explicación operativa.
 Contexto:
 {contexto_para_prompt(contexto)}
 
+{reglas}
+
 {extra}
 
-IMPORTANTE:
-El scoring debe considerar si el creador está aprovechando o desaprovechando las partidas
-como palanca de diamantes.
-Usa `categoria_creador`, `perfil_estrategico` y `performance_partidas` si existen.
+En observacion_ia y en cada alerta.descripcion:
+- Fundamenta con arquetipo, intereses (≥2 si existen), horario, categoría/meta y lectura de partidas.
+- El score debe reflejar si las partidas son palanca principal, oportunidad perdida o riesgo de dependencia.
 
 Devuelve JSON válido:
 {{
@@ -3074,6 +3435,8 @@ def prompt_generar_seguimiento(
 ) -> str:
     extra = f"\nInstrucciones adicionales:\n{instrucciones_extra}\n" if instrucciones_extra else ""
 
+    reglas = _reglas_personalizacion_ia_obligatorias(contexto)
+
     return f"""
 Eres un coach de creadores de contenido en vivo para TikTok LIVE.
 Ayuda al manager a redactar un seguimiento profesional.
@@ -3087,11 +3450,13 @@ Observaciones iniciales del manager:
 Compromisos iniciales:
 {resumen_compromisos or ""}
 
+{reglas}
+
 {extra}
 
-IMPORTANTE:
-Usa categoría, perfil estratégico y partidas (`categoria_creador`, `perfil_estrategico`,
-`performance_partidas`) para crear observaciones y compromisos personalizados.
+Mejora observaciones_manager y resumen_compromisos integrando datos concretos del contexto:
+arquetipo por nombre, ≥2 intereses literales, horario, categoría/meta y plan sobre partidas.
+Conserva la intención del manager; no sustituyas por texto genérico.
 
 Devuelve JSON válido:
 {{
@@ -3112,12 +3477,62 @@ Reglas:
 # ENDPOINTS — IA
 # =========================================================
 
+def _log_ia_debug_contexto(endpoint: str, creador_id: int, contexto: Dict[str, Any]) -> None:
+    """Logs temporales de debug: verificar datos de perfil/categoría/partidas antes del prompt IA."""
+    print(f"🧠 [IA DEBUG] endpoint: {endpoint}", flush=True)
+    print(f"🧠 [IA DEBUG] creador_id: {creador_id}", flush=True)
+    print(f"🧠 [IA DEBUG] perfil_estrategico: {contexto.get('perfil_estrategico')}", flush=True)
+    print(f"🧠 [IA DEBUG] categoria_creador: {contexto.get('categoria_creador')}", flush=True)
+    print(f"🧠 [IA DEBUG] performance_partidas: {contexto.get('performance_partidas')}", flush=True)
+    print(
+        f"🧠 [IA DEBUG] tiene_perfil_estrategico: {bool(contexto.get('perfil_estrategico'))}",
+        flush=True,
+    )
+    print(
+        f"🧠 [IA DEBUG] tiene_categoria_creador: {bool(contexto.get('categoria_creador'))}",
+        flush=True,
+    )
+    print(
+        f"🧠 [IA DEBUG] tiene_performance_partidas: {bool(contexto.get('performance_partidas'))}",
+        flush=True,
+    )
+
+    perfil = contexto.get("perfil_estrategico") or {}
+    print(f"🧠 [IA DEBUG] arquetipo: {perfil.get('arquetipo_valor')}", flush=True)
+    print(f"🧠 [IA DEBUG] intereses: {perfil.get('intereses')}", flush=True)
+    print(f"🧠 [IA DEBUG] horario: {perfil.get('horario_preferido')}", flush=True)
+
+    categoria = contexto.get("categoria_creador") or {}
+    print(f"🧠 [IA DEBUG] categoria: {categoria.get('nombre')}", flush=True)
+    print(
+        f"🧠 [IA DEBUG] meta_categoria_diamantes: {categoria.get('meta_diamantes_objetivo')}",
+        flush=True,
+    )
+
+    partidas = contexto.get("performance_partidas") or {}
+    print(f"🧠 [IA DEBUG] partidas: {partidas.get('partidas')}", flush=True)
+    print(
+        f"🧠 [IA DEBUG] diamantes_de_partidas: {partidas.get('diamantes_de_partidas')}",
+        flush=True,
+    )
+    print(
+        "🧠 [IA DEBUG] porcentaje_diamantes_por_partidas: "
+        f"{partidas.get('porcentaje_diamantes_por_partidas')}",
+        flush=True,
+    )
+    print(
+        f"🧠 [IA DEBUG] diagnostico_partidas: {partidas.get('diagnostico_partidas')}",
+        flush=True,
+    )
+
+
 @router.post("/api/creadores/performance/{creador_id}/ia/diagnostico")
 def generar_diagnostico_ia(
     creador_id: int,
     data: IARequest = IARequest(),
 ):
     contexto = obtener_contexto_ia_manager(creador_id, id_reporte=data.id_reporte)
+    _log_ia_debug_contexto("diagnostico", creador_id, contexto)
     prompt = prompt_diagnostico_performance(contexto, data.instrucciones_extra)
 
     resultado = openai_json_completion(
@@ -3142,6 +3557,7 @@ def generar_seguimiento_ia(
     data: GenerarSeguimientoIARequest,
 ):
     contexto = obtener_contexto_ia_manager(creador_id)
+    _log_ia_debug_contexto("generar_seguimiento", creador_id, contexto)
     prompt = prompt_generar_seguimiento(
         contexto,
         data.observaciones_manager or "",
@@ -3171,6 +3587,7 @@ def generar_recomendaciones_ia(
     data: GenerarRecomendacionesIARequest = GenerarRecomendacionesIARequest(),
 ):
     contexto = obtener_contexto_ia_manager(creador_id)
+    _log_ia_debug_contexto("recomendaciones", creador_id, contexto)
     prompt = prompt_recomendaciones_manager(
         contexto,
         data.max_recomendaciones,
@@ -3179,13 +3596,18 @@ def generar_recomendaciones_ia(
 
     resultado = openai_json_completion(
         prompt,
-        temperature=0.35,
+        temperature=0.25,
         system=(
             "Eres experto en coaching operativo para managers de creadores TikTok LIVE. "
-            "Responde únicamente JSON válido."
+            "Cada recomendacion debe nombrar arquetipo, intereses concretos (minimo 2 si existen), "
+            "horario, categoria/meta y analisis de partidas del contexto. "
+            "Prohibido texto generico reutilizable entre creadores. Responde unicamente JSON valido."
         ),
     )
 
+    resultado = _normalizar_resultado_recomendaciones_ia(
+        contexto, resultado, data.max_recomendaciones
+    )
     recomendaciones = resultado.get("recomendaciones", []) if isinstance(resultado, dict) else []
 
     guardadas = []
@@ -3221,6 +3643,7 @@ def generar_acciones_ia(
     data: GenerarAccionesIARequest = GenerarAccionesIARequest(),
 ):
     contexto = obtener_contexto_ia_manager(creador_id)
+    _log_ia_debug_contexto("acciones", creador_id, contexto)
     prompt = prompt_acciones_manager(
         contexto,
         data.max_acciones,
@@ -3371,6 +3794,7 @@ def generar_analisis_completo_ia(
     Puede guardar recomendaciones, score y alertas.
     """
     contexto = obtener_contexto_ia_manager(creador_id)
+    _log_ia_debug_contexto("analisis_completo", creador_id, contexto)
 
     diagnostico = openai_json_completion(
         prompt_diagnostico_performance(contexto, data.instrucciones_extra),
