@@ -27,6 +27,17 @@ from creadores_catalogo import (
 router = APIRouter()
 
 
+def _normalizar_respuesta_creador_activo(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Alias usuario + defaults para que el frontend y response_model no fallen con null."""
+    out = dict(data)
+    usuario_tt = str(out.get("usuario_tiktok") or out.get("usuario") or "").strip()
+    nombre = str(out.get("nombre") or usuario_tt or "Sin nombre").strip()
+    out["usuario_tiktok"] = usuario_tt or nombre
+    out["usuario"] = out["usuario_tiktok"]
+    out["nombre"] = nombre
+    return out
+
+
 def _resolver_estado_id_creador(
     cur,
     estado_id: Optional[int],
@@ -350,8 +361,12 @@ def guardar_respuestas_perfil_creador(data: GuardarPerfilCreadorIn):
 @router.get("/api/creadores/activos", tags=["Creadores"])
 def listar_creadores_activos():
     try:
-        return obtener_creadores_activos_db()
+        items = obtener_creadores_activos_db()
+        print(f"📋 [creadores/activos] total={len(items)}", flush=True)
+        return items
     except Exception as e:
+        print(f"❌ [creadores/activos] {e}", flush=True)
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/api/creadores_activos/{id}", response_model=CreadorActivoConManager)
@@ -363,13 +378,14 @@ def obtener_creador_activo(id: int):
                     SELECT
                         c.id,
                         c.aspirante_id,
-                        c.nombre,
-                        c.usuario_tiktok,
+                        COALESCE(NULLIF(TRIM(c.nombre), ''), NULLIF(TRIM(c.usuario_tiktok), ''), 'Sin nombre') AS nombre,
+                        COALESCE(NULLIF(TRIM(c.usuario_tiktok), ''), '') AS usuario_tiktok,
                         c.email,
                         c.telefono,
                         c.foto,
                         c.categoria_id,
                         COALESCE(cat.nombre, 'Sin categoría') AS categoria,
+                        c.estado_id,
                         ce.nombre AS estado,
 
                         d.manager_id,
@@ -407,7 +423,7 @@ def obtener_creador_activo(id: int):
                     )
 
                 columns = [desc[0] for desc in cur.description]
-                return dict(zip(columns, row))
+                return _normalizar_respuesta_creador_activo(dict(zip(columns, row)))
 
     except HTTPException:
         raise

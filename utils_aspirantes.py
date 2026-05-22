@@ -2355,8 +2355,8 @@ def obtener_creadores_activos_db():
                 cur.execute("""
                     SELECT
                         c.id,
-                        c.nombre,
-                        c.usuario_tiktok,
+                        COALESCE(NULLIF(TRIM(c.nombre), ''), NULLIF(TRIM(c.usuario_tiktok), ''), 'Sin nombre') AS nombre,
+                        COALESCE(NULLIF(TRIM(c.usuario_tiktok), ''), '') AS usuario_tiktok,
                         c.categoria_id,
                         COALESCE(cat.nombre, 'Sin categoría') AS categoria,
                         ce.nombre AS estado
@@ -2371,11 +2371,19 @@ def obtener_creadores_activos_db():
                 rows = cur.fetchall()
                 columns = [desc[0] for desc in cur.description]
 
-                return [dict(zip(columns, row)) for row in rows]
+                resultado = []
+                for row in rows:
+                    item = dict(zip(columns, row))
+                    usuario_tt = str(item.get("usuario_tiktok") or "").strip()
+                    item["usuario_tiktok"] = usuario_tt
+                    item["usuario"] = usuario_tt
+                    resultado.append(item)
+                return resultado
 
     except Exception as e:
         print(f"❌ Error al obtener creadores activos: {e}")
-        return []
+        traceback.print_exc()
+        raise
 
 
 def obtener_persona_portal_por_telefono(telefono: str) -> Optional[dict]:

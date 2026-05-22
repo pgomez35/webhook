@@ -638,6 +638,7 @@ class CreadorActivoBase(BaseModel):
     aspirante_id: Optional[int] = None
     nombre: str
     usuario_tiktok: str
+    usuario: Optional[str] = None  # alias legado (mismo valor que usuario_tiktok)
     email: Optional[str] = None
     telefono: Optional[str] = None
     foto: Optional[str] = None
