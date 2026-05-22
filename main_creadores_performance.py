@@ -56,8 +56,8 @@ OPENAI_MODEL_DEFAULT = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 OPENAI_CONFIG_CLAVE = "open_AI_enabled"
 
 _openai_client: Optional[OpenAI] = None
-# DEBUG_PERFORMANCE_IA = str(os.getenv("DEBUG_PERFORMANCE_IA", "false")).lower() in {"1", "true", "yes", "on"}
-DEBUG_PERFORMANCE_IA = True
+DEBUG_PERFORMANCE_IA = str(os.getenv("DEBUG_PERFORMANCE_IA", "false")).lower() in {"1", "true", "yes", "on"}
+
 
 # =========================================================
 # CONSTANTES DE NEGOCIO
@@ -3312,66 +3312,212 @@ def _cumple_personalizacion_minima_recomendacion(
     return True
 
 
+def _limpiar_texto_generado(texto: Any) -> str:
+    """
+    Limpieza pequeña para textos generados por IA o fallback:
+    - elimina espacios repetidos
+    - corrige doble punto
+    - conserva saltos de párrafo
+    """
+    if texto is None:
+        return ""
+
+    resultado = str(texto).strip()
+    resultado = re.sub(r"[ \t]+", " ", resultado)
+    resultado = re.sub(r"\s+\.", ".", resultado)
+    resultado = re.sub(r"\.{2,}", ".", resultado)
+    resultado = resultado.replace(" .", ".")
+    return resultado.strip()
+
+
+def _normalizar_categoria_recomendacion(categoria: Any) -> str:
+    """
+    Normaliza categorías que vienen de IA o del motor básico para generar
+    fallbacks distintos y evitar recomendaciones repetidas.
+    """
+    cat = normalizar_lower(str(categoria or "otro")) or "otro"
+    mapa = {
+        "crecimiento_audiencia": "audiencia",
+        "audiencia": "audiencia",
+        "seguidores": "audiencia",
+        "monetizacion": "monetizacion",
+        "monetización": "monetizacion",
+        "diamantes": "monetizacion",
+        "interaccion": "interaccion",
+        "interacción": "interaccion",
+        "contenido": "contenido",
+        "horario": "horario",
+        "frecuencia": "horario",
+        "duracion_live": "horario",
+        "duración_live": "horario",
+        "disciplina": "disciplina",
+        "tecnica": "tecnica",
+        "técnica": "tecnica",
+        "emocional": "emocional",
+        "optimizar_resultados": "monetizacion",
+    }
+    return mapa.get(cat, cat)
+
+
 def _construir_recomendacion_personalizada_fallback(
     contexto: Dict[str, Any],
     categoria: str = "monetizacion",
     prioridad: str = "media",
 ) -> Dict[str, str]:
+    """
+    Fallback determinístico cuando OpenAI devuelve una recomendación genérica.
+
+    Importante:
+    - No repite el mismo texto para todas las categorías.
+    - Usa arquetipo, intereses, horario, categoría y partidas.
+    - Evita frases genéricas tipo "mejorar contenido".
+    """
     datos = _extraer_datos_personalizacion_recomendaciones(contexto)
+
     nombre = datos.get("nombre_creador") or "el creador"
-    arquetipo = datos.get("arquetipo")
-    intereses = datos.get("intereses")
-    horario = datos.get("horario")
-    cat = datos.get("categoria_nombre")
+    arquetipo = datos.get("arquetipo") or "sin arquetipo definido"
+    intereses_lista = datos.get("intereses_lista") or []
+    intereses = datos.get("intereses") or "sin intereses definidos"
+    horario = datos.get("horario") or "su franja horaria principal"
+    cat = datos.get("categoria_nombre") or "Sin categoría"
     meta = datos.get("meta_diamantes")
-    diag_part = datos.get("diagnostico_partidas")
+    partidas = datos.get("partidas")
+    pct_partidas = datos.get("pct_diamantes_partidas")
+    diamantes_por_partida = datos.get("diamantes_por_partida")
+    diag_part = datos.get("diagnostico_partidas") or "sin diagnóstico de partidas"
 
-    perfil_txt: List[str] = []
-    if arquetipo:
-        perfil_txt.append(f"arquetipo {arquetipo}")
-    if intereses:
-        perfil_txt.append(f"intereses {intereses}")
-    if horario:
-        perfil_txt.append(f"horario preferido {horario}")
-    perfil_unido = ", ".join(perfil_txt) if perfil_txt else "perfil sin arquetipo/intereses/horario"
+    interes_1 = intereses_lista[0] if len(intereses_lista) >= 1 else "su tema principal"
+    interes_2 = intereses_lista[1] if len(intereses_lista) >= 2 else "otro interés del perfil"
+    interes_3 = intereses_lista[2] if len(intereses_lista) >= 3 else interes_1
 
-    tactica_partidas = (
-        diag_part
-        if diag_part
-        else "revisar si las partidas son palanca principal u oportunidad pendiente"
+    meta_txt = f"{meta} diamantes" if meta is not None else "su meta de diamantes"
+    partidas_txt = f"{partidas} partidas" if partidas not in (None, "") else "partidas sin dato"
+    diam_partida_txt = (
+        f"{diamantes_por_partida} diamantes por partida"
+        if diamantes_por_partida not in (None, "")
+        else "diamantes por partida sin dato"
+    )
+    pct_txt = (
+        f"{pct_partidas}% asociado a partidas"
+        if pct_partidas not in (None, "")
+        else "porcentaje de partidas sin dato"
     )
 
-    meta_txt = ""
-    if cat:
-        meta_txt = f"Categoría {cat}"
-        if meta is not None:
-            meta_txt += f" (meta {meta} diamantes). "
+    categoria_norm = _normalizar_categoria_recomendacion(categoria)
 
-    if arquetipo and str(arquetipo).upper() == "BATALLISTA":
-        accion = (
-            f"Programar 3 lives en {horario or 'su franja horaria'} con batallas por tramos, "
-            f"rivales con buena interacción y narrativa competitiva"
-        )
-        if intereses:
-            accion += f" enlazando {intereses}"
-    else:
-        accion = (
-            f"Programar 3 lives en {horario or 'su franja horaria'} con dinámica concreta "
-            f"alineada a {perfil_unido}"
-        )
+    recomendaciones_por_categoria = {
+        "horario": {
+            "recomendacion": (
+                f"Para {nombre}, validar durante 7 días un bloque fijo de LIVE en {horario}. "
+                f"Abrir cada transmisión con una dinámica {arquetipo}: reto rápido de {interes_1}, "
+                f"conversación de {interes_2} y una mini batalla antes del minuto 20. "
+                f"Registrar asistencia, retención y regalos por cada bloque."
+            ),
+            "justificacion": (
+                f"{nombre} tiene horario preferido {horario}, arquetipo {arquetipo} e intereses {intereses}. "
+                f"Como está en categoría {cat} con meta de {meta_txt}, primero conviene estabilizar una franja "
+                f"antes de aumentar volumen. Partidas: {diag_part}."
+            ),
+        },
+        "monetizacion": {
+            "recomendacion": (
+                f"Para {nombre}, estructurar 3 lives en {horario} con batallas por tramos: "
+                f"primer tramo de activación, segundo tramo con reto de {interes_1}, tercer tramo mezclando "
+                f"{interes_2} y cierre con meta visible de regalos para acercarse a {meta_txt}."
+            ),
+            "justificacion": (
+                f"El arquetipo {arquetipo} favorece competencia y metas visibles. Registra {partidas_txt}, "
+                f"{diam_partida_txt} y {pct_txt}. Categoría {cat}, meta {meta_txt}. "
+                f"Diagnóstico de partidas: {diag_part}."
+            ),
+        },
+        "interaccion": {
+            "recomendacion": (
+                f"Para {nombre}, activar competencias entre seguidores en {horario}: preguntas rápidas sobre "
+                f"{interes_1}, mini retos de {interes_2}, ranking simbólico de apoyo y llamado a comentar "
+                f"antes de cada partida o batalla."
+            ),
+            "justificacion": (
+                f"Como {nombre} es {arquetipo}, la interacción debe apoyarse en reto, competencia y reconocimiento. "
+                f"Sus intereses ({intereses}) permiten conversación concreta. Partidas: {diag_part}."
+            ),
+        },
+        "contenido": {
+            "recomendacion": (
+                f"Para {nombre}, crear una mini parrilla de 3 lives: Live 1 enfocado en {interes_1}, "
+                f"Live 2 mezclando {interes_2} con batalla, y Live 3 usando {interes_3} como tema de reto. "
+                f"Cada live debe terminar con una meta pequeña de regalos o seguidores."
+            ),
+            "justificacion": (
+                f"Los intereses reales del perfil son {intereses}. Usarlos explícitamente evita contenido genérico "
+                f"y conecta el arquetipo {arquetipo} con monetización. Categoría {cat}, meta {meta_txt}."
+            ),
+        },
+        "audiencia": {
+            "recomendacion": (
+                f"Para {nombre}, convertir espectadores en seguidores usando tres momentos de llamado a seguir: "
+                f"antes de la primera batalla, después de un reto de {interes_1} y al cerrar un bloque de {interes_2}. "
+                f"El mensaje debe conectar con su estilo {arquetipo}."
+            ),
+            "justificacion": (
+                f"El arquetipo {arquetipo} puede atraer audiencia si el LIVE tiene ritmo competitivo. "
+                f"Los intereses {intereses} hacen que el llamado a seguir sea específico. "
+                f"Categoría {cat}, meta {meta_txt}."
+            ),
+        },
+        "tecnica": {
+            "recomendacion": (
+                f"Para {nombre}, hacer una revisión técnica antes de los lives de {horario}: iluminación frontal, "
+                f"audio claro, encuadre estable y prueba de conexión. Esto es clave si hará batallas, retos de "
+                f"{interes_1} o dinámicas de {interes_2}."
+            ),
+            "justificacion": (
+                f"La estrategia depende de energía en vivo y partidas. Si la calidad técnica falla, baja la retención "
+                f"y se pierde conversión. Perfil: {arquetipo}, intereses {intereses}, categoría {cat}."
+            ),
+        },
+        "emocional": {
+            "recomendacion": (
+                f"Para {nombre}, definir un reto semanal alcanzable: completar 3 lives en {horario}, cada uno con "
+                f"una dinámica {arquetipo} simple basada en {interes_1} y {interes_2}. Medir cumplimiento, no perfección."
+            ),
+            "justificacion": (
+                f"Para categoría {cat}, una meta corta y repetible ayuda a sostener disciplina y confianza. "
+                f"El arquetipo {arquetipo} puede mantener motivación si el avance se mide por retos concretos."
+            ),
+        },
+        "disciplina": {
+            "recomendacion": (
+                f"Para {nombre}, fijar una rutina semanal mínima: 3 lives en {horario}, preparación 20 minutos antes, "
+                f"una dinámica de {interes_1} por live y cierre con compromiso para la siguiente emisión."
+            ),
+            "justificacion": (
+                f"Categoría {cat} con meta de {meta_txt} requiere consistencia antes de escalar. "
+                f"El perfil {arquetipo} funciona mejor con retos medibles y seguimiento semanal."
+            ),
+        },
+        "otro": {
+            "recomendacion": (
+                f"Para {nombre}, probar esta semana 3 lives en {horario} combinando {interes_1}, {interes_2} "
+                f"y una dinámica competitiva del arquetipo {arquetipo}, con una meta visible relacionada con {meta_txt}."
+            ),
+            "justificacion": (
+                f"La recomendación usa perfil estratégico ({arquetipo}, {intereses}, {horario}), categoría {cat} "
+                f"y lectura de partidas: {diag_part}."
+            ),
+        },
+    }
 
-    recomendacion = (
-        f"Para {nombre}, con {perfil_unido}, {accion}. "
-        f"{meta_txt}Partidas: {tactica_partidas}."
-    ).strip()
-
-    justificacion = (
-        f"Personalizado con arquetipo, intereses, horario, categoría/meta y performance_partidas "
-        f"del contexto ({tactica_partidas})."
+    elegido = recomendaciones_por_categoria.get(
+        categoria_norm,
+        recomendaciones_por_categoria["otro"],
     )
+
+    recomendacion = _limpiar_texto_generado(elegido["recomendacion"])
+    justificacion = _limpiar_texto_generado(elegido["justificacion"])
 
     return {
-        "categoria": categoria,
+        "categoria": categoria_norm,
         "prioridad": prioridad,
         "recomendacion": recomendacion,
         "justificacion": justificacion,
@@ -3383,6 +3529,13 @@ def _normalizar_resultado_recomendaciones_ia(
     resultado: Any,
     max_recomendaciones: int,
 ) -> Dict[str, Any]:
+    """
+    Valida recomendaciones IA y reemplaza solo las que sean genéricas.
+    Además:
+    - evita duplicados exactos
+    - evita que todas las recomendaciones terminen iguales
+    - aplica fallback diferente según categoría
+    """
     salida: Dict[str, Any] = resultado if isinstance(resultado, dict) else {}
     recs_raw = salida.get("recomendaciones")
     if not isinstance(recs_raw, list):
@@ -3390,55 +3543,116 @@ def _normalizar_resultado_recomendaciones_ia(
 
     datos = _extraer_datos_personalizacion_recomendaciones(contexto)
     normalizadas: List[Dict[str, Any]] = []
+    firmas_usadas: set = set()
+    categorias_usadas: set = set()
+
+    def _agregar_unica(rec: Dict[str, Any]) -> None:
+        if not isinstance(rec, dict):
+            return
+
+        categoria_norm = _normalizar_categoria_recomendacion(rec.get("categoria") or "otro")
+        prioridad_norm = validar_valor_en_set(
+            rec.get("prioridad") or "media",
+            PRIORIDADES_VALIDAS,
+            "prioridad",
+        ) or "media"
+
+        recomendacion = _limpiar_texto_generado(rec.get("recomendacion"))
+        justificacion = _limpiar_texto_generado(rec.get("justificacion") or recomendacion)
+
+        if not recomendacion:
+            return
+
+        firma = re.sub(r"\W+", "", recomendacion.lower())[:180]
+        if firma in firmas_usadas:
+            return
+
+        firmas_usadas.add(firma)
+        categorias_usadas.add(categoria_norm)
+        normalizadas.append({
+            "categoria": categoria_norm,
+            "prioridad": prioridad_norm,
+            "recomendacion": recomendacion,
+            "justificacion": justificacion,
+        })
 
     for rec in recs_raw[:max_recomendaciones]:
         if not isinstance(rec, dict):
             continue
 
-        categoria = rec.get("categoria") or "otro"
+        categoria = _normalizar_categoria_recomendacion(rec.get("categoria") or "otro")
         prioridad = rec.get("prioridad") or "media"
-        texto_rec = str(rec.get("recomendacion") or "").strip()
-        texto_just = str(rec.get("justificacion") or "").strip()
+        texto_rec = _limpiar_texto_generado(rec.get("recomendacion"))
+        texto_just = _limpiar_texto_generado(rec.get("justificacion"))
         texto_union = f"{texto_rec} {texto_just}"
 
-        if (
+        debe_usar_fallback = (
             _es_texto_recomendacion_generico(texto_rec)
             or _es_texto_recomendacion_generico(texto_just)
             or not _cumple_personalizacion_minima_recomendacion(texto_union, datos)
-        ):
-            rec = _construir_recomendacion_personalizada_fallback(
-                contexto, str(categoria), str(prioridad)
+        )
+
+        if debe_usar_fallback:
+            rec_normalizada = _construir_recomendacion_personalizada_fallback(
+                contexto, categoria, str(prioridad)
             )
         else:
-            rec = {
+            rec_normalizada = {
                 "categoria": categoria,
                 "prioridad": prioridad,
                 "recomendacion": texto_rec,
                 "justificacion": texto_just or texto_rec,
             }
 
-        if rec.get("recomendacion"):
-            normalizadas.append(rec)
+        _agregar_unica(rec_normalizada)
+
+    categorias_preferidas = [
+        "monetizacion",
+        "interaccion",
+        "contenido",
+        "horario",
+        "audiencia",
+        "disciplina",
+        "tecnica",
+        "emocional",
+    ]
+
+    for categoria_objetivo in categorias_preferidas:
+        if len(normalizadas) >= max_recomendaciones:
+            break
+        if categoria_objetivo in categorias_usadas:
+            continue
+
+        rec_fallback = _construir_recomendacion_personalizada_fallback(
+            contexto,
+            categoria_objetivo,
+            "media",
+        )
+        _agregar_unica(rec_fallback)
 
     if not normalizadas:
         for basica in generar_recomendaciones_basicas(contexto)[:max_recomendaciones]:
-            texto_b = str(basica.get("recomendacion") or "")
+            categoria = _normalizar_categoria_recomendacion(basica.get("categoria") or "otro")
+            prioridad = basica.get("prioridad") or "media"
+            texto_b = _limpiar_texto_generado(basica.get("recomendacion"))
+            just_b = _limpiar_texto_generado(basica.get("justificacion"))
+
             if _es_texto_recomendacion_generico(texto_b) or not _cumple_personalizacion_minima_recomendacion(
-                texto_b, datos
+                f"{texto_b} {just_b}", datos
             ):
                 rec = _construir_recomendacion_personalizada_fallback(
                     contexto,
-                    str(basica.get("categoria") or "otro"),
-                    str(basica.get("prioridad") or "media"),
+                    categoria,
+                    str(prioridad),
                 )
             else:
                 rec = {
-                    "categoria": basica.get("categoria"),
-                    "prioridad": basica.get("prioridad"),
-                    "recomendacion": basica.get("recomendacion"),
-                    "justificacion": basica.get("justificacion"),
+                    "categoria": categoria,
+                    "prioridad": prioridad,
+                    "recomendacion": texto_b,
+                    "justificacion": just_b or texto_b,
                 }
-            normalizadas.append(rec)
+            _agregar_unica(rec)
 
     salida["recomendaciones"] = normalizadas[:max_recomendaciones]
     return salida
@@ -4005,6 +4219,11 @@ def generar_analisis_completo_ia(
         prompt_recomendaciones_manager(contexto, 5, data.instrucciones_extra),
         temperature=0.35,
         system="Responde únicamente JSON válido en español.",
+    )
+    recomendaciones_result = _normalizar_resultado_recomendaciones_ia(
+        contexto,
+        recomendaciones_result,
+        5,
     )
 
     alertas_score_result = openai_json_completion(
