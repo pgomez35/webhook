@@ -329,6 +329,40 @@ def normalizar_texto(valor: Optional[str]) -> Optional[str]:
     return str(valor).strip()
 
 
+def normalizar_texto_parrafos(valor: Optional[str]) -> str:
+    """
+    Unifica saltos de línea para que el front (p. ej. white-space: pre-line)
+    pueda mostrar párrafos separados. No altera el contenido salvo espacios
+    al final de línea y líneas en blanco excesivas.
+    """
+    if valor is None:
+        return ""
+    texto = str(valor).replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not texto:
+        return ""
+    lineas = [ln.rstrip() for ln in texto.split("\n")]
+    texto = "\n".join(lineas)
+    texto = re.sub(r"\n{3,}", "\n\n", texto)
+    return texto
+
+
+def _formatear_seguimiento_respuesta(
+    row: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not row:
+        return row
+    for campo in ("observaciones_manager", "resumen_compromisos"):
+        if campo in row and row[campo]:
+            row[campo] = normalizar_texto_parrafos(row[campo])
+    return row
+
+
+def _formatear_lista_seguimientos(
+    filas: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    return [_formatear_seguimiento_respuesta(dict(f)) for f in filas]
+
+
 def normalizar_lower(valor: Optional[str]) -> Optional[str]:
     if valor is None:
         return None
@@ -816,7 +850,7 @@ def obtener_recomendaciones_pendientes(creador_id: int, limit: int = 20) -> List
 
 
 def obtener_ultimos_seguimientos(creador_id: int, limit: int = 10) -> List[Dict[str, Any]]:
-    return fetch_all(
+    filas = fetch_all(
         """
         SELECT sc.*, au.nombre_completo AS manager_nombre
         FROM creadores_performance_seguimiento sc
@@ -827,6 +861,7 @@ def obtener_ultimos_seguimientos(creador_id: int, limit: int = 10) -> List[Dict[
         """,
         (creador_id, limit),
     )
+    return _formatear_lista_seguimientos(filas)
 
 
 def obtener_acciones_abiertas(creador_id: int, limit: int = 20) -> List[Dict[str, Any]]:
@@ -2223,8 +2258,10 @@ def crear_seguimiento_performance(seg: SeguimientoPerformanceCreate):
         )
 
     fecha = seg.fecha_seguimiento or date.today()
+    observaciones = normalizar_texto_parrafos(seg.observaciones_manager)
+    compromisos = normalizar_texto_parrafos(seg.resumen_compromisos)
 
-    return execute_returning(
+    fila = execute_returning(
         """
         INSERT INTO creadores_performance_seguimiento (
             creador_id,
@@ -2246,10 +2283,11 @@ def crear_seguimiento_performance(seg: SeguimientoPerformanceCreate):
             "creador_id": seg.creador_id,
             "manager_id": manager_id,
             "fecha_seguimiento": fecha,
-            "observaciones_manager": seg.observaciones_manager or "",
-            "resumen_compromisos": seg.resumen_compromisos or "",
+            "observaciones_manager": observaciones,
+            "resumen_compromisos": compromisos,
         },
     )
+    return _formatear_seguimiento_respuesta(fila)
 
 
 @router.post("/api/creadores/performance/seguimientos-con-acciones")
@@ -2277,7 +2315,7 @@ def listar_seguimientos_performance(
     creador_id: int,
     limit: int = Query(default=100, ge=1, le=500),
 ):
-    return fetch_all(
+    filas = fetch_all(
         """
         SELECT sc.*, au.nombre_completo AS manager_nombre
         FROM creadores_performance_seguimiento sc
@@ -2288,6 +2326,7 @@ def listar_seguimientos_performance(
         """,
         (creador_id, limit),
     )
+    return _formatear_lista_seguimientos(filas)
 
 
 @router.get("/api/creadores/performance/seguimientos/{seguimiento_id}")
@@ -2316,7 +2355,7 @@ def obtener_seguimiento_performance(seguimiento_id: int):
     )
 
     seguimiento["acciones"] = acciones
-    return seguimiento
+    return _formatear_seguimiento_respuesta(seguimiento)
 
 
 @router.put("/api/creadores/performance/seguimientos/{seguimiento_id}")
@@ -2336,17 +2375,28 @@ def actualizar_seguimiento_performance(
     if not existente:
         raise HTTPException(status_code=404, detail="Seguimiento no encontrado")
 
-    return update_row_dynamic(
+    payload = model_to_dict(data, exclude_unset=True)
+    if "observaciones_manager" in payload:
+        payload["observaciones_manager"] = normalizar_texto_parrafos(
+            payload["observaciones_manager"]
+        )
+    if "resumen_compromisos" in payload:
+        payload["resumen_compromisos"] = normalizar_texto_parrafos(
+            payload["resumen_compromisos"]
+        )
+
+    actualizado = update_row_dynamic(
         table_name="creadores_performance_seguimiento",
         id_column="id",
         id_value=seguimiento_id,
-        data=model_to_dict(data, exclude_unset=True),
+        data=payload,
         allowed_fields={
             "fecha_seguimiento",
             "observaciones_manager",
             "resumen_compromisos",
         },
     )
+    return _formatear_seguimiento_respuesta(actualizado)
 
 
 @router.delete("/api/creadores/performance/seguimientos/{seguimiento_id}")
@@ -3875,6 +3925,12 @@ Devuelve JSON válido:
   "resumen_corto": "párrafo de máximo 120 palabras para mostrar rápidamente"
 }}
 
+Reglas de formato (obligatorias):
+- Separa párrafos con una línea en blanco: usa el carácter de salto de línea dos veces seguidas (\\n\\n) entre párrafos.
+- observaciones_manager: 2 a 4 párrafos breves (contexto actual, diagnóstico con datos del checklist, plan concreto).
+- resumen_compromisos: un párrafo por compromiso o acción acordada; si son varios ítems, un párrafo por ítem.
+- resumen_corto: un solo párrafo, sin líneas en blanco internas.
+
 Reglas:
 - Mantén tono profesional y humano.
 - No inventes situaciones personales no presentes en el contexto.
@@ -3983,9 +4039,16 @@ def generar_seguimiento_ia(
         temperature=0.55,
         system=(
             "Eres asistente de managers de una agencia TikTok LIVE. "
-            "Redacta seguimientos accionables en español. Responde únicamente JSON válido."
+            "Redacta seguimientos accionables en español. "
+            "Separa párrafos con doble salto de línea (\\n\\n). "
+            "Responde únicamente JSON válido."
         ),
     )
+
+    if isinstance(resultado, dict):
+        for campo in ("observaciones_manager", "resumen_compromisos", "resumen_corto"):
+            if resultado.get(campo):
+                resultado[campo] = normalizar_texto_parrafos(resultado[campo])
 
     return {
         "ok": True,
