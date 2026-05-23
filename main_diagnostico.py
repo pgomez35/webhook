@@ -24,6 +24,19 @@ class PerfilCualitativoPayload(BaseModel):
     eval_biografia: int = Field(..., ge=0, le=5)
     metadata_videos: int = Field(..., ge=0, le=5)
     eval_foto: int = Field(..., ge=0, le=5)
+    biografia: Optional[str] = None
+    biografia_sugerida: Optional[str] = None
+
+
+_CAMPOS_CUALITATIVOS_NUMERICOS = (
+    "potencial_estimado",
+    "apariencia",
+    "engagement",
+    "calidad_contenido",
+    "eval_biografia",
+    "metadata_videos",
+    "eval_foto",
+)
 
 
 class ActualizarPreEvaluacionIn(BaseModel):
@@ -1060,9 +1073,9 @@ def sync_cualitativo_perfil_y_variables(
     try:
         data = payload.model_dump()
 
-        for k, v in data.items():
+        for k in _CAMPOS_CUALITATIVOS_NUMERICOS:
             try:
-                data[k] = int(v)
+                data[k] = int(data[k])
             except Exception:
                 raise HTTPException(status_code=400, detail=f"{k} debe ser entero")
 
@@ -1079,7 +1092,9 @@ def sync_cualitativo_perfil_y_variables(
                         eval_biografia = %s,
                         metadata_videos = %s,
                         eval_foto = %s,
-                        potencial_estimado = %s
+                        potencial_estimado = %s,
+                        biografia = %s,
+                        biografia_sugerida = %s
                     WHERE aspirante_id = %s
                 """, (
                     data["apariencia"],
@@ -1089,6 +1104,8 @@ def sync_cualitativo_perfil_y_variables(
                     data["metadata_videos"],
                     data["eval_foto"],
                     data["potencial_estimado"],
+                    data.get("biografia"),
+                    data.get("biografia_sugerida"),
                     aspirante_id
                 ))
 

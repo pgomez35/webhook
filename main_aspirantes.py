@@ -2,6 +2,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from DataBase import (
     actualizar_datos_aspirantes_perfil,
@@ -9,7 +10,7 @@ from DataBase import (
     crear_invitacion_minima,
     obtener_aspirantes_db,
     obtener_aspirantes_perfil,
-    obtener_biografia_aspirantes_perfil, get_connection_context,
+    get_connection_context,
 )
 from evaluaciones import (
     evaluar_cualitativa,
@@ -45,6 +46,14 @@ ESTADO_MAP = {
     "Rechazado": 7,
 }
 ESTADO_DEFAULT = 99
+
+
+class BiografiaIaInput(BaseModel):
+    biografia: str = Field(
+        ...,
+        min_length=1,
+        description="Texto de biografía enviado por el frontend para evaluar con IA",
+    )
 
 
 @router.get("/api/aspirantes", tags=["Creadores"])
@@ -248,24 +257,27 @@ def guardar_resumen_final(aspirante_id: int, datos: GuardarResumenInput):
 
 
 @router.put("/api/aspirantes_perfil/{aspirante_id}/biografia_ia", tags=["Biografia IA"])
-def actualizar_biografia_ia(aspirante_id: int):
+def actualizar_biografia_ia(aspirante_id: int, datos: BiografiaIaInput):
+    """
+    Evalúa la biografía con IA y devuelve la sugerencia al front.
+    No persiste en BD (el front guarda al confirmar en el perfil).
+    """
     try:
-        bio_texto = obtener_biografia_aspirantes_perfil(aspirante_id)
+        bio_texto = (datos.biografia or "").strip()
         if not bio_texto:
-            raise HTTPException(status_code=404, detail="No existe biografia previa para este perfil.")
+            raise HTTPException(status_code=400, detail="La biografía no puede estar vacía.")
         try:
             biografia_sugerida = evaluar_y_mejorar_biografia(bio_texto)
         except Exception:
             raise HTTPException(status_code=500, detail="Error generando la biografia con IA.")
-        biografia_sugerida = biografia_sugerida[:500]
-        biografia_sugerida = limpiar_biografia_ia(biografia_sugerida)
-        try:
-            actualizar_datos_aspirantes_perfil(aspirante_id, {"biografia_sugerida": biografia_sugerida})
-        except Exception:
-            raise HTTPException(status_code=500, detail="Error guardando la biografia en la base de datos.")
+        biografia_sugerida = limpiar_biografia_ia(biografia_sugerida[:500])
+        # actualizar_datos_aspirantes_perfil(
+        #     aspirante_id, {"biografia_sugerida": biografia_sugerida}
+        # )
         return {
             "status": "ok",
-            "mensaje": "Biografia IA generada y guardada exitosamente",
+            "mensaje": "Biografia IA generada (sin escritura en BD)",
+            "aspirante_id": aspirante_id,
             "biografia_sugerida": biografia_sugerida,
         }
     except HTTPException:

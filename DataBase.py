@@ -1771,7 +1771,6 @@ def obtener_aspirantes_db():
                     FROM aspirantes c
                     INNER JOIN aspirantes_estados ec ON c.estado_id = ec.id
                     WHERE c.activo = TRUE
-                      AND c.estado_id IN (3,4,5,7)
                     ORDER BY creado_en ASC;
                 """
 
