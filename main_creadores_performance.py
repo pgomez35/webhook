@@ -39,7 +39,7 @@ import os
 import re
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException, Query
@@ -3568,6 +3568,12 @@ Checklist para ESTE creador:
 PROHIBIDO usar frases vagas como:
 {prohibidas}
 
+REGLA ANTI-REPETICIÓN ENTRE CATEGORÍAS (tarjetas cortas):
+- horario_preferido → solo horario / disciplina / emocional.
+- arquetipo operativo → solo interacción (y una frase en audiencia o contenido si hace falta).
+- partidas y meta de diamantes → solo monetización (horario: solo métrica de bloque).
+- intereses: monetización ≤1 gancho; contenido = parrilla Live 1/2/3; interacción sin listar los 3.
+
 {ejemplo_malo}
 {ejemplo_bueno}
 
@@ -3694,26 +3700,42 @@ def _es_texto_recomendacion_generico(texto: str) -> bool:
 
 
 def _cumple_personalizacion_minima_recomendacion(
-    texto: str, datos: Dict[str, Any]
+    texto: str,
+    datos: Dict[str, Any],
+    categoria: Optional[str] = None,
 ) -> bool:
+    """
+    Validación por categoría: cada tarjeta exige solo los datos que le corresponden.
+    """
     t = (texto or "").lower()
     if not t:
         return False
 
+    cat = _normalizar_categoria_recomendacion(categoria or "")
     arquetipo = datos.get("arquetipo")
-    if arquetipo and str(arquetipo).lower() not in t:
+    if cat == "interaccion" and arquetipo and str(arquetipo).lower() not in t:
         return False
 
     intereses = datos.get("intereses_lista") or []
     if intereses:
-        minimo = 2 if len(intereses) >= 2 else 1
-        mencionados = sum(1 for interes in intereses if interes.lower() in t)
-        if mencionados < minimo:
-            return False
+        if cat == "contenido":
+            minimo = min(2, len(intereses)) if len(intereses) >= 2 else 1
+        elif cat in ("monetizacion", "audiencia"):
+            minimo = 1
+        else:
+            minimo = 0
+        if minimo > 0:
+            mencionados = sum(1 for interes in intereses if interes.lower() in t)
+            if mencionados < minimo:
+                return False
 
     horario = datos.get("horario")
-    if horario:
-        palabras_horario = [p.strip().lower() for p in str(horario).replace(",", " ").split() if p.strip()]
+    if horario and cat in _CATEGORIAS_CON_FRANJA_HORARIO:
+        palabras_horario = [
+            p.strip().lower()
+            for p in str(horario).replace(",", " ").split()
+            if p.strip()
+        ]
         if palabras_horario and not any(p in t for p in palabras_horario if len(p) > 3):
             return False
 
@@ -4313,6 +4335,8 @@ _CATEGORIAS_RECOMENDACION_CON_DINAMICAS = frozenset({
     "monetizacion",
 })
 
+_CATEGORIAS_CON_FRANJA_HORARIO = frozenset({"horario", "disciplina", "emocional"})
+
 _MOMENTOS_LIVE_VALIDOS = (
     "apertura",
     "antes de",
@@ -4339,28 +4363,57 @@ _OBJETIVOS_LIVE_VALIDOS = (
 
 
 def _cumple_dinamicas_intereses_minimas(
-    texto: str, datos: Dict[str, Any]
+    texto: str,
+    datos: Dict[str, Any],
+    categoria: Optional[str] = None,
 ) -> bool:
     """
-    Regla crítica backend: no basta nombrar intereses.
-    Al menos 2 intereses como dinámicas LIVE (Interés: ...), con momento y objetivo.
+    Reglas por categoría (tarjetas cortas).
+    - monetización / contenido: mencionar intereses con foco propio de la categoría.
+    - interacción: mecánicas de chat/equipos (sin exigir los 3 intereses).
+    - resto: no aplica.
     """
-    t = (texto or "").lower()
-    intereses = datos.get("intereses_lista") or []
-    if len(intereses) < 2:
+    cat = _normalizar_categoria_recomendacion(categoria or "")
+    if cat not in _CATEGORIAS_RECOMENDACION_CON_DINAMICAS:
         return True
 
-    intereses_como_dinamica = sum(
-        1
-        for interes in intereses
-        if re.search(rf"{re.escape(interes.lower())}\s*:", t)
-    )
-    if intereses_como_dinamica < 2:
-        return False
+    t = (texto or "").lower()
+    intereses = datos.get("intereses_lista") or []
 
-    tiene_momento = any(m in t for m in _MOMENTOS_LIVE_VALIDOS)
-    tiene_objetivo = any(o in t for o in _OBJETIVOS_LIVE_VALIDOS)
-    return tiene_momento and tiene_objetivo
+    if cat == "interaccion":
+        return any(
+            k in t
+            for k in (
+                "comentario",
+                "chat",
+                "equipo",
+                "batalla",
+                "ranking",
+                "pregunta",
+                "reconoc",
+            )
+        )
+
+    if not intereses:
+        return True
+
+    if cat == "contenido":
+        minimo = min(2, len(intereses)) if len(intereses) >= 2 else 1
+        mencionados = sum(1 for interes in intereses if interes.lower() in t)
+        if mencionados < minimo:
+            return False
+        return any(k in t for k in ("live 1", "live 2", "live 3", "parrilla", "tema", "formato"))
+
+    if cat == "monetizacion":
+        mencionados = sum(1 for interes in intereses if interes.lower() in t)
+        if mencionados < 1:
+            return False
+        return any(
+            k in t
+            for k in ("regalo", "meta", "tramo", "batalla", "monetiz", "diamante")
+        )
+
+    return True
 
 
 def _estrategias_por_interes(interes: str) -> List[str]:
@@ -4582,6 +4635,288 @@ def _debe_conservar_prioridad_critica(contexto: Dict[str, Any], categoria_norm: 
     return score_muy_bajo or riesgo_alto_con_score_bajo
 
 
+def _sufijo_franja_horario(categoria_norm: str, horario: str) -> str:
+    """Menciona la franja horaria solo en categorías donde el horario es el foco."""
+    h = str(horario or "").strip()
+    if h and _normalizar_categoria_recomendacion(categoria_norm) in _CATEGORIAS_CON_FRANJA_HORARIO:
+        return f" en {h}"
+    return ""
+
+
+class _TarjetaRecomendacionCtx(TypedDict, total=False):
+    nombre: str
+    arquetipo: str
+    arquetipo_estrategia: Optional[Dict[str, Any]]
+    intereses_lista: List[str]
+    horario: str
+    categoria_nombre: Optional[str]
+    meta_diamantes: Any
+    datos: Dict[str, Any]
+
+
+def _tarjeta_ctx_desde_contexto(contexto: Dict[str, Any]) -> _TarjetaRecomendacionCtx:
+    datos = _extraer_datos_personalizacion_recomendaciones(contexto)
+    return {
+        "nombre": datos.get("nombre_creador") or "el creador",
+        "arquetipo": datos.get("arquetipo") or "",
+        "arquetipo_estrategia": datos.get("arquetipo_estrategia"),
+        "intereses_lista": datos.get("intereses_lista") or [],
+        "horario": datos.get("horario") or "",
+        "categoria_nombre": datos.get("categoria_nombre"),
+        "meta_diamantes": datos.get("meta_diamantes"),
+        "datos": datos,
+    }
+
+
+def _interes_tarjeta(ctx: _TarjetaRecomendacionCtx, indice: int) -> str:
+    return _interes_por_indice(ctx.get("intereses_lista") or [], indice, "")
+
+
+def _tarjeta_recomendacion_monetizacion(ctx: _TarjetaRecomendacionCtx) -> Dict[str, str]:
+    nombre = ctx["nombre"]
+    i1 = _interes_tarjeta(ctx, 0)
+    datos = ctx["datos"]
+    meta_txt = _categoria_meta_para_manager(ctx.get("categoria_nombre"), ctx.get("meta_diamantes"))
+    evitar = _texto_evitar_arquetipo(ctx.get("arquetipo_estrategia")).strip()
+    partidas = _texto_partidas_para_manager(datos, "monetizacion").strip()
+
+    partes = [
+        f"Para {nombre}: tres metas de regalos visibles (apertura, entre batallas, cierre).",
+        "Escribir cada meta en pantalla antes del tramo; revisar cumplimiento al cerrar el LIVE.",
+    ]
+    if i1:
+        partes.append(
+            f"Gancho de apertura con {i1}: mini meta de regalos antes de la primera batalla."
+        )
+    rec = " ".join(partes)
+    if partidas:
+        rec = f"{rec} {partidas}"
+
+    just = meta_txt or "Priorizar conversión a regalos por tramo."
+    if evitar:
+        just = f"{just} {evitar}".strip()
+    return {"recomendacion": rec.strip(), "justificacion": just}
+
+
+def _tarjeta_recomendacion_interaccion(ctx: _TarjetaRecomendacionCtx) -> Dict[str, str]:
+    nombre = ctx["nombre"]
+    arquetipo = ctx.get("arquetipo") or "su perfil"
+    estrategia = _bloque_estrategias_arquetipo_categoria(
+        ctx.get("arquetipo_estrategia"), "interaccion", minimo=1
+    )
+    rec = (
+        f"Para {nombre}: dinámica {arquetipo} — equipos, pregunta rápida antes de cada batalla "
+        f"y ranking simbólico en pantalla."
+    )
+    if estrategia:
+        rec = f"{rec} {estrategia}"
+    rec = f"{rec} Reconocer en vivo al top 3 que comenta y apoya por batalla."
+    just = _resumen_arquetipo_para_categoria(
+        ctx.get("arquetipo_estrategia"), nombre, "interaccion"
+    )
+    return {
+        "recomendacion": rec.strip(),
+        "justificacion": just or "Objetivo: más comentarios y retención sin solo pedir regalos.",
+    }
+
+
+def _tarjeta_recomendacion_contenido(ctx: _TarjetaRecomendacionCtx) -> Dict[str, str]:
+    nombre = ctx["nombre"]
+    i1, i2, i3 = _interes_tarjeta(ctx, 0), _interes_tarjeta(ctx, 1), _interes_tarjeta(ctx, 2)
+    temas = [t for t in (i1, i2, i3 if i3 else i1) if t]
+
+    if len(temas) >= 3:
+        parrilla = (
+            f"Live 1 — {temas[0]} (batalla o reto corto). "
+            f"Live 2 — {temas[1]} (energía entre partidas). "
+            f"Live 3 — {temas[2]} (cierre con gancho al próximo live)."
+        )
+    elif len(temas) == 2:
+        parrilla = (
+            f"Live A — {temas[0]}; Live B — {temas[1]}; repetir el formato que mejor retenga."
+        )
+    elif len(temas) == 1:
+        parrilla = f"Tres lives con variaciones de {temas[0]} (apertura, batalla, cierre)."
+    else:
+        parrilla = "Tres lives con un formato distinto cada día (apertura, batalla, cierre)."
+
+    rec = f"Para {nombre}: mini parrilla semanal. {parrilla} Guion de 5 min antes de entrar."
+    just = _resumen_arquetipo_para_categoria(
+        ctx.get("arquetipo_estrategia"), nombre, "contenido"
+    )
+    if not just:
+        just = "Un tema y una métrica por live; evita improvisar en cámara."
+    return {"recomendacion": rec.strip(), "justificacion": just}
+
+
+def _tarjeta_recomendacion_audiencia(ctx: _TarjetaRecomendacionCtx) -> Dict[str, str]:
+    nombre = ctx["nombre"]
+    i1 = _interes_tarjeta(ctx, 0)
+    gancho = f"tras la dinámica de {i1}" if i1 else "tras el pico de atención del inicio"
+    rec = (
+        f"Para {nombre}: tres llamados a follow — inicio ({gancho}), "
+        f"mitad (después del mejor pico de comentarios), "
+        f"cierre (fecha y tema del próximo LIVE para volver)."
+    )
+    just = _resumen_arquetipo_para_categoria(
+        ctx.get("arquetipo_estrategia"), nombre, "audiencia"
+    )
+    return {
+        "recomendacion": rec.strip(),
+        "justificacion": just or "Los follows suben en picos de atención, no en momentos muertos.",
+    }
+
+
+def _tarjeta_recomendacion_horario(ctx: _TarjetaRecomendacionCtx) -> Dict[str, str]:
+    nombre = ctx["nombre"]
+    horario = ctx.get("horario") or "su franja horaria principal"
+    franja = _sufijo_franja_horario("horario", horario)
+    partidas = _texto_partidas_para_manager(ctx["datos"], "horario").strip()
+    rec = (
+        f"Para {nombre}: probar 7 días el mismo bloque horario{franja} "
+        f"(±15 min en la hora de inicio). "
+        f"Registrar por día: asistentes, retención a 5 min, comentarios/min y regalos totales."
+    )
+    if partidas:
+        rec = f"{rec} {partidas}"
+    return {
+        "recomendacion": rec.strip(),
+        "justificacion": (
+            f"Horario preferido: {horario}. Comparar el mismo bloque sin mezclar demasiadas variables."
+        ),
+    }
+
+
+def _tarjeta_recomendacion_tecnica(ctx: _TarjetaRecomendacionCtx) -> Dict[str, str]:
+    nombre = ctx["nombre"]
+    return {
+        "recomendacion": (
+            f"Para {nombre}: checklist pre-LIVE (luz, audio, encuadre, conexión) en 2 minutos. "
+            f"Si hay batallas, revisar volumen de música y delay."
+        ),
+        "justificacion": "La técnica estable sostiene retención y conversión.",
+    }
+
+
+def _tarjeta_recomendacion_emocional(ctx: _TarjetaRecomendacionCtx) -> Dict[str, str]:
+    nombre = ctx["nombre"]
+    franja = _sufijo_franja_horario("emocional", ctx.get("horario") or "")
+    return {
+        "recomendacion": (
+            f"Para {nombre}: reto semanal — 3 lives{franja}; celebrar cumplimiento (3/3) "
+            f"antes de subir exigencia de metas."
+        ),
+        "justificacion": "Prioridad: energía y ritmo sin saturar al creador.",
+    }
+
+
+def _tarjeta_recomendacion_disciplina(ctx: _TarjetaRecomendacionCtx) -> Dict[str, str]:
+    nombre = ctx["nombre"]
+    franja = _sufijo_franja_horario("disciplina", ctx.get("horario") or "")
+    meta = ctx.get("meta_diamantes")
+    meta_txt = f"{meta} diamantes" if meta is not None else "la meta definida"
+    return {
+        "recomendacion": (
+            f"Para {nombre}: rutina mínima — 3 lives{franja}, 20 min de preparación "
+            f"y checklist de apertura (tema, meta de regalos, primer saludo)."
+        ),
+        "justificacion": f"La consistencia sostiene resultados. Meta operativa: {meta_txt}.",
+    }
+
+
+def _tarjeta_recomendacion_otro(ctx: _TarjetaRecomendacionCtx) -> Dict[str, str]:
+    return _tarjeta_recomendacion_monetizacion(ctx)
+
+
+_BUILDERS_TARJETA_RECOMENDACION: Dict[str, Callable[[_TarjetaRecomendacionCtx], Dict[str, str]]] = {
+    "monetizacion": _tarjeta_recomendacion_monetizacion,
+    "interaccion": _tarjeta_recomendacion_interaccion,
+    "contenido": _tarjeta_recomendacion_contenido,
+    "audiencia": _tarjeta_recomendacion_audiencia,
+    "horario": _tarjeta_recomendacion_horario,
+    "tecnica": _tarjeta_recomendacion_tecnica,
+    "emocional": _tarjeta_recomendacion_emocional,
+    "disciplina": _tarjeta_recomendacion_disciplina,
+    "otro": _tarjeta_recomendacion_otro,
+}
+
+
+def _reducir_repeticiones_en_lote_recomendaciones(
+    recs: List[Dict[str, Any]],
+    datos: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """
+    Limpia salidas IA: horario, arquetipo, partidas y «evitar» solo donde corresponde.
+    """
+    horario = str(datos.get("horario") or "").strip()
+    arquetipo = str(datos.get("arquetipo") or "").strip()
+    salida: List[Dict[str, Any]] = []
+    vio_evitar = False
+    vio_partidas = False
+    vio_arquetipo_resumen = False
+
+    patron_evitar = re.compile(
+        r"\s*Cuidar que el LIVE no caiga en[^.]+\.",
+        re.IGNORECASE,
+    )
+    patron_partidas = re.compile(
+        r"\s*(?:Registra|Con)\s+\d[\d.,]*\s+partidas[^.]*\.",
+        re.IGNORECASE,
+    )
+    patron_como_arquetipo = None
+    if arquetipo:
+        patron_como_arquetipo = re.compile(
+            rf"\s*Como\s+{re.escape(arquetipo)}[^.]*\.",
+            re.IGNORECASE,
+        )
+
+    for rec in recs:
+        if not isinstance(rec, dict):
+            continue
+        copia = dict(rec)
+        cat = _normalizar_categoria_recomendacion(copia.get("categoria") or "otro")
+
+        for campo in ("recomendacion", "justificacion"):
+            texto = str(copia.get(campo) or "").strip()
+            if not texto:
+                continue
+
+            if horario and cat not in _CATEGORIAS_CON_FRANJA_HORARIO:
+                texto = re.sub(re.escape(f" en {horario}"), "", texto, flags=re.IGNORECASE)
+                texto = re.sub(
+                    rf"\ben\s+{re.escape(horario)}\b",
+                    "",
+                    texto,
+                    flags=re.IGNORECASE,
+                )
+
+            if patron_como_arquetipo and cat not in ("interaccion", "audiencia", "contenido"):
+                if patron_como_arquetipo.search(texto):
+                    if vio_arquetipo_resumen:
+                        texto = patron_como_arquetipo.sub("", texto).strip()
+                    else:
+                        vio_arquetipo_resumen = True
+
+            if patron_evitar.search(texto):
+                if vio_evitar or cat != "monetizacion":
+                    texto = patron_evitar.sub("", texto).strip()
+                else:
+                    vio_evitar = True
+
+            if patron_partidas.search(texto):
+                if vio_partidas and cat not in ("monetizacion", "horario"):
+                    texto = patron_partidas.sub("", texto).strip()
+                else:
+                    vio_partidas = True
+
+            texto = re.sub(r"\s{2,}", " ", texto).strip()
+            copia[campo] = texto
+
+        salida.append(copia)
+
+    return salida
+
+
 def _ajustar_prioridad_recomendacion(
     contexto: Dict[str, Any],
     prioridad: Optional[str],
@@ -4605,180 +4940,23 @@ def _construir_recomendacion_personalizada_fallback(
     prioridad: str = "media",
 ) -> Dict[str, str]:
     """
-    Fallback determinístico con copy natural para el manager.
-
-    Refinamientos:
-    - elimina "aplicada..."
-    - elimina "hilo operativo del LIVE"
-    - reduce tarjetas largas de monetización/contenido
-    - varía la frase del arquetipo por categoría
-    - hace Fitness más concreto
+    Tarjeta corta por categoría: cada builder aporta solo lo necesario para ese foco.
+    Horario, arquetipo y partidas no se repiten en todas las tarjetas.
     """
-    datos = _extraer_datos_personalizacion_recomendaciones(contexto)
-
-    nombre = datos.get("nombre_creador") or "el creador"
-    arquetipo = datos.get("arquetipo") or "su arquetipo"
-    arquetipo_estrategia = datos.get("arquetipo_estrategia")
-    intereses_lista = datos.get("intereses_lista") or []
-    horario = datos.get("horario") or "su franja horaria principal"
-    cat = datos.get("categoria_nombre")
-    meta = datos.get("meta_diamantes")
+    ctx = _tarjeta_ctx_desde_contexto(contexto)
     categoria_norm = _normalizar_categoria_recomendacion(categoria)
-
-    resumen_arq = _resumen_arquetipo_para_categoria(
-        arquetipo_estrategia,
-        nombre,
+    builder = _BUILDERS_TARJETA_RECOMENDACION.get(
         categoria_norm,
+        _tarjeta_recomendacion_otro,
     )
-    cat_meta_txt = _categoria_meta_para_manager(cat, meta)
-
-    texto_partidas = _texto_partidas_para_manager(datos, categoria_norm)
-    texto_partidas_monetizacion = _texto_partidas_para_manager(datos, "monetizacion")
-    texto_partidas_interaccion = _texto_partidas_para_manager(datos, "interaccion")
-    texto_partidas_contenido = _texto_partidas_para_manager(datos, "contenido")
-    texto_partidas_horario = _texto_partidas_para_manager(datos, "horario")
-    texto_partidas_tecnica = _texto_partidas_para_manager(datos, "tecnica")
-    evitar_arq = _texto_evitar_arquetipo(arquetipo_estrategia).strip()
-
-    meta_txt = f"{meta} diamantes" if meta is not None else "la meta pendiente"
-
-    i1 = _interes_por_indice(intereses_lista, 0, "su interés principal")
-    i2 = _interes_por_indice(intereses_lista, 1, "otro interés del perfil")
-    i3 = _interes_por_indice(intereses_lista, 2, i1)
-
-    dinamicas_intereses_mon = _bloque_dinamicas_por_intereses(
-        intereses_lista,
-        minimo=3,
-        objetivos=["activar comentarios", "sostener retención", "incentivar regalos"],
-    )
-    dinamicas_intereses_int = _bloque_dinamicas_por_intereses(
-        intereses_lista,
-        minimo=3,
-        objetivos=["comentarios", "retención", "seguidores o regalos"],
-    )
-
-    estrategias_arq_int = _bloque_estrategias_arquetipo_categoria(
-        arquetipo_estrategia, "interaccion", minimo=2
-    )
-    cierre_interaccion = _frase_interaccion_arquetipo_sin_repetir(
-        estrategias_arq_int,
-        texto_partidas_interaccion,
-    )
-
-    recomendaciones_por_categoria = {
-        "horario": {
-            "recomendacion": (
-                f"Para {nombre}, validar durante 7 días un bloque fijo de LIVE en {horario}.\n\n"
-                f"Apertura: {_linea_dinamica_interes(i1, 0, momento='en la apertura del LIVE', objetivo='activar comentarios')}\n"
-                f"Mitad: {_linea_dinamica_interes(i2, 1, momento='en la mitad del LIVE', objetivo='sostener retención')}\n"
-                f"Cierre: {_linea_dinamica_interes(i3, 2, momento='en el cierre del LIVE', objetivo='incentivar regalos o seguidores')}\n\n"
-                f"Medir asistencia, retención, comentarios y regalos por bloque. {texto_partidas_horario}"
-            ),
-            "justificacion": (
-                f"{nombre} tiene horario preferido {horario}. El objetivo es comprobar qué bloque convierte mejor "
-                f"sin cambiar muchas variables a la vez. {evitar_arq}"
-            ),
-        },
-        "monetizacion": {
-            "recomendacion": (
-                f"Para {nombre}, estructurar 3 lives en {horario} con metas visibles de regalos por tramo.\n\n"
-                f"{dinamicas_intereses_mon}\n\n"
-                f"{resumen_arq} {texto_partidas_monetizacion}"
-            ),
-            "justificacion": (
-                f"Cada interés queda conectado con momento y objetivo de monetización. {cat_meta_txt} {evitar_arq}"
-            ),
-        },
-        "interaccion": {
-            "recomendacion": (
-                f"Para {nombre}, activar interacción en {horario} con dinámica de {arquetipo}.\n\n"
-                f"{dinamicas_intereses_int}\n\n"
-                f"{cierre_interaccion}"
-            ),
-            "justificacion": (
-                f"{resumen_arq} Objetivo: aumentar comentarios, retención y seguidores sin depender solo de pedir regalos. {evitar_arq}"
-            ),
-        },
-        "contenido": {
-            "recomendacion": (
-                f"Para {nombre}, crear una mini parrilla de 3 lives en {horario}:\n\n"
-                f"Live 1 — {_linea_dinamica_interes(i1, 0, momento='en apertura o antes de batalla', objetivo='comentarios')}\n"
-                f"Live 2 — {_linea_dinamica_interes(i2, 1, momento='entre partidas', objetivo='retención')}\n"
-                f"Live 3 — {_linea_dinamica_interes(i3, 2, momento='en el cierre del LIVE', objetivo='regalos o seguidores')}\n\n"
-                f"{resumen_arq}"
-            ),
-            "justificacion": (
-                f"La parrilla evita improvisación: cada interés tiene dinámica, momento y objetivo medible. "
-                f"{cat_meta_txt} {texto_partidas_contenido} {evitar_arq}"
-            ),
-        },
-        "audiencia": {
-            "recomendacion": (
-                f"Para {nombre}, convertir espectadores en seguidores en {horario} con tres llamados claros.\n\n"
-                f"Inicio: pedir follow después de presentar la dinámica de {i1}.\n"
-                f"Mitad: invitar a seguir justo después de la dinámica de {i2}.\n"
-                f"Cierre: conectar el próximo LIVE con {i3} y pedir follow para volver al siguiente reto.\n\n"
-                f"{resumen_arq}"
-            ),
-            "justificacion": (
-                f"El crecimiento de audiencia depende de ritmo, reconocimiento público y llamados a seguir "
-                f"en momentos de alta atención. {cat_meta_txt}"
-            ),
-        },
-        "tecnica": {
-            "recomendacion": (
-                f"Para {nombre}, revisar iluminación, audio, encuadre y conexión antes de cada LIVE en {horario}. "
-                f"Priorizar esta revisión cuando haya batallas, retos de {i1} o dinámicas de {i2}."
-            ),
-            "justificacion": (
-                f"Sin calidad técnica estable, bajan retención y conversión aunque la dinámica sea buena. "
-                f"{texto_partidas_tecnica}"
-            ),
-        },
-        "emocional": {
-            "recomendacion": (
-                f"Para {nombre}, definir un reto semanal alcanzable: 3 lives en {horario} con dinámicas simples.\n\n"
-                f"{_bloque_dinamicas_por_intereses(intereses_lista, minimo=2)}\n\n"
-                f"Medir cumplimiento semanal, no perfección."
-            ),
-            "justificacion": (
-                f"{resumen_arq} {cat_meta_txt} La prioridad es sostener ritmo sin saturar al creador."
-            ),
-        },
-        "disciplina": {
-            "recomendacion": (
-                f"Para {nombre}, establecer una rutina mínima: 3 lives en {horario}, 20 minutos de preparación "
-                f"y una dinámica por interés.\n\n"
-                f"{_bloque_dinamicas_por_intereses(intereses_lista, minimo=2)}"
-            ),
-            "justificacion": (
-                f"La consistencia sostiene resultados antes de escalar volumen. {resumen_arq} Meta: {meta_txt}."
-            ),
-        },
-        "otro": {
-            "recomendacion": (
-                f"Para {nombre}, probar 3 lives en {horario} esta semana.\n\n"
-                f"{dinamicas_intereses_mon}\n\n"
-                f"{resumen_arq} {texto_partidas}"
-            ),
-            "justificacion": (
-                f"Plan integrado por arquetipo, intereses y rendimiento del LIVE. {cat_meta_txt}"
-            ),
-        },
-    }
-
-    elegido = recomendaciones_por_categoria.get(
-        categoria_norm,
-        recomendaciones_por_categoria["otro"],
-    )
-
+    cuerpo = builder(ctx)
     prioridad_final = _ajustar_prioridad_recomendacion(contexto, prioridad, categoria_norm)
 
     return _pulir_recomendacion_item({
         "categoria": categoria_norm,
         "prioridad": prioridad_final,
-        "recomendacion": elegido["recomendacion"],
-        "justificacion": elegido["justificacion"],
+        "recomendacion": cuerpo["recomendacion"],
+        "justificacion": cuerpo["justificacion"],
     })
 
 
@@ -4849,14 +5027,18 @@ def _normalizar_resultado_recomendaciones_ia(
         debe_usar_fallback = (
             _es_texto_recomendacion_generico(texto_rec)
             or _es_texto_recomendacion_generico(texto_just)
-            or not _cumple_personalizacion_minima_recomendacion(texto_union, datos)
+            or not _cumple_personalizacion_minima_recomendacion(
+                texto_union, datos, categoria
+            )
             or (
                 categoria in _CATEGORIAS_RECOMENDACION_CON_DINAMICAS
-                and not _cumple_dinamicas_intereses_minimas(texto_union, datos)
+                and not _cumple_dinamicas_intereses_minimas(
+                    texto_union, datos, categoria
+                )
             )
             or any(p in texto_union.lower() for p in _TERMINOS_TECNICOS_PROHIBIDOS_MANAGER)
-            or len(texto_rec) > 900
-            or len(texto_just) > 500
+            or len(texto_rec) > 480
+            or len(texto_just) > 280
         )
 
         if debe_usar_fallback:
@@ -4907,10 +5089,14 @@ def _normalizar_resultado_recomendaciones_ia(
             texto_basico = f"{texto_b} {just_b}"
             if (
                 _es_texto_recomendacion_generico(texto_b)
-                or not _cumple_personalizacion_minima_recomendacion(texto_basico, datos)
+                or not _cumple_personalizacion_minima_recomendacion(
+                    texto_basico, datos, categoria
+                )
                 or (
                     categoria in _CATEGORIAS_RECOMENDACION_CON_DINAMICAS
-                    and not _cumple_dinamicas_intereses_minimas(texto_basico, datos)
+                    and not _cumple_dinamicas_intereses_minimas(
+                        texto_basico, datos, categoria
+                    )
                 )
             ):
                 rec = _construir_recomendacion_personalizada_fallback(
@@ -4927,7 +5113,11 @@ def _normalizar_resultado_recomendaciones_ia(
                 }
             _agregar_unica(rec)
 
-    salida["recomendaciones"] = normalizadas[:max_recomendaciones]
+    normalizadas = _reducir_repeticiones_en_lote_recomendaciones(
+        normalizadas[:max_recomendaciones],
+        datos,
+    )
+    salida["recomendaciones"] = normalizadas
     return _aplicar_pulido_final_recomendaciones(salida)
 
 def prompt_diagnostico_performance(contexto: Dict[str, Any], instrucciones_extra: Optional[str] = None) -> str:
@@ -4995,46 +5185,29 @@ interacción, monetización y riesgos a evitar.
 No interpretes el arquetipo solo por el nombre.
 No copies la definición larga completa: resume en una frase operativa.
 
-REGLA CRÍTICA SOBRE INTERESES:
-No menciones los intereses solo como una lista.
-Por cada recomendación de contenido, interacción o monetización, convierte al menos 2 intereses
-en dinámicas concretas de LIVE.
+REGLA CRÍTICA — UNA TARJETA CORTA POR CATEGORÍA (no copies el mismo plan en todas):
+Cada recomendación debe ser breve (2–4 oraciones en "recomendacion", 1–2 en "justificacion").
+NO repitas horario, arquetipo ni partidas en todas las tarjetas; cada dato va solo donde aporta.
 
-Ejemplo incorrecto:
-"Usar Música, Fitness y Maquillaje para generar conversación."
-
-Ejemplo correcto:
-"Música: adivina la canción o votación de playlist.
-Fitness: mini reto de energía de 30 segundos antes de la batalla.
-Maquillaje: votación para elegir color o desbloquear pasos del look con regalos pequeños."
-
-Cada recomendación debe incluir:
-- interés usado
-- dinámica concreta
-- momento del live donde se aplica
-- objetivo: comentarios, retención, seguidores o regalos
-- ajuste al arquetipo operativo (frase corta, no definición larga)
+Enfoque obligatorio por categoría:
+- monetizacion: metas de regalos, tramos, batallas, conversión. Máx. 1 interés como gancho. Partidas y meta aquí si aplica.
+- interaccion: chat, equipos, preguntas, ranking, reconocimiento. Arquetipo aquí. Sin repetir los 3 intereses.
+- contenido: parrilla de lives, temas y formatos (Live 1/2/3). Sin horario ni partidas.
+- audiencia: follows, comunidad, retorno al próximo live. Sin horario.
+- horario: prueba de bloque fijo 7 días y métricas a comparar. Horario solo aquí (y en disciplina/emocional si aplica).
+- tecnica: luz, audio, conexión, encuadre. Sin intereses ni arquetipo largo.
+- emocional: consistencia, energía, reto semanal alcanzable.
+- disciplina: rutina mínima de lives y preparación.
 
 TONO Y FORMATO (obligatorio):
-- El texto debe sonar como recomendación para un manager, NO como explicación técnica del sistema.
-- Máximo 850 caracteres en "recomendacion" y máximo 400 caracteres en "justificacion".
-- Usa saltos de línea legibles entre bloques, pero evita tarjetas largas.
-- Evita repetir la misma frase del arquetipo en todas las tarjetas: adapta el resumen a la categoría.
-- En interacción, no repitas "dividir la audiencia en equipos" si ya lo mencionaste una vez.
-- Usa prioridad "critica" solo si hay caída fuerte, riesgo alto, alerta crítica o incumplimiento grave; si no, usa "alta".
-- Prohibido escribir "aplicada" para unir momento y objetivo. Escribe: "Música: hacer X antes de la batalla para activar comentarios".
-- Prohibido escribir "hilo operativo del LIVE". Usa "ritmo del LIVE" o "estructura del LIVE".
-- Si el porcentaje de diamantes por partidas supera 100, NO lo presentes como porcentaje normal; usa una frase breve como: "las partidas deben seguir siendo una palanca central de monetización".
+- Texto para manager, no técnico.
+- Máximo 420 caracteres en "recomendacion" y 220 en "justificacion".
+- Prohibido repetir "en [horario]" fuera de categoría horario/disciplina/emocional.
+- Prohibido pegar los 3 intereses en monetización, interacción y contenido a la vez.
+- Usa prioridad "critica" solo con caída fuerte o alerta crítica; si no, "alta".
+- Si partidas >100% de diamantes, no uses el porcentaje como cifra exacta.
 
-FORMATO OBLIGATORIO de cada "recomendacion":
-1) Nombre del creador (si existe).
-2) Arquetipo por nombre y una frase operativa corta (sin pegar toda la definición).
-3) Al menos 2 intereses con dinámica LIVE (Interés: dinámica; momento; objetivo).
-4) Bloque horario concreto (si existe).
-5) Lectura de partidas en lenguaje natural (sin porcentajes >100 como proporción exacta).
-6) Acción ejecutable esta semana.
-
-La "justificacion" debe citar métricas y perfil en lenguaje natural para el manager.
+La "justificacion" es una frase de por qué importa esa categoría, sin duplicar la recomendación.
 
 Devuelve JSON válido con este formato:
 {{
