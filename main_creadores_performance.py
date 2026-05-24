@@ -3990,7 +3990,16 @@ def _resumen_arquetipo_para_categoria(
             return f"Como {nombre_arquetipo}, {sujeto} debe monetizar manteniendo {estilo}."
     if categoria_norm == "interaccion":
         if items_txt:
-            return f"Como {nombre_arquetipo}, la interacción debe apoyarse en {items_txt}."
+            items_l = items_txt.lower()
+            if "dividir la audiencia" in items_l or "dividir audiencia" in items_l:
+                return (
+                    f"Como {nombre_arquetipo}, la interacción debe sentirse como reto, "
+                    "competencia y reconocimiento público."
+                )
+            return (
+                f"Como {nombre_arquetipo}, la interacción debe activar participación, "
+                f"competencia y reconocimiento desde {items_txt}."
+            )
         if estilo:
             return f"Como {nombre_arquetipo}, la interacción debe mantener {estilo}."
     if categoria_norm == "contenido":
@@ -4434,6 +4443,9 @@ def _linea_dinamica_interes(
             incluir_momento = False
         if "entre partidas" in accion_l and "partidas" in momento_l:
             incluir_momento = False
+        if "entre partidas" in accion_l and "mitad" in momento_l:
+            accion = re.sub(r"\s+entre partidas\b", "", accion, flags=re.IGNORECASE).strip()
+            incluir_momento = False
         if "antes de cada batalla" in accion_l and "batalla" in momento_l:
             incluir_momento = False
         if "cierre" in accion_l and "cierre" in momento_l:
@@ -4503,6 +4515,89 @@ def _normalizar_categoria_recomendacion(categoria: Any) -> str:
     }
     return mapa.get(cat, cat)
 
+
+
+
+def _valor_metrica_existe_y_menor(reporte: Dict[str, Any], campo: str, umbral: float) -> bool:
+    """Evalúa métricas solo cuando el dato existe; evita convertir ausencias en crisis."""
+    if not isinstance(reporte, dict) or reporte.get(campo) is None:
+        return False
+    return safe_float(reporte.get(campo)) < umbral
+
+
+def _valor_metrica_existe_y_menor_o_igual(reporte: Dict[str, Any], campo: str, umbral: float) -> bool:
+    if not isinstance(reporte, dict) or reporte.get(campo) is None:
+        return False
+    return safe_float(reporte.get(campo)) <= umbral
+
+
+def _debe_conservar_prioridad_critica(contexto: Dict[str, Any], categoria_norm: str) -> bool:
+    """
+    Prioridad crítica solo cuando hay señal real de urgencia.
+    Si no hay datos fuertes, baja automáticamente a alta para no alarmar al manager.
+    """
+    categoria_norm = _normalizar_categoria_recomendacion(categoria_norm)
+    reporte = contexto.get("ultimo_reporte") or {}
+    score = contexto.get("score") or {}
+    alertas = contexto.get("alertas") or []
+
+    for alerta in alertas if isinstance(alertas, list) else []:
+        if not isinstance(alerta, dict):
+            continue
+        nivel = normalizar_lower(alerta.get("nivel_alerta") or "")
+        estado = normalizar_lower(alerta.get("estado") or "activa")
+        if nivel == "critica" and estado in {"activa", "pendiente"}:
+            return True
+
+    riesgo = normalizar_lower(score.get("riesgo_abandono") if isinstance(score, dict) else None)
+    score_general = score.get("score_general") if isinstance(score, dict) else None
+    score_muy_bajo = score_general is not None and safe_float(score_general) < 35
+    riesgo_alto_con_score_bajo = riesgo == "alto" and (score_general is None or safe_float(score_general) < 45)
+
+    if categoria_norm == "monetizacion":
+        return (
+            _valor_metrica_existe_y_menor(reporte, "porcentaje_logro_diamantes", 35)
+            or _valor_metrica_existe_y_menor_o_igual(reporte, "variacion_diamantes_mes_anterior", -30)
+            or riesgo_alto_con_score_bajo
+        )
+
+    if categoria_norm in {"audiencia", "interaccion"}:
+        return (
+            _valor_metrica_existe_y_menor(reporte, "porcentaje_logro_nuevos_seguidores", 35)
+            or _valor_metrica_existe_y_menor_o_igual(reporte, "variacion_nuevos_seguidores_mes_anterior", -25)
+            or riesgo_alto_con_score_bajo
+        )
+
+    if categoria_norm in {"horario", "disciplina"}:
+        return (
+            _valor_metrica_existe_y_menor(reporte, "porcentaje_logro_emisiones", 40)
+            or _valor_metrica_existe_y_menor(reporte, "porcentaje_logro_dias_validos", 50)
+            or _valor_metrica_existe_y_menor(reporte, "porcentaje_logro_duracion_live", 40)
+            or riesgo_alto_con_score_bajo
+        )
+
+    if categoria_norm == "tecnica":
+        return score_muy_bajo or riesgo_alto_con_score_bajo
+
+    return score_muy_bajo or riesgo_alto_con_score_bajo
+
+
+def _ajustar_prioridad_recomendacion(
+    contexto: Dict[str, Any],
+    prioridad: Optional[str],
+    categoria_norm: str,
+) -> str:
+    """Evita usar 'critica' cuando la información disponible solo justifica 'alta'."""
+    prioridad_norm = validar_valor_en_set(
+        prioridad or "media",
+        PRIORIDADES_VALIDAS,
+        "prioridad",
+    ) or "media"
+
+    if prioridad_norm == "critica" and not _debe_conservar_prioridad_critica(contexto, categoria_norm):
+        return "alta"
+
+    return prioridad_norm
 
 def _construir_recomendacion_personalizada_fallback(
     contexto: Dict[str, Any],
@@ -4677,9 +4772,11 @@ def _construir_recomendacion_personalizada_fallback(
         recomendaciones_por_categoria["otro"],
     )
 
+    prioridad_final = _ajustar_prioridad_recomendacion(contexto, prioridad, categoria_norm)
+
     return _pulir_recomendacion_item({
         "categoria": categoria_norm,
-        "prioridad": prioridad,
+        "prioridad": prioridad_final,
         "recomendacion": elegido["recomendacion"],
         "justificacion": elegido["justificacion"],
     })
@@ -4713,11 +4810,11 @@ def _normalizar_resultado_recomendaciones_ia(
             return
 
         categoria_norm = _normalizar_categoria_recomendacion(rec.get("categoria") or "otro")
-        prioridad_norm = validar_valor_en_set(
+        prioridad_norm = _ajustar_prioridad_recomendacion(
+            contexto,
             rec.get("prioridad") or "media",
-            PRIORIDADES_VALIDAS,
-            "prioridad",
-        ) or "media"
+            categoria_norm,
+        )
 
         rec_pulida = _pulir_recomendacion_item({
             "categoria": categoria_norm,
@@ -4924,6 +5021,7 @@ TONO Y FORMATO (obligatorio):
 - Usa saltos de línea legibles entre bloques, pero evita tarjetas largas.
 - Evita repetir la misma frase del arquetipo en todas las tarjetas: adapta el resumen a la categoría.
 - En interacción, no repitas "dividir la audiencia en equipos" si ya lo mencionaste una vez.
+- Usa prioridad "critica" solo si hay caída fuerte, riesgo alto, alerta crítica o incumplimiento grave; si no, usa "alta".
 - Prohibido escribir "aplicada" para unir momento y objetivo. Escribe: "Música: hacer X antes de la batalla para activar comentarios".
 - Prohibido escribir "hilo operativo del LIVE". Usa "ritmo del LIVE" o "estructura del LIVE".
 - Si el porcentaje de diamantes por partidas supera 100, NO lo presentes como porcentaje normal; usa una frase breve como: "las partidas deben seguir siendo una palanca central de monetización".
