@@ -3564,6 +3564,11 @@ Checklist para ESTE creador:
 PROHIBIDO usar frases vagas como:
 {prohibidas}
 
+REGLA DE REDACCIÓN FLUIDA (CRÍTICA):
+Escribe de forma natural y conversacional.
+INCORRECTO: "Música: adivina la canción antes de la batalla, aplicada antes de la batalla para activar comentarios."
+CORRECTO: "Música: Juega a adivinar la canción justo antes de la batalla para activar los primeros comentarios."
+
 {ejemplo_malo}
 {ejemplo_bueno}
 
@@ -4082,29 +4087,29 @@ def _estrategias_por_interes(interes: str) -> List[str]:
 
     if "música" in interes_norm or "musica" in interes_norm:
         return [
-            "hacer adivina la canción antes de la primera batalla",
-            "dejar que la audiencia vote la canción de la siguiente partida",
-            "crear duelo de playlists entre equipos de seguidores",
+            "jugar a adivinar la canción",
+            "dejar que la audiencia vote la pista de la siguiente partida",
+            "crear un duelo de playlists entre los equipos de seguidores",
         ]
 
     if "fitness" in interes_norm:
         return [
-            "hacer reto de energía de 30 segundos antes de cada batalla",
-            "hacer movimiento simple y seguro para activar comentarios",
-            "desbloquear el siguiente mini reto con meta pequeña de regalos",
+            "hacer un reto corto de energía de 30 segundos",
+            "enseñar un movimiento simple y seguro para interactuar",
+            "desbloquear un mini-reto físico con una meta pequeña de regalos",
         ]
 
     if "maquillaje" in interes_norm:
         return [
-            "hacer votación para elegir color o estilo del look",
-            "hacer transformación antes/después durante el LIVE",
-            "desbloquear el siguiente paso del maquillaje con regalos pequeños",
+            "lanzar una votación rápida para elegir el color del look",
+            "mostrar una transformación en vivo del proceso",
+            "desbloquear el siguiente paso del maquillaje con regalos",
         ]
 
     return [
-        f"hacer pregunta rápida sobre {interes}",
-        f"hacer votación de audiencia sobre {interes}",
-        f"convertir {interes} en reto corto durante el LIVE",
+        f"hacer una pregunta rápida sobre {interes}",
+        f"lanzar una votación de audiencia sobre {interes}",
+        f"convertir el tema de {interes} en un reto corto",
     ]
 
 
@@ -4130,10 +4135,15 @@ def _linea_dinamica_interes(
 ) -> str:
     estrategias = _estrategias_por_interes(interes)
     accion = estrategias[indice_estrategia % len(estrategias)]
-    etiqueta = (interes or "Interés").strip()
-    if momento and objetivo:
-        return f"{etiqueta}: {accion}, aplicada {momento} para {objetivo}."
-    return f"{etiqueta}: {accion}."
+    etiqueta = (interes or "Interés").strip().capitalize()
+
+    frase = f"{etiqueta}: {accion}"
+    if momento:
+        frase += f" {momento}"
+    if objetivo:
+        frase += f" para {objetivo}"
+
+    return frase + "."
 
 
 def _bloque_dinamicas_por_intereses(
@@ -4143,12 +4153,13 @@ def _bloque_dinamicas_por_intereses(
     objetivos: Optional[List[str]] = None,
 ) -> str:
     momentos_def = (
-        "antes de la primera batalla",
-        "entre partidas",
-        "en el cierre del LIVE",
+        "justo antes de la primera batalla",
+        "en las pausas entre partidas",
+        "durante el cierre del LIVE",
     )
-    objs = objetivos or ["activar comentarios", "sostener retención", "incentivar regalos"]
+    objs = objetivos or ["activar los comentarios", "sostener la retención", "incentivar los regalos"]
     lineas = []
+
     for i in range(min(minimo, 3)):
         interes = _interes_por_indice(intereses_lista, i, f"interés {i + 1}")
         lineas.append(
