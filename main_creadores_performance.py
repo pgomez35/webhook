@@ -3736,7 +3736,7 @@ def _limpiar_texto_generado(texto: Any) -> str:
 
 
 def _limpiar_lenguaje_tecnico_ia(texto: Any) -> str:
-    """Quita nombres internos y suaviza frases robóticas del texto visible al manager."""
+    """Quita nombres internos de campos/tablas del texto visible al manager."""
     if texto is None:
         return ""
     resultado = str(texto).strip()
@@ -3751,10 +3751,10 @@ def _limpiar_lenguaje_tecnico_ia(texto: Any) -> str:
         (r"(?i)perfil_estrategico", "perfil del creador"),
         (r"(?i)performance_partidas", "rendimiento en partidas"),
         (r"(?i)según el json", "según los datos del creador"),
-        (r"(?i)segun el json", "según los datos del creador"),
+        (r"(?i)segun el json", "segun los datos del creador"),
         (r"(?i)del json", "del perfil"),
         (r"(?i)según el contexto", "según los datos del creador"),
-        (r"(?i)segun el contexto", "según los datos del creador"),
+        (r"(?i)segun el contexto", "segun los datos del creador"),
         (r"(?i)del contexto", "del perfil"),
         (r"(?i)\bmetadata\b", ""),
         (r"(?i)\bcampo\s+", ""),
@@ -3763,29 +3763,19 @@ def _limpiar_lenguaje_tecnico_ia(texto: Any) -> str:
         (r"(?i)la tabla creadores_arquetipo", "la estrategia del arquetipo"),
         (r"(?i)creadores_arquetipo", "catálogo de arquetipos"),
         (r"(?i)instrucción ia del arquetipo", "guía operativa del arquetipo"),
-        (r"(?i)instruccion ia del arquetipo", "guía operativa del arquetipo"),
-        (r"(?i)como hilo operativo del LIVE", "para darle ritmo al LIVE"),
-        (r"(?i)hilo operativo del LIVE", "ritmo del LIVE"),
+        (r"(?i)instruccion ia del arquetipo", "guia operativa del arquetipo"),
         (
             r"(?i)diamantes_de_partidas supera diamantes_mes; revisar si ambos campos corresponden al mismo período o a la misma base de cálculo\.?",
             "El reporte sugiere alta relevancia de partidas; úsalo como señal operativa, no como proporción exacta.",
-        ),
-        (
-            r"(?i)el porcentaje asociado supera el 100%, por lo que debe revisarse como dato operativo antes de interpretarlo como proporción exacta\.?",
-            "usa este dato como señal operativa, no como proporción exacta.",
         ),
     )
     for patron, sustituto in reemplazos:
         resultado = re.sub(patron, sustituto, resultado)
 
-    # Corrige una fórmula frecuente de la IA/fallback: "aplicada X para Y".
-    resultado = re.sub(r",\s*aplicad[ao]\s+([^\.\n]+?)\s+para\s+([^\.\n]+)\.", r" \1 para \2.", resultado, flags=re.IGNORECASE)
     resultado = resultado.replace("Aplicar: Aplicar:", "Aplicar:")
-    resultado = resultado.replace(" ,", ",")
-    resultado = re.sub(r"[ \t]{2,}", " ", resultado)
+    resultado = re.sub(r"\s{2,}", " ", resultado)
     resultado = re.sub(r"\.{2,}", ".", resultado)
     resultado = re.sub(r"\s+\.", ".", resultado)
-    resultado = re.sub(r"\n\s+", "\n", resultado)
     return resultado.strip()
 
 
@@ -3800,6 +3790,7 @@ _CLAVES_ESTRATEGIA_JSON_POR_CATEGORIA: Dict[str, List[str]] = {
     "tecnica": ["dinamicas_recomendadas"],
     "otro": ["dinamicas_recomendadas", "estrategias_contenido"],
 }
+
 
 def _estrategia_json_de_arquetipo(
     arquetipo_estrategia: Optional[Dict[str, Any]],
@@ -3823,104 +3814,182 @@ def _fragmento_estrategia_corto(texto: str, max_len: int = 100) -> str:
 
 
 
-def _unir_lista_natural(items: List[str], max_items: int = 3) -> str:
-    """Une una lista corta en español: 'a, b y c'."""
-    limpios: List[str] = []
-    for item in items or []:
-        txt = str(item or "").strip().strip(".")
-        if txt and txt not in limpios:
-            limpios.append(txt)
-        if len(limpios) >= max_items:
-            break
-
-    if not limpios:
-        return ""
-    if len(limpios) == 1:
-        return limpios[0]
-    if len(limpios) == 2:
-        return f"{limpios[0]} y {limpios[1]}"
-    return ", ".join(limpios[:-1]) + f" y {limpios[-1]}"
-
-
-def _minuscula_inicial(texto: str) -> str:
-    texto = str(texto or "").strip()
-    if not texto:
-        return ""
-    return texto[0].lower() + texto[1:]
-
-
-def _frase_estilo_live_desde_db(estilo_live: Any) -> str:
-    """Convierte estilo_live de la BD en frase natural sin copiarlo como lista suelta."""
-    estilo = _fragmento_estrategia_corto(_valor_a_texto_resumen(estilo_live) or "", max_len=100)
-    if not estilo:
-        return ""
-    estilo = _minuscula_inicial(estilo.rstrip("."))
-    if estilo.startswith("un estilo") or estilo.startswith("una dinámica"):
-        return estilo
-    return f"un estilo {estilo}"
-
-
 def _resumen_arquetipo_para_recomendacion(
     arquetipo_estrategia: Optional[Dict[str, Any]] = None,
-    nombre_creador: Optional[str] = None,
 ) -> str:
     """
     Resumen operativo corto desde creadores_arquetipo (BD).
     Usa datos de estrategia_json, pero no copia la definición completa ni listas largas.
-    No contiene lógica quemada por nombre de arquetipo.
     """
     if not arquetipo_estrategia or not arquetipo_estrategia.get("nombre"):
-        sujeto = nombre_creador or "el creador"
         return (
-            f"Sin arquetipo operativo en catálogo; {sujeto} debe adaptar el plan "
-            "al estilo declarado y a las métricas del LIVE."
+            "Sin arquetipo operativo en catálogo; adaptar el plan al estilo declarado "
+            "por el creador."
         )
 
-    nombre_arquetipo = str(arquetipo_estrategia.get("nombre") or "").strip()
-    sujeto = str(nombre_creador or "el creador").strip()
+    nombre = str(arquetipo_estrategia.get("nombre") or "").strip()
     estrategia_json = _estrategia_json_de_arquetipo(arquetipo_estrategia)
 
-    estilo = _frase_estilo_live_desde_db(estrategia_json.get("estilo_live"))
+    ideas: List[str] = []
 
-    apoyos: List[str] = []
+    estilo = _fragmento_estrategia_corto(
+        _valor_a_texto_resumen(estrategia_json.get("estilo_live")) or "",
+        max_len=85,
+    )
+    if estilo:
+        ideas.append(estilo.lower())
+
     for clave in (
         "dinamicas_recomendadas",
         "estrategias_interaccion",
         "estrategias_monetizacion",
         "estrategias_contenido",
     ):
-        for item in _lista_desde_jsonb(estrategia_json.get(clave)):
-            fragmento = _fragmento_estrategia_corto(item, max_len=75)
-            if fragmento and fragmento not in apoyos:
-                apoyos.append(_minuscula_inicial(fragmento))
-            if len(apoyos) >= 3:
+        for item in _lista_desde_jsonb(estrategia_json.get(clave))[:2]:
+            fragmento = _fragmento_estrategia_corto(item, max_len=70).lower()
+            if fragmento and fragmento not in ideas:
+                ideas.append(fragmento)
+            if len(ideas) >= 4:
                 break
-        if len(apoyos) >= 3:
+        if len(ideas) >= 4:
             break
 
-    if estilo and apoyos:
+    if not ideas:
+        desc = _fragmento_estrategia_corto(
+            str(arquetipo_estrategia.get("descripcion_operativa") or ""),
+            max_len=120,
+        ).lower()
+        if desc:
+            return f"Como {nombre}, el plan debe apoyarse en {desc}."
         return (
-            f"Como {nombre_arquetipo}, {sujeto} debe mantener {estilo}, "
-            f"apoyado en {_unir_lista_natural(apoyos, 3)}."
+            f"Como {nombre}, adaptar contenido, interacción y monetización "
+            "según la estrategia operativa del catálogo."
         )
 
-    if apoyos:
-        return (
-            f"Como {nombre_arquetipo}, {sujeto} debe apoyarse en "
-            f"{_unir_lista_natural(apoyos, 3)}."
-        )
+    if len(ideas) == 1:
+        cuerpo = ideas[0]
+    elif len(ideas) == 2:
+        cuerpo = f"{ideas[0]} y {ideas[1]}"
+    else:
+        cuerpo = ", ".join(ideas[:-1]) + f" y {ideas[-1]}"
 
-    desc = _fragmento_estrategia_corto(
-        str(arquetipo_estrategia.get("descripcion_operativa") or ""),
-        max_len=130,
-    )
-    if desc:
-        return f"Como {nombre_arquetipo}, {sujeto} debe orientar el LIVE a {desc.lower()}."
+    return f"Como {nombre}, el plan debe apoyarse en {cuerpo}."
 
-    return (
-        f"Como {nombre_arquetipo}, {sujeto} debe adaptar contenido, interacción y monetización "
-        "según la estrategia operativa del catálogo."
+
+def _resumen_arquetipo_para_categoria(
+    arquetipo_estrategia: Optional[Dict[str, Any]],
+    nombre_creador: Optional[str],
+    categoria_norm: str,
+) -> str:
+    """
+    Variante corta del resumen del arquetipo según la categoría de recomendación.
+    La fuente sigue siendo creadores_arquetipo. No quema definiciones por nombre.
+    """
+    categoria_norm = _normalizar_categoria_recomendacion(categoria_norm)
+    if not arquetipo_estrategia or not arquetipo_estrategia.get("nombre"):
+        return _resumen_arquetipo_para_recomendacion(arquetipo_estrategia, nombre_creador)
+
+    nombre_arquetipo = str(arquetipo_estrategia.get("nombre") or "").strip()
+    sujeto = str(nombre_creador or "el creador").strip()
+
+    items = _items_estrategia_arquetipo_por_categoria(
+        arquetipo_estrategia,
+        categoria_norm,
+        limit=2,
     )
+    items_txt = _unir_lista_natural(
+        [_minuscula_inicial(_fragmento_estrategia_corto(i, 72)) for i in items],
+        max_items=2,
+    )
+
+    estrategia_json = _estrategia_json_de_arquetipo(arquetipo_estrategia)
+    estilo = _frase_estilo_live_desde_db(estrategia_json.get("estilo_live"))
+
+    if categoria_norm == "monetizacion":
+        if items_txt:
+            return f"Como {nombre_arquetipo}, {sujeto} debe monetizar con {items_txt}."
+        if estilo:
+            return f"Como {nombre_arquetipo}, {sujeto} debe monetizar manteniendo {estilo}."
+    if categoria_norm == "interaccion":
+        if items_txt:
+            return f"Como {nombre_arquetipo}, la interacción debe apoyarse en {items_txt}."
+        if estilo:
+            return f"Como {nombre_arquetipo}, la interacción debe mantener {estilo}."
+    if categoria_norm == "contenido":
+        if items_txt:
+            return f"Como {nombre_arquetipo}, la parrilla debe construirse con {items_txt}."
+        if estilo:
+            return f"Como {nombre_arquetipo}, la parrilla debe reflejar {estilo}."
+    if categoria_norm == "horario":
+        if items_txt:
+            return f"Como {nombre_arquetipo}, cada bloque horario debe ordenar {items_txt}."
+        if estilo:
+            return f"Como {nombre_arquetipo}, el horario debe sostener {estilo}."
+    if categoria_norm == "tecnica":
+        if estilo:
+            return f"Como {nombre_arquetipo}, la calidad técnica debe sostener {estilo}."
+        if items_txt:
+            return f"Como {nombre_arquetipo}, la calidad técnica debe facilitar {items_txt}."
+    if categoria_norm == "audiencia":
+        if items_txt:
+            return f"Como {nombre_arquetipo}, la audiencia debe participar mediante {items_txt}."
+        if estilo:
+            return f"Como {nombre_arquetipo}, la audiencia debe reconocer {estilo}."
+
+    return _resumen_arquetipo_para_recomendacion(arquetipo_estrategia, nombre_creador)
+
+
+def _categoria_meta_para_manager(categoria_nombre: Any, meta_diamantes: Any) -> str:
+    """
+    Evita frases pobres como "Categoría Sin categoría, meta su meta de diamantes".
+    """
+    cat = str(categoria_nombre or "").strip()
+    meta = None
+    if meta_diamantes not in (None, ""):
+        try:
+            meta = int(float(meta_diamantes))
+        except Exception:
+            meta = str(meta_diamantes).strip() or None
+
+    if cat and meta is not None:
+        return f"Categoría {cat}, meta {meta} diamantes."
+    if cat and meta is None:
+        return f"Categoría {cat}; pendiente asignar meta de diamantes."
+    if not cat and meta is not None:
+        return f"Pendiente asignar categoría; meta {meta} diamantes."
+    return "Pendiente asignar categoría y meta de diamantes para medir el avance."
+
+
+def _frase_interaccion_arquetipo_sin_repetir(
+    estrategias_arq_int: str,
+    texto_partidas_interaccion: str,
+) -> str:
+    """
+    Construye el cierre de interacción sin repetir "dividir la audiencia" si ya vino
+    desde la estrategia del arquetipo en BD.
+    """
+    estrategia = (estrategias_arq_int or "").strip()
+    partidas = (texto_partidas_interaccion or "").strip()
+
+    if estrategia:
+        estrategia_l = estrategia.lower()
+        if "dividir la audiencia" in estrategia_l or "dividir audiencia" in estrategia_l:
+            cierre = (
+                "Reconocer públicamente a quienes apoyan, comentan o participan "
+                "para reforzar competencia y pertenencia."
+            )
+        else:
+            cierre = (
+                "Reforzar la dinámica con reconocimiento público a quienes comentan, "
+                "votan o apoyan durante el LIVE."
+            )
+        return " ".join(p for p in (estrategia, cierre, partidas) if p).strip()
+
+    cierre = (
+        "Reconocer públicamente a quienes comentan, votan o apoyan durante las dinámicas."
+    )
+    return " ".join(p for p in (cierre, partidas) if p).strip()
+
 
 def _items_estrategia_arquetipo_por_categoria(
     arquetipo_estrategia: Optional[Dict[str, Any]],
@@ -3958,7 +4027,7 @@ def _bloque_estrategias_arquetipo_categoria(
 ) -> str:
     """
     Línea natural de apoyo desde estrategia_json.
-    Usa la tabla creadores_arquetipo como guía, sin exponer lenguaje interno ni frases robóticas.
+    Usa la tabla creadores_arquetipo como guía, sin exponer lenguaje interno.
     """
     items = _items_estrategia_arquetipo_por_categoria(
         arquetipo_estrategia,
@@ -3970,8 +4039,7 @@ def _bloque_estrategias_arquetipo_categoria(
 
     items_limpios: List[str] = []
     for item in items:
-        accion = _minuscula_inicial(_fragmento_estrategia_corto(item, 90))
-        accion = re.sub(r"^dividir audiencia", "dividir la audiencia", accion, flags=re.IGNORECASE)
+        accion = _fragmento_estrategia_corto(item, 90)
         if accion and accion not in items_limpios:
             items_limpios.append(accion)
         if len(items_limpios) >= max(1, min(minimo, 2)):
@@ -3980,20 +4048,10 @@ def _bloque_estrategias_arquetipo_categoria(
     if not items_limpios:
         return ""
 
-    frase_items = _unir_lista_natural(items_limpios, 2)
-    categoria_norm = _normalizar_categoria_recomendacion(categoria_norm)
+    if len(items_limpios) == 1:
+        return f"Usar {items_limpios[0]} como hilo operativo del LIVE."
 
-    if categoria_norm == "monetizacion":
-        return f"Usar {frase_items} para darle ritmo al LIVE y sostener la narrativa de regalos."
-    if categoria_norm == "interaccion":
-        return f"Usar {frase_items} para organizar al chat y aumentar respuestas antes de cada batalla."
-    if categoria_norm == "contenido":
-        return f"Usar {frase_items} como estructura principal de la mini parrilla."
-    if categoria_norm == "horario":
-        return f"Usar {frase_items} para ordenar la apertura, la mitad y el cierre del LIVE."
-    if categoria_norm == "audiencia":
-        return f"Usar {frase_items} para convertir participación en seguidores."
-    return f"Usar {frase_items} como estructura práctica del LIVE."
+    return f"Usar {items_limpios[0]} y {items_limpios[1]} como hilo operativo del LIVE."
 
 def _texto_evitar_arquetipo(arquetipo_estrategia: Optional[Dict[str, Any]]) -> str:
     evitar = _lista_desde_jsonb(
@@ -4036,7 +4094,7 @@ def _texto_partidas_para_manager(datos: Dict[str, Any], categoria: Optional[str]
         if categoria_norm == "monetizacion":
             return f"{base}; las partidas deben seguir siendo una palanca central de monetización."
         if categoria_norm == "interaccion":
-            return f"Con {partidas_txt} partidas registradas, las batallas son un buen momento para activar chat, equipos y ranking."
+            return f"Con {partidas_txt} partidas registradas, cada batalla debe activar chat, equipos y reconocimiento."
         if categoria_norm == "contenido":
             return f"Con {partidas_txt} partidas registradas, cada live debe preparar contenido antes, durante y después de la batalla."
         if categoria_norm == "horario":
@@ -4060,9 +4118,70 @@ def _texto_partidas_para_manager(datos: Dict[str, Any], categoria: Optional[str]
         return f"{base}. {diagnostico}"
     return f"{base}. Las partidas pueden usarse como palanca adicional sin depender solo de ellas."
 
+def _deduplicar_oraciones_manager(texto: Any) -> str:
+    """
+    Quita repeticiones obvias dentro de una misma recomendación sin cambiar el sentido.
+    Especialmente evita repetir mecánicas como "dividir la audiencia en equipos".
+    """
+    if texto is None:
+        return ""
+
+    original = str(texto).strip()
+    if not original:
+        return ""
+
+    parrafos = re.split(r"\n{2,}", original)
+    parrafos_limpios: List[str] = []
+    firmas_globales: set = set()
+    mecanicas_globales: set = set()
+
+    for parrafo in parrafos:
+        lineas = [ln.strip() for ln in parrafo.split("\n") if ln.strip()]
+        nuevas_lineas: List[str] = []
+
+        for linea in lineas:
+            partes = re.split(r"(?<=[.!?])\s+", linea)
+            nuevas_partes: List[str] = []
+
+            for parte in partes:
+                frase = parte.strip()
+                if not frase:
+                    continue
+
+                firma = re.sub(r"\W+", "", frase.lower())
+                if firma and firma in firmas_globales:
+                    continue
+
+                frase_l = frase.lower()
+                mecanicas = []
+                if "dividir la audiencia en equipos" in frase_l or "dividir audiencia en equipos" in frase_l:
+                    mecanicas.append("dividir_audiencia")
+                if "ranking simbólico" in frase_l or "ranking simbolico" in frase_l:
+                    mecanicas.append("ranking_simbolico")
+                if "reconocer públicamente" in frase_l or "reconocer publicamente" in frase_l:
+                    mecanicas.append("reconocimiento")
+
+                if mecanicas and all(m in mecanicas_globales for m in mecanicas):
+                    continue
+
+                firmas_globales.add(firma)
+                for m in mecanicas:
+                    mecanicas_globales.add(m)
+                nuevas_partes.append(frase)
+
+            if nuevas_partes:
+                nuevas_lineas.append(" ".join(nuevas_partes))
+
+        if nuevas_lineas:
+            parrafos_limpios.append("\n".join(nuevas_lineas))
+
+    return "\n\n".join(parrafos_limpios).strip()
+
+
 def _pulir_texto_recomendacion_final(texto: Any) -> str:
     limpio = _limpiar_lenguaje_tecnico_ia(texto)
     limpio = _limpiar_texto_generado(limpio)
+    limpio = _deduplicar_oraciones_manager(limpio)
     return normalizar_texto_parrafos(limpio)
 
 
@@ -4148,16 +4267,16 @@ def _estrategias_por_interes(interes: str) -> List[str]:
 
     if "música" in interes_norm or "musica" in interes_norm:
         return [
-            "hacer “adivina la canción” antes de la primera batalla",
+            "hacer adivina la canción antes de la primera batalla",
             "dejar que la audiencia vote la canción de la siguiente partida",
             "crear duelo de playlists entre equipos de seguidores",
         ]
 
     if "fitness" in interes_norm:
         return [
-            "hacer reto de energía de 30 segundos antes de cada batalla",
-            "hacer movimiento simple y seguro para activar comentarios",
-            "desbloquear el siguiente mini reto con meta pequeña de regalos",
+            "lanzar un mini reto de energía de 30 segundos antes de cada batalla",
+            "lanzar un mini reto de energía de 30 segundos entre partidas",
+            "desbloquear el siguiente mini reto con una meta pequeña de regalos",
         ]
 
     if "maquillaje" in interes_norm:
@@ -4195,44 +4314,11 @@ def _linea_dinamica_interes(
     objetivo: Optional[str] = None,
 ) -> str:
     estrategias = _estrategias_por_interes(interes)
-    accion = estrategias[indice_estrategia % len(estrategias)].strip().rstrip(".")
+    accion = estrategias[indice_estrategia % len(estrategias)]
     etiqueta = (interes or "Interés").strip()
-
-    objetivo_limpio = str(objetivo or "").strip().rstrip(".")
-    momento_limpio = str(momento or "").strip().rstrip(".")
-
-    # Si la dinámica ya trae un objetivo genérico, lo retiramos para que el objetivo final no se duplique.
-    if objetivo_limpio:
-        accion = re.sub(
-            r"\s+para\s+(activar comentarios|comentarios|sostener retención|sostener retencion|retención|retencion|incentivar regalos|seguidores o regalos)$",
-            "",
-            accion,
-            flags=re.IGNORECASE,
-        ).strip()
-
-    incluir_momento = bool(momento_limpio)
-    if incluir_momento:
-        accion_l = accion.lower()
-        momento_l = momento_limpio.lower()
-        if momento_l in accion_l:
-            incluir_momento = False
-        # Evita: "antes de la primera batalla en apertura o antes de batalla".
-        if "batalla" in accion_l and "batalla" in momento_l and "antes" in accion_l and "antes" in momento_l:
-            incluir_momento = False
-        if "antes de la primera batalla" in accion_l and "apertura" in momento_l:
-            incluir_momento = False
-        if "cierre" in accion_l and "cierre" in momento_l:
-            incluir_momento = False
-        if "entre partidas" in accion_l and "partidas" in momento_l:
-            incluir_momento = False
-
-    frase = f"{etiqueta}: {accion}"
-    if incluir_momento:
-        frase += f" {momento_limpio}"
-    if objetivo_limpio:
-        frase += f" para {objetivo_limpio}"
-
-    return frase.strip() + "."
+    if momento and objetivo:
+        return f"{etiqueta}: {accion}, aplicada {momento} para {objetivo}."
+    return f"{etiqueta}: {accion}."
 
 
 def _bloque_dinamicas_por_intereses(
@@ -4295,7 +4381,15 @@ def _construir_recomendacion_personalizada_fallback(
     categoria: str = "monetizacion",
     prioridad: str = "media",
 ) -> Dict[str, str]:
-    """Fallback determinístico con copy natural para el manager."""
+    """
+    Fallback determinístico con copy natural para el manager.
+
+    Implementa refinamiento fino:
+    - evita repetición en interacción
+    - acorta tarjetas largas
+    - varía la frase del arquetipo por categoría
+    - hace Fitness más concreto
+    """
     datos = _extraer_datos_personalizacion_recomendaciones(contexto)
 
     nombre = datos.get("nombre_creador") or "el creador"
@@ -4303,20 +4397,26 @@ def _construir_recomendacion_personalizada_fallback(
     arquetipo_estrategia = datos.get("arquetipo_estrategia")
     intereses_lista = datos.get("intereses_lista") or []
     horario = datos.get("horario") or "su franja horaria principal"
-    cat = datos.get("categoria_nombre") or "Sin categoría"
+    cat = datos.get("categoria_nombre")
     meta = datos.get("meta_diamantes")
     categoria_norm = _normalizar_categoria_recomendacion(categoria)
 
-    resumen_arq = _resumen_arquetipo_para_recomendacion(arquetipo_estrategia, nombre)
+    resumen_arq = _resumen_arquetipo_para_categoria(
+        arquetipo_estrategia,
+        nombre,
+        categoria_norm,
+    )
+    cat_meta_txt = _categoria_meta_para_manager(cat, meta)
+
     texto_partidas = _texto_partidas_para_manager(datos, categoria_norm)
     texto_partidas_monetizacion = _texto_partidas_para_manager(datos, "monetizacion")
     texto_partidas_interaccion = _texto_partidas_para_manager(datos, "interaccion")
     texto_partidas_contenido = _texto_partidas_para_manager(datos, "contenido")
     texto_partidas_horario = _texto_partidas_para_manager(datos, "horario")
     texto_partidas_tecnica = _texto_partidas_para_manager(datos, "tecnica")
-    evitar_arq = _texto_evitar_arquetipo(arquetipo_estrategia)
+    evitar_arq = _texto_evitar_arquetipo(arquetipo_estrategia).strip()
 
-    meta_txt = f"{meta} diamantes" if meta is not None else "su meta de diamantes"
+    meta_txt = f"{meta} diamantes" if meta is not None else "la meta pendiente"
 
     i1 = _interes_por_indice(intereses_lista, 0, "su interés principal")
     i2 = _interes_por_indice(intereses_lista, 1, "otro interés del perfil")
@@ -4332,6 +4432,7 @@ def _construir_recomendacion_personalizada_fallback(
         minimo=3,
         objetivos=["comentarios", "retención", "seguidores o regalos"],
     )
+
     estrategias_arq_mon = _bloque_estrategias_arquetipo_categoria(
         arquetipo_estrategia, "monetizacion", minimo=2
     )
@@ -4345,19 +4446,24 @@ def _construir_recomendacion_personalizada_fallback(
         arquetipo_estrategia, "horario", minimo=2
     )
 
+    cierre_interaccion = _frase_interaccion_arquetipo_sin_repetir(
+        estrategias_arq_int,
+        texto_partidas_interaccion,
+    )
+
     recomendaciones_por_categoria = {
         "horario": {
             "recomendacion": (
                 f"Para {nombre}, validar durante 7 días un bloque fijo de LIVE en {horario}.\n\n"
                 f"Apertura: {_linea_dinamica_interes(i1, 0, momento='en la apertura del LIVE', objetivo='activar comentarios')}\n"
-                f"Mitad del LIVE: {_linea_dinamica_interes(i2, 1, momento='en la mitad del LIVE', objetivo='sostener retención')}\n"
+                f"Mitad: {_linea_dinamica_interes(i2, 1, momento='en la mitad del LIVE', objetivo='sostener retención')}\n"
                 f"Cierre: {_linea_dinamica_interes(i3, 2, momento='en el cierre del LIVE', objetivo='incentivar regalos o seguidores')}\n\n"
                 f"{estrategias_arq_hor}\n\n"
                 f"Medir asistencia, retención, comentarios y regalos por bloque. {texto_partidas_horario}"
             ),
             "justificacion": (
-                f"{nombre} tiene horario preferido {horario}. El objetivo es comprobar qué parte del LIVE "
-                f"convierte mejor sin cambiar muchas variables a la vez. {evitar_arq.strip()}"
+                f"{nombre} tiene horario preferido {horario}. El objetivo es comprobar qué bloque convierte "
+                f"mejor sin cambiar muchas variables a la vez. {evitar_arq}"
             ),
         },
         "monetizacion": {
@@ -4365,24 +4471,22 @@ def _construir_recomendacion_personalizada_fallback(
                 f"Para {nombre}, estructurar 3 lives en {horario} con metas visibles de regalos por tramo.\n\n"
                 f"{dinamicas_intereses_mon}\n\n"
                 f"{estrategias_arq_mon}\n\n"
-                f"{resumen_arq} {texto_partidas_monetizacion} Categoría {cat}, meta {meta_txt}."
+                f"{resumen_arq} {texto_partidas_monetizacion} {cat_meta_txt}"
             ),
             "justificacion": (
                 f"La monetización mejora cuando cada interés se convierte en una acción concreta del LIVE "
-                f"y cada batalla tiene narrativa, meta y cierre. {evitar_arq.strip()}"
+                f"y cada batalla tiene narrativa, meta y cierre. {evitar_arq}"
             ),
         },
         "interaccion": {
             "recomendacion": (
                 f"Para {nombre}, activar interacción en {horario} con dinámica de {arquetipo}.\n\n"
                 f"{dinamicas_intereses_int}\n\n"
-                f"{estrategias_arq_int}\n\n"
-                f"Dividir la audiencia en equipos, usar ranking simbólico y reconocer públicamente "
-                f"a quienes apoyan antes y después de cada batalla. {texto_partidas_interaccion}"
+                f"{cierre_interaccion}"
             ),
             "justificacion": (
                 f"{resumen_arq} El objetivo es aumentar comentarios, retención y seguidores sin depender "
-                f"solo de pedir regalos. {evitar_arq.strip()}"
+                f"solo de pedir regalos. {evitar_arq}"
             ),
         },
         "contenido": {
@@ -4392,23 +4496,24 @@ def _construir_recomendacion_personalizada_fallback(
                 f"Live 2 — {_linea_dinamica_interes(i2, 1, momento='entre partidas', objetivo='retención')}\n"
                 f"Live 3 — {_linea_dinamica_interes(i3, 2, momento='en el cierre del LIVE', objetivo='regalos o seguidores')}\n\n"
                 f"{estrategias_arq_cont}\n\n"
-                f"{resumen_arq} Categoría {cat}, meta {meta_txt}. {texto_partidas_contenido}"
+                f"{resumen_arq} {cat_meta_txt} {texto_partidas_contenido}"
             ),
             "justificacion": (
                 f"La parrilla evita que el LIVE dependa solo de improvisación: cada interés tiene dinámica, "
-                f"momento y objetivo medible. {evitar_arq.strip()}"
+                f"momento y objetivo medible. {evitar_arq}"
             ),
         },
         "audiencia": {
             "recomendacion": (
-                f"Para {nombre}, convertir espectadores en seguidores en {horario} con tres llamados claros: "
-                f"uno antes de la primera batalla, otro después de {_linea_dinamica_interes(i1, 0).rstrip('.')} "
-                f"y otro al cerrar {_linea_dinamica_interes(i2, 1).rstrip('.')}.\n\n"
+                f"Para {nombre}, convertir espectadores en seguidores en {horario} con tres llamados claros.\n\n"
+                f"Inicio: pedir follow después de presentar la dinámica de {i1}.\n"
+                f"Mitad: invitar a seguir justo después de la dinámica de {i2}.\n"
+                f"Cierre: conectar el próximo LIVE con {i3} y pedir follow para volver al siguiente reto.\n\n"
                 f"{resumen_arq}"
             ),
             "justificacion": (
                 f"El crecimiento de audiencia depende de ritmo, reconocimiento público y llamados a seguir "
-                f"en momentos de alta atención. Categoría {cat}, meta {meta_txt}."
+                f"en momentos de alta atención. {cat_meta_txt}"
             ),
         },
         "tecnica": {
@@ -4425,10 +4530,10 @@ def _construir_recomendacion_personalizada_fallback(
             "recomendacion": (
                 f"Para {nombre}, definir un reto semanal alcanzable: 3 lives en {horario} con dinámicas simples.\n\n"
                 f"{_bloque_dinamicas_por_intereses(intereses_lista, minimo=2)}\n\n"
-                f"Medir cumplimiento semanal, no perfección. Cerrar cada LIVE con una acción pequeña que pueda repetir al día siguiente."
+                f"Medir cumplimiento semanal, no perfección."
             ),
             "justificacion": (
-                f"{resumen_arq} Categoría {cat} con meta {meta_txt}. La prioridad es sostener ritmo sin saturar al creador."
+                f"{resumen_arq} {cat_meta_txt} La prioridad es sostener ritmo sin saturar al creador."
             ),
         },
         "disciplina": {
@@ -4438,14 +4543,14 @@ def _construir_recomendacion_personalizada_fallback(
                 f"{_bloque_dinamicas_por_intereses(intereses_lista, minimo=2)}"
             ),
             "justificacion": (
-                f"La consistencia sostiene resultados antes de escalar volumen. {resumen_arq} Meta {meta_txt}."
+                f"La consistencia sostiene resultados antes de escalar volumen. {resumen_arq} Meta: {meta_txt}."
             ),
         },
         "otro": {
             "recomendacion": (
                 f"Para {nombre}, probar 3 lives en {horario} esta semana.\n\n"
                 f"{dinamicas_intereses_mon}\n\n"
-                f"{resumen_arq} Meta {meta_txt}. {texto_partidas}"
+                f"{resumen_arq} {cat_meta_txt} {texto_partidas}"
             ),
             "justificacion": (
                 "Plan integrado por arquetipo, intereses y rendimiento del LIVE, con acciones simples para validar esta semana."
@@ -4538,8 +4643,8 @@ def _normalizar_resultado_recomendaciones_ia(
                 and not _cumple_dinamicas_intereses_minimas(texto_union, datos)
             )
             or any(p in texto_union.lower() for p in _TERMINOS_TECNICOS_PROHIBIDOS_MANAGER)
-            or len(texto_rec) > 1400
-            or len(texto_just) > 1000
+            or len(texto_rec) > 1100
+            or len(texto_just) > 650
         )
 
         if debe_usar_fallback:
@@ -4700,7 +4805,10 @@ Cada recomendación debe incluir:
 
 TONO Y FORMATO (obligatorio):
 - El texto debe sonar como recomendación para un manager, NO como explicación técnica del sistema.
-- Máximo 2 párrafos o usa saltos de línea legibles entre bloques (interés, momento, objetivo). Evita frases repetidas entre tarjetas.
+- Máximo 900 caracteres en "recomendacion" y máximo 450 caracteres en "justificacion".
+- Usa saltos de línea legibles entre bloques, pero evita tarjetas largas.
+- Evita repetir la misma frase del arquetipo en todas las tarjetas: adapta el resumen a la categoría.
+- En interacción, no repitas "dividir la audiencia en equipos" si ya lo mencionaste una vez.
 - Si el porcentaje de diamantes por partidas supera 100, NO lo presentes como porcentaje normal; usa una frase breve como: "las partidas deben seguir siendo una palanca central de monetización".
 
 FORMATO OBLIGATORIO de cada "recomendacion":
@@ -4728,7 +4836,7 @@ Devuelve JSON válido con este formato:
 Reglas:
 - Exactamente entre 1 y {max_recomendaciones} recomendaciones.
 - No repitas recomendaciones ya existentes en contexto.recomendaciones.
-- Si falta un dato obligatorio, escríbelo en lenguaje natural, por ejemplo: "sin horario definido"; no inventes ni generalices.
+- Si falta un dato obligatorio, escribe "sin dato de X" en esa recomendación; no inventes ni generalices.
 - No uses markdown.
 - No incluyas texto fuera del JSON.
 """
@@ -5003,9 +5111,9 @@ def generar_recomendaciones_ia(
         temperature=0.25,
         system=(
             "Eres experto en coaching operativo para managers de creadores TikTok LIVE. "
-            "Usa la estrategia operativa del arquetipo registrada en BD para razonar. "
+            "Usa perfil_estrategico.arquetipo_estrategia (descripcion_operativa y estrategia_json en BD). "
             "REGLA CRITICA: texto natural para manager; prohibido citar estrategia_json, JSON, "
-            "nombres de campos internos ni referencias técnicas en el texto final. "
+            "perfil_estrategico, performance_partidas y nombres de campos internos en el texto final. "
             "No interpretes el arquetipo solo por nombre. "
             "Convierte al menos 2 intereses en dinamicas LIVE con momento y objetivo. "
             "Si porcentaje de partidas > 100 no lo presentes como porcentaje normal. "
@@ -5568,6 +5676,8 @@ def health_performance():
             status_code=500,
             detail=f"Error en healthcheck performance: {e}",
         )
+
+
 
 
 
