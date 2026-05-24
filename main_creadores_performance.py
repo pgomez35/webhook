@@ -3814,66 +3814,110 @@ def _fragmento_estrategia_corto(texto: str, max_len: int = 100) -> str:
 
 
 
+
+
+def _unir_lista_natural(items: List[str], max_items: int = 3) -> str:
+    """Une una lista corta en español: 'a, b y c'."""
+    limpios: List[str] = []
+    for item in items or []:
+        txt = str(item or "").strip().strip(".")
+        if txt and txt not in limpios:
+            limpios.append(txt)
+        if len(limpios) >= max_items:
+            break
+
+    if not limpios:
+        return ""
+    if len(limpios) == 1:
+        return limpios[0]
+    if len(limpios) == 2:
+        return f"{limpios[0]} y {limpios[1]}"
+    return ", ".join(limpios[:-1]) + f" y {limpios[-1]}"
+
+
+def _minuscula_inicial(texto: str) -> str:
+    texto = str(texto or "").strip()
+    if not texto:
+        return ""
+    return texto[0].lower() + texto[1:]
+
+
+def _frase_estilo_live_desde_db(estilo_live: Any) -> str:
+    """Convierte estilo_live de BD en frase natural, sin pegarlo como lista suelta."""
+    estilo = _fragmento_estrategia_corto(
+        _valor_a_texto_resumen(estilo_live) or "",
+        max_len=100,
+    )
+    if not estilo:
+        return ""
+    estilo = _minuscula_inicial(estilo.rstrip("."))
+    if estilo.startswith("un estilo") or estilo.startswith("una dinámica"):
+        return estilo
+    return f"un estilo {estilo}"
+
 def _resumen_arquetipo_para_recomendacion(
     arquetipo_estrategia: Optional[Dict[str, Any]] = None,
+    nombre_creador: Optional[str] = None,
 ) -> str:
     """
     Resumen operativo corto desde creadores_arquetipo (BD).
     Usa datos de estrategia_json, pero no copia la definición completa ni listas largas.
+    No contiene lógica quemada por nombre de arquetipo.
     """
+    sujeto = str(nombre_creador or "el creador").strip()
+
     if not arquetipo_estrategia or not arquetipo_estrategia.get("nombre"):
         return (
-            "Sin arquetipo operativo en catálogo; adaptar el plan al estilo declarado "
-            "por el creador."
+            f"Sin arquetipo operativo en catálogo; {sujeto} debe adaptar el plan "
+            "al estilo declarado y a las métricas del LIVE."
         )
 
-    nombre = str(arquetipo_estrategia.get("nombre") or "").strip()
+    nombre_arquetipo = str(arquetipo_estrategia.get("nombre") or "").strip()
     estrategia_json = _estrategia_json_de_arquetipo(arquetipo_estrategia)
 
-    ideas: List[str] = []
+    estilo = _frase_estilo_live_desde_db(estrategia_json.get("estilo_live"))
 
-    estilo = _fragmento_estrategia_corto(
-        _valor_a_texto_resumen(estrategia_json.get("estilo_live")) or "",
-        max_len=85,
-    )
-    if estilo:
-        ideas.append(estilo.lower())
-
+    apoyos: List[str] = []
     for clave in (
         "dinamicas_recomendadas",
         "estrategias_interaccion",
         "estrategias_monetizacion",
         "estrategias_contenido",
     ):
-        for item in _lista_desde_jsonb(estrategia_json.get(clave))[:2]:
-            fragmento = _fragmento_estrategia_corto(item, max_len=70).lower()
-            if fragmento and fragmento not in ideas:
-                ideas.append(fragmento)
-            if len(ideas) >= 4:
+        for item in _lista_desde_jsonb(estrategia_json.get(clave)):
+            fragmento = _fragmento_estrategia_corto(item, max_len=75)
+            if fragmento:
+                fragmento = _minuscula_inicial(fragmento)
+            if fragmento and fragmento not in apoyos:
+                apoyos.append(fragmento)
+            if len(apoyos) >= 3:
                 break
-        if len(ideas) >= 4:
+        if len(apoyos) >= 3:
             break
 
-    if not ideas:
-        desc = _fragmento_estrategia_corto(
-            str(arquetipo_estrategia.get("descripcion_operativa") or ""),
-            max_len=120,
-        ).lower()
-        if desc:
-            return f"Como {nombre}, el plan debe apoyarse en {desc}."
+    if estilo and apoyos:
         return (
-            f"Como {nombre}, adaptar contenido, interacción y monetización "
-            "según la estrategia operativa del catálogo."
+            f"Como {nombre_arquetipo}, {sujeto} debe mantener {estilo}, "
+            f"apoyado en {_unir_lista_natural(apoyos, 3)}."
         )
 
-    if len(ideas) == 1:
-        cuerpo = ideas[0]
-    elif len(ideas) == 2:
-        cuerpo = f"{ideas[0]} y {ideas[1]}"
-    else:
-        cuerpo = ", ".join(ideas[:-1]) + f" y {ideas[-1]}"
+    if apoyos:
+        return (
+            f"Como {nombre_arquetipo}, {sujeto} debe apoyarse en "
+            f"{_unir_lista_natural(apoyos, 3)}."
+        )
 
-    return f"Como {nombre}, el plan debe apoyarse en {cuerpo}."
+    desc = _fragmento_estrategia_corto(
+        str(arquetipo_estrategia.get("descripcion_operativa") or ""),
+        max_len=130,
+    )
+    if desc:
+        return f"Como {nombre_arquetipo}, {sujeto} debe orientar el LIVE a {desc.lower()}."
+
+    return (
+        f"Como {nombre_arquetipo}, {sujeto} debe adaptar contenido, interacción y monetización "
+        "según la estrategia operativa del catálogo."
+    )
 
 
 def _resumen_arquetipo_para_categoria(
