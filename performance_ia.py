@@ -31,6 +31,81 @@ from performance_core import (
 # PROMPTS IA
 # =========================================================
 
+_REGLA_BASE_CONOCIMIENTO_RECOMENDACIONES = """
+REGLA SOBRE BASE DE CONOCIMIENTO:
+Usa la base de conocimiento para enriquecer cada recomendación con prácticas concretas:
+- monetización: metas de regalos, AIPL, regalos pequeños, batallas, donadores, incentivos.
+- interacción: bienvenida, preguntas, equipos, ranking, comentarios, respuesta en tiempo real.
+- contenido: parrilla, temas, talentos, videos cortos, eventos, marca personal.
+- audiencia: follow, comunidad, retorno, retención, fidelidad.
+- técnica: luz, fondo, audio, cámara, portada, título.
+Pero no conviertas esto en teoría. Cada recomendación debe quedar como acción ejecutable por el manager.
+"""
+
+
+def _recortar_texto_prompt(texto: Any, max_len: int = 220) -> str:
+    limpio = (str(texto or "")).strip()
+    if not limpio:
+        return ""
+    if len(limpio) <= max_len:
+        return limpio
+    corto = limpio[: max_len - 3].rsplit(" ", 1)[0]
+    return (corto or limpio[: max_len - 3]) + "..."
+
+
+def _texto_base_conocimiento_para_prompt(contexto: Dict[str, Any], max_items: int = 12) -> str:
+    registros = contexto.get("base_conocimiento") or []
+    if not registros:
+        return "Sin base de conocimiento adicional disponible."
+
+    lineas = ["BASE DE CONOCIMIENTO OPERATIVA DISPONIBLE:"]
+    for item in registros[:max_items]:
+        if not isinstance(item, dict):
+            continue
+        modulo = (item.get("modulo") or "general").strip()
+        categoria = (item.get("categoria") or "general").strip()
+        subcategoria = (item.get("subcategoria") or "").strip()
+        titulo = _recortar_texto_prompt(item.get("titulo"), 120)
+        resumen = _recortar_texto_prompt(item.get("resumen"), 200)
+        accion = _recortar_texto_prompt(item.get("accion_recomendada"), 180)
+        ejemplo = _recortar_texto_prompt(item.get("ejemplo_manager"), 160)
+        aplica = _recortar_texto_prompt(item.get("aplica_cuando"), 160)
+
+        etiqueta = f"[{categoria}"
+        if subcategoria:
+            etiqueta += f" / {subcategoria}"
+        etiqueta += f" / {modulo}]"
+
+        bloque = f"- {etiqueta} {titulo}."
+        if resumen:
+            bloque += f"\n  Resumen: {resumen}"
+        if accion:
+            bloque += f"\n  Acción sugerida: {accion}"
+        if ejemplo:
+            bloque += f"\n  Ejemplo manager: {ejemplo}"
+        if aplica:
+            bloque += f"\n  Aplica cuando: {aplica}"
+        lineas.append(bloque)
+
+    return "\n".join(lineas)
+
+
+def _bloque_conocimiento_operativo_prompt(contexto: Dict[str, Any]) -> str:
+    base_conocimiento = _texto_base_conocimiento_para_prompt(contexto)
+    return f"""
+CONOCIMIENTO OPERATIVO DE APOYO:
+{base_conocimiento}
+
+Reglas para usarlo:
+- Usa esta base de conocimiento como referencia interna para proponer acciones más concretas.
+- No copies literalmente los textos.
+- No cites la fuente ni el nombre del curso al manager.
+- Convierte el conocimiento en acciones prácticas para este creador.
+- Si hay conflicto entre datos reales del creador y la base de conocimiento, prioriza los datos reales del creador.
+- Evita repetir la misma recomendación en varias categorías.
+"""
+
+
 _FRASES_IA_PROHIBIDAS = (
     "incluir temas de interés",
     "temas de interés relacionados",
@@ -1781,6 +1856,7 @@ def _normalizar_resultado_recomendaciones_ia(
 def prompt_diagnostico_performance(contexto: Dict[str, Any], instrucciones_extra: Optional[str] = None) -> str:
     extra = f"\nInstrucciones adicionales del manager:\n{instrucciones_extra}\n" if instrucciones_extra else ""
     reglas = _reglas_personalizacion_ia_obligatorias(contexto)
+    conocimiento = _bloque_conocimiento_operativo_prompt(contexto)
 
     return f"""
 Eres un director de performance para una agencia de TikTok LIVE en LATAM.
@@ -1788,6 +1864,8 @@ Analiza el siguiente contexto del creador y responde con JSON válido.
 
 Contexto:
 {contexto_para_prompt(contexto)}
+
+{conocimiento}
 
 {reglas}
 
@@ -1820,6 +1898,7 @@ def prompt_recomendaciones_manager(contexto: Dict[str, Any], max_recomendaciones
     extra = f"\nInstrucciones adicionales:\n{instrucciones_extra}\n" if instrucciones_extra else ""
     reglas = _reglas_personalizacion_ia_obligatorias(contexto)
     datos_obligatorios = _bloque_datos_obligatorios_recomendaciones(contexto)
+    conocimiento = _bloque_conocimiento_operativo_prompt(contexto)
 
     return f"""
 Eres un coach senior de creadores TikTok LIVE y asesor de managers de agencia.
@@ -1828,6 +1907,10 @@ Tu única tarea: generar recomendaciones operativas ULTRA ESPECÍFICAS para el c
 {datos_obligatorios}
 
 {reglas}
+
+{conocimiento}
+
+{_REGLA_BASE_CONOCIMIENTO_RECOMENDACIONES}
 
 Datos completos para análisis interno:
 {contexto_para_prompt(contexto)}
@@ -1891,6 +1974,7 @@ Reglas:
 def prompt_acciones_manager(contexto: Dict[str, Any], max_acciones: int, instrucciones_extra: Optional[str] = None) -> str:
     extra = f"\nInstrucciones adicionales:\n{instrucciones_extra}\n" if instrucciones_extra else ""
     reglas = _reglas_personalizacion_ia_obligatorias(contexto)
+    conocimiento = _bloque_conocimiento_operativo_prompt(contexto)
 
     tipos = ", ".join(sorted(TIPOS_ACCION_SUGERIDOS))
 
@@ -1900,6 +1984,8 @@ Genera acciones concretas para registrar en el seguimiento del creador.
 
 Contexto:
 {contexto_para_prompt(contexto)}
+
+{conocimiento}
 
 Tipos de acción sugeridos:
 {tipos}
@@ -1936,6 +2022,7 @@ Reglas:
 def prompt_alertas_score_ia(contexto: Dict[str, Any], instrucciones_extra: Optional[str] = None) -> str:
     extra = f"\nInstrucciones adicionales:\n{instrucciones_extra}\n" if instrucciones_extra else ""
     reglas = _reglas_personalizacion_ia_obligatorias(contexto)
+    conocimiento = _bloque_conocimiento_operativo_prompt(contexto)
 
     return f"""
 Eres un analista de riesgo y performance de creadores TikTok LIVE.
@@ -1943,6 +2030,8 @@ Evalúa el contexto y genera un score, alertas y explicación operativa.
 
 Contexto:
 {contexto_para_prompt(contexto)}
+
+{conocimiento}
 
 {reglas}
 
@@ -1990,6 +2079,7 @@ def prompt_generar_seguimiento(
     extra = f"\nInstrucciones adicionales:\n{instrucciones_extra}\n" if instrucciones_extra else ""
 
     reglas = _reglas_personalizacion_ia_obligatorias(contexto)
+    conocimiento = _bloque_conocimiento_operativo_prompt(contexto)
 
     return f"""
 Eres un coach de creadores de contenido en vivo para TikTok LIVE.
@@ -1997,6 +2087,8 @@ Ayuda al manager a redactar un seguimiento profesional.
 
 Contexto del creador:
 {contexto_para_prompt(contexto)}
+
+{conocimiento}
 
 Observaciones iniciales del manager:
 {observaciones_manager or ""}

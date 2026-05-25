@@ -60,6 +60,7 @@ from performance_core import (
     normalizar_texto_parrafos,
     obtener_arquetipo_creador,
     obtener_arquetipos_activos,
+    obtener_base_conocimiento_ia,
     obtener_categoria_creador,
     obtener_contexto_ia_manager,
     obtener_contexto_performance,
@@ -105,6 +106,28 @@ def estado_openai_performance():
     }
 
 
+@router.get("/api/creadores/performance/base-conocimiento")
+def listar_base_conocimiento_performance(
+    modulo: Optional[str] = Query(default=None),
+    categoria: Optional[str] = Query(default=None),
+    q: Optional[str] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+):
+    """
+    Consulta directa a ia_base_conocimiento (pruebas / catálogo).
+    """
+    modulos = [modulo] if modulo else None
+    categorias = [categoria] if categoria else None
+    palabras_clave = [q] if q else None
+    items = obtener_base_conocimiento_ia(
+        modulos=modulos,
+        categorias=categorias,
+        palabras_clave=palabras_clave,
+        limit=limit,
+    )
+    return {"ok": True, "items": items}
+
+
 # =========================================================
 # ENDPOINTS — DASHBOARD / CONTEXTO
 # =========================================================
@@ -121,6 +144,22 @@ def dashboard_performance_creador(
     return {
         "ok": True,
         **contexto,
+    }
+
+
+@router.get("/api/creadores/performance/{creador_id}/base-conocimiento")
+def base_conocimiento_creador_performance(
+    creador_id: int,
+    id_reporte: Optional[int] = Query(default=None),
+):
+    """
+    Muestra el conocimiento operativo que se inyectará en los prompts IA del creador.
+    """
+    contexto = obtener_contexto_ia_manager(creador_id, id_reporte=id_reporte)
+    return {
+        "ok": True,
+        "creador_id": creador_id,
+        "items": contexto.get("base_conocimiento") or [],
     }
 
 

@@ -1724,6 +1724,215 @@ def obtener_contexto_performance(
     return contexto
 
 
+_MODULOS_BASE_CONOCIMIENTO_IA = [
+    "performance_creadores",
+    "incubacion_creadores",
+    "capacitacion_agencia",
+    "onboarding_creadores",
+    "incentivos_agencia",
+    "reclutamiento_agencia",
+]
+
+
+def obtener_base_conocimiento_ia(
+    *,
+    modulos: Optional[List[str]] = None,
+    categorias: Optional[List[str]] = None,
+    palabras_clave: Optional[List[str]] = None,
+    limit: int = 18,
+) -> List[Dict[str, Any]]:
+    """
+    Consulta ia_base_conocimiento (search_path del tenant, sin schema test.).
+    """
+    limit = max(1, min(int(limit or 18), 100))
+    clauses = ["activo = true"]
+    params: List[Any] = []
+
+    modulos_limpios = [m.strip() for m in (modulos or []) if m and str(m).strip()]
+    if modulos_limpios:
+        placeholders = ", ".join(["%s"] * len(modulos_limpios))
+        clauses.append(f"modulo IN ({placeholders})")
+        params.extend(modulos_limpios)
+
+    categorias_limpias = [c.strip() for c in (categorias or []) if c and str(c).strip()]
+    if categorias_limpias:
+        placeholders = ", ".join(["%s"] * len(categorias_limpias))
+        clauses.append(f"categoria IN ({placeholders})")
+        params.extend(categorias_limpias)
+
+    palabras_limpias = [p.strip() for p in (palabras_clave or []) if p and str(p).strip()]
+    if palabras_limpias:
+        grupos_kw: List[str] = []
+        for palabra in palabras_limpias:
+            patron = f"%{palabra}%"
+            grupos_kw.append(
+                "("
+                "titulo ILIKE %s OR resumen ILIKE %s OR "
+                "COALESCE(accion_recomendada, '') ILIKE %s OR "
+                "COALESCE(aplica_cuando, '') ILIKE %s OR "
+                "COALESCE(subcategoria, '') ILIKE %s"
+                ")"
+            )
+            params.extend([patron, patron, patron, patron, patron])
+        clauses.append("(" + " OR ".join(grupos_kw) + ")")
+
+    where_sql = " AND ".join(clauses)
+    query = f"""
+        SELECT
+            id,
+            modulo,
+            categoria,
+            subcategoria,
+            titulo,
+            resumen,
+            accion_recomendada,
+            ejemplo_manager,
+            aplica_cuando,
+            fuente,
+            prioridad
+        FROM ia_base_conocimiento
+        WHERE {where_sql}
+        ORDER BY prioridad ASC, updated_at DESC, id DESC
+        LIMIT %s
+    """
+    params.append(limit)
+    filas = fetch_all(query, tuple(params))
+    return filas or []
+
+
+def _es_creador_nuevo_performance(contexto: Dict[str, Any]) -> bool:
+    """Creador reciente o con poca actividad registrada (no falla si faltan datos)."""
+    reporte = contexto.get("ultimo_reporte")
+    if not reporte:
+        return True
+
+    detalle = contexto.get("detalle") or {}
+    fecha_inc = detalle.get("fecha_incorporacion")
+    if fecha_inc:
+        try:
+            if isinstance(fecha_inc, str):
+                fecha_inc = date.fromisoformat(fecha_inc[:10])
+            if isinstance(fecha_inc, datetime):
+                fecha_inc = fecha_inc.date()
+            if isinstance(fecha_inc, date):
+                if (date.today() - fecha_inc).days <= 45:
+                    return True
+        except (TypeError, ValueError):
+            pass
+
+    emisiones = safe_float(reporte.get("emisiones_live_mes"))
+    dias_validos = safe_float(reporte.get("dias_validos_mes") or reporte.get("dias_validos"))
+    if emisiones < 4 or (dias_validos > 0 and dias_validos < 8):
+        return True
+
+    return False
+
+
+def detectar_categorias_base_conocimiento(contexto: Dict[str, Any]) -> List[str]:
+    """
+    Categorías de ia_base_conocimiento relevantes según métricas y perfil del creador.
+    """
+    categorias: List[str] = []
+    vistos: set = set()
+
+    def agregar(*items: str) -> None:
+        for item in items:
+            clave = (item or "").strip().lower()
+            if clave and clave not in vistos:
+                vistos.add(clave)
+                categorias.append(clave)
+
+    agregar(
+        "monetizacion",
+        "interaccion",
+        "contenido",
+        "audiencia",
+        "retencion",
+    )
+
+    reporte = contexto.get("ultimo_reporte") or {}
+    partidas = contexto.get("performance_partidas") or performance_partidas_vacio()
+    score = contexto.get("score") or {}
+
+    p_duracion = safe_float(reporte.get("porcentaje_logro_duracion_live")) if reporte else 0.0
+    p_dias = safe_float(reporte.get("porcentaje_logro_dias_validos")) if reporte else 0.0
+    p_emisiones = safe_float(reporte.get("porcentaje_logro_emisiones")) if reporte else 0.0
+    p_diamantes = safe_float(reporte.get("porcentaje_logro_diamantes")) if reporte else 0.0
+    p_seguidores = safe_float(reporte.get("porcentaje_logro_nuevos_seguidores")) if reporte else 0.0
+
+    if reporte and (p_dias < 60 or p_emisiones < 50 or p_duracion < 50):
+        agregar("horario_disciplina", "operacion_live", "capacitacion")
+
+    if reporte and p_seguidores < 40:
+        agregar("audiencia", "interaccion")
+
+    if reporte and p_diamantes < 40:
+        agregar("monetizacion", "batallas", "gamificacion")
+
+    n_partidas = safe_float(partidas.get("partidas"))
+    diam_partidas = safe_float(partidas.get("diamantes_de_partidas"))
+    if n_partidas > 0 or diam_partidas > 0:
+        agregar("batallas")
+
+    if not reporte:
+        agregar("tecnica_live")
+    elif p_duracion <= 0 and p_emisiones <= 0 and p_dias <= 0:
+        agregar("tecnica_live")
+
+    if _es_creador_nuevo_performance(contexto):
+        agregar("onboarding", "incubacion", "capacitacion")
+
+    riesgo = normalizar_lower(score.get("riesgo_abandono") if isinstance(score, dict) else None)
+    nivel = normalizar_lower(score.get("nivel_rendimiento") if isinstance(score, dict) else None)
+    if riesgo in ("alto", "medio") or nivel in ("bajo", "critico"):
+        agregar("retencion")
+
+    return categorias
+
+
+def _extraer_palabras_clave_base_conocimiento(contexto: Dict[str, Any]) -> List[str]:
+    palabras: List[str] = []
+    vistos: set = set()
+
+    def agregar(valor: Any) -> None:
+        if valor is None:
+            return
+        if isinstance(valor, list):
+            for item in valor:
+                agregar(item)
+            return
+        texto = str(valor).strip()
+        if len(texto) < 3:
+            return
+        clave = texto.lower()
+        if clave in vistos:
+            return
+        vistos.add(clave)
+        palabras.append(texto)
+
+    perfil = contexto.get("perfil_estrategico") or {}
+    agregar(perfil.get("arquetipo_valor"))
+    agregar(perfil.get("arquetipo_definicion"))
+    agregar(perfil.get("intereses"))
+
+    arquetipo = contexto.get("arquetipo_creador") or {}
+    agregar(arquetipo.get("nombre"))
+    agregar(arquetipo.get("codigo"))
+
+    categoria = contexto.get("categoria_creador") or {}
+    agregar(categoria.get("nombre"))
+    agregar(categoria.get("codigo"))
+
+    partidas_ctx = contexto.get("performance_partidas") or {}
+    agregar(partidas_ctx.get("diagnostico_partidas"))
+
+    score = contexto.get("score") or {}
+    agregar(score.get("riesgo_abandono"))
+    agregar(score.get("nivel_rendimiento"))
+
+    return palabras[:12]
+
+
 def obtener_contexto_ia_manager(
     creador_id: int,
     *,
@@ -1733,6 +1942,24 @@ def obtener_contexto_ia_manager(
     Contexto reducido para prompts IA: prioriza perfil_estrategico y limita listas.
     """
     contexto = obtener_contexto_performance(creador_id, id_reporte=id_reporte, incluir_perfil=True)
+
+    categorias_bc = detectar_categorias_base_conocimiento(contexto)
+    palabras_bc = _extraer_palabras_clave_base_conocimiento(contexto)
+    limite_bc = min(18, max(12, 12 + len(categorias_bc) // 3))
+
+    try:
+        base_conocimiento = obtener_base_conocimiento_ia(
+            modulos=_MODULOS_BASE_CONOCIMIENTO_IA,
+            categorias=categorias_bc,
+            palabras_clave=palabras_bc,
+            limit=limite_bc,
+        )
+    except Exception as e:
+        print(
+            f"⚠️ [PERFORMANCE] No se pudo cargar ia_base_conocimiento para creador {creador_id}: {e}",
+            flush=True,
+        )
+        base_conocimiento = []
 
     return {
         "creador": contexto.get("creador"),
@@ -1749,6 +1976,7 @@ def obtener_contexto_ia_manager(
         "recomendaciones": (contexto.get("recomendaciones") or [])[:5],
         "seguimientos": (contexto.get("seguimientos") or [])[:3],
         "acciones_abiertas": (contexto.get("acciones_abiertas") or [])[:5],
+        "base_conocimiento": base_conocimiento,
     }
 
 
