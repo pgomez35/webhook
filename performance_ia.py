@@ -53,10 +53,10 @@ def _recortar_texto_prompt(texto: Any, max_len: int = 220) -> str:
     return (corto or limpio[: max_len - 3]) + "..."
 
 
-def _texto_base_conocimiento_para_prompt(contexto: Dict[str, Any], max_items: int = 12) -> str:
+def _texto_base_conocimiento_para_prompt(contexto: Dict[str, Any], max_items: int = 6) -> str:
     registros = contexto.get("base_conocimiento") or []
     if not registros:
-        return "Sin base de conocimiento adicional disponible."
+        return ""
 
     lineas = ["BASE DE CONOCIMIENTO OPERATIVA DISPONIBLE:"]
     for item in registros[:max_items]:
@@ -90,8 +90,14 @@ def _texto_base_conocimiento_para_prompt(contexto: Dict[str, Any], max_items: in
     return "\n".join(lineas)
 
 
-def _bloque_conocimiento_operativo_prompt(contexto: Dict[str, Any]) -> str:
-    base_conocimiento = _texto_base_conocimiento_para_prompt(contexto)
+def _bloque_conocimiento_operativo_prompt(
+    contexto: Dict[str, Any],
+    *,
+    max_items: int = 6,
+) -> str:
+    base_conocimiento = _texto_base_conocimiento_para_prompt(contexto, max_items=max_items)
+    if not base_conocimiento:
+        return ""
     return f"""
 CONOCIMIENTO OPERATIVO DE APOYO:
 {base_conocimiento}
@@ -103,6 +109,17 @@ Reglas para usarlo:
 - Convierte el conocimiento en acciones prácticas para este creador.
 - Si hay conflicto entre datos reales del creador y la base de conocimiento, prioriza los datos reales del creador.
 - Evita repetir la misma recomendación en varias categorías.
+"""
+
+
+_REGLAS_ANTI_REPETICION_TARJETAS = """
+REGLAS ANTI-REPETICIÓN ENTRE TARJETAS (obligatorio):
+- horario: solo franja horaria, días fijos de transmisión y métrica a revisar en 7 días. No repitas intereses ni parrilla.
+- emocional: energía, ritmo y celebración de avances. NO repitas horario ni cantidad de lives si ya hay tarjeta de horario.
+- disciplina: rutina mínima y preparación. NO repitas horario si ya hay tarjeta de horario.
+- contenido: parrilla en formato Live 1 / Live 2 / Live 3 con un interés por live. Sin horario ni partidas.
+- interacción: equipos, preguntas rápidas, ranking simbólico o reconocimiento por nombre. Sin repetir los 3 intereses enteros.
+- monetización: metas por tramos, regalos pequeños, batalla o diamantes. Un solo interés como gancho si aplica.
 """
 
 
@@ -609,6 +626,23 @@ def _limpiar_lenguaje_tecnico_ia(texto: Any) -> str:
     resultado = re.sub(r"(?i)Usar\s+dividir audiencia", "Dividir la audiencia", resultado)
     resultado = re.sub(r"(?i)Usar\s+dividir la audiencia", "Dividir la audiencia", resultado)
     resultado = re.sub(r"(?i)Usar\s+convertir intereses", "Convertir intereses", resultado)
+    resultado = re.sub(
+        r"(?i)debe\s+construirse\s+con\s+convertir",
+        "debe convertir",
+        resultado,
+    )
+    resultado = re.sub(
+        r"(?i)la\s+parrilla\s+debe\s+construirse\s+con\s+",
+        "la parrilla debe convertir ",
+        resultado,
+    )
+    resultado = re.sub(r"(?i)\bcon\s+construir\b", "construir", resultado)
+    resultado = re.sub(r"(?i)\bcon\s+convertir\b", "convertir", resultado)
+    resultado = re.sub(
+        r"(?i)\bconvertir\s+sus\s+intereses\s+en\s+retos\b",
+        "convertir sus intereses en retos visibles",
+        resultado,
+    )
 
     resultado = resultado.replace("Aplicar: Aplicar:", "Aplicar:")
     resultado = resultado.replace(" ,", ",")
@@ -787,7 +821,10 @@ def _resumen_arquetipo_para_categoria(
             return f"Como {nombre_arquetipo}, la interacción debe mantener {estilo}."
     if categoria_norm == "contenido":
         if items_txt:
-            return f"Como {nombre_arquetipo}, la parrilla debe construirse con {items_txt}."
+            return (
+                f"Como {nombre_arquetipo}, la parrilla debe convertir {items_txt} "
+                "en retos visibles por live."
+            )
         if estilo:
             return f"Como {nombre_arquetipo}, la parrilla debe reflejar {estilo}."
     if categoria_norm == "horario":
@@ -1574,6 +1611,44 @@ _BUILDERS_TARJETA_RECOMENDACION: Dict[str, Callable[[_TarjetaRecomendacionCtx], 
 }
 
 
+def _limpiar_horario_de_texto_emocional_disciplina(
+    texto: str,
+    horario: str,
+) -> str:
+    """Quita franja horaria y conteo de lives si ya hay tarjeta de horario."""
+    if horario:
+        texto = re.sub(re.escape(f" en {horario}"), "", texto, flags=re.IGNORECASE)
+        texto = re.sub(rf"\ben\s+{re.escape(horario)}\b", "", texto, flags=re.IGNORECASE)
+        texto = re.sub(
+            r"\(?\s*\d{1,2}\s*(?:am|pm)\s*[–-]\s*\d{1,2}\s*(?:am|pm)\s*\)?",
+            "",
+            texto,
+            flags=re.IGNORECASE,
+        )
+        texto = re.sub(r"\bTarde\s*\([^)]+\)", "", texto, flags=re.IGNORECASE)
+        texto = re.sub(r"\bMañana\s*\([^)]+\)", "", texto, flags=re.IGNORECASE)
+        texto = re.sub(r"\bNoche\s*\([^)]+\)", "", texto, flags=re.IGNORECASE)
+    texto = re.sub(
+        r"\b(?:al menos\s+)?\d+\s+lives?\s+semanal(?:es)?\b",
+        "",
+        texto,
+        flags=re.IGNORECASE,
+    )
+    texto = re.sub(
+        r"\b(?:realizar|hacer)\s+al menos\s+\d+\s+lives?\b",
+        "",
+        texto,
+        flags=re.IGNORECASE,
+    )
+    texto = re.sub(
+        r"\bhorario\s+fijo\s+para\s+sus\s+transmisiones\b",
+        "mantener rutina de transmisión",
+        texto,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"\s{2,}", " ", texto).strip()
+
+
 def _reducir_repeticiones_en_lote_recomendaciones(
     recs: List[Dict[str, Any]],
     datos: Dict[str, Any],
@@ -1587,6 +1662,11 @@ def _reducir_repeticiones_en_lote_recomendaciones(
     vio_evitar = False
     vio_partidas = False
     vio_arquetipo_resumen = False
+    hay_tarjeta_horario = any(
+        _normalizar_categoria_recomendacion(r.get("categoria") or "") == "horario"
+        for r in recs
+        if isinstance(r, dict)
+    )
 
     patron_evitar = re.compile(
         r"\s*Cuidar que el LIVE no caiga en[^.]+\.",
@@ -1622,6 +1702,9 @@ def _reducir_repeticiones_en_lote_recomendaciones(
                     texto,
                     flags=re.IGNORECASE,
                 )
+
+            if hay_tarjeta_horario and cat in ("emocional", "disciplina"):
+                texto = _limpiar_horario_de_texto_emocional_disciplina(texto, horario)
 
             if patron_como_arquetipo and cat not in ("interaccion", "audiencia", "contenido"):
                 if patron_como_arquetipo.search(texto):
@@ -1856,7 +1939,7 @@ def _normalizar_resultado_recomendaciones_ia(
 def prompt_diagnostico_performance(contexto: Dict[str, Any], instrucciones_extra: Optional[str] = None) -> str:
     extra = f"\nInstrucciones adicionales del manager:\n{instrucciones_extra}\n" if instrucciones_extra else ""
     reglas = _reglas_personalizacion_ia_obligatorias(contexto)
-    conocimiento = _bloque_conocimiento_operativo_prompt(contexto)
+    conocimiento = _bloque_conocimiento_operativo_prompt(contexto, max_items=4)
 
     return f"""
 Eres un director de performance para una agencia de TikTok LIVE en LATAM.
@@ -1864,8 +1947,7 @@ Analiza el siguiente contexto del creador y responde con JSON válido.
 
 Contexto:
 {contexto_para_prompt(contexto)}
-
-{conocimiento}
+{f"{conocimiento}" if conocimiento else ""}
 
 {reglas}
 
@@ -1898,7 +1980,7 @@ def prompt_recomendaciones_manager(contexto: Dict[str, Any], max_recomendaciones
     extra = f"\nInstrucciones adicionales:\n{instrucciones_extra}\n" if instrucciones_extra else ""
     reglas = _reglas_personalizacion_ia_obligatorias(contexto)
     datos_obligatorios = _bloque_datos_obligatorios_recomendaciones(contexto)
-    conocimiento = _bloque_conocimiento_operativo_prompt(contexto)
+    conocimiento = _bloque_conocimiento_operativo_prompt(contexto, max_items=6)
 
     return f"""
 Eres un coach senior de creadores TikTok LIVE y asesor de managers de agencia.
@@ -1907,10 +1989,11 @@ Tu única tarea: generar recomendaciones operativas ULTRA ESPECÍFICAS para el c
 {datos_obligatorios}
 
 {reglas}
-
-{conocimiento}
+{f"{conocimiento}" if conocimiento else ""}
 
 {_REGLA_BASE_CONOCIMIENTO_RECOMENDACIONES}
+
+{_REGLAS_ANTI_REPETICION_TARJETAS}
 
 Datos completos para análisis interno:
 {contexto_para_prompt(contexto)}
@@ -1974,7 +2057,7 @@ Reglas:
 def prompt_acciones_manager(contexto: Dict[str, Any], max_acciones: int, instrucciones_extra: Optional[str] = None) -> str:
     extra = f"\nInstrucciones adicionales:\n{instrucciones_extra}\n" if instrucciones_extra else ""
     reglas = _reglas_personalizacion_ia_obligatorias(contexto)
-    conocimiento = _bloque_conocimiento_operativo_prompt(contexto)
+    conocimiento = _bloque_conocimiento_operativo_prompt(contexto, max_items=6)
 
     tipos = ", ".join(sorted(TIPOS_ACCION_SUGERIDOS))
 
@@ -1984,8 +2067,7 @@ Genera acciones concretas para registrar en el seguimiento del creador.
 
 Contexto:
 {contexto_para_prompt(contexto)}
-
-{conocimiento}
+{f"{conocimiento}" if conocimiento else ""}
 
 Tipos de acción sugeridos:
 {tipos}
@@ -2022,7 +2104,7 @@ Reglas:
 def prompt_alertas_score_ia(contexto: Dict[str, Any], instrucciones_extra: Optional[str] = None) -> str:
     extra = f"\nInstrucciones adicionales:\n{instrucciones_extra}\n" if instrucciones_extra else ""
     reglas = _reglas_personalizacion_ia_obligatorias(contexto)
-    conocimiento = _bloque_conocimiento_operativo_prompt(contexto)
+    conocimiento = _bloque_conocimiento_operativo_prompt(contexto, max_items=4)
 
     return f"""
 Eres un analista de riesgo y performance de creadores TikTok LIVE.
@@ -2030,8 +2112,7 @@ Evalúa el contexto y genera un score, alertas y explicación operativa.
 
 Contexto:
 {contexto_para_prompt(contexto)}
-
-{conocimiento}
+{f"{conocimiento}" if conocimiento else ""}
 
 {reglas}
 
@@ -2079,7 +2160,7 @@ def prompt_generar_seguimiento(
     extra = f"\nInstrucciones adicionales:\n{instrucciones_extra}\n" if instrucciones_extra else ""
 
     reglas = _reglas_personalizacion_ia_obligatorias(contexto)
-    conocimiento = _bloque_conocimiento_operativo_prompt(contexto)
+    conocimiento = _bloque_conocimiento_operativo_prompt(contexto, max_items=4)
 
     return f"""
 Eres un coach de creadores de contenido en vivo para TikTok LIVE.
@@ -2087,8 +2168,7 @@ Ayuda al manager a redactar un seguimiento profesional.
 
 Contexto del creador:
 {contexto_para_prompt(contexto)}
-
-{conocimiento}
+{f"{conocimiento}" if conocimiento else ""}
 
 Observaciones iniciales del manager:
 {observaciones_manager or ""}

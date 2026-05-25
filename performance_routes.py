@@ -60,6 +60,7 @@ from performance_core import (
     normalizar_texto_parrafos,
     obtener_arquetipo_creador,
     obtener_arquetipos_activos,
+    adjuntar_base_conocimiento_ia,
     obtener_base_conocimiento_ia,
     obtener_categoria_creador,
     obtener_contexto_ia_manager,
@@ -155,7 +156,12 @@ def base_conocimiento_creador_performance(
     """
     Muestra el conocimiento operativo que se inyectará en los prompts IA del creador.
     """
-    contexto = obtener_contexto_ia_manager(creador_id, id_reporte=id_reporte)
+    contexto = obtener_contexto_ia_manager(
+        creador_id,
+        id_reporte=id_reporte,
+        incluir_base_conocimiento=True,
+        limite_base_conocimiento=6,
+    )
     return {
         "ok": True,
         "creador_id": creador_id,
@@ -1243,7 +1249,11 @@ def generar_recomendaciones_ia(
     creador_id: int,
     data: GenerarRecomendacionesIARequest = GenerarRecomendacionesIARequest(),
 ):
-    contexto = obtener_contexto_ia_manager(creador_id)
+    contexto = obtener_contexto_ia_manager(
+        creador_id,
+        incluir_base_conocimiento=True,
+        limite_base_conocimiento=6,
+    )
     _log_ia_debug_contexto("recomendaciones", creador_id, contexto)
     prompt = prompt_recomendaciones_manager(
         contexto,
@@ -1305,7 +1315,11 @@ def generar_acciones_ia(
     creador_id: int,
     data: GenerarAccionesIARequest = GenerarAccionesIARequest(),
 ):
-    contexto = obtener_contexto_ia_manager(creador_id)
+    contexto = obtener_contexto_ia_manager(
+        creador_id,
+        incluir_base_conocimiento=True,
+        limite_base_conocimiento=6,
+    )
     _log_ia_debug_contexto("acciones", creador_id, contexto)
     prompt = prompt_acciones_manager(
         contexto,
@@ -1457,7 +1471,8 @@ def generar_analisis_completo_ia(
     Puede guardar recomendaciones, score y alertas.
     """
     contexto = obtener_contexto_ia_manager(creador_id)
-    _log_ia_debug_contexto("analisis_completo", creador_id, contexto)
+    contexto_recomendaciones = adjuntar_base_conocimiento_ia(contexto, limite=6)
+    _log_ia_debug_contexto("analisis_completo", creador_id, contexto_recomendaciones)
 
     diagnostico = openai_json_completion(
         prompt_diagnostico_performance(contexto, data.instrucciones_extra),
@@ -1466,12 +1481,12 @@ def generar_analisis_completo_ia(
     )
 
     recomendaciones_result = openai_json_completion(
-        prompt_recomendaciones_manager(contexto, 5, data.instrucciones_extra),
+        prompt_recomendaciones_manager(contexto_recomendaciones, 5, data.instrucciones_extra),
         temperature=0.35,
         system="Responde únicamente JSON válido en español.",
     )
     recomendaciones_result = _normalizar_resultado_recomendaciones_ia(
-        contexto,
+        contexto_recomendaciones,
         recomendaciones_result,
         5,
     )

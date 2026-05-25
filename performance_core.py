@@ -402,7 +402,9 @@ def serializable(obj: Any) -> Any:
 
 
 def contexto_para_prompt(contexto: Dict[str, Any]) -> str:
-    return json.dumps(serializable(contexto), ensure_ascii=False, indent=2)
+    """Serializa contexto para IA sin duplicar base_conocimiento (va en bloque aparte)."""
+    ctx = {k: v for k, v in contexto.items() if k != "base_conocimiento"}
+    return json.dumps(serializable(ctx), ensure_ascii=False, indent=2)
 
 
 def validar_valor_en_set(
@@ -1933,35 +1935,70 @@ def _extraer_palabras_clave_base_conocimiento(contexto: Dict[str, Any]) -> List[
     return palabras[:12]
 
 
-def obtener_contexto_ia_manager(
-    creador_id: int,
+def _cargar_base_conocimiento_para_contexto(
+    contexto: Dict[str, Any],
     *,
-    id_reporte: Optional[int] = None,
-) -> Dict[str, Any]:
-    """
-    Contexto reducido para prompts IA: prioriza perfil_estrategico y limita listas.
-    """
-    contexto = obtener_contexto_performance(creador_id, id_reporte=id_reporte, incluir_perfil=True)
-
+    limite: int = 6,
+) -> List[Dict[str, Any]]:
+    """Carga registros de ia_base_conocimiento acotados al contexto del creador."""
+    limite = max(1, min(int(limite or 6), 18))
     categorias_bc = detectar_categorias_base_conocimiento(contexto)
     palabras_bc = _extraer_palabras_clave_base_conocimiento(contexto)
-    limite_bc = min(18, max(12, 12 + len(categorias_bc) // 3))
+    return obtener_base_conocimiento_ia(
+        modulos=_MODULOS_BASE_CONOCIMIENTO_IA,
+        categorias=categorias_bc,
+        palabras_clave=palabras_bc,
+        limit=limite,
+    )
 
+
+def adjuntar_base_conocimiento_ia(
+    contexto: Dict[str, Any],
+    *,
+    limite: int = 6,
+) -> Dict[str, Any]:
+    """Copia el contexto y adjunta base_conocimiento (sin reconsultar performance completo)."""
+    ctx = dict(contexto)
     try:
-        base_conocimiento = obtener_base_conocimiento_ia(
-            modulos=_MODULOS_BASE_CONOCIMIENTO_IA,
-            categorias=categorias_bc,
-            palabras_clave=palabras_bc,
-            limit=limite_bc,
-        )
+        ctx["base_conocimiento"] = _cargar_base_conocimiento_para_contexto(ctx, limite=limite)
     except Exception as e:
+        creador_id = (ctx.get("creador") or {}).get("id")
         print(
             f"⚠️ [PERFORMANCE] No se pudo cargar ia_base_conocimiento para creador {creador_id}: {e}",
             flush=True,
         )
-        base_conocimiento = []
+        ctx["base_conocimiento"] = []
+    return ctx
 
-    return {
+
+def obtener_contexto_ia_manager(
+    creador_id: int,
+    *,
+    id_reporte: Optional[int] = None,
+    incluir_base_conocimiento: bool = False,
+    limite_base_conocimiento: int = 6,
+) -> Dict[str, Any]:
+    """
+    Contexto reducido para prompts IA: prioriza perfil_estrategico y limita listas.
+    La base de conocimiento solo se carga si incluir_base_conocimiento=True.
+    """
+    contexto = obtener_contexto_performance(creador_id, id_reporte=id_reporte, incluir_perfil=True)
+
+    base_conocimiento: List[Dict[str, Any]] = []
+    if incluir_base_conocimiento:
+        try:
+            base_conocimiento = _cargar_base_conocimiento_para_contexto(
+                contexto,
+                limite=limite_base_conocimiento,
+            )
+        except Exception as e:
+            print(
+                f"⚠️ [PERFORMANCE] No se pudo cargar ia_base_conocimiento para creador {creador_id}: {e}",
+                flush=True,
+            )
+            base_conocimiento = []
+
+    resultado: Dict[str, Any] = {
         "creador": contexto.get("creador"),
         "detalle": contexto.get("detalle"),
         "categoria_creador": contexto.get("categoria_creador"),
@@ -1976,8 +2013,10 @@ def obtener_contexto_ia_manager(
         "recomendaciones": (contexto.get("recomendaciones") or [])[:5],
         "seguimientos": (contexto.get("seguimientos") or [])[:3],
         "acciones_abiertas": (contexto.get("acciones_abiertas") or [])[:5],
-        "base_conocimiento": base_conocimiento,
     }
+    if incluir_base_conocimiento:
+        resultado["base_conocimiento"] = base_conocimiento
+    return resultado
 
 
 # =========================================================
