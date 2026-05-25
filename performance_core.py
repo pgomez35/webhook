@@ -594,6 +594,7 @@ def openai_chat_completion(
     model: Optional[str] = None,
     temperature: float = 0.4,
     system: Optional[str] = None,
+    json_mode: bool = False,
 ) -> str:
     messages: List[dict] = []
 
@@ -602,13 +603,27 @@ def openai_chat_completion(
 
     messages.append({"role": "user", "content": prompt})
 
+    kwargs: Dict[str, Any] = {
+        "model": model or OPENAI_MODEL_DEFAULT,
+        "messages": messages,
+        "temperature": temperature,
+    }
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+
     try:
         client = get_openai_client()
-        response = client.with_options(timeout=60).chat.completions.create(
-            model=model or OPENAI_MODEL_DEFAULT,
-            messages=messages,
-            temperature=temperature,
-        )
+        try:
+            response = client.with_options(timeout=60).chat.completions.create(**kwargs)
+        except Exception as e:
+            if json_mode and "response_format" in kwargs:
+                kwargs_retry = dict(kwargs)
+                kwargs_retry.pop("response_format", None)
+                response = client.with_options(timeout=60).chat.completions.create(
+                    **kwargs_retry
+                )
+            else:
+                raise e
         content = response.choices[0].message.content
         return (content or "").strip()
 
@@ -635,6 +650,7 @@ def openai_json_completion(
         model=model,
         temperature=temperature,
         system=system,
+        json_mode=True,
     )
     parsed = parse_json_openai(content)
     if isinstance(parsed, dict) and parsed.get("error_parse_json"):

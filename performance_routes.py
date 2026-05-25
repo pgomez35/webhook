@@ -1214,7 +1214,7 @@ def generar_recomendaciones_ia(
 
     resultado = openai_json_completion(
         prompt,
-        temperature=0.25,
+        temperature=0.5,
         system=(
             "Eres experto en coaching operativo para managers de creadores TikTok LIVE. "
             "Usa perfil_estrategico.arquetipo_estrategia (descripcion_operativa y estrategia_json en BD). "
@@ -1223,7 +1223,7 @@ def generar_recomendaciones_ia(
             "No interpretes el arquetipo solo por nombre. "
             "Convierte al menos 2 intereses en dinamicas LIVE con momento y objetivo. "
             "Si porcentaje de partidas > 100 no lo presentes como porcentaje normal. "
-            "Responde unicamente JSON valido."
+            "Responde unicamente con un objeto JSON valido."
         ),
     )
 
@@ -1428,8 +1428,8 @@ def generar_analisis_completo_ia(
 
     recomendaciones_result = openai_json_completion(
         prompt_recomendaciones_manager(contexto, 5, data.instrucciones_extra),
-        temperature=0.35,
-        system="Responde únicamente JSON válido en español.",
+        temperature=0.5,
+        system="Responde únicamente con un objeto JSON válido en español.",
     )
     recomendaciones_result = _normalizar_resultado_recomendaciones_ia(
         contexto,

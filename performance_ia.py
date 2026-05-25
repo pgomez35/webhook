@@ -386,6 +386,52 @@ def _bloque_datos_obligatorios_recomendaciones(contexto: Dict[str, Any]) -> str:
         ]
     )
 
+
+def _bloque_datos_por_categoria_recomendaciones(contexto: Dict[str, Any]) -> str:
+    d = _extraer_datos_personalizacion_recomendaciones(contexto)
+    intereses = d.get("intereses_lista") or []
+    intereses_txt = ", ".join(str(i) for i in intereses[:5] if i) or "sin dato"
+
+    def _v(valor: Any) -> str:
+        if valor is None or valor == "":
+            return "sin dato"
+        return str(valor)
+
+    return "\n".join(
+        [
+            "DATOS REPARTIDOS POR TARJETA (usa cada dato solo en su categoría):",
+            "- monetizacion:",
+            (
+                f"  meta: {_v(d.get('meta_diamantes'))} | categoría: {_v(d.get('categoria_nombre'))} | "
+                f"partidas: {_v(d.get('texto_partidas_manager'))} | interés gancho: "
+                f"{intereses[0] if intereses else 'sin dato'}"
+            ),
+            "- interaccion:",
+            (
+                f"  arquetipo: {_v(d.get('arquetipo'))} | equipos, ranking, preguntas, reconocimiento | "
+                f"dinámicas: {_v((d.get('arquetipo_interaccion') or [])[:2])}"
+            ),
+            "- contenido:",
+            f"  intereses: {intereses_txt} | mini parrilla Live 1 / Live 2 / Live 3",
+            "- audiencia:",
+            "  follows, comunidad, retorno al próximo LIVE, retención",
+            "- horario:",
+            f"  franja: {_v(d.get('horario'))} | 3 lives/semana | medir asistencia, comentarios y regalos por bloque",
+            "- tecnica:",
+            "  luz, audio, conexión, encuadre, portada, título",
+            "- emocional:",
+            f"  energía, confianza, reto semanal (3 lives) | no saturar a {_v(d.get('nombre_creador'))}",
+            "- disciplina:",
+            "  rutina mínima, preparación pre-LIVE, cumplimiento semanal",
+        ]
+    )
+
+
+def _texto_contiene_alguna(texto: str, palabras: Tuple[str, ...]) -> bool:
+    t = (texto or "").lower()
+    return any(p in t for p in palabras)
+
+
 def _es_texto_recomendacion_generico(texto: str) -> bool:
     t = (texto or "").strip().lower()
     if not t:
@@ -426,41 +472,73 @@ def _cumple_personalizacion_minima_recomendacion(
     categoria: Optional[str] = None,
 ) -> bool:
     """
-    Validación por categoría: cada tarjeta exige solo los datos que le corresponden.
+    Validación relajada por categoría: acepta recomendaciones concretas sin exigir
+    menciones literales de arquetipo o 2 intereses en todas las tarjetas.
     """
-    t = (texto or "").lower()
+    t = (texto or "").strip()
     if not t:
         return False
 
-    cat = _normalizar_categoria_recomendacion(categoria or "")
-    arquetipo = datos.get("arquetipo")
-    if cat == "interaccion" and arquetipo and str(arquetipo).lower() not in t:
+    tl = t.lower()
+    if any(p in tl for p in _TERMINOS_TECNICOS_PROHIBIDOS_MANAGER):
         return False
 
+    cat = _normalizar_categoria_recomendacion(categoria or "")
     intereses = datos.get("intereses_lista") or []
-    if intereses:
-        if cat == "contenido":
-            minimo = min(2, len(intereses)) if len(intereses) >= 2 else 1
-        elif cat in ("monetizacion", "audiencia"):
-            minimo = 1
-        else:
-            minimo = 0
-        if minimo > 0:
-            mencionados = sum(1 for interes in intereses if interes.lower() in t)
-            if mencionados < minimo:
-                return False
 
-    horario = datos.get("horario")
-    if horario and cat in _CATEGORIAS_CON_FRANJA_HORARIO:
-        palabras_horario = [
-            p.strip().lower()
-            for p in str(horario).replace(",", " ").split()
-            if p.strip()
-        ]
-        if palabras_horario and not any(p in t for p in palabras_horario if len(p) > 3):
-            return False
+    if cat == "contenido":
+        tiene_interes = any(str(i).lower() in tl for i in intereses if i)
+        tiene_formato = _texto_contiene_alguna(
+            tl,
+            ("live 1", "live 2", "live 3", "live a", "live b", "parrilla", "tema", "formato", "guion", "guión", "reto"),
+        )
+        return tiene_formato and (tiene_interes or not intereses)
 
-    return True
+    if cat == "interaccion":
+        return _texto_contiene_alguna(
+            tl,
+            ("chat", "equipo", "ranking", "pregunta", "comentario", "reconocer", "batalla", "dinámica", "dinamica", "reto"),
+        )
+
+    if cat == "monetizacion":
+        return _texto_contiene_alguna(
+            tl,
+            ("regalo", "meta", "diamante", "tramo", "batalla", "monetiz", "apertura", "cierre"),
+        )
+
+    if cat == "horario":
+        horario = datos.get("horario")
+        menciona_horario = bool(horario) and str(horario).lower() in tl
+        return menciona_horario or _texto_contiene_alguna(
+            tl,
+            ("horario", "bloque", "franja", "semana", "días", "dias", "medir", "asistencia", "3 live", "3 lives"),
+        )
+
+    if cat == "audiencia":
+        return _texto_contiene_alguna(
+            tl,
+            ("follow", "seguidor", "comunidad", "retorno", "retención", "retencion", "volver", "fidel"),
+        )
+
+    if cat == "tecnica":
+        return _texto_contiene_alguna(
+            tl,
+            ("luz", "audio", "encuadre", "conexión", "conexion", "cámara", "camara", "portada", "título", "titulo"),
+        )
+
+    if cat == "emocional":
+        return _texto_contiene_alguna(
+            tl,
+            ("energía", "energia", "confianza", "ritmo", "reto", "semanal", "saturar", "motiv", "3 live", "3 lives"),
+        )
+
+    if cat == "disciplina":
+        return _texto_contiene_alguna(
+            tl,
+            ("rutina", "preparación", "preparacion", "constancia", "cumplimiento", "semanal", "disciplina"),
+        )
+
+    return len(tl) >= 40
 
 
 def _limpiar_texto_generado(texto: Any) -> str:
@@ -741,8 +819,8 @@ def _resumen_arquetipo_para_categoria(
     if categoria_norm == "contenido":
         if items_txt:
             return (
-                f"Como {nombre_arquetipo}, la parrilla debe convertir {items_txt} "
-                "en retos visibles por live."
+                f"Como {nombre_arquetipo}, la parrilla debe convertir sus intereses en retos visibles "
+                "desde el inicio del LIVE."
             )
         if estilo:
             return f"Como {nombre_arquetipo}, la parrilla debe reflejar {estilo}."
@@ -990,14 +1068,187 @@ def _deduplicar_oraciones_manager(texto: Any) -> str:
     return "\n\n".join(parrafos_limpios).strip()
 
 
+def _pulir_frases_roboticas_manager(texto: Any) -> str:
+    """Corrige duplicados y frases mecánicas en texto visible al manager."""
+    if texto is None:
+        return ""
+    resultado = str(texto).strip()
+    if not resultado:
+        return ""
+
+    while True:
+        anterior = resultado
+        resultado = re.sub(r"(?i)\b(convertir|construir)\s+\1\b", r"\1", resultado)
+        if resultado == anterior:
+            break
+
+    reemplazos = (
+        (r"(?i)\bcon\s+convertir\s+intereses\b", "convirtiendo intereses"),
+        (r"(?i)\bdebe\s+convertir\s+intereses\b", "debe convertir sus intereses"),
+        (
+            r"(?i)\bdebe\s+convertir\s+intereses\s+en\s+retos\s+y\s+abrir\b",
+            "debe convertir sus intereses en retos visibles y abrir",
+        ),
+        (
+            r"(?i)\bla\s+parrilla\s+debe\s+construirse\s+con\s+convertir\b",
+            "la parrilla debe convertir",
+        ),
+        (
+            r"(?i)\bla\s+parrilla\s+debe\s+convertir\s+convertir\b",
+            "la parrilla debe convertir sus",
+        ),
+        (r"(?i)\ben\s+retos\s+visibles\s+por\s+live\b", "desde el inicio del LIVE"),
+        (r"(?i)\ben\s+retos\s+visibles\s+por\s+LIVE\b", "desde el inicio del LIVE"),
+        (r"(?i)\bpor\s+live\b", "por LIVE"),
+        (r"(?i)\bpr[oó]ximo\s+live\b", "próximo LIVE"),
+    )
+    for patron, sustituto in reemplazos:
+        resultado = re.sub(patron, sustituto, resultado)
+
+    resultado = re.sub(r"[ \t]{2,}", " ", resultado)
+    resultado = re.sub(r"\.{2,}", ".", resultado)
+    resultado = re.sub(r"\s+\.", ".", resultado)
+    return resultado.strip()
+
+
+def _quitar_oraciones_interaccion_redundantes(texto: str) -> str:
+    """Evita repetir equipos / dividir audiencia en la misma recomendación."""
+    original = (texto or "").strip()
+    if not original:
+        return ""
+
+    texto_l = original.lower()
+    tiene_equipos = "equipo" in texto_l
+    tiene_ranking = "ranking" in texto_l
+    if not tiene_equipos and not tiene_ranking:
+        return original
+
+    partes = re.split(r"(?<=[.!?])\s+", original)
+    filtradas: List[str] = []
+    for parte in partes:
+        pl = parte.lower().strip()
+        if not pl:
+            continue
+        if tiene_equipos and (
+            "dividir la audiencia" in pl
+            or "dividir audiencia" in pl
+            or (pl.startswith("usar ") and "chat" in pl)
+        ):
+            continue
+        filtradas.append(parte.strip())
+
+    return " ".join(filtradas).strip() if filtradas else original
+
+
+def _justificacion_contenido_natural(justificacion: str) -> str:
+    match = re.search(r"(?i)como\s+([^,]+),", justificacion or "")
+    if not match:
+        return justificacion
+    arquetipo = match.group(1).strip()
+    return (
+        f"Como {arquetipo}, la parrilla debe convertir sus intereses en retos visibles "
+        "desde el inicio del LIVE."
+    )
+
+
+def _justificacion_monetizacion_natural(justificacion: str) -> str:
+    texto = (justificacion or "").strip()
+    if not texto or "tramos pequeños" in texto.lower():
+        return texto
+
+    match_meta = re.search(r"(?i)meta\s+(\d[\d.,]*)\s+diamantes", texto)
+    match_cat = re.search(r"(?i)categor[ií]a\s+([^,;.]+)", texto)
+    if match_meta:
+        meta_n = match_meta.group(1).replace(",", "")
+        cat_n = match_cat.group(1).strip() if match_cat else "asignada"
+        return (
+            f"La meta {cat_n} de {meta_n} diamantes necesita tramos pequeños para que "
+            "la audiencia sienta avance y participe con más facilidad."
+        )
+    if "priorizar conversión" in texto.lower() or "regalos por tramo" in texto.lower():
+        return (
+            "Los tramos pequeños de regalos ayudan a que la audiencia sienta avance "
+            "y participe con más facilidad."
+        )
+    return texto
+
+
+def _justificacion_interaccion_natural(justificacion: str, recomendacion: str) -> str:
+    texto = (justificacion or "").strip()
+    if texto and "reto, competencia y reconocimiento" in texto.lower():
+        return texto
+
+    match = re.search(r"(?i)como\s+([^,]+),", texto or recomendacion or "")
+    arquetipo = match.group(1).strip() if match else "Batallista"
+    return (
+        f"Como {arquetipo}, la interacción debe sentirse como reto, "
+        "competencia y reconocimiento público."
+    )
+
+
+def _pulir_recomendacion_por_categoria(
+    rec: Dict[str, Any],
+    *,
+    hay_tarjeta_horario: bool = False,
+) -> Dict[str, Any]:
+    if not isinstance(rec, dict):
+        return rec
+
+    cat = _normalizar_categoria_recomendacion(rec.get("categoria") or "otro")
+    recomendacion = str(rec.get("recomendacion") or "").strip()
+    justificacion = str(rec.get("justificacion") or recomendacion).strip()
+
+    if cat == "interaccion":
+        recomendacion = _quitar_oraciones_interaccion_redundantes(recomendacion)
+        justificacion = _justificacion_interaccion_natural(justificacion, recomendacion)
+
+    elif cat == "contenido":
+        just_l = justificacion.lower()
+        if (
+            "convertir convertir" in just_l
+            or "con convertir" in just_l
+            or "por live" in just_l
+            or "desde convertir" in just_l
+            or len(justificacion) > 200
+        ):
+            justificacion = _justificacion_contenido_natural(justificacion)
+
+    elif cat == "monetizacion":
+        justificacion = _justificacion_monetizacion_natural(justificacion)
+
+    elif cat == "horario":
+        if "consistencia horaria" not in justificacion.lower():
+            justificacion = (
+                "La consistencia horaria ayuda a crear expectativa y retorno de audiencia."
+            )
+
+    elif cat == "emocional" and hay_tarjeta_horario:
+        recomendacion = _limpiar_horario_de_texto_emocional_disciplina(
+            recomendacion,
+            "",
+        )
+        if "sostener energía" not in justificacion.lower():
+            justificacion = "Prioridad: sostener energía y ritmo sin saturar al creador."
+
+    salida = dict(rec)
+    salida["recomendacion"] = recomendacion
+    salida["justificacion"] = justificacion
+    return salida
+
+
 def _pulir_texto_recomendacion_final(texto: Any) -> str:
     limpio = _limpiar_lenguaje_tecnico_ia(texto)
+    limpio = _pulir_frases_roboticas_manager(limpio)
     limpio = _limpiar_texto_generado(limpio)
     limpio = _deduplicar_oraciones_manager(limpio)
     return normalizar_texto_parrafos(limpio)
 
 
-def _pulir_recomendacion_item(rec: Dict[str, Any]) -> Dict[str, Any]:
+def _pulir_recomendacion_item(
+    rec: Dict[str, Any],
+    *,
+    hay_tarjeta_horario: bool = False,
+) -> Dict[str, Any]:
     if not isinstance(rec, dict):
         return rec
     salida = dict(rec)
@@ -1005,15 +1256,22 @@ def _pulir_recomendacion_item(rec: Dict[str, Any]) -> Dict[str, Any]:
     salida["justificacion"] = _pulir_texto_recomendacion_final(
         rec.get("justificacion") or rec.get("recomendacion")
     )
-    return salida
+    return _pulir_recomendacion_por_categoria(salida, hay_tarjeta_horario=hay_tarjeta_horario)
 
 
 def _aplicar_pulido_final_recomendaciones(resultado: Any) -> Dict[str, Any]:
     salida: Dict[str, Any] = resultado if isinstance(resultado, dict) else {}
     recs = salida.get("recomendaciones")
     if isinstance(recs, list):
+        hay_tarjeta_horario = any(
+            _normalizar_categoria_recomendacion(r.get("categoria") or "") == "horario"
+            for r in recs
+            if isinstance(r, dict)
+        )
         salida["recomendaciones"] = [
-            _pulir_recomendacion_item(r) for r in recs if isinstance(r, dict)
+            _pulir_recomendacion_item(r, hay_tarjeta_horario=hay_tarjeta_horario)
+            for r in recs
+            if isinstance(r, dict)
         ]
     return salida
 
@@ -1364,48 +1622,53 @@ def _interes_tarjeta(ctx: _TarjetaRecomendacionCtx, indice: int) -> str:
 def _tarjeta_recomendacion_monetizacion(ctx: _TarjetaRecomendacionCtx) -> Dict[str, str]:
     nombre = ctx["nombre"]
     i1 = _interes_tarjeta(ctx, 0)
-    datos = ctx["datos"]
-    meta_txt = _categoria_meta_para_manager(ctx.get("categoria_nombre"), ctx.get("meta_diamantes"))
-    evitar = _texto_evitar_arquetipo(ctx.get("arquetipo_estrategia")).strip()
-    partidas = _texto_partidas_para_manager(datos, "monetizacion").strip()
+    cat_nombre = str(ctx.get("categoria_nombre") or "la categoría").strip()
+    meta = ctx.get("meta_diamantes")
+    gancho = f"usando {i1} como mini reto" if i1 else "con mini retos visibles"
 
-    partes = [
-        f"Para {nombre}: tres metas de regalos visibles (apertura, entre batallas, cierre).",
-        "Escribir cada meta en pantalla antes del tramo; revisar cumplimiento al cerrar el LIVE.",
-    ]
-    if i1:
-        partes.append(
-            f"Gancho de apertura con {i1}: mini meta de regalos antes de la primera batalla."
+    rec = (
+        f"Establecer metas pequeñas de regalos por tramo {gancho}: "
+        "apertura para activar el primer reto, entre batallas para desbloquear "
+        "30 segundos de energía y cierre para elegir el reto del próximo LIVE."
+    )
+    if meta not in (None, ""):
+        try:
+            meta_n = int(float(meta))
+            just = (
+                f"La meta {cat_nombre} de {meta_n} diamantes necesita tramos pequeños para que "
+                "la audiencia sienta avance y participe con más facilidad."
+            )
+        except Exception:
+            just = (
+                "Los tramos pequeños de regalos ayudan a que la audiencia sienta avance "
+                "y participe con más facilidad."
+            )
+    else:
+        just = (
+            "La meta mensual necesita tramos pequeños para que la audiencia sienta avance "
+            "y participe con más facilidad."
         )
-    rec = " ".join(partes)
-    if partidas:
-        rec = f"{rec} {partidas}"
-
-    just = meta_txt or "Priorizar conversión a regalos por tramo."
-    if evitar:
-        just = f"{just} {evitar}".strip()
     return {"recomendacion": rec.strip(), "justificacion": just}
 
 
 def _tarjeta_recomendacion_interaccion(ctx: _TarjetaRecomendacionCtx) -> Dict[str, str]:
     nombre = ctx["nombre"]
-    arquetipo = ctx.get("arquetipo") or "su perfil"
-    estrategia = _bloque_estrategias_arquetipo_categoria(
-        ctx.get("arquetipo_estrategia"), "interaccion", minimo=1
-    )
+    arquetipo = ctx.get("arquetipo") or "Batallista"
     rec = (
-        f"Para {nombre}: dinámica {arquetipo} — equipos, pregunta rápida antes de cada batalla "
-        f"y ranking simbólico en pantalla."
+        f"Para {nombre}: dinámica {arquetipo} con 2 equipos, pregunta rápida antes de cada batalla "
+        "y ranking simbólico en pantalla. Reconocer en vivo al top 3 que comenta o apoya en cada ronda."
     )
-    if estrategia:
-        rec = f"{rec} {estrategia}"
-    rec = f"{rec} Reconocer en vivo al top 3 que comenta y apoya por batalla."
     just = _resumen_arquetipo_para_categoria(
         ctx.get("arquetipo_estrategia"), nombre, "interaccion"
     )
+    if not just or "activar participación" in just.lower():
+        just = (
+            f"Como {arquetipo}, la interacción debe sentirse como reto, "
+            "competencia y reconocimiento público."
+        )
     return {
         "recomendacion": rec.strip(),
-        "justificacion": just or "Objetivo: más comentarios y retención sin solo pedir regalos.",
+        "justificacion": just,
     }
 
 
@@ -1414,11 +1677,13 @@ def _tarjeta_recomendacion_contenido(ctx: _TarjetaRecomendacionCtx) -> Dict[str,
     i1, i2, i3 = _interes_tarjeta(ctx, 0), _interes_tarjeta(ctx, 1), _interes_tarjeta(ctx, 2)
     temas = [t for t in (i1, i2, i3 if i3 else i1) if t]
 
+    arquetipo = ctx.get("arquetipo") or "su arquetipo"
+
     if len(temas) >= 3:
         parrilla = (
-            f"Live 1 — {temas[0]} (batalla o reto corto). "
-            f"Live 2 — {temas[1]} (energía entre partidas). "
-            f"Live 3 — {temas[2]} (cierre con gancho al próximo live)."
+            f"Live 1 — {temas[0]} con batalla o reto corto. "
+            f"Live 2 — {temas[1]} con energía entre partidas. "
+            f"Live 3 — {temas[2]} con cierre y gancho al próximo LIVE."
         )
     elif len(temas) == 2:
         parrilla = (
@@ -1429,12 +1694,14 @@ def _tarjeta_recomendacion_contenido(ctx: _TarjetaRecomendacionCtx) -> Dict[str,
     else:
         parrilla = "Tres lives con un formato distinto cada día (apertura, batalla, cierre)."
 
-    rec = f"Para {nombre}: mini parrilla semanal. {parrilla} Guion de 5 min antes de entrar."
-    just = _resumen_arquetipo_para_categoria(
-        ctx.get("arquetipo_estrategia"), nombre, "contenido"
+    rec = (
+        f"Para {nombre}: mini parrilla semanal. {parrilla} "
+        "Preparar guion de 5 minutos antes de entrar."
     )
-    if not just:
-        just = "Un tema y una métrica por live; evita improvisar en cámara."
+    just = (
+        f"Como {arquetipo}, la parrilla debe convertir sus intereses en retos visibles "
+        "desde el inicio del LIVE."
+    )
     return {"recomendacion": rec.strip(), "justificacion": just}
 
 
@@ -1457,22 +1724,14 @@ def _tarjeta_recomendacion_audiencia(ctx: _TarjetaRecomendacionCtx) -> Dict[str,
 
 
 def _tarjeta_recomendacion_horario(ctx: _TarjetaRecomendacionCtx) -> Dict[str, str]:
-    nombre = ctx["nombre"]
     horario = ctx.get("horario") or "su franja horaria principal"
-    franja = _sufijo_franja_horario("horario", horario)
-    partidas = _texto_partidas_para_manager(ctx["datos"], "horario").strip()
     rec = (
-        f"Para {nombre}: probar 7 días el mismo bloque horario{franja} "
-        f"(±15 min en la hora de inicio). "
-        f"Registrar por día: asistentes, retención a 5 min, comentarios/min y regalos totales."
+        f"Definir un horario fijo en {horario} y realizar al menos 3 lives por semana. "
+        "Medir asistencia, comentarios y regalos por bloque durante 7 días."
     )
-    if partidas:
-        rec = f"{rec} {partidas}"
     return {
         "recomendacion": rec.strip(),
-        "justificacion": (
-            f"Horario preferido: {horario}. Comparar el mismo bloque sin mezclar demasiadas variables."
-        ),
+        "justificacion": "La consistencia horaria ayuda a crear expectativa y retorno de audiencia.",
     }
 
 
@@ -1489,13 +1748,12 @@ def _tarjeta_recomendacion_tecnica(ctx: _TarjetaRecomendacionCtx) -> Dict[str, s
 
 def _tarjeta_recomendacion_emocional(ctx: _TarjetaRecomendacionCtx) -> Dict[str, str]:
     nombre = ctx["nombre"]
-    franja = _sufijo_franja_horario("emocional", ctx.get("horario") or "")
     return {
         "recomendacion": (
-            f"Para {nombre}: reto semanal — 3 lives{franja}; celebrar cumplimiento (3/3) "
-            f"antes de subir exigencia de metas."
+            f"Para {nombre}: reto semanal — 3 lives; celebrar cumplimiento (3/3) "
+            "antes de subir exigencia de metas."
         ),
-        "justificacion": "Prioridad: energía y ritmo sin saturar al creador.",
+        "justificacion": "Prioridad: sostener energía y ritmo sin saturar al creador.",
     }
 
 
@@ -1893,77 +2151,95 @@ No uses markdown. No incluyas texto fuera del JSON.
 """
 
 
+_EJEMPLO_FEW_SHOT_RECOMENDACIONES = """
+EJEMPLO DE SALIDA ESPERADA (creador inventado — imita el estilo, no los datos):
+{
+  "recomendaciones": [
+    {
+      "categoria": "emocional",
+      "prioridad": "alta",
+      "recomendacion": "Para Luna: reto semanal — 3 lives; celebrar cumplimiento 3/3 antes de subir exigencia de metas.",
+      "justificacion": "Prioridad: sostener energía y ritmo sin saturar a la creadora."
+    },
+    {
+      "categoria": "horario",
+      "prioridad": "alta",
+      "recomendacion": "Definir un horario fijo en Noche (7pm–11pm) y realizar al menos 3 lives por semana. Medir asistencia, comentarios y regalos por bloque durante 7 días.",
+      "justificacion": "La consistencia horaria ayuda a crear expectativa y retorno de audiencia."
+    },
+    {
+      "categoria": "contenido",
+      "prioridad": "alta",
+      "recomendacion": "Para Luna: mini parrilla semanal. Live 1 — Baile con reto corto. Live 2 — Moda con votación de outfit. Live 3 — Humor con cierre y gancho al próximo LIVE. Preparar guion de 5 minutos antes de entrar.",
+      "justificacion": "Como creadora de entretenimiento, la parrilla debe convertir sus intereses en momentos visibles desde el inicio del LIVE."
+    },
+    {
+      "categoria": "interaccion",
+      "prioridad": "alta",
+      "recomendacion": "Para Luna: dinámica competitiva con 2 equipos, pregunta rápida antes de cada reto y ranking simbólico en pantalla. Reconocer en vivo al top 3 que comenta o apoya en cada ronda.",
+      "justificacion": "La interacción debe sentirse como juego, competencia y reconocimiento público."
+    },
+    {
+      "categoria": "monetizacion",
+      "prioridad": "alta",
+      "recomendacion": "Establecer metas pequeñas de regalos por tramo usando Baile como mini reto: apertura para activar el primer reto, mitad del LIVE para desbloquear una ronda extra y cierre para elegir el reto del próximo LIVE.",
+      "justificacion": "La meta Bronce de 5000 diamantes necesita tramos pequeños para que la audiencia sienta avance y participe con más facilidad."
+    }
+  ]
+}
+"""
+
+
 def prompt_recomendaciones_manager(contexto: Dict[str, Any], max_recomendaciones: int, instrucciones_extra: Optional[str] = None) -> str:
     extra = f"\nInstrucciones adicionales:\n{instrucciones_extra}\n" if instrucciones_extra else ""
     reglas = _reglas_personalizacion_ia_obligatorias(contexto)
     datos_obligatorios = _bloque_datos_obligatorios_recomendaciones(contexto)
+    datos_por_categoria = _bloque_datos_por_categoria_recomendaciones(contexto)
 
     return f"""
 Eres un coach senior de creadores TikTok LIVE y asesor de managers de agencia.
-Tu única tarea: generar recomendaciones operativas ULTRA ESPECÍFICAS para el creador del contexto.
+Genera recomendaciones operativas específicas para el creador del contexto.
+Responde únicamente con un objeto JSON válido en español.
 
 {datos_obligatorios}
+
+{datos_por_categoria}
 
 {reglas}
 
 {_REGLAS_ANTI_REPETICION_TARJETAS}
 
-Datos completos para análisis interno:
+{_EJEMPLO_FEW_SHOT_RECOMENDACIONES}
+
+Reglas de salida:
+- Usa los datos reales del creador del contexto, no los del ejemplo.
+- Devuelve JSON válido con la clave "recomendaciones".
+- No repitas horario fuera de la tarjeta horario.
+- No repitas partidas fuera de monetización.
+- No repitas la misma mecánica dos veces en una tarjeta.
+- Máximo 420 caracteres en "recomendacion" y 220 en "justificacion".
+- Texto natural para manager; sin nombres técnicos internos.
+- Entre 1 y {max_recomendaciones} recomendaciones; prioridad "alta" salvo caída fuerte (entonces "critica").
+- Si partidas >100% de diamantes, no uses el porcentaje como cifra exacta.
+
+Contexto completo (solo para razonar; no copies nombres de campos al manager):
 {contexto_para_prompt(contexto)}
 
 {extra}
 
 {_REGLAS_PROHIBIDO_LENGUAJE_TECNICO_MANAGER}
 
-REGLA CRÍTICA SOBRE ARQUETIPO:
-El significado del arquetipo viene del catálogo operativo de arquetipos.
-Usa su definición operativa, estilo LIVE, dinámicas recomendadas, estrategias de contenido,
-interacción, monetización y riesgos a evitar.
-No interpretes el arquetipo solo por el nombre.
-No copies la definición larga completa: resume en una frase operativa.
-
-REGLA CRÍTICA — UNA TARJETA CORTA POR CATEGORÍA (no copies el mismo plan en todas):
-Cada recomendación debe ser breve (2–4 oraciones en "recomendacion", 1–2 en "justificacion").
-NO repitas horario, arquetipo ni partidas en todas las tarjetas; cada dato va solo donde aporta.
-
-Enfoque obligatorio por categoría:
-- monetizacion: metas de regalos, tramos, batallas, conversión. Máx. 1 interés como gancho. Partidas y meta aquí si aplica.
-- interaccion: chat, equipos, preguntas, ranking, reconocimiento. Arquetipo aquí. Sin repetir los 3 intereses.
-- contenido: parrilla de lives, temas y formatos (Live 1/2/3). Sin horario ni partidas.
-- audiencia: follows, comunidad, retorno al próximo live. Sin horario.
-- horario: prueba de bloque fijo 7 días y métricas a comparar. Horario solo aquí (y en disciplina/emocional si aplica).
-- tecnica: luz, audio, conexión, encuadre. Sin intereses ni arquetipo largo.
-- emocional: consistencia, energía, reto semanal alcanzable.
-- disciplina: rutina mínima de lives y preparación.
-
-TONO Y FORMATO (obligatorio):
-- Texto para manager, no técnico.
-- Máximo 420 caracteres en "recomendacion" y 220 en "justificacion".
-- Prohibido repetir "en [horario]" fuera de categoría horario/disciplina/emocional.
-- Prohibido pegar los 3 intereses en monetización, interacción y contenido a la vez.
-- Usa prioridad "critica" solo con caída fuerte o alerta crítica; si no, "alta".
-- Si partidas >100% de diamantes, no uses el porcentaje como cifra exacta.
-
-La "justificacion" es una frase de por qué importa esa categoría, sin duplicar la recomendación.
-
-Devuelve JSON válido con este formato:
+Formato JSON requerido:
 {{
   "recomendaciones": [
     {{
       "categoria": "monetizacion|disciplina|horario|contenido|interaccion|audiencia|tecnica|emocional|otro",
       "prioridad": "baja|media|alta|critica",
-      "recomendacion": "acción concreta que debe revisar el manager",
-      "justificacion": "por qué se recomienda según métricas o perfil"
+      "recomendacion": "acción concreta para el manager",
+      "justificacion": "por qué importa según métricas o perfil"
     }}
   ]
 }}
-
-Reglas:
-- Exactamente entre 1 y {max_recomendaciones} recomendaciones.
-- No repitas recomendaciones ya existentes en contexto.recomendaciones.
-- Si falta un dato obligatorio, escribe "sin dato de X" en esa recomendación; no inventes ni generalices.
-- No uses markdown.
-- No incluyas texto fuera del JSON.
 """
 
 
