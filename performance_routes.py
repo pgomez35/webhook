@@ -1230,7 +1230,7 @@ def generar_recomendaciones_ia(
     resultado = _normalizar_resultado_recomendaciones_ia(
         contexto, resultado, data.max_recomendaciones
     )
-    resultado = _aplicar_pulido_final_recomendaciones(resultado)
+    resultado = _aplicar_pulido_final_recomendaciones(resultado, contexto)
     recomendaciones = resultado.get("recomendaciones", []) if isinstance(resultado, dict) else []
 
     guardadas = []
@@ -1436,7 +1436,10 @@ def generar_analisis_completo_ia(
         recomendaciones_result,
         5,
     )
-    recomendaciones_result = _aplicar_pulido_final_recomendaciones(recomendaciones_result)
+    recomendaciones_result = _aplicar_pulido_final_recomendaciones(
+        recomendaciones_result,
+        contexto,
+    )
 
     alertas_score_result = openai_json_completion(
         prompt_alertas_score_ia(contexto, data.instrucciones_extra),

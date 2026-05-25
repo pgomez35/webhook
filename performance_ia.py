@@ -34,11 +34,11 @@ from performance_core import (
 _REGLAS_ANTI_REPETICION_TARJETAS = """
 REGLAS ANTI-REPETICIÓN ENTRE TARJETAS (obligatorio):
 - horario: solo franja horaria, días fijos de transmisión y métrica a revisar en 7 días. No repitas intereses ni parrilla.
-- emocional: energía, ritmo y celebración de avances. NO repitas horario ni cantidad de lives si ya hay tarjeta de horario.
+- emocional: reto semanal 3 lives, celebrar cumplimiento 3/3 antes de subir metas. Sin horario ni diamantes.
 - disciplina: rutina mínima y preparación. NO repitas horario si ya hay tarjeta de horario.
-- contenido: parrilla en formato Live 1 / Live 2 / Live 3 con un interés por live. Sin horario ni partidas.
-- interacción: equipos, preguntas rápidas, ranking simbólico o reconocimiento por nombre. Sin repetir los 3 intereses enteros.
-- monetización: metas por tramos, regalos pequeños, batalla o diamantes. Un solo interés como gancho si aplica.
+- contenido: parrilla Live 1 / Live 2 / Live 3 con un interés por live. Sin horario ni partidas.
+- interacción: 2 equipos, pregunta rápida, ranking simbólico y top 3 por ronda. Sin repetir «dividir equipos» dos veces.
+- monetización: metas pequeñas por tramo (apertura, mitad del LIVE, cierre). Un interés como gancho.
 """
 
 
@@ -403,13 +403,13 @@ def _bloque_datos_por_categoria_recomendaciones(contexto: Dict[str, Any]) -> str
             "- monetizacion:",
             (
                 f"  meta: {_v(d.get('meta_diamantes'))} | categoría: {_v(d.get('categoria_nombre'))} | "
-                f"partidas: {_v(d.get('texto_partidas_manager'))} | interés gancho: "
-                f"{intereses[0] if intereses else 'sin dato'}"
+                f"interés gancho: {intereses[0] if intereses else 'sin dato'} | "
+                "tramos: apertura, mitad del LIVE, cierre"
             ),
             "- interaccion:",
             (
-                f"  arquetipo: {_v(d.get('arquetipo'))} | equipos, ranking, preguntas, reconocimiento | "
-                f"dinámicas: {_v((d.get('arquetipo_interaccion') or [])[:2])}"
+                f"  arquetipo: {_v(d.get('arquetipo'))} | 2 equipos, pregunta rápida, ranking simbólico, "
+                f"top 3 por ronda | dinámicas: {_v((d.get('arquetipo_interaccion') or [])[:2])}"
             ),
             "- contenido:",
             f"  intereses: {intereses_txt} | mini parrilla Live 1 / Live 2 / Live 3",
@@ -420,7 +420,10 @@ def _bloque_datos_por_categoria_recomendaciones(contexto: Dict[str, Any]) -> str
             "- tecnica:",
             "  luz, audio, conexión, encuadre, portada, título",
             "- emocional:",
-            f"  energía, confianza, reto semanal (3 lives) | no saturar a {_v(d.get('nombre_creador'))}",
+            (
+                f"  reto semanal 3 lives, celebrar 3/3 antes de subir metas | "
+                f"sin horario ni diamantes | no saturar a {_v(d.get('nombre_creador'))}"
+            ),
             "- disciplina:",
             "  rutina mínima, preparación pre-LIVE, cumplimiento semanal",
         ]
@@ -1151,26 +1154,85 @@ def _justificacion_contenido_natural(justificacion: str) -> str:
     )
 
 
-def _justificacion_monetizacion_natural(justificacion: str) -> str:
-    texto = (justificacion or "").strip()
-    if not texto or "tramos pequeños" in texto.lower():
-        return texto
+def _texto_tiene_tramos_monetizacion(texto: str) -> bool:
+    tl = (texto or "").lower()
+    return (
+        "apertura" in tl
+        and ("mitad" in tl or "entre batalla" in tl)
+        and "cierre" in tl
+    )
 
-    match_meta = re.search(r"(?i)meta\s+(\d[\d.,]*)\s+diamantes", texto)
-    match_cat = re.search(r"(?i)categor[ií]a\s+([^,;.]+)", texto)
-    if match_meta:
-        meta_n = match_meta.group(1).replace(",", "")
-        cat_n = match_cat.group(1).strip() if match_cat else "asignada"
+
+def _texto_tiene_ranking_y_top(texto: str) -> bool:
+    tl = (texto or "").lower()
+    tiene_ranking = _texto_contiene_alguna(
+        tl,
+        ("ranking", "puntuación", "puntuacion", "tabla de puntos", "marcador"),
+    )
+    tiene_top = _texto_contiene_alguna(
+        tl,
+        (
+            "top 3",
+            "top tres",
+            "3 mejores",
+            "tres mejores",
+            "mejores que comenta",
+            "mejores que apoya",
+            "top coment",
+            "reconocer en vivo",
+        ),
+    )
+    return tiene_ranking and tiene_top
+
+
+def _recomendacion_monetizacion_estructurada(interes: str = "") -> str:
+    tramos = (
+        "apertura para activar el primer mini reto, mitad del LIVE para desbloquear "
+        "30 segundos de energía y cierre para elegir el reto del próximo LIVE."
+    )
+    if interes:
         return (
-            f"La meta {cat_n} de {meta_n} diamantes necesita tramos pequeños para que "
-            "la audiencia sienta avance y participe con más facilidad."
+            f"Implementar metas pequeñas de regalos por tramo usando {interes} como gancho: "
+            f"{tramos}"
         )
-    if "priorizar conversión" in texto.lower() or "regalos por tramo" in texto.lower():
-        return (
-            "Los tramos pequeños de regalos ayudan a que la audiencia sienta avance "
-            "y participe con más facilidad."
-        )
-    return texto
+    return f"Implementar metas pequeñas de regalos por tramo: {tramos}"
+
+
+def _justificacion_monetizacion_desde_datos(datos: Optional[Dict[str, Any]] = None) -> str:
+    datos = datos or {}
+    cat = datos.get("categoria_nombre")
+    meta = datos.get("meta_diamantes")
+    if cat and meta not in (None, ""):
+        try:
+            meta_n = int(float(meta))
+            return (
+                f"Esto convierte la meta {cat} de {meta_n} diamantes en pasos pequeños y "
+                "más fáciles de apoyar para la audiencia."
+            )
+        except Exception:
+            pass
+    return (
+        "Esto convierte la meta mensual en pasos pequeños y más fáciles de apoyar "
+        "para la audiencia."
+    )
+
+
+def _justificacion_monetizacion_natural(
+    justificacion: str,
+    datos: Optional[Dict[str, Any]] = None,
+) -> str:
+    texto = (justificacion or "").strip()
+    jl = texto.lower()
+    if datos and (
+        not texto
+        or "necesita tramos" in jl
+        or "priorizar conversión" in jl
+        or "pasos pequeños" not in jl
+    ):
+        return _justificacion_monetizacion_desde_datos(datos)
+    if texto and "esto convierte" in jl:
+        return texto
+    return _justificacion_monetizacion_desde_datos(datos)
 
 
 def _justificacion_interaccion_natural(justificacion: str, recomendacion: str) -> str:
@@ -1179,15 +1241,98 @@ def _justificacion_interaccion_natural(justificacion: str, recomendacion: str) -
         return texto
 
     match = re.search(r"(?i)como\s+([^,]+),", texto or recomendacion or "")
-    arquetipo = match.group(1).strip() if match else "Batallista"
+    if match:
+        arquetipo = match.group(1).strip()
+        return (
+            f"Como {arquetipo}, la interacción debe sentirse como reto, "
+            "competencia y reconocimiento público."
+        )
     return (
-        f"Como {arquetipo}, la interacción debe sentirse como reto, "
-        "competencia y reconocimiento público."
+        "La interacción debe sentirse como juego, participación y reconocimiento público."
     )
+
+
+def _recomendacion_interaccion_estructurada() -> str:
+    return (
+        "Dividir la audiencia en 2 equipos antes de cada batalla, lanzar una pregunta rápida "
+        "y mostrar un ranking simbólico. Reconocer en vivo al top 3 que comenta o apoya en cada ronda."
+    )
+
+
+def _enriquecer_recomendacion_interaccion_si_falta(recomendacion: str) -> str:
+    """Añade solo lo que falta; no reemplaza texto ya bueno con sinónimos distintos."""
+    base = (recomendacion or "").strip()
+    if not base:
+        return _recomendacion_interaccion_estructurada()
+
+    tl = base.lower()
+    if _texto_tiene_ranking_y_top(base) and _texto_contiene_alguna(
+        tl, ("equipo", "pregunta", "batalla", "ronda"),
+    ):
+        return _quitar_oraciones_interaccion_redundantes(base)
+
+    if len(base) < 55:
+        return _recomendacion_interaccion_estructurada()
+
+    extras: List[str] = []
+    if not _texto_contiene_alguna(tl, ("pregunta", "preguntar")):
+        extras.append("lanzar una pregunta rápida antes de cada batalla")
+    if not _texto_contiene_alguna(tl, ("ranking", "puntuación", "puntuacion", "marcador")):
+        extras.append("mostrar un ranking simbólico en pantalla")
+    if not _texto_contiene_alguna(
+        tl,
+        (
+            "top 3",
+            "top tres",
+            "3 mejores",
+            "tres mejores",
+            "mejores que comenta",
+            "mejores que apoya",
+            "reconocer en vivo",
+        ),
+    ):
+        extras.append("reconocer en vivo al top 3 que comenta o apoya en cada ronda")
+
+    if not extras:
+        return _quitar_oraciones_interaccion_redundantes(base)
+
+    return f"{base.rstrip('.')}. {' '.join(extras)}."
+
+
+def _texto_tiene_cumplimiento_3_3(texto: str) -> bool:
+    tl = (texto or "").lower()
+    return _texto_contiene_alguna(
+        tl,
+        ("3/3", "3 de 3", "tres de tres", "tres en tres", "cumplimiento 3"),
+    )
+
+
+def _recomendacion_emocional_estructurada() -> str:
+    return (
+        "Establecer un reto semanal de 3 lives y celebrar el cumplimiento 3/3 "
+        "antes de subir exigencia de metas."
+    )
+
+
+def _limpiar_emocional_de_horario_y_metricas(
+    texto: str,
+    horario: str = "",
+) -> str:
+    limpio = _limpiar_horario_de_texto_emocional_disciplina(texto, horario)
+    limpio = re.sub(
+        r"(?i)\b(?:tarde|mañana|noche)\s*\([^)]+\)",
+        "",
+        limpio,
+    )
+    limpio = re.sub(r"(?i)\b\d+\s*lives?\s+semanal(?:es)?\b", "3 lives", limpio)
+    limpio = re.sub(r"(?i)\bdiamantes?\b", "", limpio)
+    limpio = re.sub(r"\s{2,}", " ", limpio).strip()
+    return limpio
 
 
 def _pulir_recomendacion_por_categoria(
     rec: Dict[str, Any],
+    contexto: Optional[Dict[str, Any]] = None,
     *,
     hay_tarjeta_horario: bool = False,
 ) -> Dict[str, Any]:
@@ -1197,38 +1342,65 @@ def _pulir_recomendacion_por_categoria(
     cat = _normalizar_categoria_recomendacion(rec.get("categoria") or "otro")
     recomendacion = str(rec.get("recomendacion") or "").strip()
     justificacion = str(rec.get("justificacion") or recomendacion).strip()
+    datos = (
+        _extraer_datos_personalizacion_recomendaciones(contexto)
+        if contexto
+        else {}
+    )
+    horario_ctx = str(datos.get("horario") or "")
 
-    if cat == "interaccion":
-        recomendacion = _quitar_oraciones_interaccion_redundantes(recomendacion)
+    if cat == "monetizacion":
+        tl = recomendacion.lower()
+        if (
+            _texto_contiene_alguna(
+                tl,
+                ("metas pequeñas", "por tramo", "regalos por tramo", "mini reto"),
+            )
+            and not _texto_tiene_tramos_monetizacion(recomendacion)
+        ):
+            interes = (datos.get("intereses_lista") or [""])[0] if datos.get("intereses_lista") else ""
+            recomendacion = _recomendacion_monetizacion_estructurada(str(interes or ""))
+        justificacion = _justificacion_monetizacion_natural(justificacion, datos)
+
+    elif cat == "interaccion":
+        recomendacion = _enriquecer_recomendacion_interaccion_si_falta(recomendacion)
         justificacion = _justificacion_interaccion_natural(justificacion, recomendacion)
 
     elif cat == "contenido":
+        recomendacion = _pulir_frases_roboticas_manager(recomendacion)
+        justificacion = _pulir_frases_roboticas_manager(justificacion)
         just_l = justificacion.lower()
-        if (
+        justificacion_robotica = (
             "convertir convertir" in just_l
             or "con convertir" in just_l
             or "por live" in just_l
-            or "desde convertir" in just_l
-            or len(justificacion) > 200
-        ):
-            justificacion = _justificacion_contenido_natural(justificacion)
+            or "debe construirse" in just_l
+            or (
+                "como batallista" in just_l
+                and "ayuda a atraer" not in just_l
+            )
+        )
+        if justificacion_robotica:
+            justificacion = (
+                "Convertir intereses en retos visibles desde el inicio del LIVE ayuda a atraer "
+                "y mantener la atención de la audiencia."
+            )
 
-    elif cat == "monetizacion":
-        justificacion = _justificacion_monetizacion_natural(justificacion)
+    elif cat == "emocional":
+        recomendacion = _limpiar_emocional_de_horario_y_metricas(recomendacion, horario_ctx)
+        if (
+            not _texto_tiene_cumplimiento_3_3(recomendacion)
+            or "reto semanal" not in recomendacion.lower()
+        ):
+            recomendacion = _recomendacion_emocional_estructurada()
+        if "sostener energía" not in justificacion.lower():
+            justificacion = "Prioridad: sostener energía y ritmo sin saturar al creador."
 
     elif cat == "horario":
         if "consistencia horaria" not in justificacion.lower():
             justificacion = (
                 "La consistencia horaria ayuda a crear expectativa y retorno de audiencia."
             )
-
-    elif cat == "emocional" and hay_tarjeta_horario:
-        recomendacion = _limpiar_horario_de_texto_emocional_disciplina(
-            recomendacion,
-            "",
-        )
-        if "sostener energía" not in justificacion.lower():
-            justificacion = "Prioridad: sostener energía y ritmo sin saturar al creador."
 
     salida = dict(rec)
     salida["recomendacion"] = recomendacion
@@ -1244,11 +1416,7 @@ def _pulir_texto_recomendacion_final(texto: Any) -> str:
     return normalizar_texto_parrafos(limpio)
 
 
-def _pulir_recomendacion_item(
-    rec: Dict[str, Any],
-    *,
-    hay_tarjeta_horario: bool = False,
-) -> Dict[str, Any]:
+def _pulir_recomendacion_item(rec: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(rec, dict):
         return rec
     salida = dict(rec)
@@ -1256,10 +1424,13 @@ def _pulir_recomendacion_item(
     salida["justificacion"] = _pulir_texto_recomendacion_final(
         rec.get("justificacion") or rec.get("recomendacion")
     )
-    return _pulir_recomendacion_por_categoria(salida, hay_tarjeta_horario=hay_tarjeta_horario)
+    return salida
 
 
-def _aplicar_pulido_final_recomendaciones(resultado: Any) -> Dict[str, Any]:
+def _aplicar_pulido_final_recomendaciones(
+    resultado: Any,
+    contexto: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     salida: Dict[str, Any] = resultado if isinstance(resultado, dict) else {}
     recs = salida.get("recomendaciones")
     if isinstance(recs, list):
@@ -1268,11 +1439,18 @@ def _aplicar_pulido_final_recomendaciones(resultado: Any) -> Dict[str, Any]:
             for r in recs
             if isinstance(r, dict)
         )
-        salida["recomendaciones"] = [
-            _pulir_recomendacion_item(r, hay_tarjeta_horario=hay_tarjeta_horario)
-            for r in recs
-            if isinstance(r, dict)
-        ]
+        pulidas: List[Dict[str, Any]] = []
+        for r in recs:
+            if not isinstance(r, dict):
+                continue
+            item = _pulir_recomendacion_item(r)
+            item = _pulir_recomendacion_por_categoria(
+                item,
+                contexto,
+                hay_tarjeta_horario=hay_tarjeta_horario,
+            )
+            pulidas.append(item)
+        salida["recomendaciones"] = pulidas
     return salida
 
 
@@ -1620,52 +1798,20 @@ def _interes_tarjeta(ctx: _TarjetaRecomendacionCtx, indice: int) -> str:
 
 
 def _tarjeta_recomendacion_monetizacion(ctx: _TarjetaRecomendacionCtx) -> Dict[str, str]:
-    nombre = ctx["nombre"]
     i1 = _interes_tarjeta(ctx, 0)
-    cat_nombre = str(ctx.get("categoria_nombre") or "la categoría").strip()
-    meta = ctx.get("meta_diamantes")
-    gancho = f"usando {i1} como mini reto" if i1 else "con mini retos visibles"
-
-    rec = (
-        f"Establecer metas pequeñas de regalos por tramo {gancho}: "
-        "apertura para activar el primer reto, entre batallas para desbloquear "
-        "30 segundos de energía y cierre para elegir el reto del próximo LIVE."
-    )
-    if meta not in (None, ""):
-        try:
-            meta_n = int(float(meta))
-            just = (
-                f"La meta {cat_nombre} de {meta_n} diamantes necesita tramos pequeños para que "
-                "la audiencia sienta avance y participe con más facilidad."
-            )
-        except Exception:
-            just = (
-                "Los tramos pequeños de regalos ayudan a que la audiencia sienta avance "
-                "y participe con más facilidad."
-            )
-    else:
-        just = (
-            "La meta mensual necesita tramos pequeños para que la audiencia sienta avance "
-            "y participe con más facilidad."
-        )
+    datos = ctx.get("datos") or {}
+    rec = _recomendacion_monetizacion_estructurada(i1)
+    just = _justificacion_monetizacion_desde_datos(datos)
     return {"recomendacion": rec.strip(), "justificacion": just}
 
 
 def _tarjeta_recomendacion_interaccion(ctx: _TarjetaRecomendacionCtx) -> Dict[str, str]:
-    nombre = ctx["nombre"]
     arquetipo = ctx.get("arquetipo") or "Batallista"
-    rec = (
-        f"Para {nombre}: dinámica {arquetipo} con 2 equipos, pregunta rápida antes de cada batalla "
-        "y ranking simbólico en pantalla. Reconocer en vivo al top 3 que comenta o apoya en cada ronda."
+    rec = _recomendacion_interaccion_estructurada()
+    just = (
+        f"Como {arquetipo}, la interacción debe sentirse como reto, "
+        "competencia y reconocimiento público."
     )
-    just = _resumen_arquetipo_para_categoria(
-        ctx.get("arquetipo_estrategia"), nombre, "interaccion"
-    )
-    if not just or "activar participación" in just.lower():
-        just = (
-            f"Como {arquetipo}, la interacción debe sentirse como reto, "
-            "competencia y reconocimiento público."
-        )
     return {
         "recomendacion": rec.strip(),
         "justificacion": just,
@@ -1673,17 +1819,14 @@ def _tarjeta_recomendacion_interaccion(ctx: _TarjetaRecomendacionCtx) -> Dict[st
 
 
 def _tarjeta_recomendacion_contenido(ctx: _TarjetaRecomendacionCtx) -> Dict[str, str]:
-    nombre = ctx["nombre"]
     i1, i2, i3 = _interes_tarjeta(ctx, 0), _interes_tarjeta(ctx, 1), _interes_tarjeta(ctx, 2)
     temas = [t for t in (i1, i2, i3 if i3 else i1) if t]
 
-    arquetipo = ctx.get("arquetipo") or "su arquetipo"
-
     if len(temas) >= 3:
         parrilla = (
-            f"Live 1 — {temas[0]} con batalla o reto corto. "
-            f"Live 2 — {temas[1]} con energía entre partidas. "
-            f"Live 3 — {temas[2]} con cierre y gancho al próximo LIVE."
+            f"Live 1 — {temas[0]} con mini reto; "
+            f"Live 2 — {temas[1]} con votación de canción; "
+            f"Live 3 — {temas[2]} con duelo de estilos."
         )
     elif len(temas) == 2:
         parrilla = (
@@ -1694,13 +1837,10 @@ def _tarjeta_recomendacion_contenido(ctx: _TarjetaRecomendacionCtx) -> Dict[str,
     else:
         parrilla = "Tres lives con un formato distinto cada día (apertura, batalla, cierre)."
 
-    rec = (
-        f"Para {nombre}: mini parrilla semanal. {parrilla} "
-        "Preparar guion de 5 minutos antes de entrar."
-    )
+    rec = f"Mini parrilla semanal: {parrilla}"
     just = (
-        f"Como {arquetipo}, la parrilla debe convertir sus intereses en retos visibles "
-        "desde el inicio del LIVE."
+        "Convertir intereses en retos visibles desde el inicio del LIVE ayuda a atraer "
+        "y mantener la atención de la audiencia."
     )
     return {"recomendacion": rec.strip(), "justificacion": just}
 
@@ -1747,12 +1887,8 @@ def _tarjeta_recomendacion_tecnica(ctx: _TarjetaRecomendacionCtx) -> Dict[str, s
 
 
 def _tarjeta_recomendacion_emocional(ctx: _TarjetaRecomendacionCtx) -> Dict[str, str]:
-    nombre = ctx["nombre"]
     return {
-        "recomendacion": (
-            f"Para {nombre}: reto semanal — 3 lives; celebrar cumplimiento (3/3) "
-            "antes de subir exigencia de metas."
-        ),
+        "recomendacion": _recomendacion_emocional_estructurada(),
         "justificacion": "Prioridad: sostener energía y ritmo sin saturar al creador.",
     }
 
@@ -2111,7 +2247,7 @@ def _normalizar_resultado_recomendaciones_ia(
         datos,
     )
     salida["recomendaciones"] = normalizadas
-    return _aplicar_pulido_final_recomendaciones(salida)
+    return _aplicar_pulido_final_recomendaciones(salida, contexto)
 
 def prompt_diagnostico_performance(contexto: Dict[str, Any], instrucciones_extra: Optional[str] = None) -> str:
     extra = f"\nInstrucciones adicionales del manager:\n{instrucciones_extra}\n" if instrucciones_extra else ""
@@ -2158,7 +2294,7 @@ EJEMPLO DE SALIDA ESPERADA (creador inventado — imita el estilo, no los datos)
     {
       "categoria": "emocional",
       "prioridad": "alta",
-      "recomendacion": "Para Luna: reto semanal — 3 lives; celebrar cumplimiento 3/3 antes de subir exigencia de metas.",
+      "recomendacion": "Establecer un reto semanal de 3 lives y celebrar el cumplimiento 3/3 antes de subir exigencia de metas.",
       "justificacion": "Prioridad: sostener energía y ritmo sin saturar a la creadora."
     },
     {
@@ -2170,20 +2306,20 @@ EJEMPLO DE SALIDA ESPERADA (creador inventado — imita el estilo, no los datos)
     {
       "categoria": "contenido",
       "prioridad": "alta",
-      "recomendacion": "Para Luna: mini parrilla semanal. Live 1 — Baile con reto corto. Live 2 — Moda con votación de outfit. Live 3 — Humor con cierre y gancho al próximo LIVE. Preparar guion de 5 minutos antes de entrar.",
-      "justificacion": "Como creadora de entretenimiento, la parrilla debe convertir sus intereses en momentos visibles desde el inicio del LIVE."
+      "recomendacion": "Mini parrilla semanal: Live 1 — Baile con mini reto; Live 2 — Moda con votación de canción; Live 3 — Humor con duelo de estilos.",
+      "justificacion": "Convertir intereses en retos visibles desde el inicio del LIVE ayuda a atraer y mantener la atención de la audiencia."
     },
     {
       "categoria": "interaccion",
       "prioridad": "alta",
-      "recomendacion": "Para Luna: dinámica competitiva con 2 equipos, pregunta rápida antes de cada reto y ranking simbólico en pantalla. Reconocer en vivo al top 3 que comenta o apoya en cada ronda.",
-      "justificacion": "La interacción debe sentirse como juego, competencia y reconocimiento público."
+      "recomendacion": "Dividir la audiencia en 2 equipos antes de cada batalla, lanzar una pregunta rápida y mostrar un ranking simbólico. Reconocer en vivo al top 3 que comenta o apoya en cada ronda.",
+      "justificacion": "Como creadora de entretenimiento, la interacción debe sentirse como reto, competencia y reconocimiento público."
     },
     {
       "categoria": "monetizacion",
       "prioridad": "alta",
-      "recomendacion": "Establecer metas pequeñas de regalos por tramo usando Baile como mini reto: apertura para activar el primer reto, mitad del LIVE para desbloquear una ronda extra y cierre para elegir el reto del próximo LIVE.",
-      "justificacion": "La meta Bronce de 5000 diamantes necesita tramos pequeños para que la audiencia sienta avance y participe con más facilidad."
+      "recomendacion": "Implementar metas pequeñas de regalos por tramo usando Baile como gancho: apertura para activar el primer mini reto, mitad del LIVE para desbloquear 30 segundos de energía y cierre para elegir el reto del próximo LIVE.",
+      "justificacion": "Esto convierte la meta Bronce de 5000 diamantes en pasos pequeños y más fáciles de apoyar para la audiencia."
     }
   ]
 }
