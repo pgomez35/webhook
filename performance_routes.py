@@ -1152,26 +1152,22 @@ def debug_datos_tablas_ia(
     anonimizar: bool = Query(default=True),
 ):
     """
-    Exporta solo filas crudas de tablas del creador para pruebas IA externas.
-    No invoca OpenAI ni incluye base de conocimiento ni análisis calculados.
+    Exporta un JSON compacto con datos reales de tablas para pruebas externas de IA.
+
+    No llama OpenAI.
+    No incluye base_conocimiento.
+    No incluye insights.
+    No incluye recomendaciones.
+    No incluye score.
+    No incluye alertas.
+    No incluye acciones.
+    No incluye seguimientos.
     """
-    resultado = obtener_datos_tablas_debug_ia(
+    return obtener_datos_tablas_debug_ia(
         creador_id,
         id_reporte=id_reporte,
         anonimizar=anonimizar,
     )
-    datos_tablas = resultado.get("datos_tablas") or {}
-    if isinstance(datos_tablas, dict):
-        datos_tablas.pop("base_conocimiento", None)
-        datos_tablas.pop("ia_base_conocimiento", None)
-
-    return {
-        "ok": True,
-        "tipo": "debug_datos_tablas_ia",
-        "creador_id": resultado.get("creador_id", creador_id),
-        "id_reporte": resultado.get("id_reporte"),
-        "datos_tablas": datos_tablas,
-    }
 
 
 @router.get(

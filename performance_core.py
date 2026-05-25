@@ -8,7 +8,7 @@ import os
 import re
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
 from fastapi import HTTPException
@@ -477,12 +477,44 @@ def limpiar_datos_sensibles_debug(obj: Any) -> Any:
 
 _CLAVES_PERMITIDAS_DATOS_TABLAS_DEBUG = (
     "creador",
-    "perfil_creador",
-    "categoria_creador",
-    "arquetipo_creador",
-    "ultimo_reporte",
-    "metas_reporte",
-    "perfil_respuestas",
+    "categoria",
+    "arquetipo",
+    "reporte",
+    "metas",
+    "perfil",
+)
+
+_CAMPOS_REPORTE_DEBUG = (
+    "periodo_inicio",
+    "periodo_fin",
+    "diamantes_mes",
+    "emisiones_live_mes",
+    "duracion_live_mes",
+    "dias_validos_mes",
+    "nuevos_seguidores_mes",
+    "porcentaje_logro_diamantes",
+    "porcentaje_logro_duracion_live",
+    "porcentaje_logro_dias_validos",
+    "porcentaje_logro_nuevos_seguidores",
+    "porcentaje_logro_emisiones",
+    "variacion_diamantes_mes_anterior",
+    "variacion_duracion_live_mes_anterior",
+    "variacion_dias_validos_mes_anterior",
+    "variacion_nuevos_seguidores_mes_anterior",
+    "variacion_emisiones_mes_anterior",
+    "partidas",
+    "diamantes_de_partidas",
+)
+
+_CAMPOS_METAS_DEBUG = (
+    "periodo_inicio",
+    "periodo_fin",
+    "meta_diamantes",
+    "meta_horas_live",
+    "meta_dias_validos",
+    "meta_emisiones",
+    "meta_nuevos_seguidores",
+    "fuente",
 )
 
 _CLAVES_PROHIBIDAS_DATOS_TABLAS_DEBUG = frozenset({
@@ -508,6 +540,157 @@ _CLAVES_PROHIBIDAS_DATOS_TABLAS_DEBUG = frozenset({
     "schema_salida_esperado",
     "prompt_para_copiar",
 })
+
+
+def _dict_compacto_debug(
+    row: Optional[Dict[str, Any]],
+    campos: Tuple[str, ...],
+) -> Dict[str, Any]:
+    if not row:
+        return {}
+    salida: Dict[str, Any] = {}
+    for campo in campos:
+        if campo not in row:
+            continue
+        valor = row[campo]
+        if valor is None or valor == "":
+            continue
+        salida[campo] = valor
+    return salida
+
+
+def _valor_json_labels_debug(valor: Any) -> Any:
+    if valor is None:
+        return None
+    if isinstance(valor, list):
+        return valor
+    if isinstance(valor, str):
+        texto = valor.strip()
+        if not texto:
+            return None
+        try:
+            return json.loads(texto)
+        except Exception:
+            return valor
+    return valor
+
+
+def _armar_creador_compacto_debug(
+    creador: Optional[Dict[str, Any]],
+    detalle: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    c = creador or {}
+    d = detalle or {}
+    salida: Dict[str, Any] = {}
+    for clave, fuentes in (
+        ("nombre", (c, d)),
+        ("nombre_artistico", (c, d)),
+        ("nickname", (c, d)),
+        ("usuario_tiktok", (c, d)),
+        ("estado", (c, d)),
+    ):
+        for fuente in fuentes:
+            valor = fuente.get(clave) or (
+                fuente.get("usuario") if clave == "usuario_tiktok" else None
+            )
+            if valor not in (None, ""):
+                salida[clave] = valor
+                break
+    return salida
+
+
+def _armar_categoria_compacto_debug(
+    categoria: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    return _dict_compacto_debug(
+        categoria,
+        ("nombre", "meta_diamantes_objetivo", "descripcion"),
+    )
+
+
+def _armar_arquetipo_compacto_debug(
+    arquetipo: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if not arquetipo:
+        return {}
+    salida = _dict_compacto_debug(
+        arquetipo,
+        ("codigo", "nombre", "descripcion_operativa"),
+    )
+    estrategia = arquetipo.get("estrategia_json")
+    if estrategia is not None:
+        if isinstance(estrategia, str):
+            try:
+                estrategia = json.loads(estrategia)
+            except Exception:
+                pass
+        salida["estrategia_json"] = estrategia
+    return salida
+
+
+def _armar_metas_compacto_debug(
+    metas_lista: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if not metas_lista:
+        return {}
+    return _dict_compacto_debug(metas_lista[0], _CAMPOS_METAS_DEBUG)
+
+
+def _armar_perfil_compacto_debug(
+    filas: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Mapa campo_db -> valor legible (labels si aplica).
+    Omite ids, timestamps y metadatos de pregunta.
+    """
+    salida: Dict[str, Any] = {}
+    for row in filas:
+        campo = (row.get("campo_db") or row.get("variable_nombre") or "").strip()
+        if not campo:
+            continue
+
+        labels = _valor_json_labels_debug(row.get("valor_json_labels"))
+        if labels is not None:
+            valor = labels
+        else:
+            valor = (
+                row.get("valor_resuelto")
+                or row.get("valor_label")
+                or row.get("valor_texto")
+            )
+            if valor is None and row.get("valor_integer") is not None:
+                valor = row.get("valor_integer")
+            if valor is None and row.get("valor_numeric") is not None:
+                valor = row.get("valor_numeric")
+
+        if valor is None or valor == "":
+            continue
+
+        if campo in salida and salida[campo] == valor:
+            continue
+        salida[campo] = valor
+
+    return salida
+
+
+def _armar_datos_tablas_compactos_debug(
+    *,
+    creador: Optional[Dict[str, Any]],
+    detalle: Optional[Dict[str, Any]],
+    categoria: Optional[Dict[str, Any]],
+    arquetipo: Optional[Dict[str, Any]],
+    reporte: Optional[Dict[str, Any]],
+    metas_lista: List[Dict[str, Any]],
+    perfil_filas: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    return {
+        "creador": _armar_creador_compacto_debug(creador, detalle),
+        "categoria": _armar_categoria_compacto_debug(categoria),
+        "arquetipo": _armar_arquetipo_compacto_debug(arquetipo),
+        "reporte": _dict_compacto_debug(reporte, _CAMPOS_REPORTE_DEBUG),
+        "metas": _armar_metas_compacto_debug(metas_lista),
+        "perfil": _armar_perfil_compacto_debug(perfil_filas),
+    }
 
 
 def _aplicar_whitelist_datos_tablas_debug(datos_tablas: Any) -> Dict[str, Any]:
@@ -2203,42 +2386,42 @@ def obtener_datos_tablas_debug_ia(
     anonimizar: bool = True,
 ) -> Dict[str, Any]:
     """
-    Exporta datos crudos de tablas para pruebas externas de IA.
+    Exporta JSON compacto con datos reales de tablas para pruebas externas de IA.
 
-    No llama OpenAI.
-    No incluye base_conocimiento.
-    No incluye insights, score, alertas, recomendaciones, acciones ni seguimientos.
-    No calcula diagnósticos ni agrega textos quemados.
+    No llama OpenAI. No incluye base_conocimiento, insights, score, alertas,
+    recomendaciones, acciones ni seguimientos. No calcula diagnósticos.
     """
     creador = obtener_creador(creador_id)
     if not creador:
         raise HTTPException(status_code=404, detail="Creador no encontrado")
 
-    perfil_creador = obtener_detalle_creador(creador_id)
-    categoria_creador = obtener_categoria_creador(creador_id)
-    arquetipo_creador = obtener_arquetipo_creador(creador_id)
-    ultimo_reporte = obtener_ultimo_reporte(creador_id, id_reporte=id_reporte)
-    metas_reporte = obtener_metas_reporte_lista(creador_id, ultimo_reporte)
-    perfil_respuestas = obtener_perfil_respuestas_debug_ia(creador_id)
+    detalle = obtener_detalle_creador(creador_id)
+    categoria = obtener_categoria_creador(creador_id)
+    arquetipo = obtener_arquetipo_creador(creador_id)
+    reporte = obtener_ultimo_reporte(creador_id, id_reporte=id_reporte)
+    metas_lista = obtener_metas_reporte_lista(creador_id, reporte)
+    perfil_filas = obtener_perfil_respuestas_debug_ia(creador_id)
 
-    datos_tablas: Dict[str, Any] = {
-        "creador": creador,
-        "perfil_creador": perfil_creador,
-        "categoria_creador": categoria_creador,
-        "arquetipo_creador": arquetipo_creador,
-        "ultimo_reporte": ultimo_reporte,
-        "metas_reporte": metas_reporte,
-        "perfil_respuestas": perfil_respuestas,
-    }
+    datos_compactos = _armar_datos_tablas_compactos_debug(
+        creador=creador,
+        detalle=detalle,
+        categoria=categoria,
+        arquetipo=arquetipo,
+        reporte=reporte,
+        metas_lista=metas_lista,
+        perfil_filas=perfil_filas,
+    )
 
     datos_serializados = _serializar_datos_tablas_debug(
-        datos_tablas,
+        datos_compactos,
         anonimizar=anonimizar,
     )
 
     return {
+        "ok": True,
+        "tipo": "debug_datos_tablas_ia",
         "creador_id": creador_id,
-        "id_reporte": (ultimo_reporte or {}).get("id_reporte") if ultimo_reporte else None,
+        "id_reporte": (reporte or {}).get("id_reporte") if reporte else None,
         "datos_tablas": datos_serializados,
     }
 
