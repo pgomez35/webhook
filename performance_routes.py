@@ -1,7 +1,6 @@
 """
 Endpoints HTTP de performance de creadores.
 """
-import json
 import os
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
@@ -43,7 +42,6 @@ from performance_core import (
     _formatear_lista_seguimientos,
     _formatear_seguimiento_respuesta,
     calcular_score_basico,
-    construir_metricas_derivadas,
     construir_perfil_estrategico,
     construir_resumen_basico,
     detectar_alertas_basicas,
@@ -66,10 +64,10 @@ from performance_core import (
     obtener_contexto_ia_manager,
     obtener_contexto_performance,
     obtener_creador,
+    obtener_datos_tablas_debug_ia,
     obtener_manager_id_por_creador,
     obtener_perfil_respuestas,
     obtener_score_actual,
-    serializable,
     openai_api_key_configurada,
     openai_disponible,
     openai_habilitado_en_agencia,
@@ -1147,233 +1145,31 @@ def _log_ia_debug_contexto(endpoint: str, creador_id: int, contexto: Dict[str, A
     )
 
 
-_LLAVES_SENSIBLES_DEBUG = frozenset({
-    "telefono",
-    "phone",
-    "email",
-    "correo",
-    "documento",
-    "cedula",
-    "password",
-    "token",
-    "api_key",
-    "secret",
-    "access_token",
-    "refresh_token",
-    "authorization",
-    "redis_url",
-    "connection_string",
-})
-
-_CAMPOS_NOMBRE_REAL_DEBUG = frozenset({
-    "nombre",
-    "nombre_real",
-    "nombre_completo",
-    "primer_nombre",
-    "apellido",
-    "apellidos",
-})
-
-_INSTRUCCIONES_MODELO_DEBUG_RECOMENDACIONES = (
-    "Eres un coach senior de creadores TikTok LIVE para una agencia. "
-    "Con base en el JSON del creador, genera recomendaciones operativas para el manager. "
-    "No inventes datos. Usa el arquetipo, intereses, horario, categoría, meta de diamantes, "
-    "partidas, métricas de performance y base de conocimiento. "
-    "Cada recomendación debe ser concreta, accionable y no repetida. "
-    "No menciones nombres técnicos internos. Responde únicamente JSON válido."
-)
-
-_SCHEMA_SALIDA_RECOMENDACIONES_DEBUG = {
-    "recomendaciones": [
-        {
-            "categoria": (
-                "monetizacion|interaccion|contenido|audiencia|horario|tecnica|emocional|disciplina|otro"
-            ),
-            "prioridad": "baja|media|alta|critica",
-            "recomendacion": "acción concreta para el manager",
-            "justificacion": "por qué se recomienda según datos del creador",
-        }
-    ]
-}
-
-_PROMPT_COPIAR_DEBUG_RECOMENDACIONES = """Analiza el siguiente JSON de contexto de un creador TikTok LIVE y genera 5 recomendaciones para el manager.
-
-Reglas:
-1. Monetización debe usar metas de regalos, tramos, diamantes, batallas o categoría/meta.
-2. Interacción debe usar equipos, preguntas, ranking, reconocimiento o chat.
-3. Contenido debe convertir intereses en una mini parrilla Live 1 / Live 2 / Live 3.
-4. Horario solo debe hablar de franja, días y medición por bloque.
-5. Emocional debe hablar de energía, confianza, constancia y no saturar.
-6. No repitas la misma acción en dos categorías.
-7. No uses lenguaje técnico interno.
-8. Devuelve únicamente JSON válido con la clave recomendaciones.
-
-JSON DEL CREADOR:
-{{contexto_prueba}}"""
-
-
-def _normalizar_llave_debug(key: Any) -> str:
-    texto = normalizar_lower(str(key or ""))
-    return (
-        texto.replace("á", "a")
-        .replace("é", "e")
-        .replace("í", "i")
-        .replace("ó", "o")
-        .replace("ú", "u")
-        .replace("ñ", "n")
-    )
-
-
-def _es_llave_sensible_debug(key: Any) -> bool:
-    llave = _normalizar_llave_debug(key)
-    if llave in _LLAVES_SENSIBLES_DEBUG:
-        return True
-    return any(
-        llave.endswith(sufijo)
-        for sufijo in ("_token", "_secret", "_password", "_api_key")
-    )
-
-
-def _limpiar_datos_sensibles_debug(obj: Any) -> Any:
-    """Recorre dict/list y elimina llaves sensibles; trunca textos muy largos."""
-    if isinstance(obj, dict):
-        limpio: Dict[str, Any] = {}
-        for clave, valor in obj.items():
-            if _es_llave_sensible_debug(clave):
-                continue
-            limpio[clave] = _limpiar_datos_sensibles_debug(valor)
-        return limpio
-
-    if isinstance(obj, list):
-        return [_limpiar_datos_sensibles_debug(item) for item in obj]
-
-    if isinstance(obj, str) and len(obj) > 3000:
-        return "[texto largo omitido para debug]"
-
-    return obj
-
-
-def _anonimizar_creador_basico_debug(basico: Dict[str, Any]) -> Dict[str, Any]:
-    """Mantiene nombre artístico / TikTok; sustituye nombre real por etiqueta genérica."""
-    salida = dict(basico)
-    tiene_alias_publico = any(
-        salida.get(campo)
-        for campo in (
-            "nombre_artistico",
-            "nickname",
-            "usuario_tiktok",
-            "usuario",
-            "tiktok",
-            "alias",
-        )
-    )
-    for campo in _CAMPOS_NOMBRE_REAL_DEBUG:
-        if campo not in salida or not salida.get(campo):
-            continue
-        if tiene_alias_publico or campo in ("nombre", "nombre_real", "nombre_completo"):
-            salida[campo] = "Creador/a"
-    return salida
-
-
-def _construir_creador_basico_debug(
-    creador: Optional[Dict[str, Any]],
-    detalle: Optional[Dict[str, Any]],
-) -> Dict[str, Any]:
-    c = dict(creador or {})
-    d = dict(detalle or {})
-    basico: Dict[str, Any] = {
-        "id": c.get("id"),
-        "nickname": c.get("nickname") or d.get("nickname"),
-        "usuario_tiktok": c.get("usuario_tiktok") or c.get("usuario") or d.get("usuario_tiktok"),
-        "nombre_artistico": c.get("nombre_artistico") or d.get("nombre_artistico"),
-        "nombre": c.get("nombre") or d.get("nombre"),
-        "nombre_real": c.get("nombre_real") or d.get("nombre_real"),
-        "estado": c.get("estado") or d.get("estado"),
-        "manager_id": d.get("manager_id"),
-        "horario_preferido": d.get("horario_preferido") or c.get("horario_preferido"),
-    }
-    return {k: v for k, v in basico.items() if v is not None and v != ""}
-
-
-def _armar_contexto_prueba_debug(
-    contexto: Dict[str, Any],
-    *,
-    anonimizar: bool,
-) -> Dict[str, Any]:
-    creador = contexto.get("creador") or {}
-    detalle = contexto.get("detalle") or {}
-    reporte = contexto.get("ultimo_reporte")
-
-    creador_basico = _construir_creador_basico_debug(creador, detalle)
-    if anonimizar:
-        creador_basico = _anonimizar_creador_basico_debug(creador_basico)
-
-    contexto_prueba: Dict[str, Any] = {
-        "creador_basico": creador_basico,
-        "perfil_estrategico": contexto.get("perfil_estrategico") or {},
-        "categoria_creador": contexto.get("categoria_creador") or {},
-        "arquetipo_creador": contexto.get("arquetipo_creador") or {},
-        "reporte_performance": reporte or {},
-        "metricas_derivadas": construir_metricas_derivadas(reporte),
-        "metas": contexto.get("metas") or {},
-        "insights": contexto.get("insights") or {},
-        "score": contexto.get("score") or {},
-        "performance_partidas": contexto.get("performance_partidas") or {},
-        "alertas": contexto.get("alertas") or [],
-        "recomendaciones_existentes": contexto.get("recomendaciones") or [],
-        "seguimientos_recientes": contexto.get("seguimientos") or [],
-        "acciones_abiertas": contexto.get("acciones_abiertas") or [],
-        "base_conocimiento": contexto.get("base_conocimiento") or [],
-    }
-
-    limpio = _limpiar_datos_sensibles_debug(serializable(contexto_prueba))
-    return limpio if isinstance(limpio, dict) else {}
-
-
 @router.get(
     "/api/creadores/performance/{creador_id}/ia/debug-contexto-recomendaciones",
 )
 def debug_contexto_recomendaciones_ia(
     creador_id: int,
     id_reporte: Optional[int] = Query(default=None),
-    incluir_base_conocimiento: bool = Query(default=True),
-    base_conocimiento_limit: int = Query(default=6, ge=1, le=30),
+    incluir_base_conocimiento: bool = Query(default=False),
     anonimizar: bool = Query(default=True),
 ):
     """
-    Exporta el contexto IA de recomendaciones en JSON limpio para pruebas externas.
-    No invoca OpenAI.
+    Exporta solo filas crudas de tablas para pruebas IA externas (ChatGPT, Gemini, etc.).
+    No invoca OpenAI ni ejecuta análisis del motor de performance.
     """
-    contexto = obtener_contexto_ia_manager(
+    resultado = obtener_datos_tablas_debug_ia(
         creador_id,
         id_reporte=id_reporte,
         incluir_base_conocimiento=incluir_base_conocimiento,
-        base_conocimiento_limit=base_conocimiento_limit,
+        anonimizar=anonimizar,
     )
-
-    contexto_prueba = _armar_contexto_prueba_debug(contexto, anonimizar=anonimizar)
-    contexto_json = json.dumps(contexto_prueba, ensure_ascii=False, indent=2)
-    prompt_para_copiar = _PROMPT_COPIAR_DEBUG_RECOMENDACIONES.replace(
-        "{{contexto_prueba}}",
-        contexto_json,
-    )
-
     return {
         "ok": True,
-        "tipo": "debug_contexto_recomendaciones_ia",
-        "uso": (
-            "Copiar este JSON en ChatGPT, Gemini u otro modelo para comparar "
-            "calidad de recomendaciones."
-        ),
-        "creador_id": creador_id,
-        "id_reporte": id_reporte,
-        "incluir_base_conocimiento": incluir_base_conocimiento,
-        "base_conocimiento_limit": base_conocimiento_limit,
-        "anonimizar": anonimizar,
-        "contexto_prueba": contexto_prueba,
-        "instrucciones_para_modelo": _INSTRUCCIONES_MODELO_DEBUG_RECOMENDACIONES,
-        "schema_salida_esperado": _SCHEMA_SALIDA_RECOMENDACIONES_DEBUG,
-        "prompt_para_copiar": prompt_para_copiar,
+        "tipo": "debug_datos_tablas_ia",
+        "creador_id": resultado.get("creador_id", creador_id),
+        "id_reporte": resultado.get("id_reporte"),
+        "datos_tablas": resultado.get("datos_tablas") or {},
     }
 
 

@@ -401,6 +401,70 @@ def serializable(obj: Any) -> Any:
     return obj
 
 
+_LLAVES_SENSIBLES_DEBUG = frozenset({
+    "telefono",
+    "phone",
+    "email",
+    "correo",
+    "documento",
+    "cedula",
+    "password",
+    "token",
+    "api_key",
+    "secret",
+    "access_token",
+    "refresh_token",
+    "authorization",
+    "redis_url",
+    "connection_string",
+})
+
+
+def _normalizar_llave_sensible_debug(key: Any) -> str:
+    texto = normalizar_lower(str(key or ""))
+    return (
+        texto.replace("á", "a")
+        .replace("é", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ú", "u")
+        .replace("ñ", "n")
+    )
+
+
+def _es_llave_sensible_debug(key: Any) -> bool:
+    llave = _normalizar_llave_sensible_debug(key)
+    if llave in _LLAVES_SENSIBLES_DEBUG:
+        return True
+    return any(
+        llave.endswith(sufijo)
+        for sufijo in ("_token", "_secret", "_password", "_api_key")
+    )
+
+
+def limpiar_datos_sensibles_debug(obj: Any) -> Any:
+    """Elimina llaves sensibles en estructuras anidadas (export debug IA)."""
+    if isinstance(obj, dict):
+        limpio: Dict[str, Any] = {}
+        for clave, valor in obj.items():
+            if _es_llave_sensible_debug(clave):
+                continue
+            limpio[clave] = limpiar_datos_sensibles_debug(valor)
+        return limpio
+
+    if isinstance(obj, list):
+        return [limpiar_datos_sensibles_debug(item) for item in obj]
+
+    return obj
+
+
+def _serializar_datos_tablas_debug(obj: Any, *, anonimizar: bool) -> Any:
+    serializado = serializable(obj)
+    if anonimizar:
+        return limpiar_datos_sensibles_debug(serializado)
+    return serializado
+
+
 def contexto_para_prompt(contexto: Dict[str, Any]) -> str:
     return json.dumps(serializable(contexto), ensure_ascii=False, indent=2)
 
@@ -905,6 +969,31 @@ def obtener_perfil_respuestas(creador_id: int) -> List[Dict[str, Any]]:
         """,
         (creador_id,),
     )
+
+
+def obtener_metas_reporte_lista(
+    creador_id: int,
+    reporte: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Metas mensuales del periodo del reporte (filas crudas de BD)."""
+    if not reporte:
+        return []
+
+    return fetch_all(
+        """
+        SELECT *
+        FROM creadores_metas_mensuales
+        WHERE creador_id = %s
+          AND periodo_inicio = %s
+          AND periodo_fin = %s
+        ORDER BY created_at DESC, id DESC
+        """,
+        (
+            creador_id,
+            reporte["periodo_inicio"],
+            reporte["periodo_fin"],
+        ),
+    ) or []
 
 
 def obtener_categoria_creador(creador_id: int) -> Optional[Dict[str, Any]]:
@@ -1958,6 +2047,75 @@ def obtener_contexto_ia_manager(
         )
 
     return resultado
+
+
+def obtener_base_conocimiento_tablas_raw(
+    *,
+    limit: int = 500,
+) -> List[Dict[str, Any]]:
+    """Registros activos de ia_base_conocimiento sin filtros heurísticos."""
+    limite = max(1, min(int(limit or 500), 2000))
+    try:
+        return fetch_all(
+            f"""
+            SELECT {_CAMPOS_BASE_CONOCIMIENTO_IA},
+                   activo, created_at, updated_at
+            FROM ia_base_conocimiento
+            WHERE activo = true
+            ORDER BY prioridad ASC, updated_at DESC, id DESC
+            LIMIT %s
+            """,
+            (limite,),
+        ) or []
+    except Exception as exc:
+        print(f"⚠️ [IA] No se pudo leer ia_base_conocimiento: {exc}", flush=True)
+        return []
+
+
+def obtener_datos_tablas_debug_ia(
+    creador_id: int,
+    *,
+    id_reporte: Optional[int] = None,
+    incluir_base_conocimiento: bool = False,
+    anonimizar: bool = True,
+) -> Dict[str, Any]:
+    """
+    Datos crudos de tablas para pruebas IA externas.
+    No incluye score, insights, alertas, recomendaciones ni campos calculados por algoritmo.
+    """
+    creador = obtener_creador(creador_id)
+    if not creador:
+        raise HTTPException(status_code=404, detail="Creador no encontrado")
+
+    perfil_creador = obtener_detalle_creador(creador_id)
+    categoria_creador = obtener_categoria_creador(creador_id)
+    arquetipo_creador = obtener_arquetipo_creador(creador_id)
+    ultimo_reporte = obtener_ultimo_reporte(creador_id, id_reporte=id_reporte)
+    metas_reporte = obtener_metas_reporte_lista(creador_id, ultimo_reporte)
+    perfil_respuestas = obtener_perfil_respuestas(creador_id)
+
+    base_conocimiento: List[Dict[str, Any]] = []
+    if incluir_base_conocimiento:
+        base_conocimiento = obtener_base_conocimiento_tablas_raw()
+
+    datos_tablas: Dict[str, Any] = {
+        "creador": creador,
+        "perfil_creador": perfil_creador,
+        "categoria_creador": categoria_creador,
+        "arquetipo_creador": arquetipo_creador,
+        "ultimo_reporte": ultimo_reporte,
+        "metas_reporte": metas_reporte,
+        "perfil_respuestas": perfil_respuestas,
+        "base_conocimiento": base_conocimiento,
+    }
+
+    datos_serializados = _serializar_datos_tablas_debug(datos_tablas, anonimizar=anonimizar)
+
+    return {
+        "creador_id": creador_id,
+        "id_reporte": (ultimo_reporte or {}).get("id_reporte") if ultimo_reporte else None,
+        "datos_tablas": datos_serializados,
+    }
 
 
 # =========================================================
