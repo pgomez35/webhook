@@ -241,6 +241,7 @@ class GenerarAccionesIARequest(BaseModel):
 class GenerarRecomendacionesIARequest(BaseModel):
     guardar: bool = False
     max_recomendaciones: int = Field(default=5, ge=1, le=10)
+    id_reporte: Optional[int] = None
     instrucciones_extra: Optional[str] = None
 
 

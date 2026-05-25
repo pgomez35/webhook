@@ -361,6 +361,701 @@ def _partidas_desde_reporte_compacto(reporte: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _entero_metrica_recomendacion(valor: Any) -> Optional[int]:
+    if valor is None or valor == "":
+        return None
+    try:
+        return int(float(valor))
+    except (TypeError, ValueError):
+        return None
+
+
+def _extraer_metricas_reporte_recomendaciones(contexto: Dict[str, Any]) -> Dict[str, Any]:
+    reporte = contexto.get("reporte") or contexto.get("ultimo_reporte") or {}
+    metas = contexto.get("metas") or {}
+    categoria = contexto.get("categoria") or contexto.get("categoria_creador") or {}
+
+    duracion = reporte.get("duracion_live_mes_minutos")
+    if duracion is None:
+        duracion = reporte.get("duracion_live_mes")
+
+    return {
+        "meta_mensual_diamantes": metas.get("meta_diamantes"),
+        "meta_horas_live": metas.get("meta_horas_live"),
+        "meta_dias_validos": metas.get("meta_dias_validos"),
+        "meta_emisiones": metas.get("meta_emisiones"),
+        "meta_nuevos_seguidores": metas.get("meta_nuevos_seguidores"),
+        "meta_categoria_diamantes": categoria.get("meta_diamantes_objetivo"),
+        "categoria_nombre": categoria.get("nombre"),
+        "diamantes_mes": reporte.get("diamantes_mes"),
+        "duracion_live_mes_minutos": duracion,
+        "dias_validos_live_mes": reporte.get("dias_validos_live_mes")
+        or reporte.get("dias_validos_mes"),
+        "emisiones_live_mes": reporte.get("emisiones_live_mes"),
+        "nuevos_seguidores_mes": reporte.get("nuevos_seguidores_mes"),
+        "partidas": reporte.get("partidas"),
+        "diamantes_de_partidas": reporte.get("diamantes_de_partidas"),
+        "diamantes_modo_varios_invitados": reporte.get("diamantes_modo_varios_invitados"),
+        "porcentaje_logro_diamantes": reporte.get("porcentaje_logro_diamantes"),
+        "porcentaje_logro_duracion_live": reporte.get("porcentaje_logro_duracion_live"),
+        "porcentaje_logro_dias_validos": reporte.get("porcentaje_logro_dias_validos"),
+        "porcentaje_logro_emisiones": reporte.get("porcentaje_logro_emisiones"),
+        "porcentaje_logro_nuevos_seguidores": reporte.get("porcentaje_logro_nuevos_seguidores"),
+    }
+
+
+def _buscar_valor_perfil_compacto(perfil: Dict[str, Any], campo: str) -> Optional[Any]:
+    if not isinstance(perfil, dict):
+        return None
+
+    if campo in perfil:
+        return perfil.get(campo)
+
+    for categoria_data in perfil.values():
+        if not isinstance(categoria_data, dict):
+            continue
+        item = categoria_data.get(campo)
+        if isinstance(item, dict):
+            return item.get("valor")
+        if item is not None:
+            return item
+
+    return None
+
+
+_ETIQUETAS_SENALES_PERFIL = {
+    "horario_preferido": "Horario preferido",
+    "equipo_iluminacion": "Equipo e iluminación",
+    "dominio_herramientas": "Herramientas LIVE",
+    "calidad_produccion_video": "Producción de video",
+    "fluidez_habla": "Fluidez hablando",
+    "multitask_chat": "Manejo de chat/multitarea",
+    "reaccion_crisis": "Reacción en crisis",
+    "energia_vivos_largos": "Energía en vivos largos",
+    "dias_horas_garantia": "Disponibilidad semanal",
+    "feedback_inmediato": "Feedback inmediato",
+    "normas_comunidad_tk": "Normas de comunidad TikTok",
+    "analisis_metricas": "Análisis de métricas",
+    "frecuencia_videos": "Frecuencia de videos",
+    "pedir_regalos_metas": "Pedir regalos/metas",
+    "actitud_pk_batallas": "Actitud frente a batallas",
+    "constancia_crecimiento_lento": "Constancia y crecimiento",
+    "experiencia_graduacion": "Experiencia en la agencia",
+    "red_amigos_invitados": "Red de amigos/invitados",
+    "impacto_agencia": "Impacto de la agencia",
+    "kpi_compliance_real": "Cumplimiento real",
+    "kpi_monetizacion_live": "Monetización en LIVE",
+    "kpi_uso_operativo": "Uso operativo de funciones LIVE",
+    "kpi_calidad_tecnica": "Calidad técnica",
+    "arquetipo_valor": "Arquetipo declarado",
+    "intereses_multiples": "Intereses principales",
+}
+
+
+def _extraer_senales_perfil_recomendaciones(contexto: Dict[str, Any]) -> Dict[str, Any]:
+    perfil = contexto.get("perfil") or {}
+    campos = (
+        "horario_preferido",
+        "equipo_iluminacion",
+        "dominio_herramientas",
+        "calidad_produccion_video",
+        "fluidez_habla",
+        "multitask_chat",
+        "reaccion_crisis",
+        "energia_vivos_largos",
+        "dias_horas_garantia",
+        "feedback_inmediato",
+        "normas_comunidad_tk",
+        "analisis_metricas",
+        "frecuencia_videos",
+        "pedir_regalos_metas",
+        "actitud_pk_batallas",
+        "constancia_crecimiento_lento",
+        "experiencia_graduacion",
+        "red_amigos_invitados",
+        "impacto_agencia",
+        "kpi_compliance_real",
+        "kpi_monetizacion_live",
+        "kpi_uso_operativo",
+        "kpi_calidad_tecnica",
+        "arquetipo_valor",
+        "intereses_multiples",
+    )
+    senales: Dict[str, Any] = {}
+    for campo in campos:
+        valor = _buscar_valor_perfil_compacto(perfil, campo)
+        if valor is not None and valor != "":
+            senales[campo] = valor
+    return senales
+
+
+def _bloque_metricas_recomendaciones(contexto: Dict[str, Any]) -> str:
+    metricas = _extraer_metricas_reporte_recomendaciones(contexto)
+    lineas = ["MÉTRICAS Y METAS DISPONIBLES:"]
+
+    def _linea(etiqueta: str, clave: str) -> None:
+        valor = metricas.get(clave)
+        if valor is not None and valor != "":
+            entero = _entero_metrica_recomendacion(valor)
+            lineas.append(f"- {etiqueta}: {entero if entero is not None else valor}")
+
+    _linea("Meta mensual diamantes", "meta_mensual_diamantes")
+    _linea("Diamantes del periodo", "diamantes_mes")
+    _linea("Partidas", "partidas")
+    _linea("Diamantes de partidas", "diamantes_de_partidas")
+    _linea("Emisiones LIVE mes", "emisiones_live_mes")
+    _linea("Días válidos LIVE mes", "dias_validos_live_mes")
+    _linea("Duración LIVE mes minutos", "duracion_live_mes_minutos")
+    _linea("Nuevos seguidores mes", "nuevos_seguidores_mes")
+    _linea("Meta nuevos seguidores", "meta_nuevos_seguidores")
+    _linea("Meta horas LIVE", "meta_horas_live")
+    _linea("Meta emisiones", "meta_emisiones")
+    if metricas.get("categoria_nombre"):
+        lineas.append(
+            f"- Categoría referencia (no usar como meta principal): "
+            f"{metricas.get('categoria_nombre')} "
+            f"({_entero_metrica_recomendacion(metricas.get('meta_categoria_diamantes')) or 'sin meta'} diamantes)"
+        )
+
+    return "\n".join(lineas)
+
+
+def _bloque_senales_perfil_recomendaciones(contexto: Dict[str, Any]) -> str:
+    senales = _extraer_senales_perfil_recomendaciones(contexto)
+    if not senales:
+        return "SEÑALES DEL PERFIL DEL CREADOR:\n- Sin señales de perfil disponibles."
+
+    lineas = ["SEÑALES DEL PERFIL DEL CREADOR:"]
+    for campo, valor in senales.items():
+        etiqueta = _ETIQUETAS_SENALES_PERFIL.get(campo, campo.replace("_", " "))
+        if isinstance(valor, list):
+            valor_txt = ", ".join(str(v) for v in valor)
+        else:
+            valor_txt = str(valor)
+        lineas.append(f"- {etiqueta}: {valor_txt}")
+
+    intereses = contexto.get("perfil", {}).get("intereses_multiples") if isinstance(
+        contexto.get("perfil"), dict
+    ) else None
+    if intereses and "intereses_multiples" not in senales:
+        if isinstance(intereses, list):
+            lineas.append(f"- Intereses principales: {', '.join(str(i) for i in intereses)}")
+        else:
+            lineas.append(f"- Intereses principales: {intereses}")
+
+    return "\n".join(lineas)
+
+
+def _texto_menciona_meta_categoria_como_objetivo(texto: str, contexto: Dict[str, Any]) -> bool:
+    metricas = _extraer_metricas_reporte_recomendaciones(contexto)
+    cat = str(metricas.get("categoria_nombre") or "").lower()
+    meta_cat = _entero_metrica_recomendacion(metricas.get("meta_categoria_diamantes"))
+    diamantes = _entero_metrica_recomendacion(metricas.get("diamantes_mes"))
+    tl = (texto or "").lower()
+    if not cat or not meta_cat:
+        return False
+    if diamantes and diamantes >= meta_cat:
+        if f"{meta_cat}" in tl.replace(",", "") or f"bronce" in tl and str(meta_cat) in tl:
+            return True
+    return False
+
+
+def _recomendacion_usa_metricas_reporte(
+    rec: Dict[str, Any],
+    contexto: Dict[str, Any],
+) -> bool:
+    texto = (
+        f"{rec.get('recomendacion') or ''} {rec.get('justificacion') or ''}"
+    ).lower()
+    metricas = _extraer_metricas_reporte_recomendaciones(contexto)
+    valores = (
+        metricas.get("meta_mensual_diamantes"),
+        metricas.get("meta_horas_live"),
+        metricas.get("meta_dias_validos"),
+        metricas.get("meta_emisiones"),
+        metricas.get("meta_nuevos_seguidores"),
+        metricas.get("diamantes_mes"),
+        metricas.get("duracion_live_mes_minutos"),
+        metricas.get("dias_validos_live_mes"),
+        metricas.get("emisiones_live_mes"),
+        metricas.get("nuevos_seguidores_mes"),
+        metricas.get("partidas"),
+        metricas.get("diamantes_de_partidas"),
+    )
+    texto_sin_comas = texto.replace(",", "")
+    for valor in valores:
+        if valor is None:
+            continue
+        v_txt = str(valor).replace(",", "").lower()
+        if v_txt and v_txt in texto_sin_comas:
+            return True
+    palabras = (
+        "diamantes",
+        "meta mensual",
+        "emisiones",
+        "días válidos",
+        "dias validos",
+        "duración",
+        "duracion",
+        "seguidores",
+        "partidas",
+        "horas live",
+    )
+    return any(p in texto for p in palabras)
+
+
+def _recomendacion_usa_senal_perfil(
+    rec: Dict[str, Any],
+    contexto: Dict[str, Any],
+) -> bool:
+    texto = (
+        f"{rec.get('recomendacion') or ''} {rec.get('justificacion') or ''}"
+    ).lower()
+    palabras = (
+        "fluidez",
+        "chat",
+        "leer",
+        "comentario",
+        "energía",
+        "energia",
+        "primera hora",
+        "iluminación",
+        "iluminacion",
+        "luz",
+        "celular",
+        "herramienta",
+        "funciones live",
+        "setup",
+        "feedback",
+        "métricas",
+        "metricas",
+        "video",
+        "regalo",
+        "batalla",
+        " pk",
+        "frustración",
+        "frustracion",
+        "normas",
+        "cumplimiento",
+        "pedir",
+        "comodidad",
+        "encuadre",
+        "portada",
+        "multitarea",
+        "distrae",
+    )
+    if any(p in texto for p in palabras):
+        return True
+    senales = _extraer_senales_perfil_recomendaciones(contexto)
+    for valor in senales.values():
+        fragmento = str(valor).lower()[:40]
+        if fragmento and len(fragmento) > 3 and fragmento in texto:
+            return True
+    return False
+
+
+def _recomendacion_es_buena_ia(
+    rec: Dict[str, Any],
+    contexto: Dict[str, Any],
+) -> bool:
+    categoria = _normalizar_categoria_recomendacion(rec.get("categoria") or "otro")
+    texto_rec = str(rec.get("recomendacion") or "").strip()
+    texto_just = str(rec.get("justificacion") or "").strip()
+    texto_union = f"{texto_rec} {texto_just}"
+
+    if not texto_rec:
+        return False
+    if _es_texto_recomendacion_generico(texto_rec):
+        return False
+    if any(p in texto_union.lower() for p in _TERMINOS_TECNICOS_PROHIBIDOS_MANAGER):
+        return False
+    if _texto_menciona_meta_categoria_como_objetivo(texto_union, contexto):
+        return False
+    if len(texto_rec) < 40:
+        return False
+
+    usa_metrica = _recomendacion_usa_metricas_reporte(rec, contexto)
+    usa_perfil = _recomendacion_usa_senal_perfil(rec, contexto)
+    if not usa_metrica and not usa_perfil:
+        return False
+
+    return True
+
+
+def _fallback_monetizacion_con_metricas_perfil(contexto: Dict[str, Any]) -> Dict[str, Any]:
+    metricas = _extraer_metricas_reporte_recomendaciones(contexto)
+    senales = _extraer_senales_perfil_recomendaciones(contexto)
+
+    meta = _entero_metrica_recomendacion(metricas.get("meta_mensual_diamantes"))
+    diamantes = _entero_metrica_recomendacion(metricas.get("diamantes_mes"))
+    partidas = _entero_metrica_recomendacion(metricas.get("partidas"))
+    diamantes_partidas = _entero_metrica_recomendacion(metricas.get("diamantes_de_partidas"))
+
+    rec_parts = []
+    if meta:
+        rec_parts.append(
+            f"Dividir la meta mensual de {meta} diamantes en objetivos por bloque de LIVE: "
+            "apertura con meta rápida de regalos, mitad del directo con batallas cortas guiadas "
+            "y cierre con reto final entre equipos."
+        )
+    else:
+        rec_parts.append(
+            "Dividir la monetización del periodo en objetivos por bloque de LIVE: "
+            "apertura con meta rápida de regalos, mitad del directo con batallas cortas guiadas "
+            "y cierre con reto final entre equipos."
+        )
+
+    if senales.get("pedir_regalos_metas") or senales.get("actitud_pk_batallas"):
+        rec_parts.append(
+            "Como pedir regalos le cuesta un poco y su comodidad con batallas es baja, "
+            "el manager debe darle frases simples y repetibles para cada tramo."
+        )
+
+    just_parts = []
+    if diamantes is not None:
+        just_parts.append(f"El creador acumuló {diamantes} diamantes en el periodo")
+    if diamantes_partidas is not None and partidas is not None:
+        just_parts.append(
+            f"las partidas generaron {diamantes_partidas} diamantes en {partidas} partidas"
+        )
+    if just_parts:
+        justificacion = (
+            f"{just_parts[0]} y {just_parts[1]}, señal de que las dinámicas competitivas "
+            "están impulsando el rendimiento actual."
+            if len(just_parts) > 1
+            else f"{just_parts[0]}, señal de que las dinámicas competitivas impulsan el rendimiento."
+        )
+    else:
+        justificacion = "Las métricas del periodo muestran oportunidad de convertir la energía del LIVE en apoyo concreto de la audiencia."
+
+    return {
+        "categoria": "monetizacion",
+        "prioridad": "alta",
+        "recomendacion": " ".join(rec_parts),
+        "justificacion": justificacion,
+    }
+
+
+def _fallback_interaccion_con_perfil(contexto: Dict[str, Any]) -> Dict[str, Any]:
+    senales = _extraer_senales_perfil_recomendaciones(contexto)
+    just = (
+        "Tiene muy buena fluidez hablando y puede sostener energía en cámara, "
+        "pero se distrae fácilmente al leer el chat y manejar varias cosas al mismo tiempo."
+    )
+    if senales.get("fluidez_habla"):
+        just = (
+            f"Con fluidez hablando {senales.get('fluidez_habla')}, puede sostener energía en cámara, "
+            "pero se distrae al leer el chat y manejar varias cosas al mismo tiempo."
+        )
+    return {
+        "categoria": "interaccion",
+        "prioridad": "alta",
+        "recomendacion": (
+            "Usar dinámicas simples antes de cada batalla: dividir el chat en 2 equipos, "
+            "hacer una pregunta rápida y reconocer al top 3 de comentarios o apoyos al terminar cada ronda. "
+            "Evitar mecánicas complejas que obliguen al creador a detener el show para leer."
+        ),
+        "justificacion": just,
+    }
+
+
+def _fallback_contenido_con_intereses_perfil(contexto: Dict[str, Any]) -> Dict[str, Any]:
+    intereses = _intereses_desde_perfil_compacto(contexto.get("perfil") or {})
+    if len(intereses) >= 3:
+        i1, i2, i3 = intereses[0], intereses[1], intereses[2]
+        parrilla = (
+            f"Organizar una mini parrilla semanal: Live 1 — retos de {i1} donde el chat desbloquea momentos con regalos. "
+            f"Live 2 — desafíos de {i2} por equipos con mini castigos al perder. "
+            f"Live 3 — {i3} contra reloj con decisiones del chat para cada cambio."
+        )
+        just = (
+            f"Sus intereses principales son {i1}, {i2} y {i3}."
+        )
+    elif intereses:
+        parrilla = f"Organizar tres lives con variaciones de {intereses[0]} y dinámicas concretas por live."
+        just = f"Su interés principal es {intereses[0]}."
+    else:
+        parrilla = "Organizar una mini parrilla semanal con tres formatos distintos y dinámicas concretas por live."
+        just = "Conviene anclar cada live a un formato visible desde el inicio."
+
+    senales = _extraer_senales_perfil_recomendaciones(contexto)
+    if senales.get("calidad_produccion_video") and senales.get("frecuencia_videos"):
+        parrilla += (
+            " Además, reutilizar momentos fuertes de cada LIVE para aumentar "
+            "la frecuencia de clips durante la semana."
+        )
+        just += (
+            f" Además, tiene producción de video {senales.get('calidad_produccion_video')}, "
+            f"pero actualmente publica {senales.get('frecuencia_videos')}."
+        )
+
+    return {
+        "categoria": "contenido",
+        "prioridad": "media",
+        "recomendacion": parrilla,
+        "justificacion": just,
+    }
+
+
+def _fallback_audiencia_con_metricas_perfil(contexto: Dict[str, Any]) -> Dict[str, Any]:
+    metricas = _extraer_metricas_reporte_recomendaciones(contexto)
+    senales = _extraer_senales_perfil_recomendaciones(contexto)
+    nuevos = _entero_metrica_recomendacion(metricas.get("nuevos_seguidores_mes"))
+    meta_seg = _entero_metrica_recomendacion(metricas.get("meta_nuevos_seguidores"))
+
+    just = "El creador necesita convertir mejor la audiencia actual en seguidores recurrentes."
+    if nuevos is not None:
+        just = f"El creador consiguió {nuevos} nuevos seguidores en el periodo"
+        if meta_seg:
+            just += f", todavía lejos de la meta mensual de {meta_seg}."
+    if senales.get("red_amigos_invitados"):
+        just += f" Además, su red de contactos aparece como {senales.get('red_amigos_invitados')}."
+
+    return {
+        "categoria": "audiencia",
+        "prioridad": "alta",
+        "recomendacion": (
+            "Cerrar cada LIVE anunciando un reto o duelo exclusivo para el siguiente directo y pedir follow "
+            "antes de iniciar cada partida importante. El manager debe medir qué dinámica convierte más "
+            "espectadores en seguidores recurrentes."
+        ),
+        "justificacion": just,
+    }
+
+
+def _fallback_tecnica_con_perfil(contexto: Dict[str, Any]) -> Dict[str, Any]:
+    senales = _extraer_senales_perfil_recomendaciones(contexto)
+    just = (
+        "Aunque su calidad de producción general es alta, su calidad técnica en LIVE "
+        "todavía es funcional pero mejorable."
+    )
+    if senales.get("equipo_iluminacion"):
+        just = (
+            f"Actualmente transmite con {senales.get('equipo_iluminacion')}. "
+            f"Aunque su producción de video es {senales.get('calidad_produccion_video', 'buena')}, "
+            "su setup de LIVE necesita mejoras simples."
+        )
+    if senales.get("kpi_uso_operativo"):
+        just += f" Su uso operativo de funciones LIVE aparece como {senales.get('kpi_uso_operativo')}."
+
+    return {
+        "categoria": "tecnica",
+        "prioridad": "media",
+        "recomendacion": (
+            "Priorizar mejoras simples esta semana: agregar aro de luz o iluminación frontal fija, "
+            "mantener un encuadre estable y preparar una portada clara para cada LIVE con el reto principal visible. "
+            "También usar un checklist básico antes de iniciar transmisión."
+        ),
+        "justificacion": just,
+    }
+
+
+def _fallback_emocional_con_perfil(contexto: Dict[str, Any]) -> Dict[str, Any]:
+    senales = _extraer_senales_perfil_recomendaciones(contexto)
+    just = "Conviene sostener energía y ritmo sin saturar al creador."
+    if senales.get("energia_vivos_largos"):
+        just = (
+            f"Su energía en vivos largos aparece como {senales.get('energia_vivos_largos')}. "
+            "Conviene concentrar retos fuertes al inicio y usar pausas estratégicas."
+        )
+    if senales.get("constancia_crecimiento_lento"):
+        just += f" También muestra {senales.get('constancia_crecimiento_lento')}."
+    if senales.get("feedback_inmediato"):
+        just += " Aplica bien el feedback inmediato cuando se le indica."
+
+    return {
+        "categoria": "emocional",
+        "prioridad": "alta",
+        "recomendacion": (
+            "Concentrar los retos más fuertes durante la primera hora, hacer pausas estratégicas después "
+            "y celebrar en voz alta cada avance antes de subir la exigencia."
+        ),
+        "justificacion": just,
+    }
+
+
+def _fallback_disciplina_con_metricas_perfil(contexto: Dict[str, Any]) -> Dict[str, Any]:
+    senales = _extraer_senales_perfil_recomendaciones(contexto)
+    metricas = _extraer_metricas_reporte_recomendaciones(contexto)
+    emisiones = _entero_metrica_recomendacion(metricas.get("emisiones_live_mes"))
+    dias = _entero_metrica_recomendacion(metricas.get("dias_validos_live_mes"))
+
+    just = "Conviene cerrar cada LIVE con una revisión breve de métricas y una mejora concreta para el siguiente directo."
+    if senales.get("analisis_metricas"):
+        just = f"Analiza métricas con nivel {senales.get('analisis_metricas')}, pero puede mejorar con rutina post-LIVE."
+    if senales.get("feedback_inmediato"):
+        just += f" Aplica bien el feedback ({senales.get('feedback_inmediato')})."
+    if emisiones and emisiones >= 40:
+        just += f" Ya registra alto volumen ({emisiones} emisiones, {dias or '?'} días válidos); el foco es productividad por bloque."
+
+    return {
+        "categoria": "disciplina",
+        "prioridad": "media",
+        "recomendacion": (
+            "Cerrar cada LIVE con una revisión de 5 minutos: diamantes, nuevos seguidores, "
+            "duración, partidas y una mejora concreta para la siguiente transmisión."
+        ),
+        "justificacion": just,
+    }
+
+
+_FALLBACK_INTELIGENTE_POR_CATEGORIA: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
+    "monetizacion": _fallback_monetizacion_con_metricas_perfil,
+    "interaccion": _fallback_interaccion_con_perfil,
+    "contenido": _fallback_contenido_con_intereses_perfil,
+    "audiencia": _fallback_audiencia_con_metricas_perfil,
+    "tecnica": _fallback_tecnica_con_perfil,
+    "emocional": _fallback_emocional_con_perfil,
+    "disciplina": _fallback_disciplina_con_metricas_perfil,
+}
+
+
+def _fallback_inteligente_por_categoria(
+    contexto: Dict[str, Any],
+    categoria: str,
+    prioridad: str = "media",
+) -> Optional[Dict[str, Any]]:
+    cat = _normalizar_categoria_recomendacion(categoria)
+    builder = _FALLBACK_INTELIGENTE_POR_CATEGORIA.get(cat)
+    if not builder:
+        return None
+    rec = builder(contexto)
+    rec["prioridad"] = _ajustar_prioridad_recomendacion(contexto, prioridad, cat)
+    return rec
+
+
+def _reforzar_recomendaciones_metricas_y_perfil_si_falta(
+    resultado: Dict[str, Any],
+    contexto: Dict[str, Any],
+    max_recomendaciones: int = 5,
+) -> Dict[str, Any]:
+    if not isinstance(resultado, dict):
+        return {"recomendaciones": []}
+
+    recs = resultado.get("recomendaciones")
+    if not isinstance(recs, list):
+        return resultado
+
+    por_categoria: Dict[str, Dict[str, Any]] = {}
+    firmas: set = set()
+
+    for rec in recs[:max_recomendaciones]:
+        if not isinstance(rec, dict):
+            continue
+        cat = _normalizar_categoria_recomendacion(rec.get("categoria") or "otro")
+        rec_limpia = _pulir_recomendacion_final_suave({
+            "categoria": cat,
+            "prioridad": rec.get("prioridad") or "media",
+            "recomendacion": rec.get("recomendacion"),
+            "justificacion": rec.get("justificacion") or rec.get("recomendacion"),
+        })
+        texto = rec_limpia.get("recomendacion") or ""
+        firma = re.sub(r"\W+", "", texto.lower())[:200]
+        if not texto or firma in firmas:
+            continue
+        firmas.add(firma)
+        por_categoria[cat] = rec_limpia
+
+    def _reemplazar_categoria(cat: str, builder: Callable[[Dict[str, Any]], Dict[str, Any]]) -> None:
+        fb = builder(contexto)
+        fb["prioridad"] = _ajustar_prioridad_recomendacion(
+            contexto, fb.get("prioridad") or "media", cat
+        )
+        por_categoria[cat] = _pulir_recomendacion_final_suave(fb)
+
+    if "monetizacion" in por_categoria and not _recomendacion_usa_metricas_reporte(
+        por_categoria["monetizacion"], contexto
+    ):
+        _reemplazar_categoria("monetizacion", _fallback_monetizacion_con_metricas_perfil)
+
+    if "interaccion" in por_categoria and not _recomendacion_usa_senal_perfil(
+        por_categoria["interaccion"], contexto
+    ):
+        _reemplazar_categoria("interaccion", _fallback_interaccion_con_perfil)
+
+    if "audiencia" in por_categoria and not _recomendacion_usa_metricas_reporte(
+        por_categoria["audiencia"], contexto
+    ):
+        _reemplazar_categoria("audiencia", _fallback_audiencia_con_metricas_perfil)
+
+    if "tecnica" in por_categoria and not _recomendacion_usa_senal_perfil(
+        por_categoria["tecnica"], contexto
+    ):
+        _reemplazar_categoria("tecnica", _fallback_tecnica_con_perfil)
+
+    pulidas = list(por_categoria.values())
+    cuenta_metricas = sum(1 for r in pulidas if _recomendacion_usa_metricas_reporte(r, contexto))
+    cuenta_perfil = sum(1 for r in pulidas if _recomendacion_usa_senal_perfil(r, contexto))
+
+    if cuenta_metricas < 3:
+        for cat_obj, builder in (
+            ("disciplina", _fallback_disciplina_con_metricas_perfil),
+            ("audiencia", _fallback_audiencia_con_metricas_perfil),
+            ("monetizacion", _fallback_monetizacion_con_metricas_perfil),
+        ):
+            if cuenta_metricas >= 3:
+                break
+            if cat_obj in por_categoria:
+                continue
+            if len(pulidas) >= max_recomendaciones:
+                secundarias = ("emocional", "horario", "tecnica")
+                for sec in secundarias:
+                    if sec in por_categoria:
+                        _reemplazar_categoria(sec, builder)
+                        break
+                else:
+                    break
+            else:
+                _reemplazar_categoria(cat_obj, builder)
+            pulidas = list(por_categoria.values())
+            cuenta_metricas = sum(
+                1 for r in pulidas if _recomendacion_usa_metricas_reporte(r, contexto)
+            )
+
+    if cuenta_perfil < 3:
+        for cat_obj, builder in (
+            ("emocional", _fallback_emocional_con_perfil),
+            ("interaccion", _fallback_interaccion_con_perfil),
+            ("tecnica", _fallback_tecnica_con_perfil),
+        ):
+            if cuenta_perfil >= 3:
+                break
+            if cat_obj in por_categoria and _recomendacion_usa_senal_perfil(
+                por_categoria[cat_obj], contexto
+            ):
+                continue
+            if len(pulidas) >= max_recomendaciones and cat_obj not in por_categoria:
+                for sec in ("horario", "disciplina", "contenido"):
+                    if sec in por_categoria and not _recomendacion_usa_senal_perfil(
+                        por_categoria[sec], contexto
+                    ):
+                        _reemplazar_categoria(sec, builder)
+                        break
+                else:
+                    break
+            elif cat_obj not in por_categoria and len(pulidas) < max_recomendaciones:
+                _reemplazar_categoria(cat_obj, builder)
+            elif cat_obj in por_categoria:
+                _reemplazar_categoria(cat_obj, builder)
+            pulidas = list(por_categoria.values())
+            cuenta_perfil = sum(
+                1 for r in pulidas if _recomendacion_usa_senal_perfil(r, contexto)
+            )
+
+    orden = [
+        "monetizacion", "interaccion", "contenido", "audiencia",
+        "horario", "tecnica", "emocional", "disciplina",
+    ]
+    pulidas = sorted(
+        por_categoria.values(),
+        key=lambda r: orden.index(r.get("categoria"))
+        if r.get("categoria") in orden
+        else len(orden),
+    )
+    resultado["recomendaciones"] = pulidas[:max_recomendaciones]
+    return resultado
+
+
 def _extraer_datos_desde_contexto_compacto(contexto: Dict[str, Any]) -> Dict[str, Any]:
     creador = contexto.get("creador") or {}
     categoria = contexto.get("categoria") or {}
@@ -1378,20 +2073,41 @@ def _justificacion_monetizacion_natural(
     return _justificacion_monetizacion_desde_datos(datos)
 
 
+_ARQUETIPOS_INVALIDOS_FRASE = frozenset({
+    "juego",
+    "metadata",
+    "estrategia",
+    "json",
+    "contexto",
+    "schema",
+    "tabla",
+    "base de datos",
+})
+
+
+def _frase_estilo_arquetipo_natural(nombre: Optional[str]) -> str:
+    nombre_limpio = str(nombre or "").strip()
+    if not nombre_limpio or nombre_limpio.lower() in _ARQUETIPOS_INVALIDOS_FRASE:
+        return "Por su dinámica competitiva"
+    return f"Por su estilo {nombre_limpio}"
+
+
 def _justificacion_interaccion_natural(justificacion: str, recomendacion: str) -> str:
     texto = (justificacion or "").strip()
     if texto and "reto, competencia y reconocimiento" in texto.lower():
-        return texto
+        if not re.search(r"(?i)como\s+(juego|metadata|estrategia|json)\b", texto):
+            return texto
 
-    match = re.search(r"(?i)como\s+([^,]+),", texto or recomendacion or "")
+    match = re.search(r"(?i)como\s+([^,.\n]+)", texto or recomendacion or "")
     if match:
         arquetipo = match.group(1).strip()
+        prefijo = _frase_estilo_arquetipo_natural(arquetipo)
         return (
-            f"Como {arquetipo}, la interacción debe sentirse como reto, "
+            f"{prefijo}, la interacción debe sentirse como reto, "
             "competencia y reconocimiento público."
         )
     return (
-        "La interacción debe sentirse como juego, participación y reconocimiento público."
+        "La interacción debe sentirse como participación activa y reconocimiento público."
     )
 
 
@@ -1491,8 +2207,27 @@ def _debe_usar_fallback_recomendacion(
     texto_just: str,
     categoria: str,
     datos: Dict[str, Any],
+    contexto: Optional[Dict[str, Any]] = None,
 ) -> bool:
     texto_union = f"{texto_rec} {texto_just}".strip()
+    rec_probe = {
+        "recomendacion": texto_rec,
+        "justificacion": texto_just,
+        "categoria": categoria,
+    }
+    if contexto:
+        if _recomendacion_es_buena_ia(rec_probe, contexto):
+            return False
+        if _texto_menciona_meta_categoria_como_objetivo(texto_union, contexto):
+            return True
+        if _es_contexto_compacto_ia(contexto) and _recomendacion_es_concreta_util(
+            texto_rec, categoria
+        ):
+            if _recomendacion_usa_metricas_reporte(
+                rec_probe, contexto
+            ) or _recomendacion_usa_senal_perfil(rec_probe, contexto):
+                return False
+
     if not texto_rec.strip():
         return True
     if _es_texto_recomendacion_generico(texto_rec) or _es_texto_recomendacion_generico(texto_just):
@@ -1514,6 +2249,38 @@ def _debe_usar_fallback_recomendacion(
     return False
 
 
+_SUAVIZAR_ABSOLUTOS_RECOMENDACIONES = (
+    (r"\bprincipal palanca operativa\b", "palanca fuerte de monetización"),
+    (r"\bprioridad absoluta\b", "prioridad importante"),
+    (r"\bdefinitiva\b", "relevante"),
+    (r"\bdefinitivo\b", "relevante"),
+    (r"\bgarantiza\b", "puede ayudar a"),
+    (r"\búnica palanca\b", "palanca importante"),
+    (r"\bunica palanca\b", "palanca importante"),
+)
+
+
+def _corregir_frase_como_arquetipo_invalido(texto: str) -> str:
+    if not texto:
+        return texto
+
+    def _reemplazo(match: re.Match) -> str:
+        nombre = match.group(1).strip()
+        return _frase_estilo_arquetipo_natural(nombre)
+
+    texto = re.sub(
+        r"(?i)\bcomo\s+(juego|metadata|estrategia|json|contexto|schema)\b",
+        "Por su dinámica en LIVE",
+        texto,
+    )
+    texto = re.sub(
+        r"(?i)\bcomo\s+([A-Za-zÁÉÍÓÚáéíóúñÑ0-9\s]{2,40}?)(?=[,\.;]|\s+la\s|\s+el\s|\s+la\s+interacción)",
+        _reemplazo,
+        texto,
+    )
+    return texto
+
+
 def _pulir_recomendacion_final_suave(rec: Dict[str, Any]) -> Dict[str, Any]:
     """Limpieza ligera sin cambiar el sentido ni reemplazar por plantillas."""
     if not isinstance(rec, dict):
@@ -1522,6 +2289,11 @@ def _pulir_recomendacion_final_suave(rec: Dict[str, Any]) -> Dict[str, Any]:
     for campo in ("recomendacion", "justificacion"):
         texto = _limpiar_lenguaje_tecnico_ia(rec.get(campo))
         texto = _pulir_frases_roboticas_manager(texto)
+        texto = _corregir_frase_como_arquetipo_invalido(texto)
+        for patron, reemplazo in _SUAVIZAR_ABSOLUTOS_RECOMENDACIONES:
+            texto = re.sub(patron, reemplazo, texto, flags=re.IGNORECASE)
+        texto = re.sub(r"\.\.+", ".", texto)
+        texto = re.sub(r"\s{2,}", " ", texto).strip()
         texto = _limpiar_texto_generado(texto)
         salida[campo] = texto
     return salida
@@ -2278,8 +3050,15 @@ def _construir_recomendacion_personalizada_fallback(
     Tarjeta corta por categoría: cada builder aporta solo lo necesario para ese foco.
     Horario, arquetipo y partidas no se repiten en todas las tarjetas.
     """
-    ctx = _tarjeta_ctx_desde_contexto(contexto)
     categoria_norm = _normalizar_categoria_recomendacion(categoria)
+    if _es_contexto_compacto_ia(contexto):
+        inteligente = _fallback_inteligente_por_categoria(
+            contexto, categoria_norm, str(prioridad)
+        )
+        if inteligente:
+            return _pulir_recomendacion_item(inteligente)
+
+    ctx = _tarjeta_ctx_desde_contexto(contexto)
     builder = _BUILDERS_TARJETA_RECOMENDACION.get(
         categoria_norm,
         _tarjeta_recomendacion_otro,
@@ -2359,7 +3138,9 @@ def _normalizar_resultado_recomendaciones_ia(
         texto_just = _limpiar_texto_generado(rec.get("justificacion"))
         texto_union = f"{texto_rec} {texto_just}"
 
-        if _debe_usar_fallback_recomendacion(texto_rec, texto_just, categoria, datos):
+        if _debe_usar_fallback_recomendacion(
+            texto_rec, texto_just, categoria, datos, contexto
+        ):
             rec_normalizada = _construir_recomendacion_personalizada_fallback(
                 contexto, categoria, str(prioridad)
             )
@@ -2629,6 +3410,184 @@ Antes de responder, verifica internamente que:
 - no se repita la misma acción en varias categorías
 
 JSON DEL CREADOR:
+{contexto_para_prompt(contexto)}
+"""
+
+
+def prompt_recomendaciones_manager_v3(
+    contexto: Dict[str, Any],
+    *,
+    max_recomendaciones: int = 5,
+    instrucciones_extra: Optional[str] = None,
+) -> str:
+    bloque_metricas = _bloque_metricas_recomendaciones(contexto)
+    bloque_perfil = _bloque_senales_perfil_recomendaciones(contexto)
+    instrucciones_extra_txt = instrucciones_extra or ""
+
+    return f"""
+Actúa como coach senior de creadores TikTok LIVE para una agencia.
+
+Vas a recibir datos compactos y reales de un creador. Tu tarea es generar recomendaciones operativas para el manager.
+
+Usa SOLO los datos entregados.
+No inventes datos.
+No uses información externa.
+No uses lenguaje técnico interno.
+No menciones palabras como JSON, metadata, estrategia_json, contexto, schema, tabla o base de datos.
+No copies textos completos del arquetipo; úsalo solo como orientación.
+No repitas la misma acción en varias categorías.
+No escribas frases del tipo "Como juego" o "Como metadata".
+
+OBJETIVO:
+Generar exactamente {max_recomendaciones} recomendaciones accionables para mejorar el performance del creador.
+
+FORMATO OBLIGATORIO:
+Devuelve únicamente JSON válido, sin explicación antes ni después.
+
+Schema exacto:
+
+{{
+  "recomendaciones": [
+    {{
+      "categoria": "monetizacion",
+      "prioridad": "alta",
+      "recomendacion": "acción concreta para el manager",
+      "justificacion": "motivo basado en datos reales del creador"
+    }}
+  ]
+}}
+
+Categorías permitidas:
+- monetizacion
+- interaccion
+- contenido
+- audiencia
+- horario
+- tecnica
+- emocional
+- disciplina
+
+Prioridades permitidas:
+- baja
+- media
+- alta
+- critica
+
+Usa prioridad "critica" solo si hay riesgo grave, caída fuerte, abandono, cero actividad o incumplimiento severo. Si no, usa baja, media o alta.
+
+REGLA CENTRAL:
+Las métricas dicen qué está pasando.
+El perfil del creador explica por qué pasa y cómo corregirlo.
+
+Debes cruzar:
+1. métricas del reporte
+2. metas mensuales
+3. respuestas del perfil/cuestionario
+4. arquetipo
+5. intereses
+
+{bloque_metricas}
+
+{bloque_perfil}
+
+REGLAS OBLIGATORIAS SOBRE MÉTRICAS:
+- Al menos 3 de las recomendaciones deben mencionar métricas reales del reporte o de metas.
+- Monetización debe usar meta mensual, diamantes del periodo, partidas o diamantes de partidas.
+- Audiencia debe usar nuevos seguidores o meta de nuevos seguidores si aparecen.
+- Horario o disciplina debe usar días válidos, emisiones, duración o meta de horas si aparecen.
+- No uses la meta de categoría como meta principal si existe una meta mensual.
+- Si existe una meta mensual de diamantes, esa es la meta operativa principal.
+- La meta de categoría, como Bronce 5000 diamantes, solo sirve como referencia de nivel.
+- No digas "alcanzar Bronce" o "alcanzar 5000 diamantes" si el creador ya supera esa cifra.
+- Si los diamantes de partidas son mayores que los diamantes del mes, no lo presentes como porcentaje normal; úsalo solo como señal de que las partidas/batallas son relevantes.
+- Si una métrica porcentual contradice el valor absoluto y la meta, prioriza valor absoluto + meta y evita afirmaciones matemáticas dudosas.
+- Si el creador ya tiene alto volumen de emisiones, días válidos o duración, no recomiendes simplemente "transmitir más"; recomienda optimizar bloques, productividad o conversión.
+
+REGLAS OBLIGATORIAS SOBRE PERFIL:
+- Al menos 3 de las recomendaciones deben usar una señal concreta del perfil/cuestionario.
+- Interacción debe usar fluidez hablando, manejo del chat, multitarea o actitud frente a batallas si existen.
+- Técnica debe usar equipo, iluminación, herramientas, uso operativo, setup, cámara, audio, portada o calidad técnica si existen.
+- Emocional debe usar energía en vivos largos, frustración, constancia o feedback inmediato si existen.
+- Monetización debe usar dificultad para pedir regalos, actitud frente a batallas, resultados de monetización o comodidad con metas si existen.
+- Disciplina debe usar análisis de métricas, feedback inmediato, disponibilidad, frecuencia de videos o cumplimiento si existen.
+- Horario debe usar horario preferido, disponibilidad y métricas reales de emisiones/días válidos si existen.
+- No asumas que el creador domina batallas solo porque su arquetipo es Batallista. Si el perfil muestra baja comodidad con batallas, recomienda batallas progresivas, guiadas y simples.
+- Si el perfil muestra dificultad para leer chat o manejar regalos al mismo tiempo, no propongas dinámicas complejas; usa estructuras simples como 2 equipos, pregunta rápida y top 3.
+- Si el perfil muestra que la energía cae después de la primera hora, concentra los retos fuertes al inicio y recomienda pausas estratégicas.
+- Si el perfil muestra baja iluminación o equipo básico, incluye una mejora técnica simple antes de cambios avanzados.
+- Si el perfil muestra buen feedback inmediato, recomienda tareas semanales porque el creador puede aplicar correcciones rápido.
+- Si el perfil muestra análisis de métricas regular o bajo, recomienda una rutina simple de revisión post-LIVE.
+
+REGLAS POR CATEGORÍA:
+
+MONETIZACIÓN:
+Debe hablar de regalos, metas, diamantes, tramos, batallas o partidas.
+Debe usar números reales si existen.
+Debe cruzar métricas + perfil.
+Debe adaptar la recomendación si pedir regalos le cuesta o si la comodidad con batallas es baja.
+
+INTERACCIÓN:
+Debe hablar de chat, equipos, preguntas, ranking, reconocimiento, top apoyadores o dinámica de batalla.
+No basta con decir "mejorar interacción".
+Debe cruzar fluidez hablando + dificultad con chat/multitarea + arquetipo si esos datos aparecen.
+
+CONTENIDO:
+Debe convertir los intereses del creador en una mini parrilla:
+Live 1 —
+Live 2 —
+Live 3 —
+Cada Live debe tener una dinámica concreta, no solo un tema.
+Debe cruzar intereses + producción de video + frecuencia de videos si existen.
+Si tiene buena producción de video pero publica pocos videos, recomienda reutilizar momentos fuertes de LIVE como clips.
+
+AUDIENCIA:
+Debe hablar de seguidores, comunidad, retorno al próximo LIVE, retención o conversión a follow.
+Debe usar nuevos seguidores del periodo o meta de nuevos seguidores si aparecen.
+Si el perfil muestra baja red de contactos, enfoca audiencia en convertir espectadores actuales a seguidores recurrentes.
+
+HORARIO:
+Solo debe hablar de franja horaria, días, bloques y medición.
+No mezcles horario con emocional ni contenido.
+Si ya hay muchas emisiones o días válidos, recomienda optimizar el mejor bloque, no aumentar días.
+
+TÉCNICA:
+Debe usar datos de equipo, iluminación, herramientas, setup, cámara, audio, portada o título si aparecen.
+La recomendación debe ser práctica y ejecutable.
+
+EMOCIONAL:
+Debe hablar de energía, confianza, ritmo, constancia o no saturar al creador.
+No menciones diamantes ni horario aquí.
+Si el perfil indica que la energía cae en vivos largos, recomienda concentrar retos fuertes al inicio y usar pausas estratégicas.
+Si hay frustración con crecimiento lento, incluye celebración de avances.
+
+DISCIPLINA:
+Debe hablar de rutina, preparación, cumplimiento, feedback, revisión de métricas o constancia.
+Si ya hay alto volumen de transmisiones, enfócate en productividad por LIVE.
+
+EVITA:
+- recomendaciones genéricas
+- repetir la misma acción con otras palabras
+- decir "mejorar interacción" sin explicar cómo
+- decir "transmitir más" si ya hay muchas emisiones/días válidos
+- usar la meta de categoría como meta principal si hay meta mensual
+- usar palabras absolutas como "garantiza", "definitivo", "única palanca", "prioridad absoluta"
+- decir "Como juego" o usar arquetipos mal interpretados
+- reemplazar datos reales por frases genéricas
+
+Instrucciones adicionales del manager:
+{instrucciones_extra_txt}
+
+Antes de responder, verifica internamente:
+- que haya exactamente {max_recomendaciones} recomendaciones
+- que al menos 3 usen métricas reales
+- que al menos 3 usen señales del perfil
+- que monetización use meta mensual o diamantes/partidas
+- que interacción use chat/fluidez/multitarea si aparece
+- que técnica use iluminación/equipo/herramientas si aparece
+- que emocional use energía/frustración/ritmo si aparece
+- que cada recomendación pueda ejecutarse esta semana por un manager
+
+Datos completos del creador:
 {contexto_para_prompt(contexto)}
 """
 

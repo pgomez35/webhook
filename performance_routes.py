@@ -79,13 +79,14 @@ from performance_core import (
 from performance_ia import (
     _aplicar_pulido_final_recomendaciones,
     _normalizar_resultado_recomendaciones_ia,
+    _reforzar_recomendaciones_metricas_y_perfil_si_falta,
     _pulir_recomendacion_item,
     prompt_acciones_manager,
     prompt_alertas_score_ia,
     prompt_diagnostico_performance,
     prompt_generar_seguimiento,
     prompt_recomendaciones_manager,
-    prompt_recomendaciones_manager_v2,
+    prompt_recomendaciones_manager_v3,
 )
 
 load_dotenv()
@@ -1250,10 +1251,11 @@ def generar_recomendaciones_ia(
 ):
     contexto = obtener_contexto_recomendaciones_ia_compacto(
         creador_id,
+        id_reporte=data.id_reporte,
         anonimizar=True,
     )
     _log_ia_debug_contexto("recomendaciones", creador_id, contexto)
-    prompt = prompt_recomendaciones_manager_v2(
+    prompt = prompt_recomendaciones_manager_v3(
         contexto,
         max_recomendaciones=data.max_recomendaciones,
         instrucciones_extra=data.instrucciones_extra,
@@ -1272,6 +1274,11 @@ def generar_recomendaciones_ia(
         contexto, resultado, data.max_recomendaciones
     )
     resultado = _aplicar_pulido_final_recomendaciones(resultado, contexto)
+    resultado = _reforzar_recomendaciones_metricas_y_perfil_si_falta(
+        resultado,
+        contexto,
+        max_recomendaciones=data.max_recomendaciones,
+    )
     recomendaciones = resultado.get("recomendaciones", []) if isinstance(resultado, dict) else []
 
     guardadas = []
