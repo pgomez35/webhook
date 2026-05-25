@@ -92,7 +92,7 @@ from main_creadores_perfil import router as main_creadores_perfil_router
 from main_creadores_perfil_config import router as main_creadores_perfil_config_router
 from main_creadores_categoria import router as main_creadores_categoria_router
 from main_creadores_metricas import router as main_creadores_metricas_router
-from main_creadores_performance import router as main_creadores_performance_router
+from performance_routes import router as main_creadores_performance_router
 
 
 
