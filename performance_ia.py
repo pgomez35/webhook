@@ -31,6 +31,17 @@ from performance_core import (
 # PROMPTS IA
 # =========================================================
 
+_REGLAS_ANTI_REPETICION_TARJETAS = """
+REGLAS ANTI-REPETICIÓN ENTRE TARJETAS (obligatorio):
+- horario: solo franja horaria, días fijos de transmisión y métrica a revisar en 7 días. No repitas intereses ni parrilla.
+- emocional: energía, ritmo y celebración de avances. NO repitas horario ni cantidad de lives si ya hay tarjeta de horario.
+- disciplina: rutina mínima y preparación. NO repitas horario si ya hay tarjeta de horario.
+- contenido: parrilla en formato Live 1 / Live 2 / Live 3 con un interés por live. Sin horario ni partidas.
+- interacción: equipos, preguntas rápidas, ranking simbólico o reconocimiento por nombre. Sin repetir los 3 intereses enteros.
+- monetización: metas por tramos, regalos pequeños, batalla o diamantes. Un solo interés como gancho si aplica.
+"""
+
+
 _FRASES_IA_PROHIBIDAS = (
     "incluir temas de interés",
     "temas de interés relacionados",
@@ -534,6 +545,23 @@ def _limpiar_lenguaje_tecnico_ia(texto: Any) -> str:
     resultado = re.sub(r"(?i)Usar\s+dividir audiencia", "Dividir la audiencia", resultado)
     resultado = re.sub(r"(?i)Usar\s+dividir la audiencia", "Dividir la audiencia", resultado)
     resultado = re.sub(r"(?i)Usar\s+convertir intereses", "Convertir intereses", resultado)
+    resultado = re.sub(
+        r"(?i)debe\s+construirse\s+con\s+convertir",
+        "debe convertir",
+        resultado,
+    )
+    resultado = re.sub(
+        r"(?i)la\s+parrilla\s+debe\s+construirse\s+con\s+",
+        "la parrilla debe convertir ",
+        resultado,
+    )
+    resultado = re.sub(r"(?i)\bcon\s+construir\b", "construir", resultado)
+    resultado = re.sub(r"(?i)\bcon\s+convertir\b", "convertir", resultado)
+    resultado = re.sub(
+        r"(?i)\bconvertir\s+sus\s+intereses\s+en\s+retos\b",
+        "convertir sus intereses en retos visibles",
+        resultado,
+    )
 
     resultado = resultado.replace("Aplicar: Aplicar:", "Aplicar:")
     resultado = resultado.replace(" ,", ",")
@@ -712,7 +740,10 @@ def _resumen_arquetipo_para_categoria(
             return f"Como {nombre_arquetipo}, la interacción debe mantener {estilo}."
     if categoria_norm == "contenido":
         if items_txt:
-            return f"Como {nombre_arquetipo}, la parrilla debe construirse con {items_txt}."
+            return (
+                f"Como {nombre_arquetipo}, la parrilla debe convertir {items_txt} "
+                "en retos visibles por live."
+            )
         if estilo:
             return f"Como {nombre_arquetipo}, la parrilla debe reflejar {estilo}."
     if categoria_norm == "horario":
@@ -1499,6 +1530,44 @@ _BUILDERS_TARJETA_RECOMENDACION: Dict[str, Callable[[_TarjetaRecomendacionCtx], 
 }
 
 
+def _limpiar_horario_de_texto_emocional_disciplina(
+    texto: str,
+    horario: str,
+) -> str:
+    """Quita franja horaria y conteo de lives si ya hay tarjeta de horario."""
+    if horario:
+        texto = re.sub(re.escape(f" en {horario}"), "", texto, flags=re.IGNORECASE)
+        texto = re.sub(rf"\ben\s+{re.escape(horario)}\b", "", texto, flags=re.IGNORECASE)
+        texto = re.sub(
+            r"\(?\s*\d{1,2}\s*(?:am|pm)\s*[–-]\s*\d{1,2}\s*(?:am|pm)\s*\)?",
+            "",
+            texto,
+            flags=re.IGNORECASE,
+        )
+        texto = re.sub(r"\bTarde\s*\([^)]+\)", "", texto, flags=re.IGNORECASE)
+        texto = re.sub(r"\bMañana\s*\([^)]+\)", "", texto, flags=re.IGNORECASE)
+        texto = re.sub(r"\bNoche\s*\([^)]+\)", "", texto, flags=re.IGNORECASE)
+    texto = re.sub(
+        r"\b(?:al menos\s+)?\d+\s+lives?\s+semanal(?:es)?\b",
+        "",
+        texto,
+        flags=re.IGNORECASE,
+    )
+    texto = re.sub(
+        r"\b(?:realizar|hacer)\s+al menos\s+\d+\s+lives?\b",
+        "",
+        texto,
+        flags=re.IGNORECASE,
+    )
+    texto = re.sub(
+        r"\bhorario\s+fijo\s+para\s+sus\s+transmisiones\b",
+        "mantener rutina de transmisión",
+        texto,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"\s{2,}", " ", texto).strip()
+
+
 def _reducir_repeticiones_en_lote_recomendaciones(
     recs: List[Dict[str, Any]],
     datos: Dict[str, Any],
@@ -1512,6 +1581,11 @@ def _reducir_repeticiones_en_lote_recomendaciones(
     vio_evitar = False
     vio_partidas = False
     vio_arquetipo_resumen = False
+    hay_tarjeta_horario = any(
+        _normalizar_categoria_recomendacion(r.get("categoria") or "") == "horario"
+        for r in recs
+        if isinstance(r, dict)
+    )
 
     patron_evitar = re.compile(
         r"\s*Cuidar que el LIVE no caiga en[^.]+\.",
@@ -1547,6 +1621,9 @@ def _reducir_repeticiones_en_lote_recomendaciones(
                     texto,
                     flags=re.IGNORECASE,
                 )
+
+            if hay_tarjeta_horario and cat in ("emocional", "disciplina"):
+                texto = _limpiar_horario_de_texto_emocional_disciplina(texto, horario)
 
             if patron_como_arquetipo and cat not in ("interaccion", "audiencia", "contenido"):
                 if patron_como_arquetipo.search(texto):
@@ -1828,6 +1905,8 @@ Tu única tarea: generar recomendaciones operativas ULTRA ESPECÍFICAS para el c
 {datos_obligatorios}
 
 {reglas}
+
+{_REGLAS_ANTI_REPETICION_TARJETAS}
 
 Datos completos para análisis interno:
 {contexto_para_prompt(contexto)}
