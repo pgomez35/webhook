@@ -1145,32 +1145,49 @@ def _log_ia_debug_contexto(endpoint: str, creador_id: int, contexto: Dict[str, A
     )
 
 
-@router.get(
-    "/api/creadores/performance/{creador_id}/ia/debug-contexto-recomendaciones",
-)
-def debug_contexto_recomendaciones_ia(
+@router.get("/api/creadores/performance/{creador_id}/ia/debug-datos-tablas")
+def debug_datos_tablas_ia(
     creador_id: int,
     id_reporte: Optional[int] = Query(default=None),
-    incluir_base_conocimiento: bool = Query(default=False),
     anonimizar: bool = Query(default=True),
 ):
     """
-    Exporta solo filas crudas de tablas para pruebas IA externas (ChatGPT, Gemini, etc.).
-    No invoca OpenAI ni ejecuta análisis del motor de performance.
+    Exporta solo filas crudas de tablas del creador para pruebas IA externas.
+    No invoca OpenAI ni incluye base de conocimiento ni análisis calculados.
     """
     resultado = obtener_datos_tablas_debug_ia(
         creador_id,
         id_reporte=id_reporte,
-        incluir_base_conocimiento=incluir_base_conocimiento,
         anonimizar=anonimizar,
     )
+    datos_tablas = resultado.get("datos_tablas") or {}
+    if isinstance(datos_tablas, dict):
+        datos_tablas.pop("base_conocimiento", None)
+        datos_tablas.pop("ia_base_conocimiento", None)
+
     return {
         "ok": True,
         "tipo": "debug_datos_tablas_ia",
         "creador_id": resultado.get("creador_id", creador_id),
         "id_reporte": resultado.get("id_reporte"),
-        "datos_tablas": resultado.get("datos_tablas") or {},
+        "datos_tablas": datos_tablas,
     }
+
+
+@router.get(
+    "/api/creadores/performance/{creador_id}/ia/debug-contexto-recomendaciones",
+)
+def debug_contexto_recomendaciones_ia_legacy(
+    creador_id: int,
+    id_reporte: Optional[int] = Query(default=None),
+    anonimizar: bool = Query(default=True),
+):
+    """Alias legacy: misma salida que debug-datos-tablas (sin base de conocimiento)."""
+    return debug_datos_tablas_ia(
+        creador_id=creador_id,
+        id_reporte=id_reporte,
+        anonimizar=anonimizar,
+    )
 
 
 @router.post("/api/creadores/performance/{creador_id}/ia/diagnostico")

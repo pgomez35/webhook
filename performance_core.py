@@ -442,12 +442,26 @@ def _es_llave_sensible_debug(key: Any) -> bool:
     )
 
 
+def _parece_email_debug(valor: Any) -> bool:
+    if not isinstance(valor, str):
+        return False
+    return bool(
+        re.search(
+            r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+            valor,
+        )
+    )
+
+
 def limpiar_datos_sensibles_debug(obj: Any) -> Any:
-    """Elimina llaves sensibles en estructuras anidadas (export debug IA)."""
+    """Elimina o anonimiza datos sensibles en estructuras anidadas (export debug IA)."""
     if isinstance(obj, dict):
         limpio: Dict[str, Any] = {}
         for clave, valor in obj.items():
             if _es_llave_sensible_debug(clave):
+                continue
+            if _parece_email_debug(valor):
+                limpio[clave] = "[email omitido]"
                 continue
             limpio[clave] = limpiar_datos_sensibles_debug(valor)
         return limpio
@@ -455,11 +469,66 @@ def limpiar_datos_sensibles_debug(obj: Any) -> Any:
     if isinstance(obj, list):
         return [limpiar_datos_sensibles_debug(item) for item in obj]
 
+    if _parece_email_debug(obj):
+        return "[email omitido]"
+
     return obj
 
 
+_CLAVES_PERMITIDAS_DATOS_TABLAS_DEBUG = (
+    "creador",
+    "perfil_creador",
+    "categoria_creador",
+    "arquetipo_creador",
+    "ultimo_reporte",
+    "metas_reporte",
+    "perfil_respuestas",
+)
+
+_CLAVES_PROHIBIDAS_DATOS_TABLAS_DEBUG = frozenset({
+    "base_conocimiento",
+    "ia_base_conocimiento",
+    "insights",
+    "recomendaciones",
+    "recomendaciones_existentes",
+    "alertas",
+    "score",
+    "acciones_abiertas",
+    "acciones",
+    "seguimientos",
+    "seguimientos_recientes",
+    "performance_partidas",
+    "perfil_estrategico",
+    "resumen_ia",
+    "lectura_para_ia",
+    "diagnostico",
+    "metricas_derivadas",
+    "contexto_prueba",
+    "instrucciones_para_modelo",
+    "schema_salida_esperado",
+    "prompt_para_copiar",
+})
+
+
+def _aplicar_whitelist_datos_tablas_debug(datos_tablas: Any) -> Dict[str, Any]:
+    """Solo deja las claves acordadas para export debug; elimina cualquier resto."""
+    if not isinstance(datos_tablas, dict):
+        return {}
+
+    salida: Dict[str, Any] = {}
+    for clave in _CLAVES_PERMITIDAS_DATOS_TABLAS_DEBUG:
+        if clave not in datos_tablas:
+            continue
+        valor = datos_tablas[clave]
+        if clave in _CLAVES_PROHIBIDAS_DATOS_TABLAS_DEBUG:
+            continue
+        salida[clave] = valor
+    return salida
+
+
 def _serializar_datos_tablas_debug(obj: Any, *, anonimizar: bool) -> Any:
-    serializado = serializable(obj)
+    filtrado = _aplicar_whitelist_datos_tablas_debug(obj)
+    serializado = serializable(filtrado)
     if anonimizar:
         return limpiar_datos_sensibles_debug(serializado)
     return serializado
@@ -969,6 +1038,84 @@ def obtener_perfil_respuestas(creador_id: int) -> List[Dict[str, Any]]:
         """,
         (creador_id,),
     )
+
+
+def obtener_perfil_respuestas_debug_ia(creador_id: int) -> List[Dict[str, Any]]:
+    """
+    Respuestas de perfil para debug IA.
+
+    Devuelve datos de tablas en formato útil:
+    - variable, categoría, pregunta
+    - valor directo y labels si el valor viene por valor_id o valor_json
+
+    No calcula análisis ni interpreta resultados.
+    """
+    return fetch_all(
+        """
+        SELECT
+            r.id,
+            r.creador_id,
+            r.variable_id,
+
+            v.nombre AS variable_nombre,
+            v.nombre_natural,
+            v.campo_db,
+            v.texto AS pregunta,
+
+            c.nombre AS categoria_nombre,
+            c.nombre_natural AS categoria_natural,
+
+            r.valor_integer,
+            r.valor_numeric,
+            r.valor_texto,
+            r.valor_json,
+            r.valor_id,
+
+            pv.label AS valor_label,
+            pv.nivel AS valor_nivel,
+
+            valores_json.valor_json_labels,
+
+            CASE
+                WHEN r.valor_texto IS NOT NULL THEN r.valor_texto
+                WHEN r.valor_numeric IS NOT NULL THEN r.valor_numeric::text
+                WHEN r.valor_integer IS NOT NULL THEN r.valor_integer::text
+                WHEN pv.label IS NOT NULL THEN pv.label
+                WHEN valores_json.valor_json_labels IS NOT NULL
+                    THEN valores_json.valor_json_labels::text
+                ELSE NULL
+            END AS valor_resuelto,
+
+            r.created_at,
+            r.updated_at
+        FROM creadores_perfil_respuesta r
+        INNER JOIN creadores_perfil_variable v
+            ON r.variable_id = v.id
+        LEFT JOIN creadores_perfil_categoria c
+            ON v.categoria_id = c.id
+        LEFT JOIN creadores_perfil_valor pv
+            ON r.valor_id = pv.id
+        LEFT JOIN LATERAL (
+            SELECT jsonb_agg(pv2.label ORDER BY x.orden) AS valor_json_labels
+            FROM jsonb_array_elements_text(
+                CASE
+                    WHEN r.valor_json IS NOT NULL
+                     AND jsonb_typeof(r.valor_json::jsonb) = 'array'
+                    THEN r.valor_json::jsonb
+                    ELSE '[]'::jsonb
+                END
+            ) WITH ORDINALITY AS x(valor_id_txt, orden)
+            INNER JOIN creadores_perfil_valor pv2
+                ON pv2.id = x.valor_id_txt::integer
+        ) valores_json ON true
+        WHERE r.creador_id = %s
+        ORDER BY
+            c.orden ASC NULLS LAST,
+            v.orden ASC NULLS LAST,
+            v.id ASC
+        """,
+        (creador_id,),
+    ) or []
 
 
 def obtener_metas_reporte_lista(
@@ -2049,39 +2196,19 @@ def obtener_contexto_ia_manager(
     return resultado
 
 
-def obtener_base_conocimiento_tablas_raw(
-    *,
-    limit: int = 500,
-) -> List[Dict[str, Any]]:
-    """Registros activos de ia_base_conocimiento sin filtros heurísticos."""
-    limite = max(1, min(int(limit or 500), 2000))
-    try:
-        return fetch_all(
-            f"""
-            SELECT {_CAMPOS_BASE_CONOCIMIENTO_IA},
-                   activo, created_at, updated_at
-            FROM ia_base_conocimiento
-            WHERE activo = true
-            ORDER BY prioridad ASC, updated_at DESC, id DESC
-            LIMIT %s
-            """,
-            (limite,),
-        ) or []
-    except Exception as exc:
-        print(f"⚠️ [IA] No se pudo leer ia_base_conocimiento: {exc}", flush=True)
-        return []
-
-
 def obtener_datos_tablas_debug_ia(
     creador_id: int,
     *,
     id_reporte: Optional[int] = None,
-    incluir_base_conocimiento: bool = False,
     anonimizar: bool = True,
 ) -> Dict[str, Any]:
     """
-    Datos crudos de tablas para pruebas IA externas.
-    No incluye score, insights, alertas, recomendaciones ni campos calculados por algoritmo.
+    Exporta datos crudos de tablas para pruebas externas de IA.
+
+    No llama OpenAI.
+    No incluye base_conocimiento.
+    No incluye insights, score, alertas, recomendaciones, acciones ni seguimientos.
+    No calcula diagnósticos ni agrega textos quemados.
     """
     creador = obtener_creador(creador_id)
     if not creador:
@@ -2092,11 +2219,7 @@ def obtener_datos_tablas_debug_ia(
     arquetipo_creador = obtener_arquetipo_creador(creador_id)
     ultimo_reporte = obtener_ultimo_reporte(creador_id, id_reporte=id_reporte)
     metas_reporte = obtener_metas_reporte_lista(creador_id, ultimo_reporte)
-    perfil_respuestas = obtener_perfil_respuestas(creador_id)
-
-    base_conocimiento: List[Dict[str, Any]] = []
-    if incluir_base_conocimiento:
-        base_conocimiento = obtener_base_conocimiento_tablas_raw()
+    perfil_respuestas = obtener_perfil_respuestas_debug_ia(creador_id)
 
     datos_tablas: Dict[str, Any] = {
         "creador": creador,
@@ -2106,10 +2229,12 @@ def obtener_datos_tablas_debug_ia(
         "ultimo_reporte": ultimo_reporte,
         "metas_reporte": metas_reporte,
         "perfil_respuestas": perfil_respuestas,
-        "base_conocimiento": base_conocimiento,
     }
 
-    datos_serializados = _serializar_datos_tablas_debug(datos_tablas, anonimizar=anonimizar)
+    datos_serializados = _serializar_datos_tablas_debug(
+        datos_tablas,
+        anonimizar=anonimizar,
+    )
 
     return {
         "creador_id": creador_id,
