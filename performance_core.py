@@ -1740,17 +1740,201 @@ def obtener_contexto_performance(
     return contexto
 
 
+MODULOS_BASE_CONOCIMIENTO_IA = (
+    "performance_creadores",
+    "tiktok_live",
+    "coaching_manager",
+)
+
+_CAMPOS_BASE_CONOCIMIENTO_IA = """
+    id, modulo, categoria, subcategoria, titulo, resumen,
+    accion_recomendada, ejemplo_manager, aplica_cuando, fuente, prioridad
+"""
+
+
+def construir_metricas_derivadas(reporte: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Métricas resumidas del último reporte para prompts y export debug."""
+    if not reporte:
+        return {}
+
+    return {
+        "id_reporte": reporte.get("id_reporte"),
+        "periodo_inicio": reporte.get("periodo_inicio"),
+        "periodo_fin": reporte.get("periodo_fin"),
+        "diamantes_mes": safe_float(reporte.get("diamantes_mes")),
+        "emisiones_live_mes": safe_float(reporte.get("emisiones_live_mes")),
+        "porcentaje_logro_diamantes": safe_float(reporte.get("porcentaje_logro_diamantes")),
+        "porcentaje_logro_duracion_live": safe_float(reporte.get("porcentaje_logro_duracion_live")),
+        "porcentaje_logro_dias_validos": safe_float(reporte.get("porcentaje_logro_dias_validos")),
+        "porcentaje_logro_nuevos_seguidores": safe_float(
+            reporte.get("porcentaje_logro_nuevos_seguidores")
+        ),
+        "porcentaje_logro_emisiones": safe_float(reporte.get("porcentaje_logro_emisiones")),
+        "variacion_diamantes_mes_anterior": safe_float(reporte.get("variacion_diamantes_mes_anterior")),
+        "variacion_duracion_live_mes_anterior": safe_float(
+            reporte.get("variacion_duracion_live_mes_anterior")
+        ),
+        "variacion_dias_validos_mes_anterior": safe_float(
+            reporte.get("variacion_dias_validos_mes_anterior")
+        ),
+        "variacion_nuevos_seguidores_mes_anterior": safe_float(
+            reporte.get("variacion_nuevos_seguidores_mes_anterior")
+        ),
+        "variacion_emisiones_mes_anterior": safe_float(
+            reporte.get("variacion_emisiones_mes_anterior")
+        ),
+        "partidas": safe_float(reporte.get("partidas")),
+        "diamantes_de_partidas": safe_float(reporte.get("diamantes_de_partidas")),
+    }
+
+
+def detectar_categorias_base_conocimiento(contexto: Dict[str, Any]) -> List[str]:
+    """Categorías sugeridas para filtrar ia_base_conocimiento según el estado del creador."""
+    categorias: List[str] = []
+    reporte = contexto.get("ultimo_reporte") or {}
+    partidas = contexto.get("performance_partidas") or {}
+
+    if safe_float(reporte.get("porcentaje_logro_diamantes")) < 60:
+        categorias.append("monetizacion")
+    if safe_float(reporte.get("porcentaje_logro_dias_validos")) < 60:
+        categorias.extend(["horario", "disciplina"])
+    if safe_float(reporte.get("porcentaje_logro_emisiones")) < 55:
+        categorias.append("horario")
+    if safe_float(partidas.get("partidas")) > 0:
+        categorias.append("interaccion")
+
+    perfil = contexto.get("perfil_estrategico") or {}
+    if perfil.get("arquetipo_valor"):
+        categorias.append("interaccion")
+
+    for fija in ("contenido", "emocional", "audiencia"):
+        categorias.append(fija)
+
+    return list(dict.fromkeys(categorias))[:10]
+
+
+def _palabras_clave_base_conocimiento(contexto: Dict[str, Any]) -> List[str]:
+    palabras: List[str] = []
+    perfil = contexto.get("perfil_estrategico") or {}
+
+    intereses = perfil.get("intereses") or []
+    if isinstance(intereses, list):
+        for item in intereses[:6]:
+            if isinstance(item, str) and item.strip():
+                palabras.append(item.strip()[:50])
+            elif isinstance(item, dict):
+                for clave in ("label", "nombre", "valor", "texto"):
+                    if item.get(clave):
+                        palabras.append(str(item[clave]).strip()[:50])
+                        break
+
+    arquetipo = perfil.get("arquetipo_valor")
+    if arquetipo:
+        palabras.append(str(arquetipo).strip()[:50])
+
+    categoria = (contexto.get("categoria_creador") or {}).get("nombre")
+    if categoria:
+        palabras.append(str(categoria).strip()[:50])
+
+    horario = perfil.get("horario_preferido")
+    if isinstance(horario, dict):
+        for clave in ("label", "nombre", "valor"):
+            if horario.get(clave):
+                palabras.append(str(horario[clave]).strip()[:50])
+                break
+    elif horario:
+        palabras.append(str(horario).strip()[:50])
+
+    return list(dict.fromkeys(p for p in palabras if p))[:12]
+
+
+def obtener_base_conocimiento_ia(
+    *,
+    modulos: Optional[List[str]] = None,
+    categorias: Optional[List[str]] = None,
+    palabras_clave: Optional[List[str]] = None,
+    limit: int = 6,
+) -> List[Dict[str, Any]]:
+    """Fragmentos operativos desde ia_base_conocimiento (tabla del tenant)."""
+    limite = max(1, min(int(limit or 6), 30))
+    condiciones = ["activo = true"]
+    params: List[Any] = []
+
+    modulos_filtro = list(modulos or MODULOS_BASE_CONOCIMIENTO_IA)
+    if modulos_filtro:
+        condiciones.append("modulo = ANY(%s)")
+        params.append(modulos_filtro)
+
+    if categorias:
+        condiciones.append("categoria = ANY(%s)")
+        params.append(list(categorias))
+
+    if palabras_clave:
+        bloques_kw: List[str] = []
+        for palabra in palabras_clave[:12]:
+            texto = str(palabra or "").strip()
+            if not texto:
+                continue
+            patron = f"%{texto}%"
+            bloques_kw.append(
+                "("
+                "titulo ILIKE %s OR resumen ILIKE %s "
+                "OR COALESCE(accion_recomendada, '') ILIKE %s "
+                "OR COALESCE(aplica_cuando, '') ILIKE %s "
+                "OR COALESCE(subcategoria, '') ILIKE %s"
+                ")"
+            )
+            params.extend([patron, patron, patron, patron, patron])
+        if bloques_kw:
+            condiciones.append(f"({' OR '.join(bloques_kw)})")
+
+    sql = f"""
+        SELECT {_CAMPOS_BASE_CONOCIMIENTO_IA}
+        FROM ia_base_conocimiento
+        WHERE {' AND '.join(condiciones)}
+        ORDER BY prioridad ASC, updated_at DESC, id DESC
+        LIMIT %s
+    """
+    params.append(limite)
+
+    try:
+        filas = fetch_all(sql, tuple(params))
+        return filas or []
+    except Exception as exc:
+        print(f"⚠️ [IA] No se pudo cargar ia_base_conocimiento: {exc}", flush=True)
+        return []
+
+
+def adjuntar_base_conocimiento_ia(
+    contexto: Dict[str, Any],
+    *,
+    limite: int = 6,
+) -> List[Dict[str, Any]]:
+    """Carga base de conocimiento contextual sin reconsultar performance completo."""
+    limite_norm = max(1, min(int(limite or 6), 30))
+    categorias = detectar_categorias_base_conocimiento(contexto)
+    palabras = _palabras_clave_base_conocimiento(contexto)
+    return obtener_base_conocimiento_ia(
+        modulos=list(MODULOS_BASE_CONOCIMIENTO_IA),
+        categorias=categorias or None,
+        palabras_clave=palabras or None,
+        limit=limite_norm,
+    )
+
+
 def obtener_contexto_ia_manager(
     creador_id: int,
     *,
     id_reporte: Optional[int] = None,
+    incluir_base_conocimiento: bool = False,
+    base_conocimiento_limit: int = 6,
 ) -> Dict[str, Any]:
     """
     Contexto reducido para prompts IA: prioriza perfil_estrategico y limita listas.
     """
     contexto = obtener_contexto_performance(creador_id, id_reporte=id_reporte, incluir_perfil=True)
 
-    return {
+    resultado: Dict[str, Any] = {
         "creador": contexto.get("creador"),
         "detalle": contexto.get("detalle"),
         "categoria_creador": contexto.get("categoria_creador"),
@@ -1766,6 +1950,14 @@ def obtener_contexto_ia_manager(
         "seguimientos": (contexto.get("seguimientos") or [])[:3],
         "acciones_abiertas": (contexto.get("acciones_abiertas") or [])[:5],
     }
+
+    if incluir_base_conocimiento:
+        resultado["base_conocimiento"] = adjuntar_base_conocimiento_ia(
+            resultado,
+            limite=base_conocimiento_limit,
+        )
+
+    return resultado
 
 
 # =========================================================
