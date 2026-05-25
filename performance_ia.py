@@ -303,7 +303,150 @@ Si falta un dato, dilo en lenguaje natural (ej. "sin horario definido"); no cite
 """
 
 
+def _es_contexto_compacto_ia(contexto: Dict[str, Any]) -> bool:
+    return (
+        isinstance(contexto, dict)
+        and "perfil" in contexto
+        and "reporte" in contexto
+        and "perfil_estrategico" not in contexto
+    )
+
+
+def _reporte_desde_contexto(contexto: Dict[str, Any]) -> Dict[str, Any]:
+    reporte = contexto.get("ultimo_reporte") or contexto.get("reporte")
+    return reporte if isinstance(reporte, dict) else {}
+
+
+def _intereses_desde_perfil_compacto(perfil: Dict[str, Any]) -> List[str]:
+    if not isinstance(perfil, dict):
+        return []
+    raw = perfil.get("intereses_multiples") or perfil.get("intereses")
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    if isinstance(raw, str):
+        texto = raw.strip()
+        if not texto:
+            return []
+        try:
+            parsed = json.loads(texto)
+            if isinstance(parsed, list):
+                return [str(x).strip() for x in parsed if str(x).strip()]
+        except Exception:
+            pass
+        return [texto]
+    return [str(raw).strip()]
+
+
+def _partidas_desde_reporte_compacto(reporte: Dict[str, Any]) -> Dict[str, Any]:
+    """Campos de partidas desde columnas del reporte, sin diagnóstico calculado."""
+    if not reporte:
+        return performance_partidas_vacio()
+
+    partidas = safe_float(reporte.get("partidas"))
+    diamantes_de_partidas = safe_float(reporte.get("diamantes_de_partidas"))
+    diamantes_mes = safe_float(reporte.get("diamantes_mes"))
+    pct = (diamantes_de_partidas / diamantes_mes * 100) if diamantes_mes > 0 else 0.0
+
+    return {
+        "partidas": int(partidas) if partidas == int(partidas) else partidas,
+        "diamantes_de_partidas": diamantes_de_partidas,
+        "diamantes_mes": diamantes_mes,
+        "diamantes_por_partida": round(diamantes_de_partidas / partidas, 2) if partidas > 0 else 0.0,
+        "porcentaje_diamantes_por_partidas": round(pct, 2),
+        "porcentaje_diamantes_por_partidas_visual": round(min(pct, 100), 2),
+        "advertencia_partidas": None,
+        "diagnostico_partidas": None,
+    }
+
+
+def _extraer_datos_desde_contexto_compacto(contexto: Dict[str, Any]) -> Dict[str, Any]:
+    creador = contexto.get("creador") or {}
+    categoria = contexto.get("categoria") or {}
+    arquetipo_row = contexto.get("arquetipo") or {}
+    perfil = contexto.get("perfil") or {}
+    reporte = _reporte_desde_contexto(contexto)
+    partidas = _partidas_desde_reporte_compacto(reporte)
+
+    intereses_lista = _intereses_desde_perfil_compacto(perfil)
+    estrategia_json = arquetipo_row.get("estrategia_json") or {}
+    if isinstance(estrategia_json, str):
+        try:
+            estrategia_json = json.loads(estrategia_json)
+        except Exception:
+            estrategia_json = {}
+    if not isinstance(estrategia_json, dict):
+        estrategia_json = {}
+
+    arquetipo_estrategia = None
+    if arquetipo_row:
+        arquetipo_estrategia = {
+            "codigo": arquetipo_row.get("codigo"),
+            "nombre": arquetipo_row.get("nombre"),
+            "descripcion_operativa": arquetipo_row.get("descripcion_operativa"),
+            "estrategia_json": estrategia_json,
+        }
+
+    nombre = (
+        creador.get("nombre_artistico")
+        or creador.get("nickname")
+        or creador.get("nombre")
+        or creador.get("usuario_tiktok")
+        or creador.get("usuario")
+        or "el creador"
+    )
+    arquetipo_nombre = (
+        arquetipo_row.get("nombre")
+        or perfil.get("arquetipo_valor")
+        or perfil.get("arquetipo_definicion")
+    )
+    horario = perfil.get("horario_preferido")
+    if isinstance(horario, dict):
+        horario = horario.get("label") or horario.get("nombre") or horario.get("valor")
+
+    n_partidas = safe_float(partidas.get("partidas"))
+    d_partidas = safe_float(partidas.get("diamantes_de_partidas"))
+    texto_partidas = (
+        f"{int(n_partidas)} partidas y {int(d_partidas)} diamantes asociados a batallas en el periodo."
+        if n_partidas > 0
+        else "Sin partidas registradas en el periodo del reporte."
+    )
+
+    return {
+        "nombre_creador": nombre,
+        "arquetipo": arquetipo_nombre,
+        "intereses_lista": intereses_lista,
+        "intereses": ", ".join(intereses_lista) if intereses_lista else None,
+        "horario": horario,
+        "categoria_nombre": categoria.get("nombre"),
+        "meta_diamantes": categoria.get("meta_diamantes_objetivo"),
+        "partidas": partidas.get("partidas"),
+        "pct_diamantes_partidas": partidas.get("porcentaje_diamantes_por_partidas"),
+        "diagnostico_partidas": None,
+        "diamantes_por_partida": partidas.get("diamantes_por_partida"),
+        "arquetipo_codigo": arquetipo_row.get("codigo"),
+        "arquetipo_descripcion": arquetipo_row.get("descripcion_operativa"),
+        "arquetipo_estilo_live": estrategia_json.get("estilo_live"),
+        "arquetipo_dinamicas": _lista_desde_jsonb(estrategia_json.get("dinamicas_recomendadas")),
+        "arquetipo_contenido": _lista_desde_jsonb(estrategia_json.get("estrategias_contenido")),
+        "arquetipo_interaccion": _lista_desde_jsonb(estrategia_json.get("estrategias_interaccion")),
+        "arquetipo_monetizacion": _lista_desde_jsonb(estrategia_json.get("estrategias_monetizacion")),
+        "arquetipo_evitar": _lista_desde_jsonb(estrategia_json.get("evitar")),
+        "arquetipo_instruccion_ia": estrategia_json.get("instruccion_ia"),
+        "advertencia_partidas": None,
+        "arquetipo_estrategia": arquetipo_estrategia,
+        "resumen_arquetipo": _resumen_arquetipo_para_recomendacion(arquetipo_estrategia),
+        "texto_partidas_manager": texto_partidas,
+        "diamantes_mes": reporte.get("diamantes_mes"),
+        "metas": contexto.get("metas") or {},
+    }
+
+
 def _extraer_datos_personalizacion_recomendaciones(contexto: Dict[str, Any]) -> Dict[str, Any]:
+    if _es_contexto_compacto_ia(contexto):
+        return _extraer_datos_desde_contexto_compacto(contexto)
+
     perfil = contexto.get("perfil_estrategico") or {}
     categoria = contexto.get("categoria_creador") or {}
     partidas = contexto.get("performance_partidas") or performance_partidas_vacio()
@@ -1330,11 +1473,66 @@ def _limpiar_emocional_de_horario_y_metricas(
     return limpio
 
 
+def _recomendacion_es_concreta_util(texto: str, categoria: Optional[str] = None) -> bool:
+    """True si el texto de IA ya es accionable; evita sobrescribir con builders rígidos."""
+    t = (texto or "").strip()
+    if not t or _es_texto_recomendacion_generico(t):
+        return False
+    if len(t) < 32:
+        return False
+    tl = t.lower()
+    if any(p in tl for p in _TERMINOS_TECNICOS_PROHIBIDOS_MANAGER):
+        return False
+    return True
+
+
+def _debe_usar_fallback_recomendacion(
+    texto_rec: str,
+    texto_just: str,
+    categoria: str,
+    datos: Dict[str, Any],
+) -> bool:
+    texto_union = f"{texto_rec} {texto_just}".strip()
+    if not texto_rec.strip():
+        return True
+    if _es_texto_recomendacion_generico(texto_rec) or _es_texto_recomendacion_generico(texto_just):
+        return True
+    if any(p in texto_union.lower() for p in _TERMINOS_TECNICOS_PROHIBIDOS_MANAGER):
+        return True
+    if len(texto_rec) > 480 or len(texto_just) > 280:
+        return True
+    if _recomendacion_es_concreta_util(texto_rec, categoria):
+        return False
+    if (
+        categoria in _CATEGORIAS_RECOMENDACION_CON_DINAMICAS
+        and not _cumple_dinamicas_intereses_minimas(texto_union, datos, categoria)
+        and len(texto_rec) < 70
+    ):
+        return True
+    if not _cumple_personalizacion_minima_recomendacion(texto_union, datos, categoria):
+        return True
+    return False
+
+
+def _pulir_recomendacion_final_suave(rec: Dict[str, Any]) -> Dict[str, Any]:
+    """Limpieza ligera sin cambiar el sentido ni reemplazar por plantillas."""
+    if not isinstance(rec, dict):
+        return rec
+    salida = dict(rec)
+    for campo in ("recomendacion", "justificacion"):
+        texto = _limpiar_lenguaje_tecnico_ia(rec.get(campo))
+        texto = _pulir_frases_roboticas_manager(texto)
+        texto = _limpiar_texto_generado(texto)
+        salida[campo] = texto
+    return salida
+
+
 def _pulir_recomendacion_por_categoria(
     rec: Dict[str, Any],
     contexto: Optional[Dict[str, Any]] = None,
     *,
     hay_tarjeta_horario: bool = False,
+    modo_suave: bool = True,
 ) -> Dict[str, Any]:
     if not isinstance(rec, dict):
         return rec
@@ -1349,22 +1547,28 @@ def _pulir_recomendacion_por_categoria(
     )
     horario_ctx = str(datos.get("horario") or "")
 
+    concreta = _recomendacion_es_concreta_util(recomendacion, cat)
+
     if cat == "monetizacion":
         tl = recomendacion.lower()
-        if (
-            _texto_contiene_alguna(
-                tl,
-                ("metas pequeñas", "por tramo", "regalos por tramo", "mini reto"),
-            )
-            and not _texto_tiene_tramos_monetizacion(recomendacion)
-        ):
-            interes = (datos.get("intereses_lista") or [""])[0] if datos.get("intereses_lista") else ""
-            recomendacion = _recomendacion_monetizacion_estructurada(str(interes or ""))
-        justificacion = _justificacion_monetizacion_natural(justificacion, datos)
+        if not modo_suave or not concreta:
+            if (
+                _texto_contiene_alguna(
+                    tl,
+                    ("metas pequeñas", "por tramo", "regalos por tramo", "mini reto"),
+                )
+                and not _texto_tiene_tramos_monetizacion(recomendacion)
+            ) or _es_texto_recomendacion_generico(recomendacion):
+                interes = (datos.get("intereses_lista") or [""])[0] if datos.get("intereses_lista") else ""
+                recomendacion = _recomendacion_monetizacion_estructurada(str(interes or ""))
+        if not modo_suave or "esto convierte" not in justificacion.lower():
+            justificacion = _justificacion_monetizacion_natural(justificacion, datos)
 
     elif cat == "interaccion":
-        recomendacion = _enriquecer_recomendacion_interaccion_si_falta(recomendacion)
-        justificacion = _justificacion_interaccion_natural(justificacion, recomendacion)
+        if not modo_suave or not _texto_tiene_ranking_y_top(recomendacion):
+            recomendacion = _enriquecer_recomendacion_interaccion_si_falta(recomendacion)
+        if not modo_suave or "reto, competencia" not in justificacion.lower():
+            justificacion = _justificacion_interaccion_natural(justificacion, recomendacion)
 
     elif cat == "contenido":
         recomendacion = _pulir_frases_roboticas_manager(recomendacion)
@@ -1388,12 +1592,13 @@ def _pulir_recomendacion_por_categoria(
 
     elif cat == "emocional":
         recomendacion = _limpiar_emocional_de_horario_y_metricas(recomendacion, horario_ctx)
-        if (
-            not _texto_tiene_cumplimiento_3_3(recomendacion)
-            or "reto semanal" not in recomendacion.lower()
-        ):
-            recomendacion = _recomendacion_emocional_estructurada()
-        if "sostener energía" not in justificacion.lower():
+        if not modo_suave or not concreta:
+            if (
+                not _texto_tiene_cumplimiento_3_3(recomendacion)
+                or "reto semanal" not in recomendacion.lower()
+            ) or _es_texto_recomendacion_generico(recomendacion):
+                recomendacion = _recomendacion_emocional_estructurada()
+        if (not modo_suave or not concreta) and "sostener energía" not in justificacion.lower():
             justificacion = "Prioridad: sostener energía y ritmo sin saturar al creador."
 
     elif cat == "horario":
@@ -1448,6 +1653,7 @@ def _aplicar_pulido_final_recomendaciones(
                 item,
                 contexto,
                 hay_tarjeta_horario=hay_tarjeta_horario,
+                modo_suave=True,
             )
             pulidas.append(item)
         salida["recomendaciones"] = pulidas
@@ -1715,7 +1921,7 @@ def _debe_conservar_prioridad_critica(contexto: Dict[str, Any], categoria_norm: 
     Si no hay datos fuertes, baja automáticamente a alta para no alarmar al manager.
     """
     categoria_norm = _normalizar_categoria_recomendacion(categoria_norm)
-    reporte = contexto.get("ultimo_reporte") or {}
+    reporte = _reporte_desde_contexto(contexto)
     score = contexto.get("score") or {}
     alertas = contexto.get("alertas") or []
 
@@ -2123,7 +2329,7 @@ def _normalizar_resultado_recomendaciones_ia(
             categoria_norm,
         )
 
-        rec_pulida = _pulir_recomendacion_item({
+        rec_pulida = _pulir_recomendacion_final_suave({
             "categoria": categoria_norm,
             "prioridad": prioridad_norm,
             "recomendacion": rec.get("recomendacion"),
@@ -2153,29 +2359,12 @@ def _normalizar_resultado_recomendaciones_ia(
         texto_just = _limpiar_texto_generado(rec.get("justificacion"))
         texto_union = f"{texto_rec} {texto_just}"
 
-        debe_usar_fallback = (
-            _es_texto_recomendacion_generico(texto_rec)
-            or _es_texto_recomendacion_generico(texto_just)
-            or not _cumple_personalizacion_minima_recomendacion(
-                texto_union, datos, categoria
-            )
-            or (
-                categoria in _CATEGORIAS_RECOMENDACION_CON_DINAMICAS
-                and not _cumple_dinamicas_intereses_minimas(
-                    texto_union, datos, categoria
-                )
-            )
-            or any(p in texto_union.lower() for p in _TERMINOS_TECNICOS_PROHIBIDOS_MANAGER)
-            or len(texto_rec) > 480
-            or len(texto_just) > 280
-        )
-
-        if debe_usar_fallback:
+        if _debe_usar_fallback_recomendacion(texto_rec, texto_just, categoria, datos):
             rec_normalizada = _construir_recomendacion_personalizada_fallback(
                 contexto, categoria, str(prioridad)
             )
         else:
-            rec_normalizada = _pulir_recomendacion_item({
+            rec_normalizada = _pulir_recomendacion_final_suave({
                 "categoria": categoria,
                 "prioridad": prioridad,
                 "recomendacion": texto_rec,
@@ -2323,6 +2512,124 @@ EJEMPLO DE SALIDA ESPERADA (creador inventado — imita el estilo, no los datos)
     }
   ]
 }
+"""
+
+
+def prompt_recomendaciones_manager_v2(
+    contexto: Dict[str, Any],
+    *,
+    max_recomendaciones: int = 5,
+    instrucciones_extra: Optional[str] = None,
+) -> str:
+    instrucciones_extra_txt = instrucciones_extra or ""
+
+    return f"""
+Actúa como coach senior de creadores TikTok LIVE para una agencia.
+
+Voy a darte un JSON con datos reales de un creador. Tu tarea es generar recomendaciones operativas para el manager.
+
+Usa SOLO los datos que aparecen en el JSON.
+No inventes datos.
+No uses lenguaje técnico interno.
+No menciones nombres de campos como estrategia_json, metadata, contexto, JSON, perfil_estrategico o performance_partidas.
+No copies textos completos del arquetipo; úsalo solo para orientar la recomendación.
+No repitas la misma acción en varias categorías.
+
+IMPORTANTE SOBRE METAS:
+- Si existe una meta mensual en el JSON, úsala como meta operativa principal.
+- La meta de categoría, por ejemplo Bronce 5000 diamantes, solo sirve como referencia de nivel.
+- No digas que el creador debe alcanzar la meta de categoría si sus diamantes del periodo ya superan esa cifra.
+- Si los diamantes de partidas son mayores que los diamantes del mes, no lo presentes como porcentaje normal. Úsalo solo como señal de que las batallas/partidas son relevantes.
+
+IMPORTANTE SOBRE FRECUENCIA Y HORARIO:
+- No recomiendes aumentar frecuencia si el creador ya tiene buen cumplimiento en días válidos, emisiones o duración.
+- En ese caso, recomienda optimizar bloques dentro de la franja actual.
+- Horario solo debe hablar de franja, días, bloques y medición. No mezcles horario con emocional ni contenido.
+
+IMPORTANTE SOBRE BATALLAS:
+- Si el arquetipo es Batallista pero el perfil muestra baja comodidad con batallas o PK, no asumas que domina las batallas.
+- Recomienda batallas estructuradas, progresivas y fáciles de ejecutar.
+
+Genera exactamente {max_recomendaciones} recomendaciones.
+
+Cada recomendación debe tener:
+1. categoria
+2. prioridad
+3. recomendacion concreta para el manager
+4. justificacion basada en datos del creador
+
+Categorías permitidas:
+- monetizacion
+- interaccion
+- contenido
+- audiencia
+- horario
+- tecnica
+- emocional
+- disciplina
+
+Reglas por categoría:
+
+MONETIZACIÓN:
+Debe hablar de regalos, metas, diamantes, tramos, batallas o partidas.
+Debe ser una acción concreta, no genérica.
+Idealmente dividir la acción en apertura, mitad del LIVE y cierre.
+
+INTERACCIÓN:
+Debe hablar de chat, equipos, preguntas, ranking, reconocimiento, top apoyadores o dinámica de batalla.
+No basta con decir "mejorar interacción".
+Si el perfil muestra dificultad leyendo chat o multitarea, usa estructuras simples.
+
+CONTENIDO:
+Debe convertir intereses del creador en una mini parrilla:
+Live 1 —
+Live 2 —
+Live 3 —
+
+AUDIENCIA:
+Debe hablar de seguidores, comunidad, retorno al próximo LIVE, retención o conversión a follow.
+
+HORARIO:
+Solo debe hablar de franja horaria, días, bloques y medición.
+
+TÉCNICA:
+Debe usar datos de equipo, iluminación, herramientas, setup, cámara, audio, portada o título si aparecen en el JSON.
+
+EMOCIONAL:
+Debe hablar de energía, confianza, ritmo, constancia o no saturar al creador.
+No menciones diamantes ni horario aquí.
+
+DISCIPLINA:
+Debe hablar de rutina, preparación, cumplimiento, feedback, métricas o constancia.
+
+Instrucciones adicionales del manager:
+{instrucciones_extra_txt}
+
+Formato obligatorio:
+Devuelve únicamente JSON válido, sin explicación antes ni después.
+
+Schema exacto:
+
+{{
+  "recomendaciones": [
+    {{
+      "categoria": "monetizacion",
+      "prioridad": "alta",
+      "recomendacion": "texto concreto y accionable",
+      "justificacion": "motivo basado en datos del JSON"
+    }}
+  ]
+}}
+
+Antes de responder, verifica internamente que:
+- cada recomendación sea diferente
+- cada recomendación use datos reales del JSON
+- cada recomendación pueda ejecutarse esta semana por un manager
+- no haya lenguaje técnico interno
+- no se repita la misma acción en varias categorías
+
+JSON DEL CREADOR:
+{contexto_para_prompt(contexto)}
 """
 
 

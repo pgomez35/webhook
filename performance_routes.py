@@ -64,6 +64,7 @@ from performance_core import (
     obtener_contexto_ia_manager,
     obtener_contexto_performance,
     obtener_creador,
+    obtener_contexto_recomendaciones_ia_compacto,
     obtener_datos_tablas_debug_ia,
     obtener_manager_id_por_creador,
     obtener_perfil_respuestas,
@@ -84,6 +85,7 @@ from performance_ia import (
     prompt_diagnostico_performance,
     prompt_generar_seguimiento,
     prompt_recomendaciones_manager,
+    prompt_recomendaciones_manager_v2,
 )
 
 load_dotenv()
@@ -1246,26 +1248,23 @@ def generar_recomendaciones_ia(
     creador_id: int,
     data: GenerarRecomendacionesIARequest = GenerarRecomendacionesIARequest(),
 ):
-    contexto = obtener_contexto_ia_manager(creador_id)
+    contexto = obtener_contexto_recomendaciones_ia_compacto(
+        creador_id,
+        anonimizar=True,
+    )
     _log_ia_debug_contexto("recomendaciones", creador_id, contexto)
-    prompt = prompt_recomendaciones_manager(
+    prompt = prompt_recomendaciones_manager_v2(
         contexto,
-        data.max_recomendaciones,
-        data.instrucciones_extra,
+        max_recomendaciones=data.max_recomendaciones,
+        instrucciones_extra=data.instrucciones_extra,
     )
 
     resultado = openai_json_completion(
         prompt,
-        temperature=0.5,
+        temperature=0.45,
         system=(
-            "Eres experto en coaching operativo para managers de creadores TikTok LIVE. "
-            "Usa perfil_estrategico.arquetipo_estrategia (descripcion_operativa y estrategia_json en BD). "
-            "REGLA CRITICA: texto natural para manager; prohibido citar estrategia_json, JSON, "
-            "perfil_estrategico, performance_partidas y nombres de campos internos en el texto final. "
-            "No interpretes el arquetipo solo por nombre. "
-            "Convierte al menos 2 intereses en dinamicas LIVE con momento y objetivo. "
-            "Si porcentaje de partidas > 100 no lo presentes como porcentaje normal. "
-            "Responde unicamente con un objeto JSON valido."
+            "Eres coach senior de creadores TikTok LIVE para managers de agencia. "
+            "Responde únicamente con un objeto JSON válido en español."
         ),
     )
 
@@ -1277,7 +1276,7 @@ def generar_recomendaciones_ia(
 
     guardadas = []
     if data.guardar:
-        reporte = contexto.get("ultimo_reporte") or {}
+        reporte = contexto.get("reporte") or {}
         for rec in recomendaciones:
             if not isinstance(rec, dict):
                 continue

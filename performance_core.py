@@ -2379,17 +2379,15 @@ def obtener_contexto_ia_manager(
     return resultado
 
 
-def obtener_datos_tablas_debug_ia(
+def construir_datos_tablas_compactos_ia(
     creador_id: int,
     *,
     id_reporte: Optional[int] = None,
     anonimizar: bool = True,
 ) -> Dict[str, Any]:
     """
-    Exporta JSON compacto con datos reales de tablas para pruebas externas de IA.
-
-    No llama OpenAI. No incluye base_conocimiento, insights, score, alertas,
-    recomendaciones, acciones ni seguimientos. No calcula diagnósticos.
+    Contexto compacto (creador, categoría, arquetipo, reporte, metas, perfil).
+    Solo datos reales de tablas; sin insights, score, alertas ni base_conocimiento.
     """
     creador = obtener_creador(creador_id)
     if not creador:
@@ -2412,8 +2410,38 @@ def obtener_datos_tablas_debug_ia(
         perfil_filas=perfil_filas,
     )
 
-    datos_serializados = _serializar_datos_tablas_debug(
+    serializado = _serializar_datos_tablas_debug(
         datos_compactos,
+        anonimizar=anonimizar,
+    )
+    return serializado if isinstance(serializado, dict) else {}
+
+
+def obtener_contexto_recomendaciones_ia_compacto(
+    creador_id: int,
+    *,
+    id_reporte: Optional[int] = None,
+    anonimizar: bool = True,
+) -> Dict[str, Any]:
+    """Mismo payload compacto que debug-datos-tablas, para prompts de recomendaciones IA."""
+    return construir_datos_tablas_compactos_ia(
+        creador_id,
+        id_reporte=id_reporte,
+        anonimizar=anonimizar,
+    )
+
+
+def obtener_datos_tablas_debug_ia(
+    creador_id: int,
+    *,
+    id_reporte: Optional[int] = None,
+    anonimizar: bool = True,
+) -> Dict[str, Any]:
+    """Envoltorio HTTP de debug sobre el contexto compacto."""
+    reporte = obtener_ultimo_reporte(creador_id, id_reporte=id_reporte)
+    datos_tablas = construir_datos_tablas_compactos_ia(
+        creador_id,
+        id_reporte=id_reporte,
         anonimizar=anonimizar,
     )
 
@@ -2422,7 +2450,7 @@ def obtener_datos_tablas_debug_ia(
         "tipo": "debug_datos_tablas_ia",
         "creador_id": creador_id,
         "id_reporte": (reporte or {}).get("id_reporte") if reporte else None,
-        "datos_tablas": datos_serializados,
+        "datos_tablas": datos_tablas,
     }
 
 
