@@ -2,6 +2,7 @@
 Endpoints HTTP de performance de creadores.
 """
 import os
+from copy import deepcopy
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
@@ -78,7 +79,11 @@ from performance_core import (
 )
 from performance_ia import (
     _aplicar_pulido_final_recomendaciones,
+    _extraer_metricas_reporte_recomendaciones,
+    _extraer_senales_perfil_recomendaciones,
     _normalizar_resultado_recomendaciones_ia,
+    _recomendacion_usa_metricas_reporte,
+    _recomendacion_usa_senal_perfil,
     _reforzar_recomendaciones_metricas_y_perfil_si_falta,
     _pulir_recomendacion_item,
     prompt_acciones_manager,
@@ -1244,6 +1249,68 @@ def generar_seguimiento_ia(
     }
 
 
+def _debug_evaluar_recomendaciones_ia(
+    resultado: Any,
+    contexto: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Evalúa si las recomendaciones usan métricas reales y señales de perfil.
+    Solo para debug. No altera el resultado.
+    """
+    recomendaciones: List[Any] = []
+
+    if isinstance(resultado, dict):
+        recomendaciones = resultado.get("recomendaciones") or []
+
+    if not isinstance(recomendaciones, list):
+        recomendaciones = []
+
+    evaluadas: List[Dict[str, Any]] = []
+    total_metricas = 0
+    total_perfil = 0
+
+    for idx, rec in enumerate(recomendaciones, start=1):
+        if not isinstance(rec, dict):
+            continue
+
+        usa_metricas = False
+        usa_perfil = False
+
+        try:
+            usa_metricas = _recomendacion_usa_metricas_reporte(rec, contexto)
+        except Exception:
+            usa_metricas = False
+
+        try:
+            usa_perfil = _recomendacion_usa_senal_perfil(rec, contexto)
+        except Exception:
+            usa_perfil = False
+
+        if usa_metricas:
+            total_metricas += 1
+        if usa_perfil:
+            total_perfil += 1
+
+        evaluadas.append({
+            "idx": idx,
+            "categoria": rec.get("categoria"),
+            "prioridad": rec.get("prioridad"),
+            "usa_metricas_reales": usa_metricas,
+            "usa_senal_perfil": usa_perfil,
+            "recomendacion": rec.get("recomendacion"),
+            "justificacion": rec.get("justificacion"),
+        })
+
+    return {
+        "total_recomendaciones": len(recomendaciones),
+        "total_con_metricas_reales": total_metricas,
+        "total_con_senal_perfil": total_perfil,
+        "cumple_minimo_metricas": total_metricas >= 3,
+        "cumple_minimo_perfil": total_perfil >= 3,
+        "detalle": evaluadas,
+    }
+
+
 @router.post("/api/creadores/performance/{creador_id}/ia/recomendaciones")
 def generar_recomendaciones_ia(
     creador_id: int,
@@ -1306,6 +1373,129 @@ def generar_recomendaciones_ia(
         "guardado": data.guardar,
         "resultado": resultado,
         "guardadas": guardadas,
+    }
+
+
+@router.post("/api/creadores/performance/{creador_id}/ia/recomendaciones-debug-raw")
+def generar_recomendaciones_ia_debug_raw(
+    creador_id: int,
+    data: GenerarRecomendacionesIARequest = GenerarRecomendacionesIARequest(),
+    incluir_prompt: bool = Query(default=True),
+    incluir_contexto: bool = Query(default=True),
+):
+    """
+    Endpoint temporal de debug.
+
+    Compara respuesta raw de OpenAI vs normalización, pulido y refuerzo.
+    No guarda nada en DB.
+    """
+    contexto = obtener_contexto_recomendaciones_ia_compacto(
+        creador_id,
+        id_reporte=data.id_reporte,
+        anonimizar=True,
+    )
+
+    prompt = prompt_recomendaciones_manager_v3(
+        contexto,
+        max_recomendaciones=data.max_recomendaciones or 5,
+        instrucciones_extra=data.instrucciones_extra,
+    )
+
+    metricas_extraidas: Dict[str, Any] = {}
+    senales_perfil_extraidas: Dict[str, Any] = {}
+
+    try:
+        metricas_extraidas = _extraer_metricas_reporte_recomendaciones(contexto)
+    except Exception as e:
+        metricas_extraidas = {"error": str(e)}
+
+    try:
+        senales_perfil_extraidas = _extraer_senales_perfil_recomendaciones(contexto)
+    except Exception as e:
+        senales_perfil_extraidas = {"error": str(e)}
+
+    respuesta_raw = openai_json_completion(
+        prompt,
+        temperature=0.45,
+        system=(
+            "Eres coach senior de creadores TikTok LIVE para managers de agencia. "
+            "Responde únicamente con un objeto JSON válido en español."
+        ),
+    )
+
+    evaluacion_raw = _debug_evaluar_recomendaciones_ia(respuesta_raw, contexto)
+
+    respuesta_normalizada = _normalizar_resultado_recomendaciones_ia(
+        contexto,
+        deepcopy(respuesta_raw),
+        data.max_recomendaciones or 5,
+    )
+    evaluacion_normalizada = _debug_evaluar_recomendaciones_ia(
+        respuesta_normalizada,
+        contexto,
+    )
+
+    respuesta_pulida = _aplicar_pulido_final_recomendaciones(
+        deepcopy(respuesta_normalizada),
+        contexto,
+    )
+    evaluacion_pulida = _debug_evaluar_recomendaciones_ia(respuesta_pulida, contexto)
+
+    respuesta_reforzada = _reforzar_recomendaciones_metricas_y_perfil_si_falta(
+        deepcopy(respuesta_pulida),
+        contexto,
+        max_recomendaciones=data.max_recomendaciones or 5,
+    )
+    evaluacion_reforzada = _debug_evaluar_recomendaciones_ia(
+        respuesta_reforzada,
+        contexto,
+    )
+
+    respuesta_reforzada_pulida = _aplicar_pulido_final_recomendaciones(
+        deepcopy(respuesta_reforzada),
+        contexto,
+    )
+    evaluacion_reforzada_pulida = _debug_evaluar_recomendaciones_ia(
+        respuesta_reforzada_pulida,
+        contexto,
+    )
+
+    return {
+        "ok": True,
+        "debug": True,
+        "guardado": False,
+        "creador_id": creador_id,
+        "id_reporte": data.id_reporte,
+        "modelo": OPENAI_MODEL_DEFAULT,
+        "temperature": 0.45,
+        "metricas_extraidas": metricas_extraidas,
+        "senales_perfil_extraidas": senales_perfil_extraidas,
+        "contexto_usado": contexto if incluir_contexto else None,
+        "prompt_usado": prompt if incluir_prompt else None,
+        "pasos": {
+            "raw_openai": {
+                "resultado": respuesta_raw,
+                "evaluacion": evaluacion_raw,
+            },
+            "normalizada": {
+                "resultado": respuesta_normalizada,
+                "evaluacion": evaluacion_normalizada,
+            },
+            "pulida": {
+                "resultado": respuesta_pulida,
+                "evaluacion": evaluacion_pulida,
+            },
+            "reforzada": {
+                "resultado": respuesta_reforzada,
+                "evaluacion": evaluacion_reforzada,
+            },
+            "reforzada_pulida": {
+                "resultado": respuesta_reforzada_pulida,
+                "evaluacion": evaluacion_reforzada_pulida,
+            },
+        },
+        "resultado_final_debug": respuesta_reforzada_pulida,
+        "evaluacion_final_debug": evaluacion_reforzada_pulida,
     }
 
 
