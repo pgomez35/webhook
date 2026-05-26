@@ -52,7 +52,16 @@ from tenant import (
     current_token
 )
 from utils_aspirantes_1 import *
-from redis_client import redis_set_temp, redis_get_temp, redis_delete_temp
+from utils_whatsapp_flujos import (
+    actualizar_flujo,
+    asegurar_flujo_payload,
+    eliminar_flujo,
+    guardar_aspirante_temp,
+    limpiar_aspirante_temp,
+    obtener_aspirante_temp,
+    obtener_flujo,
+    obtener_flujo_whatsapp,
+)
 from utils_aspirantes import obtener_status_24hrs, \
     enviar_plantilla_estado_evaluacion, buscar_estado_creador, \
     accion_menu_estado_evaluacion, _handle_statuses, enviar_confirmacion_interactiva, manejar_input_link_tiktok, \
@@ -75,10 +84,8 @@ FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "https://talentum-manager.com
 
 router = APIRouter()
 
-# Estado del flujo en memoria
-usuarios_flujo = {}    # { numero: paso_actual }
 # ⚠️ respuestas = {} - ELIMINADO: No se usaba. Las respuestas se guardan en aspirantes_perfil_flujo_temp
-usuarios_temp = {}  # ⚠️ Fallback a memoria si Redis falla (solo para datos temporales de onboarding)
+usuarios_temp = {}  # Fallback en memoria si falla whatsapp_flujos (onboarding)
 
 # ============================
 # ENVIAR MENSAJES INICIO
@@ -433,61 +440,11 @@ def validar_opciones_multiples(texto, opciones_validas):
 
 
 
-# 🗂️ Cachés en memoria con timestamp
-usuarios_flujo = {}   # {numero: (paso, timestamp)}
+# 🗂️ Caché de roles en memoria (el paso del flujo va en tabla whatsapp_flujos)
 usuarios_roles = {}   # {numero: (rol, timestamp)}
 
 # Tiempo de vida en segundos (1 hora = 3600)
 TTL = 1800
-
-
-def actualizar_flujo(numero, paso):
-    """Actualiza el paso del flujo sin perder otros datos del usuario."""
-    if numero not in usuarios_flujo or not isinstance(usuarios_flujo[numero], dict):
-        usuarios_flujo[numero] = {}
-    usuarios_flujo[numero]["paso"] = paso
-    usuarios_flujo[numero]["timestamp"] = time.time()
-
-
-def obtener_flujo(numero):
-
-    cache = usuarios_flujo.get(numero)
-    ahora = time.time()
-
-    if not cache:
-        return None
-
-    # ✅ Formato nuevo (dict)
-    if isinstance(cache, dict):
-        t = cache.get("timestamp", 0)
-        if ahora - t < TTL:
-            return cache.get("paso")
-
-    # ⚙️ Compatibilidad con formato antiguo (tuple)
-    elif isinstance(cache, tuple) and len(cache) == 2:
-        paso, t = cache
-        if ahora - t < TTL:
-            return paso
-
-    # 🧹 Limpieza automática si expiró o no coincide formato
-    usuarios_flujo.pop(numero, None)
-    return None
-
-def asegurar_flujo(numero: str) -> dict:
-    if numero not in usuarios_flujo or not isinstance(usuarios_flujo[numero], dict):
-        usuarios_flujo[numero] = {"timestamp": time.time()}
-    return usuarios_flujo[numero]
-
-def eliminar_flujo(numero: str, tenant_schema: Optional[str] = None):
-    """Reinicia cualquier flujo o estado temporal del usuario."""
-    usuarios_flujo.pop(numero, None)
-    # ✅ Limpiar también de Redis
-    try:
-        redis_delete_temp(numero)
-    except Exception as e:
-        print(f"⚠️ Error eliminando de Redis en eliminar_flujo para {numero}: {e}")
-    usuarios_temp.pop(numero, None)  # Limpiar también de memoria (fallback)
-    print(f"🧹 Flujo reiniciado para {numero}")
 
 
 def obtener_rol_usuario(numero):
@@ -1406,11 +1363,12 @@ def mensaje_encuesta_final(
 
 
 def obtener_nombre_usuario(numero: str) -> str | None:
-    datos = usuarios_flujo.get(numero)
-    if isinstance(datos, dict):
-        return datos.get("nombre")
-    # Limpieza automática si el valor es inválido
-    usuarios_flujo.pop(numero, None)
+    row = obtener_flujo_whatsapp(numero)
+    if not row:
+        return None
+    payload = row.get("payload_json")
+    if isinstance(payload, dict):
+        return payload.get("nombre")
     return None
 
 def enviar_preguntas_frecuentes(numero):
@@ -1441,7 +1399,7 @@ def manejar_respuesta(numero, texto):
     # Estado actual
     paso = obtener_flujo(numero)              # puede ser None, int, o string (p.e. "chat_libre")
     rol = obtener_rol_usuario(numero)
-    asegurar_flujo(numero)                    # asegura estructura en caché
+    asegurar_flujo_payload(numero)
 
     # 1) Atajos globales
     if _es_saludo(texto_normalizado):
@@ -1449,7 +1407,7 @@ def manejar_respuesta(numero, texto):
         return
 
     if _es_volver_menu(texto_normalizado):
-        usuarios_flujo.pop(numero, None)
+        eliminar_flujo(numero)
         enviar_menu_principal(numero, rol)
         return
 
@@ -1525,12 +1483,12 @@ def manejar_menu(numero, texto_normalizado, rol):
             # enviar_diagnostico(numero)
             # ----------------------------
 
-            usuarios_flujo.pop(numero, None)
+            eliminar_flujo(numero)
             return
         if texto_normalizado in {"3", "requisitos"}:
             actualizar_flujo(numero, "requisitos")
             enviar_requisitos(numero)
-            usuarios_flujo.pop(numero, None)
+            eliminar_flujo(numero)
             return
         if texto_normalizado in {"4", "chat libre"}:
             actualizar_flujo(numero, "chat_libre")
@@ -1539,7 +1497,7 @@ def manejar_menu(numero, texto_normalizado, rol):
         if texto_normalizado in {"5", "preguntas", "faq"}:
             actualizar_flujo(numero, "faq")
             enviar_preguntas_frecuentes(numero)
-            usuarios_flujo.pop(numero, None)
+            eliminar_flujo(numero)
             return
         # Si no es una opción válida: muestra SIEMPRE el menú principal de aspirante
         nombre = buscar_usuario_por_telefono(numero).get("nombre", "").split(" ")[0] or ""
@@ -1571,7 +1529,7 @@ def manejar_menu(numero, texto_normalizado, rol):
                 "📅 Estas son tus citas agendadas. (Próximamente mostraremos el detalle desde sistema 😉)"
             )
             enviar_citas_agendadas(numero)
-            usuarios_flujo.pop(numero, None)
+            eliminar_flujo(numero)
             return
 
         # 3) Chat libre
@@ -1589,7 +1547,7 @@ def manejar_menu(numero, texto_normalizado, rol):
         }:
             actualizar_flujo(numero, "guia_presentacion_tiktok_live")
             enviar_guia_tikTok_LIVE(numero)
-            usuarios_flujo.pop(numero, None)
+            eliminar_flujo(numero)
             return
 
         # Opción no válida → podrías reenviar menú específico de entrevista
@@ -1610,17 +1568,17 @@ def manejar_menu(numero, texto_normalizado, rol):
         if texto_normalizado == "3":
             actualizar_flujo(numero, "asesoria")
             enviar_mensaje(numero, "📌 Un asesor se pondrá en contacto contigo pronto.")
-            usuarios_flujo.pop(numero, None)
+            eliminar_flujo(numero)
             return
         if texto_normalizado == "4":
             actualizar_flujo(numero, "recursos")
             enviar_recursos_exclusivos(numero)
-            usuarios_flujo.pop(numero, None)
+            eliminar_flujo(numero)
             return
         if texto_normalizado == "5":
             actualizar_flujo(numero, "eventos")
             enviar_eventos(numero)
-            usuarios_flujo.pop(numero, None)
+            eliminar_flujo(numero)
             return
         if texto_normalizado == "6":
             actualizar_flujo(numero, "soporte")
@@ -1633,12 +1591,12 @@ def manejar_menu(numero, texto_normalizado, rol):
         if texto_normalizado == "8":
             actualizar_flujo(numero, "estadisticas")
             enviar_estadisticas(numero)
-            usuarios_flujo.pop(numero, None)
+            eliminar_flujo(numero)
             return
         if texto_normalizado == "9":
             actualizar_flujo(numero, "baja")
             solicitar_baja(numero)
-            usuarios_flujo.pop(numero, None)
+            eliminar_flujo(numero)
             return
         # Si no es una opción válida: muestra SIEMPRE el menú principal de creador
         nombre = buscar_usuario_por_telefono(numero).get("nombre", "").split(" ")[0] or ""
@@ -1653,7 +1611,7 @@ def manejar_menu(numero, texto_normalizado, rol):
         if texto_normalizado == "2":
             actualizar_flujo(numero, "ver_perfiles")
             enviar_perfiles(numero)
-            usuarios_flujo.pop(numero, None)
+            eliminar_flujo(numero)
             return
         if texto_normalizado == "3":
             actualizar_flujo(numero, "comunicado")
@@ -1662,7 +1620,7 @@ def manejar_menu(numero, texto_normalizado, rol):
         if texto_normalizado == "4":
             actualizar_flujo(numero, "recursos_admin")
             gestionar_recursos(numero)
-            usuarios_flujo.pop(numero, None)
+            eliminar_flujo(numero)
             return
         if texto_normalizado in {"5", "chat libre"}:
             actualizar_flujo(numero, "chat_libre")
@@ -1919,9 +1877,9 @@ def _process_new_user_onboarding(
 
         # Guardar aspirante temporal
         try:
-            redis_set_temp(numero, aspirante, ttl=900)
+            guardar_aspirante_temp(numero, aspirante, ttl_segundos=900)
         except Exception as e:
-            print(f"⚠️ Redis falló, usando memoria: {e}")
+            print(f"⚠️ whatsapp_flujos falló, usando memoria: {e}")
             usuarios_temp[numero] = aspirante
 
         # Confirmación con botones
@@ -1961,7 +1919,7 @@ def _process_new_user_onboarding(
         # CONFIRMA QUE SÍ
         # -------------------------
         if es_si:
-            aspirante = redis_get_temp(numero) or usuarios_temp.get(numero)
+            aspirante = obtener_aspirante_temp(numero) or usuarios_temp.get(numero)
 
             if not aspirante:
                 enviar_mensaje(
@@ -2001,7 +1959,7 @@ def _process_new_user_onboarding(
 
             # Limpiar temporales
             try:
-                redis_delete_temp(numero)
+                limpiar_aspirante_temp(numero)
             except Exception:
                 pass
             usuarios_temp.pop(numero, None)
@@ -2022,7 +1980,7 @@ def _process_new_user_onboarding(
             )
 
             try:
-                redis_delete_temp(numero)
+                limpiar_aspirante_temp(numero)
             except Exception:
                 pass
             usuarios_temp.pop(numero, None)
@@ -2140,9 +2098,9 @@ def _process_new_user_onboardingV1(
 
         # Guardar aspirante temporal
         try:
-            redis_set_temp(numero, aspirante, ttl=900)
+            guardar_aspirante_temp(numero, aspirante, ttl_segundos=900)
         except Exception as e:
-            print(f"⚠️ Redis falló, usando memoria: {e}")
+            print(f"⚠️ whatsapp_flujos falló, usando memoria: {e}")
             usuarios_temp[numero] = aspirante
 
         # Confirmación con botones
@@ -2182,7 +2140,7 @@ def _process_new_user_onboardingV1(
         # CONFIRMA QUE SÍ
         # -------------------------
         if es_si:
-            aspirante = redis_get_temp(numero) or usuarios_temp.get(numero)
+            aspirante = obtener_aspirante_temp(numero) or usuarios_temp.get(numero)
 
             if not aspirante:
                 enviar_mensaje(
@@ -2219,7 +2177,7 @@ def _process_new_user_onboardingV1(
 
             # Limpiar temporales
             try:
-                redis_delete_temp(numero)
+                limpiar_aspirante_temp(numero)
             except Exception:
                 pass
 
@@ -2241,7 +2199,7 @@ def _process_new_user_onboardingV1(
             )
 
             try:
-                redis_delete_temp(numero)
+                limpiar_aspirante_temp(numero)
             except Exception:
                 pass
 
@@ -5653,7 +5611,7 @@ def iniciar_encuesta_inicial(data: IniciarEncuestaInput):
 #         # CONFIRMA QUE SÍ
 #         # -------------------------
 #         if es_si:
-#             aspirante = redis_get_temp(numero) or usuarios_temp.get(numero)
+#             aspirante = obtener_aspirante_temp(numero) or usuarios_temp.get(numero)
 #
 #             if not aspirante:
 #                 enviar_mensaje(
@@ -5669,7 +5627,7 @@ def iniciar_encuesta_inicial(data: IniciarEncuestaInput):
 #
 #             # Limpiar temporales
 #             try:
-#                 redis_delete_temp(numero)
+#                 limpiar_aspirante_temp(numero)
 #             except:
 #                 pass
 #             usuarios_temp.pop(numero, None)
@@ -5690,7 +5648,7 @@ def iniciar_encuesta_inicial(data: IniciarEncuestaInput):
 #             )
 #
 #             try:
-#                 redis_delete_temp(numero)
+#                 limpiar_aspirante_temp(numero)
 #             except:
 #                 pass
 #             usuarios_temp.pop(numero, None)

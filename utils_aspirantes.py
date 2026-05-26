@@ -1326,7 +1326,7 @@ def enviar_confirmacion_interactiva(numero, nickname, phone_id, token):
 
 
 # Asegúrate de importar esto al inicio del archivo
-from redis_client import actualizar_flujo, obtener_flujo, eliminar_flujo
+from utils_whatsapp_flujos import actualizar_flujo, obtener_flujo, eliminar_flujo
 
 
 def manejar_input_link_tiktok(aspirante_id, wa_id, tipo, texto, payload, token, phone_id):

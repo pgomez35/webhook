@@ -221,6 +221,14 @@ __all__ = [
     "ttl_onboarding_usuario",
     "ttl_onboarding_confirmacion",
     "ttl_onboarding_encuesta",
+    "actualizar_flujo",
+    "obtener_flujo",
+    "eliminar_flujo",
+    "guardar_aspirante_temp",
+    "obtener_aspirante_temp",
+    "limpiar_aspirante_temp",
+    "asegurar_flujo_payload",
+    "guardar_nombre_en_flujo",
 ]
 
 
@@ -238,3 +246,151 @@ def limpiar_flujos_whatsapp_expirados() -> int:
             eliminados = cur.fetchall()
             conn.commit()
             return len(eliminados)
+
+
+# ============================
+# API compatible (antes Redis / memoria)
+# ============================
+
+
+def _ttl_para_paso(paso: Any) -> int:
+    g = _ttl_global_override()
+    if g is not None:
+        return g
+    p = str(paso or "").strip().lower()
+    if p == "confirmando_nickname":
+        return ttl_onboarding_confirmacion()
+    if p == "esperando_inicio_encuesta":
+        return ttl_onboarding_encuesta()
+    if p in (
+        "esperando_usuario_tiktok",
+        "esperando_input_link_tiktok",
+        "esperando_link_tiktok_live",
+    ):
+        return ttl_onboarding_usuario()
+    return _env_int("WHATSAPP_FLUJO_TTL_MINUTOS", 30)
+
+
+def _paso_a_str(paso: Any) -> str:
+    return str(paso)
+
+
+def _paso_desde_str(paso: Optional[str]) -> Any:
+    if paso is None:
+        return None
+    if str(paso).isdigit():
+        return int(paso)
+    return paso
+
+
+def _payload_aspirante_serializable(aspirante_data: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(aspirante_data, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    for key, valor in aspirante_data.items():
+        if key == "id":
+            continue
+        if isinstance(valor, (str, int, float, bool)) or valor is None:
+            out[key] = valor
+    return out
+
+
+def _aspirante_desde_fila(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    payload = row.get("payload_json")
+    if not isinstance(payload, dict):
+        payload = {}
+    aspirante_id = row.get("aspirante_id") or payload.get("id")
+    if not aspirante_id:
+        return None
+    out = dict(payload)
+    out["id"] = aspirante_id
+    return out
+
+
+def actualizar_flujo(numero: str, paso: Any, ttl_segundos: Optional[int] = None) -> None:
+    """Paso de conversación en whatsapp_flujos (sustituye Redis flow: y memoria)."""
+    ttl_min = max(1, (ttl_segundos // 60) if ttl_segundos else _ttl_para_paso(paso))
+    existing = obtener_flujo_whatsapp(numero)
+    payload = (existing or {}).get("payload_json") if existing else {}
+    if not isinstance(payload, dict):
+        payload = {}
+    aspirante_id = (existing or {}).get("aspirante_id") if existing else None
+    actualizar_flujo_whatsapp(
+        numero,
+        _paso_a_str(paso),
+        aspirante_id=aspirante_id,
+        payload_json=payload,
+        ttl_minutos=ttl_min,
+    )
+
+
+def obtener_flujo(numero: str) -> Any:
+    if flujo_whatsapp_expirado(numero):
+        eliminar_flujo_whatsapp(numero)
+        return None
+    row = obtener_flujo_whatsapp(numero)
+    if not row:
+        return None
+    return _paso_desde_str(row.get("paso"))
+
+
+def eliminar_flujo(numero: str) -> None:
+    eliminar_flujo_whatsapp(numero)
+
+
+def guardar_aspirante_temp(numero: str, aspirante_data: dict, ttl_segundos: int = 900) -> None:
+    """Datos del aspirante en payload_json (sustituye Redis temp:)."""
+    data = aspirante_data if isinstance(aspirante_data, dict) else {}
+    aspirante_id = data.get("id")
+    payload = _payload_aspirante_serializable(data)
+    existing = obtener_flujo_whatsapp(numero)
+    paso = (existing or {}).get("paso") or "confirmando_nickname"
+    ttl_min = max(1, ttl_segundos // 60)
+    actualizar_flujo_whatsapp(
+        numero,
+        paso,
+        aspirante_id=aspirante_id,
+        payload_json=payload,
+        ttl_minutos=ttl_min,
+    )
+
+
+def obtener_aspirante_temp(numero: str) -> Optional[Dict[str, Any]]:
+    row = obtener_flujo_whatsapp(numero)
+    if not row:
+        return None
+    return _aspirante_desde_fila(row)
+
+
+def limpiar_aspirante_temp(numero: str) -> None:
+    row = obtener_flujo_whatsapp(numero)
+    if not row:
+        return
+    paso = row.get("paso") or "esperando_usuario_tiktok"
+    actualizar_flujo_whatsapp(
+        numero,
+        paso,
+        aspirante_id=None,
+        payload_json={},
+        ttl_minutos=_ttl_para_paso(paso),
+    )
+
+
+def asegurar_flujo_payload(numero: str) -> Dict[str, Any]:
+    """Asegura dict payload en BD (antes asegurar_flujo en memoria)."""
+    row = obtener_flujo_whatsapp(numero)
+    if row and isinstance(row.get("payload_json"), dict):
+        return row["payload_json"]
+    return {}
+
+
+def guardar_nombre_en_flujo(numero: str, nombre: str, paso: Any = "info") -> None:
+    payload = asegurar_flujo_payload(numero)
+    payload["nombre"] = nombre
+    actualizar_flujo_whatsapp(
+        numero,
+        _paso_a_str(paso),
+        aspirante_id=None,
+        payload_json=payload,
+        ttl_minutos=_ttl_para_paso(paso),
+    )
