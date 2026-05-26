@@ -1311,6 +1311,25 @@ def _debug_evaluar_recomendaciones_ia(
     }
 
 
+def _debug_resultado_recomendaciones(resultado: Any) -> Dict[str, Any]:
+    """Mismo shape que POST .../ia/recomendaciones → resultado."""
+    if isinstance(resultado, dict):
+        recs = resultado.get("recomendaciones")
+        if isinstance(recs, list):
+            return {"recomendaciones": recs}
+    return {"recomendaciones": []}
+
+
+def _debug_paso_pipeline_recomendaciones(
+    resultado: Any,
+    evaluacion: Dict[str, Any],
+) -> Dict[str, Any]:
+    return {
+        "resultado": _debug_resultado_recomendaciones(resultado),
+        "evaluacion": evaluacion,
+    }
+
+
 @router.post("/api/creadores/performance/{creador_id}/ia/recomendaciones")
 def generar_recomendaciones_ia(
     creador_id: int,
@@ -1386,14 +1405,15 @@ def generar_recomendaciones_ia_debug_raw(
     """
     Endpoint temporal de debug.
 
-    Compara respuesta raw de OpenAI vs normalización, pulido y refuerzo.
+    Misma envoltura que debug-datos-tablas + comparativa del pipeline IA.
     No guarda nada en DB.
     """
-    contexto = obtener_contexto_recomendaciones_ia_compacto(
+    base_debug = obtener_datos_tablas_debug_ia(
         creador_id,
         id_reporte=data.id_reporte,
         anonimizar=True,
     )
+    contexto = base_debug.get("datos_tablas") or {}
 
     prompt = prompt_recomendaciones_manager_v3(
         contexto,
@@ -1460,42 +1480,71 @@ def generar_recomendaciones_ia_debug_raw(
         contexto,
     )
 
+    resultado_final = _debug_resultado_recomendaciones(respuesta_reforzada_pulida)
+
     return {
         "ok": True,
-        "debug": True,
-        "guardado": False,
+        "tipo": "debug_recomendaciones_ia_pipeline",
         "creador_id": creador_id,
-        "id_reporte": data.id_reporte,
+        "id_reporte": base_debug.get("id_reporte"),
+        "guardado": False,
         "modelo": OPENAI_MODEL_DEFAULT,
         "temperature": 0.45,
+        "datos_tablas": base_debug.get("datos_tablas") if incluir_contexto else None,
+        "prompt_usado": prompt if incluir_prompt else None,
         "metricas_extraidas": metricas_extraidas,
         "senales_perfil_extraidas": senales_perfil_extraidas,
-        "contexto_usado": contexto if incluir_contexto else None,
-        "prompt_usado": prompt if incluir_prompt else None,
-        "pasos": {
+        "comparativa": {
+            "raw_openai": _debug_paso_pipeline_recomendaciones(
+                respuesta_raw, evaluacion_raw
+            ),
+            "normalizada": _debug_paso_pipeline_recomendaciones(
+                respuesta_normalizada, evaluacion_normalizada
+            ),
+            "pulida": _debug_paso_pipeline_recomendaciones(
+                respuesta_pulida, evaluacion_pulida
+            ),
+            "reforzada": _debug_paso_pipeline_recomendaciones(
+                respuesta_reforzada, evaluacion_reforzada
+            ),
+            "reforzada_pulida": _debug_paso_pipeline_recomendaciones(
+                respuesta_reforzada_pulida, evaluacion_reforzada_pulida
+            ),
+        },
+        "resultado": resultado_final,
+        "evaluacion": evaluacion_reforzada_pulida,
+        "resumen_validacion": {
             "raw_openai": {
-                "resultado": respuesta_raw,
-                "evaluacion": evaluacion_raw,
+                "total_con_metricas_reales": evaluacion_raw["total_con_metricas_reales"],
+                "total_con_senal_perfil": evaluacion_raw["total_con_senal_perfil"],
+                "cumple_minimo_metricas": evaluacion_raw["cumple_minimo_metricas"],
+                "cumple_minimo_perfil": evaluacion_raw["cumple_minimo_perfil"],
             },
             "normalizada": {
-                "resultado": respuesta_normalizada,
-                "evaluacion": evaluacion_normalizada,
+                "total_con_metricas_reales": evaluacion_normalizada["total_con_metricas_reales"],
+                "total_con_senal_perfil": evaluacion_normalizada["total_con_senal_perfil"],
+                "cumple_minimo_metricas": evaluacion_normalizada["cumple_minimo_metricas"],
+                "cumple_minimo_perfil": evaluacion_normalizada["cumple_minimo_perfil"],
             },
             "pulida": {
-                "resultado": respuesta_pulida,
-                "evaluacion": evaluacion_pulida,
+                "total_con_metricas_reales": evaluacion_pulida["total_con_metricas_reales"],
+                "total_con_senal_perfil": evaluacion_pulida["total_con_senal_perfil"],
+                "cumple_minimo_metricas": evaluacion_pulida["cumple_minimo_metricas"],
+                "cumple_minimo_perfil": evaluacion_pulida["cumple_minimo_perfil"],
             },
             "reforzada": {
-                "resultado": respuesta_reforzada,
-                "evaluacion": evaluacion_reforzada,
+                "total_con_metricas_reales": evaluacion_reforzada["total_con_metricas_reales"],
+                "total_con_senal_perfil": evaluacion_reforzada["total_con_senal_perfil"],
+                "cumple_minimo_metricas": evaluacion_reforzada["cumple_minimo_metricas"],
+                "cumple_minimo_perfil": evaluacion_reforzada["cumple_minimo_perfil"],
             },
             "reforzada_pulida": {
-                "resultado": respuesta_reforzada_pulida,
-                "evaluacion": evaluacion_reforzada_pulida,
+                "total_con_metricas_reales": evaluacion_reforzada_pulida["total_con_metricas_reales"],
+                "total_con_senal_perfil": evaluacion_reforzada_pulida["total_con_senal_perfil"],
+                "cumple_minimo_metricas": evaluacion_reforzada_pulida["cumple_minimo_metricas"],
+                "cumple_minimo_perfil": evaluacion_reforzada_pulida["cumple_minimo_perfil"],
             },
         },
-        "resultado_final_debug": respuesta_reforzada_pulida,
-        "evaluacion_final_debug": evaluacion_reforzada_pulida,
     }
 
 
