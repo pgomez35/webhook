@@ -4094,10 +4094,6 @@ def _normalizar_estructura_recomendaciones_minima(
         if not isinstance(rec, dict):
             continue
 
-        categoria = _normalizar_categoria_recomendacion(rec.get("categoria") or "")
-        if categoria not in _CATEGORIAS_RECOMENDACION_LIMPIAS:
-            continue
-
         prioridad = str(rec.get("prioridad") or "media").strip().lower()
         if prioridad not in _PRIORIDADES_RECOMENDACION_LIMPIAS:
             prioridad = "media"
@@ -4107,6 +4103,29 @@ def _normalizar_estructura_recomendaciones_minima(
 
         if not recomendacion:
             continue
+
+        categoria = _normalizar_categoria_recomendacion(rec.get("categoria") or "")
+        if categoria not in _CATEGORIAS_RECOMENDACION_LIMPIAS:
+            # No descartamos la recomendación por categoría inválida.
+            # Mapeamos a una categoría permitida para que el manager pueda guardar y revisar.
+            texto_union = f"{recomendacion} {justificacion}".lower()
+            if any(
+                kw in texto_union
+                for kw in (
+                    "rutina",
+                    "cumplimiento",
+                    "revisión",
+                    "revision",
+                    "preparación",
+                    "preparacion",
+                    "feedback",
+                    "frecuencia",
+                    "semanal",
+                )
+            ):
+                categoria = "disciplina"
+            else:
+                categoria = "contenido"
 
         salida.append({
             "categoria": categoria,
@@ -4347,6 +4366,178 @@ def _validar_recomendaciones_limpias(
     return {
         "ok": len(errores) == 0,
         "errores": errores,
+        "detalle": detalle,
+        "total_con_metricas_reales": total_metricas,
+        "total_con_senal_perfil": total_perfil,
+    }
+
+
+def _validar_recomendaciones_no_bloqueante(
+    resultado: Dict[str, Any],
+    contexto: Dict[str, Any],
+    *,
+    max_recomendaciones: int = 5,
+) -> Dict[str, Any]:
+    """
+    Valida formato mínimo y audita calidad.
+
+    Bloquea solo errores de formato que impiden guardar.
+    Todo lo semántico o de calidad va como advertencia.
+    """
+    errores: List[str] = []
+    advertencias: List[str] = []
+    detalle: List[Dict[str, Any]] = []
+
+    if not isinstance(resultado, dict):
+        return {
+            "ok": False,
+            "errores": ["La respuesta debe ser un objeto JSON."],
+            "advertencias": [],
+            "detalle": [],
+            "total_con_metricas_reales": 0,
+            "total_con_senal_perfil": 0,
+        }
+
+    recs = resultado.get("recomendaciones")
+    if not isinstance(recs, list):
+        return {
+            "ok": False,
+            "errores": ["El JSON debe contener una lista llamada recomendaciones."],
+            "advertencias": [],
+            "detalle": [],
+            "total_con_metricas_reales": 0,
+            "total_con_senal_perfil": 0,
+        }
+
+    if not recs:
+        return {
+            "ok": False,
+            "errores": ["La lista de recomendaciones está vacía."],
+            "advertencias": [],
+            "detalle": [],
+            "total_con_metricas_reales": 0,
+            "total_con_senal_perfil": 0,
+        }
+
+    if len(recs) != max_recomendaciones:
+        advertencias.append(
+            f"Se esperaban {max_recomendaciones} recomendaciones y se recibieron {len(recs)}."
+        )
+
+    categorias_validas = {
+        "monetizacion",
+        "interaccion",
+        "contenido",
+        "audiencia",
+        "horario",
+        "tecnica",
+        "emocional",
+        "disciplina",
+    }
+
+    prioridades_validas = {
+        "baja",
+        "media",
+        "alta",
+        "critica",
+    }
+
+    total_metricas = 0
+    total_perfil = 0
+    validas_para_guardar = 0
+
+    for idx, rec in enumerate(recs, start=1):
+        if not isinstance(rec, dict):
+            advertencias.append(f"Recomendación {idx} no tiene formato de objeto JSON válido.")
+            continue
+
+        categoria = str(rec.get("categoria") or "").strip().lower()
+        prioridad = str(rec.get("prioridad") or "").strip().lower()
+        recomendacion = str(rec.get("recomendacion") or "").strip()
+        justificacion = str(rec.get("justificacion") or "").strip()
+
+        if not recomendacion:
+            advertencias.append(f"Recomendación {idx} no tiene texto de recomendación.")
+            continue
+
+        validas_para_guardar += 1
+
+        if not categoria:
+            advertencias.append(f"Recomendación {idx} no tiene categoría.")
+        elif categoria not in categorias_validas:
+            advertencias.append(
+                f"Recomendación {idx} tiene una categoría no reconocida: {categoria}."
+            )
+
+        if not prioridad:
+            advertencias.append(f"Recomendación {idx} no tiene prioridad.")
+        elif prioridad not in prioridades_validas:
+            advertencias.append(
+                f"Recomendación {idx} tiene una prioridad no reconocida: {prioridad}."
+            )
+
+        texto = f"{recomendacion} {justificacion}"
+
+        try:
+            usa_metricas = _texto_contiene_numero_operativo(texto, contexto)
+        except Exception:
+            usa_metricas = False
+
+        try:
+            usa_perfil = _recomendacion_tiene_senal_perfil_limpia(rec, contexto)
+        except Exception:
+            usa_perfil = False
+
+        try:
+            usa_meta_categoria = _recomendacion_tiene_meta_categoria_prohibida(
+                rec, contexto
+            )
+        except Exception:
+            usa_meta_categoria = False
+
+        if usa_metricas:
+            total_metricas += 1
+
+        if usa_perfil:
+            total_perfil += 1
+
+        if usa_meta_categoria:
+            advertencias.append(
+                "Recomendación "
+                f"{idx} podría estar usando la meta de categoría como meta principal. "
+                "Revisar antes de aplicar."
+            )
+
+        detalle.append(
+            {
+                "idx": idx,
+                "categoria": categoria,
+                "prioridad": prioridad,
+                "usa_metricas_reales": usa_metricas,
+                "usa_senal_perfil": usa_perfil,
+                "usa_meta_categoria_prohibida": usa_meta_categoria,
+            }
+        )
+
+    if total_metricas < 3:
+        advertencias.append(
+            f"Solo {total_metricas} recomendaciones usan métricas reales; idealmente deberían ser al menos 3."
+        )
+
+    if total_perfil < 3:
+        advertencias.append(
+            f"Solo {total_perfil} recomendaciones usan señales de perfil; idealmente deberían ser al menos 3."
+        )
+
+    if validas_para_guardar == 0:
+        errores.append(
+            "No hay recomendaciones guardables: cada ítem debe incluir texto en 'recomendacion'."
+        )
+
+    return {
+        "ok": len(errores) == 0,
+        "errores": errores,
+        "advertencias": advertencias,
         "detalle": detalle,
         "total_con_metricas_reales": total_metricas,
         "total_con_senal_perfil": total_perfil,

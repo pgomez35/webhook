@@ -89,6 +89,7 @@ from performance_ia import (
     _recomendacion_usa_senal_perfil,
     _texto_contiene_numero_operativo,
     _validar_recomendaciones_limpias,
+    _validar_recomendaciones_no_bloqueante,
     prompt_acciones_manager,
     prompt_alertas_score_ia,
     prompt_corregir_recomendaciones_limpias,
@@ -1398,7 +1399,7 @@ def _generar_recomendaciones_openai_limpio(
         max_recomendaciones=max_recs,
     )
 
-    validacion = _validar_recomendaciones_limpias(
+    validacion = _validar_recomendaciones_no_bloqueante(
         resultado_limpio,
         contexto,
         max_recomendaciones=max_recs,
@@ -1437,7 +1438,7 @@ def _generar_recomendaciones_openai_limpio(
         max_recomendaciones=max_recs,
     )
 
-    validacion_retry = _validar_recomendaciones_limpias(
+    validacion_retry = _validar_recomendaciones_no_bloqueante(
         resultado_retry_limpio,
         contexto,
         max_recomendaciones=max_recs,
@@ -1480,8 +1481,8 @@ def generar_recomendaciones_ia(
             "resultado": {"recomendaciones": []},
             "guardadas": [],
             "message": (
-                "La IA no generó recomendaciones con la calidad mínima requerida. "
-                "Puedes exportar el JSON de variables y probar con otra IA externa."
+                "No se pudieron generar recomendaciones porque el formato no es válido. "
+                "Revisa que exista una lista llamada 'recomendaciones' y que cada ítem tenga 'recomendacion'."
             ),
         }
 
@@ -1514,16 +1515,25 @@ def generar_recomendaciones_ia(
             if payload["recomendacion"]:
                 guardadas.append(insertar_recomendacion(payload))
 
+    advertencias = validacion.get("advertencias") or []
+    message = (
+        "Recomendaciones generadas correctamente. "
+        "Encontramos algunas advertencias para revisar, pero no impiden guardar."
+        if advertencias
+        else "Recomendaciones generadas correctamente."
+    )
+
     return {
-        "ok": True,
+        "ok": bool(validacion.get("ok", False)),
         "creador_id": creador_id,
-        "guardado": data.guardar,
+        "guardado": data.guardar and validacion.get("ok", False),
         "pipeline": generado.get("debug_pipeline"),
         "retry_usado": generado.get("retry_usado"),
         "modelo": OPENAI_MODEL_RECOMENDACIONES,
         "validacion": validacion,
         "resultado": resultado,
         "guardadas": guardadas,
+        "message": message,
     }
 
 
@@ -1615,7 +1625,7 @@ def importar_recomendaciones_ia_externas(
         max_recomendaciones=max_recs,
     )
 
-    validacion = _validar_recomendaciones_limpias(
+    validacion = _validar_recomendaciones_no_bloqueante(
         resultado_limpio,
         contexto,
         max_recomendaciones=max_recs,
@@ -1630,7 +1640,10 @@ def importar_recomendaciones_ia_externas(
             "validacion": validacion,
             "resultado": resultado_limpio,
             "guardadas": [],
-            "message": "El JSON pegado no cumple la calidad mínima requerida.",
+            "message": (
+                "No pudimos importar el contenido porque el formato no es válido. "
+                "Revisa que exista una lista llamada 'recomendaciones' y que cada ítem tenga 'recomendacion'."
+            ),
         }
 
     guardadas = []
@@ -1655,14 +1668,23 @@ def importar_recomendaciones_ia_externas(
             if payload["recomendacion"]:
                 guardadas.append(insertar_recomendacion(payload))
 
+    advertencias = validacion.get("advertencias") or []
+    message = (
+        "Recomendaciones importadas correctamente. "
+        "Encontramos algunas advertencias para revisar, pero no impiden guardar."
+        if advertencias
+        else "Recomendaciones importadas correctamente."
+    )
+
     return {
         "ok": True,
         "creador_id": creador_id,
-        "guardado": data.guardar,
+        "guardado": data.guardar and validacion.get("ok", False),
         "origen": "ia_externa",
         "validacion": validacion,
         "resultado": resultado_limpio,
         "guardadas": guardadas,
+        "message": message,
     }
 
 
