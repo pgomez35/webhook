@@ -4058,6 +4058,23 @@ _PRIORIDADES_RECOMENDACION_LIMPIAS = frozenset({
     "critica",
 })
 
+_FRASES_BLOQUEANTES_RECOMENDACIONES = (
+    "meta bronce de 5000",
+    "meta categoría",
+    "meta categoria",
+    "meta de categoría",
+    "meta de categoria",
+    "por su estilo participación activa",
+    "por su estilo participacion activa",
+    "según el json",
+    "segun el json",
+    "del contexto",
+    "metadata",
+    "estrategia_json",
+    "schema",
+    "base de datos",
+)
+
 
 def _normalizar_estructura_recomendaciones_minima(
     resultado: Any,
@@ -4269,6 +4286,11 @@ def _validar_recomendaciones_limpias(
         categorias.add(categoria)
 
         texto = f"{rec.get('recomendacion') or ''} {rec.get('justificacion') or ''}"
+        texto_lower = texto.lower()
+
+        for frase in _FRASES_BLOQUEANTES_RECOMENDACIONES:
+            if frase in texto_lower:
+                errores.append(f"Recomendación {idx} contiene frase bloqueada: {frase}")
 
         usa_metricas = _texto_contiene_numero_operativo(texto, contexto)
         usa_perfil = _recomendacion_tiene_senal_perfil_limpia(rec, contexto)
@@ -4510,34 +4532,115 @@ Datos del creador:
 def prompt_corregir_recomendaciones_limpias(
     *,
     contexto: Dict[str, Any],
-    resultado_anterior: Dict[str, Any],
-    errores: Dict[str, Any],
+    resultado_anterior: Optional[Dict[str, Any]] = None,
+    errores: Optional[Dict[str, Any]] = None,
+    max_recomendaciones: int = 5,
+) -> str:
+    del resultado_anterior  # no incluir respuesta fallida en el prompt
+
+    return f"""
+Regenera desde cero las recomendaciones.
+
+La respuesta anterior falló validación.
+NO copies frases de la respuesta anterior.
+NO intentes parchar la respuesta anterior.
+Crea una nueva respuesta desde cero usando solo los datos del creador.
+
+Errores detectados:
+{contexto_para_prompt(errores or {})}
+
+Reglas obligatorias:
+- Devuelve exactamente {max_recomendaciones} recomendaciones.
+- Devuelve únicamente JSON válido.
+- Al menos 3 recomendaciones deben contener números reales del reporte o metas.
+- Al menos 3 recomendaciones deben usar señales reales del perfil.
+- Monetización debe usar meta mensual, diamantes, partidas o diamantes de partidas.
+- Audiencia debe usar nuevos seguidores o meta de nuevos seguidores.
+- Disciplina u horario debe usar emisiones, días válidos, duración o metas.
+- No uses la meta de categoría como meta principal.
+- No escribas "meta Bronce de 5000".
+- No escribas "Por su estilo participación activa".
+- No uses lenguaje técnico interno.
+- No digas JSON, contexto, metadata, tabla, schema o estrategia_json.
+- Si el perfil dice que las batallas le cuestan o no le gustan, recomienda batallas guiadas, simples y progresivas.
+- Si el perfil dice que se distrae con el chat, recomienda mecánicas simples.
+
+Schema obligatorio:
+{{
+  "recomendaciones": [
+    {{
+      "categoria": "monetizacion",
+      "prioridad": "alta",
+      "recomendacion": "acción concreta",
+      "justificacion": "justificación con datos reales"
+    }}
+  ]
+}}
+
+Categorías permitidas:
+monetizacion, interaccion, contenido, audiencia, horario, tecnica, emocional, disciplina
+
+Prioridades permitidas:
+baja, media, alta, critica
+
+Datos del creador:
+{contexto_para_prompt(contexto)}
+"""
+
+
+def prompt_recomendaciones_externo_desde_json(
+    contexto: Dict[str, Any],
     max_recomendaciones: int = 5,
 ) -> str:
     return f"""
-Corrige las recomendaciones anteriores.
+Actúa como coach senior de creadores TikTok LIVE para una agencia.
 
-Debes devolver exactamente {max_recomendaciones} recomendaciones en JSON válido.
+Usa SOLO el JSON entregado.
+No inventes datos.
+No menciones JSON, metadata, tabla, schema, contexto ni base de datos.
+Devuelve únicamente JSON válido.
 
-Errores detectados:
-{contexto_para_prompt(errores)}
+Genera exactamente {max_recomendaciones} recomendaciones para el manager.
 
-Reglas obligatorias:
-- Monetización debe mencionar números reales como meta mensual, diamantes del periodo, partidas o diamantes de partidas.
-- Audiencia debe mencionar nuevos seguidores o meta de seguidores.
-- Disciplina u horario debe mencionar emisiones, días válidos, duración o metas.
-- Al menos 3 recomendaciones deben contener números reales.
-- Al menos 3 recomendaciones deben usar señales del perfil.
-- No uses la meta de categoría como meta principal.
-- No escribas "meta Bronce de 5000".
-- No escribas frases rotas como "Por su estilo participación activa...".
-- No uses lenguaje técnico interno.
-- Devuelve únicamente JSON válido.
+Schema obligatorio:
+{{
+  "recomendaciones": [
+    {{
+      "categoria": "monetizacion",
+      "prioridad": "alta",
+      "recomendacion": "acción concreta",
+      "justificacion": "justificación con datos reales"
+    }}
+  ]
+}}
 
-Respuesta anterior:
-{contexto_para_prompt(resultado_anterior)}
+Categorías permitidas:
+monetizacion, interaccion, contenido, audiencia, horario, tecnica, emocional, disciplina
 
-Datos del creador:
+Prioridades permitidas:
+baja, media, alta, critica
+
+Reglas:
+- Las métricas dicen qué está pasando.
+- El perfil explica por qué pasa y cómo corregirlo.
+- Al menos 3 recomendaciones deben mencionar números reales.
+- Al menos 3 recomendaciones deben usar señales concretas del perfil.
+- Monetización debe usar meta mensual, diamantes del periodo, partidas o diamantes de partidas.
+- Audiencia debe usar nuevos seguidores o meta de nuevos seguidores.
+- Horario o disciplina debe usar días válidos, emisiones, duración o metas.
+- No uses la meta de categoría como meta principal si existe meta mensual.
+- Si existe metas.meta_diamantes, esa es la meta operativa principal.
+- La categoría Bronce y su meta de 5000 diamantes son solo referencia de nivel.
+- No digas "alcanzar Bronce" si el creador ya supera esa cifra.
+- Si diamantes de partidas supera diamantes del mes, úsalo solo como señal de relevancia de partidas, no como porcentaje normal.
+- Si ya hay alto volumen de emisiones, días o duración, no recomiendes simplemente transmitir más.
+- Interacción debe usar chat, fluidez, multitarea o batallas si aparecen.
+- Técnica debe usar iluminación, equipo, herramientas, setup o calidad técnica si aparecen.
+- Contenido debe convertir intereses en dinámicas concretas.
+- Emocional debe usar energía, ritmo, constancia o feedback si aparecen.
+- Disciplina debe proponer rutina concreta de revisión o preparación.
+
+JSON:
 {contexto_para_prompt(contexto)}
 """
 

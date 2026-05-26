@@ -249,6 +249,13 @@ class GenerarRecomendacionesIARequest(BaseModel):
     instrucciones_extra: Optional[str] = None
 
 
+class RecomendacionesIAExternasRequest(BaseModel):
+    guardar: bool = True
+    id_reporte: Optional[int] = None
+    max_recomendaciones: int = Field(default=5, ge=1, le=10)
+    resultado: Dict[str, Any]
+
+
 class GenerarAlertasScoreIARequest(BaseModel):
     guardar: bool = False
     instrucciones_extra: Optional[str] = None

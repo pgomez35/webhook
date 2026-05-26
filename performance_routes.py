@@ -30,6 +30,7 @@ from performance_core import (
     GenerarAccionesIARequest,
     GenerarAlertasScoreIARequest,
     GenerarRecomendacionesIARequest,
+    RecomendacionesIAExternasRequest,
     GenerarSeguimientoIARequest,
     IARequest,
     RecomendacionPerformanceCreate,
@@ -93,9 +94,34 @@ from performance_ia import (
     prompt_corregir_recomendaciones_limpias,
     prompt_diagnostico_performance,
     prompt_generar_seguimiento,
+    prompt_recomendaciones_externo_desde_json,
     prompt_recomendaciones_manager,
     prompt_recomendaciones_manager_v4_limpio,
 )
+
+_CATEGORIAS_RECOMENDACIONES_IA = [
+    "monetizacion",
+    "interaccion",
+    "contenido",
+    "audiencia",
+    "horario",
+    "tecnica",
+    "emocional",
+    "disciplina",
+]
+
+_PRIORIDADES_RECOMENDACIONES_IA = ["baja", "media", "alta", "critica"]
+
+_SCHEMA_RESPUESTA_RECOMENDACIONES_IA = {
+    "recomendaciones": [
+        {
+            "categoria": "monetizacion",
+            "prioridad": "alta",
+            "recomendacion": "acción concreta para el manager",
+            "justificacion": "motivo basado en datos reales del creador",
+        }
+    ]
+}
 
 load_dotenv()
 
@@ -114,6 +140,8 @@ def estado_openai_performance():
         "api_key_configurada": openai_api_key_configurada(),
         "puede_usarse": openai_disponible(),
         "modelo": OPENAI_MODEL_DEFAULT,
+        "modelo_default": OPENAI_MODEL_DEFAULT,
+        "modelo_recomendaciones": OPENAI_MODEL_RECOMENDACIONES,
     }
 
 
@@ -1357,7 +1385,7 @@ def _generar_recomendaciones_openai_limpio(
     resultado_raw = openai_json_completion(
         prompt,
         model=OPENAI_MODEL_RECOMENDACIONES,
-        temperature=0.45,
+        temperature=0.35,
         system=(
             "Eres coach senior de creadores TikTok LIVE para managers de agencia. "
             "Responde únicamente con un objeto JSON válido en español."
@@ -1380,6 +1408,7 @@ def _generar_recomendaciones_openai_limpio(
             "resultado": resultado_limpio,
             "validacion": validacion,
             "contexto": contexto,
+            "modelo": OPENAI_MODEL_RECOMENDACIONES,
             "debug_pipeline": "openai_limpio",
             "retry_usado": False,
             "resultado_raw": resultado_raw,
@@ -1417,6 +1446,7 @@ def _generar_recomendaciones_openai_limpio(
         "resultado": resultado_retry_limpio,
         "validacion": validacion_retry,
         "contexto": contexto,
+        "modelo": OPENAI_MODEL_RECOMENDACIONES,
         "debug_pipeline": "openai_limpio",
         "retry_usado": True,
         "validacion_inicial": validacion,
@@ -1435,12 +1465,30 @@ def generar_recomendaciones_ia(
         data=data,
     )
 
-    resultado = generado["resultado"]
-    recomendaciones = resultado.get("recomendaciones", []) if isinstance(resultado, dict) else []
     validacion = generado.get("validacion") or {}
 
+    if not validacion.get("ok"):
+        return {
+            "ok": False,
+            "creador_id": creador_id,
+            "guardado": False,
+            "pipeline": generado.get("debug_pipeline"),
+            "retry_usado": generado.get("retry_usado"),
+            "modelo": OPENAI_MODEL_RECOMENDACIONES,
+            "validacion": validacion,
+            "resultado": {"recomendaciones": []},
+            "guardadas": [],
+            "message": (
+                "La IA no generó recomendaciones con la calidad mínima requerida. "
+                "Puedes exportar el JSON de variables y probar con otra IA externa."
+            ),
+        }
+
+    resultado = generado["resultado"]
+    recomendaciones = resultado.get("recomendaciones", []) if isinstance(resultado, dict) else []
+
     guardadas = []
-    if data.guardar and validacion.get("ok"):
+    if data.guardar:
         contexto = generado.get("contexto") or obtener_contexto_recomendaciones_ia_compacto(
             creador_id,
             id_reporte=data.id_reporte,
@@ -1471,8 +1519,139 @@ def generar_recomendaciones_ia(
         "guardado": data.guardar,
         "pipeline": generado.get("debug_pipeline"),
         "retry_usado": generado.get("retry_usado"),
+        "modelo": OPENAI_MODEL_RECOMENDACIONES,
         "validacion": validacion,
         "resultado": resultado,
+        "guardadas": guardadas,
+    }
+
+
+@router.get("/api/creadores/performance/{creador_id}/ia/recomendaciones/exportar-json")
+def exportar_json_recomendaciones_ia(
+    creador_id: int,
+    id_reporte: Optional[int] = Query(default=None),
+    anonimizar: bool = Query(default=True),
+):
+    datos = obtener_datos_tablas_debug_ia(
+        creador_id,
+        id_reporte=id_reporte,
+        anonimizar=anonimizar,
+    )
+
+    return {
+        "ok": True,
+        "tipo": "json_variables_recomendaciones_ia",
+        "creador_id": creador_id,
+        "id_reporte": datos.get("id_reporte"),
+        "instruccion_uso": (
+            "Copia el contenido de 'json_variables' y úsalo en la IA externa. "
+            "Luego pega en Talentum Manager el JSON de recomendaciones generado."
+        ),
+        "schema_respuesta_esperado": _SCHEMA_RESPUESTA_RECOMENDACIONES_IA,
+        "categorias_permitidas": _CATEGORIAS_RECOMENDACIONES_IA,
+        "prioridades_permitidas": _PRIORIDADES_RECOMENDACIONES_IA,
+        "json_variables": datos.get("datos_tablas") or {},
+    }
+
+
+@router.get("/api/creadores/performance/{creador_id}/ia/recomendaciones/prompt-externo")
+def exportar_prompt_externo_recomendaciones_ia(
+    creador_id: int,
+    id_reporte: Optional[int] = Query(default=None),
+    anonimizar: bool = Query(default=True),
+    max_recomendaciones: int = Query(default=5, ge=1, le=10),
+):
+    datos = obtener_datos_tablas_debug_ia(
+        creador_id,
+        id_reporte=id_reporte,
+        anonimizar=anonimizar,
+    )
+
+    contexto = datos.get("datos_tablas") or {}
+
+    prompt = prompt_recomendaciones_externo_desde_json(
+        contexto,
+        max_recomendaciones=max_recomendaciones,
+    )
+
+    return {
+        "ok": True,
+        "tipo": "prompt_externo_recomendaciones_ia",
+        "creador_id": creador_id,
+        "id_reporte": datos.get("id_reporte"),
+        "prompt": prompt,
+        "json_variables": contexto,
+        "schema_respuesta_esperado": _SCHEMA_RESPUESTA_RECOMENDACIONES_IA,
+        "categorias_permitidas": _CATEGORIAS_RECOMENDACIONES_IA,
+        "prioridades_permitidas": _PRIORIDADES_RECOMENDACIONES_IA,
+    }
+
+
+@router.post("/api/creadores/performance/{creador_id}/ia/recomendaciones/importar-json")
+def importar_recomendaciones_ia_externas(
+    creador_id: int,
+    data: RecomendacionesIAExternasRequest,
+):
+    max_recs = data.max_recomendaciones or 5
+
+    contexto = obtener_contexto_recomendaciones_ia_compacto(
+        creador_id,
+        id_reporte=data.id_reporte,
+        anonimizar=True,
+    )
+
+    resultado_limpio = _normalizar_estructura_recomendaciones_minima(
+        data.resultado,
+        max_recomendaciones=max_recs,
+    )
+
+    validacion = _validar_recomendaciones_limpias(
+        resultado_limpio,
+        contexto,
+        max_recomendaciones=max_recs,
+    )
+
+    if not validacion.get("ok"):
+        return {
+            "ok": False,
+            "creador_id": creador_id,
+            "guardado": False,
+            "origen": "ia_externa",
+            "validacion": validacion,
+            "resultado": resultado_limpio,
+            "guardadas": [],
+            "message": "El JSON pegado no cumple la calidad mínima requerida.",
+        }
+
+    guardadas = []
+
+    if data.guardar:
+        reporte = contexto.get("reporte") or {}
+
+        for rec in resultado_limpio.get("recomendaciones", []):
+            if not isinstance(rec, dict):
+                continue
+
+            payload = {
+                "creador_id": creador_id,
+                "id_reporte": data.id_reporte or reporte.get("id_reporte"),
+                "categoria": rec.get("categoria"),
+                "prioridad": rec.get("prioridad") or "media",
+                "recomendacion": rec.get("recomendacion"),
+                "justificacion": rec.get("justificacion"),
+                "aplicada": False,
+            }
+
+            if payload["recomendacion"]:
+                guardadas.append(insertar_recomendacion(payload))
+
+    return {
+        "ok": True,
+        "creador_id": creador_id,
+        "guardado": data.guardar,
+        "origen": "ia_externa",
+        "validacion": validacion,
+        "resultado": resultado_limpio,
         "guardadas": guardadas,
     }
 
@@ -1553,7 +1732,8 @@ def generar_recomendaciones_ia_debug_raw(
         "pipeline": generado.get("debug_pipeline"),
         "retry_usado": generado.get("retry_usado"),
         "modelo": OPENAI_MODEL_RECOMENDACIONES,
-        "temperature": 0.45,
+        "modelo_recomendaciones": OPENAI_MODEL_RECOMENDACIONES,
+        "temperature": 0.35,
         "datos_tablas": base_debug.get("datos_tablas") if incluir_contexto else None,
         "prompt_usado": prompt_v4 if incluir_prompt else None,
         "metricas_extraidas": metricas_extraidas,
