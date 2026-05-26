@@ -95,6 +95,7 @@ from performance_ia import (
     prompt_diagnostico_performance,
     prompt_generar_seguimiento,
     prompt_recomendaciones_externo_desde_json,
+    texto_copiable_prompt_externo_recomendaciones,
     prompt_recomendaciones_manager,
     prompt_recomendaciones_manager_v4_limpio,
 )
@@ -1544,8 +1545,8 @@ def exportar_json_recomendaciones_ia(
         "creador_id": creador_id,
         "id_reporte": datos.get("id_reporte"),
         "instruccion_uso": (
-            "Copia el contenido de 'json_variables' y úsalo en la IA externa. "
-            "Luego pega en Talentum Manager el JSON de recomendaciones generado."
+            "Para un solo bloque listo para pegar, usa GET .../ia/recomendaciones/prompt-externo "
+            "y copia 'texto_copiable' (o 'prompt'). Este endpoint solo expone json_variables sueltos."
         ),
         "schema_respuesta_esperado": _SCHEMA_RESPUESTA_RECOMENDACIONES_IA,
         "categorias_permitidas": _CATEGORIAS_RECOMENDACIONES_IA,
@@ -1574,12 +1575,21 @@ def exportar_prompt_externo_recomendaciones_ia(
         max_recomendaciones=max_recomendaciones,
     )
 
+    texto_copiable = texto_copiable_prompt_externo_recomendaciones(prompt)
+
     return {
         "ok": True,
         "tipo": "prompt_externo_recomendaciones_ia",
         "creador_id": creador_id,
         "id_reporte": datos.get("id_reporte"),
+        "instruccion_uso": (
+            "Copia 'texto_copiable' (equivale a 'prompt') y pégalo en ChatGPT u otra IA externa. "
+            "Incluye instrucciones, schema de salida y JSON del creador. "
+            "Luego importa aquí el JSON de recomendaciones generado."
+        ),
         "prompt": prompt,
+        "texto_copiable": texto_copiable,
+        "prompt_autocontenido": True,
         "json_variables": contexto,
         "schema_respuesta_esperado": _SCHEMA_RESPUESTA_RECOMENDACIONES_IA,
         "categorias_permitidas": _CATEGORIAS_RECOMENDACIONES_IA,

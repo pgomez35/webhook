@@ -4644,3 +4644,13 @@ JSON:
 {contexto_para_prompt(contexto)}
 """
 
+
+def texto_copiable_prompt_externo_recomendaciones(prompt: str) -> str:
+    """Texto único listo para pegar en IA externa (instrucciones + schema + JSON)."""
+    return (prompt or "").strip()
+
+
+def texto_copiable_prompt_externo_recomendaciones(prompt: str) -> str:
+    """Texto único listo para pegar en IA externa (instrucciones + schema + JSON)."""
+    return (prompt or "").strip()
+
