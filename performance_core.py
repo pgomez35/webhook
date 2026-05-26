@@ -21,6 +21,10 @@ load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL_DEFAULT = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_MODEL_RECOMENDACIONES = os.getenv(
+    "OPENAI_MODEL_RECOMENDACIONES",
+    OPENAI_MODEL_DEFAULT,
+)
 OPENAI_CONFIG_CLAVE = "open_AI_enabled"
 _openai_client: Optional[OpenAI] = None
 DEBUG_PERFORMANCE_IA = str(os.getenv("DEBUG_PERFORMANCE_IA", "false")).lower() in {
@@ -490,7 +494,9 @@ _CAMPOS_REPORTE_DEBUG = (
     "periodo_fin",
     "diamantes_mes",
     "emisiones_live_mes",
+    "duracion_live_mes_minutos",
     "duracion_live_mes",
+    "dias_validos_live_mes",
     "dias_validos_mes",
     "nuevos_seguidores_mes",
     "porcentaje_logro_diamantes",
@@ -637,6 +643,25 @@ def _armar_metas_compacto_debug(
     return _dict_compacto_debug(metas_lista[0], _CAMPOS_METAS_DEBUG)
 
 
+def _armar_reporte_compacto_debug(reporte: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    reporte = reporte or {}
+    salida = _dict_compacto_debug(reporte, _CAMPOS_REPORTE_DEBUG)
+
+    if "duracion_live_mes_minutos" not in salida:
+        if reporte.get("duracion_live_mes_minutos") is not None:
+            salida["duracion_live_mes_minutos"] = reporte.get("duracion_live_mes_minutos")
+        elif reporte.get("duracion_live_mes") is not None:
+            salida["duracion_live_mes_minutos"] = reporte.get("duracion_live_mes")
+
+    if "dias_validos_live_mes" not in salida:
+        if reporte.get("dias_validos_live_mes") is not None:
+            salida["dias_validos_live_mes"] = reporte.get("dias_validos_live_mes")
+        elif reporte.get("dias_validos_mes") is not None:
+            salida["dias_validos_live_mes"] = reporte.get("dias_validos_mes")
+
+    return salida
+
+
 def _armar_perfil_compacto_debug(
     filas: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
@@ -688,7 +713,7 @@ def _armar_datos_tablas_compactos_debug(
         "creador": _armar_creador_compacto_debug(creador, detalle),
         "categoria": _armar_categoria_compacto_debug(categoria),
         "arquetipo": _armar_arquetipo_compacto_debug(arquetipo),
-        "reporte": _dict_compacto_debug(reporte, _CAMPOS_REPORTE_DEBUG),
+        "reporte": _armar_reporte_compacto_debug(reporte),
         "metas": _armar_metas_compacto_debug(metas_lista),
         "perfil": _armar_perfil_compacto_debug(perfil_filas),
     }
