@@ -128,6 +128,92 @@ def resolver_categoria_id_creador(
     return None
 
 
+    return None
+
+
+_ARQUETIPO_VACIO_LABELS = frozenset({
+    "",
+    "sin arquetipo",
+    "sin seleccionar",
+    "no definido",
+    "no definida",
+    "no asignado",
+    "no asignada",
+    "ninguno",
+    "ninguna",
+    "null",
+    "none",
+    "n/a",
+    "na",
+})
+
+
+def resolver_arquetipo_id(cur, arquetipo):
+    """
+    Resuelve arquetipo_id para creadores.
+    Valores vacíos o placeholders → None (NULL en BD).
+    Nombre desconocido → None (no bloquea el guardado).
+    """
+    if arquetipo is None:
+        return None
+
+    if isinstance(arquetipo, bool):
+        return None
+
+    if isinstance(arquetipo, int):
+        if arquetipo <= 0:
+            return None
+        cur.execute(
+            "SELECT id FROM creadores_arquetipo WHERE id = %s LIMIT 1",
+            (arquetipo,),
+        )
+        return _row_id(cur.fetchone())
+
+    texto_original = str(arquetipo).strip()
+    texto = texto_original.lower()
+
+    if texto in _ARQUETIPO_VACIO_LABELS:
+        return None
+
+    if texto.isdigit():
+        aid = int(texto)
+        if aid <= 0:
+            return None
+        cur.execute(
+            "SELECT id FROM creadores_arquetipo WHERE id = %s LIMIT 1",
+            (aid,),
+        )
+        return _row_id(cur.fetchone())
+
+    cur.execute(
+        """
+        SELECT id
+        FROM creadores_arquetipo
+        WHERE LOWER(nombre) = LOWER(%s)
+        LIMIT 1
+        """,
+        (texto_original,),
+    )
+    row = cur.fetchone()
+    if row:
+        return _row_id(row)
+
+    cur.execute(
+        """
+        SELECT id
+        FROM creadores_arquetipo
+        WHERE LOWER(codigo) = LOWER(%s)
+        LIMIT 1
+        """,
+        (texto_original,),
+    )
+    row = cur.fetchone()
+    if row:
+        return _row_id(row)
+
+    return None
+
+
 def resolver_arquetipo_id_creador(
     cur,
     arquetipo_id=None,
@@ -136,56 +222,12 @@ def resolver_arquetipo_id_creador(
     """
     Resuelve FK creadores.arquetipo_id por id o por nombre/código del catálogo.
     """
-    from fastapi import HTTPException
+    if arquetipo_id is not None and str(arquetipo_id).strip() != "":
+        resolved = resolver_arquetipo_id(cur, arquetipo_id)
+        if resolved is not None:
+            return resolved
 
-    if arquetipo_id is not None:
-        try:
-            aid = int(arquetipo_id)
-        except (TypeError, ValueError):
-            raise HTTPException(
-                status_code=400,
-                detail=f"arquetipo_id inválido: {arquetipo_id}",
-            )
-        cur.execute(
-            "SELECT id FROM creadores_arquetipo WHERE id = %s "
-            "AND COALESCE(activo, true) = true LIMIT 1",
-            (aid,),
-        )
-        if not cur.fetchone():
-            cur.execute(
-                "SELECT id FROM creadores_arquetipo WHERE id = %s LIMIT 1",
-                (aid,),
-            )
-            if not cur.fetchone():
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"arquetipo_id de creador no válido: {aid}",
-                )
-        return aid
-
-    if arquetipo_legacy is not None and str(arquetipo_legacy).strip():
-        leg = str(arquetipo_legacy).strip()
-        cur.execute(
-            "SELECT id FROM creadores_arquetipo "
-            "WHERE (nombre ILIKE %s OR codigo ILIKE %s) "
-            "AND COALESCE(activo, true) = true "
-            "ORDER BY id LIMIT 1",
-            (leg, leg),
-        )
-        row = cur.fetchone()
-        if not row:
-            cur.execute(
-                "SELECT id FROM creadores_arquetipo "
-                "WHERE nombre ILIKE %s OR codigo ILIKE %s "
-                "ORDER BY id LIMIT 1",
-                (leg, leg),
-            )
-            row = cur.fetchone()
-        if not row:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Arquetipo de creador no reconocido: {arquetipo_legacy}",
-            )
-        return row[0]
+    if arquetipo_legacy is not None and str(arquetipo_legacy).strip() != "":
+        return resolver_arquetipo_id(cur, arquetipo_legacy)
 
     return None
