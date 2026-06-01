@@ -30,36 +30,82 @@ SQL_SELECT_CREADOR_ARQUETIPO = """
     COALESCE(arq.nombre, 'Sin arquetipo') AS arquetipo,
 """
 
-
 _CATEGORIA_VACIA_LABELS = frozenset({
     "",
     "sin categoría",
     "sin categoria",
-    "sin categoría ",
+    "no definida",
+    "no definido",
+    "no asignada",
+    "no asignado",
     "ninguna",
     "ninguno",
-    "none",
     "null",
+    "none",
     "n/a",
     "na",
 })
 
 
-def _categoria_sin_asignar(categoria_id=None, categoria_legacy=None) -> bool:
-    if categoria_id is not None and str(categoria_id).strip() != "":
-        try:
-            if int(categoria_id) > 0:
-                return False
-            return True
-        except (TypeError, ValueError):
-            pass
-    if categoria_legacy is not None:
-        leg = str(categoria_legacy).strip().lower()
-        if leg in _CATEGORIA_VACIA_LABELS:
-            return True
-        if leg:
-            return False
-    return categoria_id is None or not str(categoria_id).strip()
+def _row_id(row):
+    if row is None:
+        return None
+    if isinstance(row, dict):
+        return row.get("id")
+    return row[0]
+
+
+def resolver_categoria_id(cur, categoria):
+    """
+    Resuelve categoria_id para creadores.
+    Valores vacíos o placeholders → None (NULL en BD).
+    Nombre desconocido → None (no bloquea el guardado).
+    """
+    if categoria is None:
+        return None
+
+    if isinstance(categoria, bool):
+        return None
+
+    if isinstance(categoria, int):
+        if categoria <= 0:
+            return None
+        cur.execute(
+            "SELECT id FROM creadores_categoria WHERE id = %s LIMIT 1",
+            (categoria,),
+        )
+        return _row_id(cur.fetchone())
+
+    texto_original = str(categoria).strip()
+    texto = texto_original.lower()
+
+    if texto in _CATEGORIA_VACIA_LABELS:
+        return None
+
+    if texto.isdigit():
+        cid = int(texto)
+        if cid <= 0:
+            return None
+        cur.execute(
+            "SELECT id FROM creadores_categoria WHERE id = %s LIMIT 1",
+            (cid,),
+        )
+        return _row_id(cur.fetchone())
+
+    cur.execute(
+        """
+        SELECT id
+        FROM creadores_categoria
+        WHERE LOWER(nombre) = LOWER(%s)
+        LIMIT 1
+        """,
+        (texto_original,),
+    )
+    row = cur.fetchone()
+    if row:
+        return _row_id(row)
+
+    return None
 
 
 def resolver_categoria_id_creador(
@@ -70,56 +116,14 @@ def resolver_categoria_id_creador(
     """
     Resuelve FK creadores.categoria_id.
     Acepta categoria_id directo o nombre legado (campo categoria varchar antiguo).
-    Si no se envía categoría (null, 0, 'Sin categoría', etc.), devuelve None.
     """
-    from fastapi import HTTPException
+    if categoria_id is not None and str(categoria_id).strip() != "":
+        resolved = resolver_categoria_id(cur, categoria_id)
+        if resolved is not None:
+            return resolved
 
-    if _categoria_sin_asignar(categoria_id, categoria_legacy):
-        return None
-
-    if categoria_id is not None:
-        try:
-            cid = int(categoria_id)
-        except (TypeError, ValueError):
-            raise HTTPException(
-                status_code=400,
-                detail=f"categoria_id inválido: {categoria_id}",
-            )
-        if cid <= 0:
-            return None
-        cur.execute(
-            "SELECT id FROM creadores_categoria WHERE id = %s LIMIT 1",
-            (cid,),
-        )
-        if not cur.fetchone():
-            raise HTTPException(
-                status_code=400,
-                detail=f"categoria_id de creador no válido: {cid}",
-            )
-        return cid
-
-    if categoria_legacy is not None and str(categoria_legacy).strip():
-        leg = str(categoria_legacy).strip()
-        if leg.lower() in _CATEGORIA_VACIA_LABELS:
-            return None
-        cur.execute(
-            "SELECT id FROM creadores_categoria WHERE nombre ILIKE %s "
-            "AND COALESCE(activa, true) = true ORDER BY id LIMIT 1",
-            (leg,),
-        )
-        row = cur.fetchone()
-        if not row:
-            cur.execute(
-                "SELECT id FROM creadores_categoria WHERE nombre ILIKE %s ORDER BY id LIMIT 1",
-                (leg,),
-            )
-            row = cur.fetchone()
-        if not row:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Categoría de creador no reconocida: {categoria_legacy}",
-            )
-        return row[0]
+    if categoria_legacy is not None and str(categoria_legacy).strip() != "":
+        return resolver_categoria_id(cur, categoria_legacy)
 
     return None
 
