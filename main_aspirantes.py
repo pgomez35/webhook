@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -163,15 +164,65 @@ def _intencion_para_evaluacion(valor):
     return resuelto
 
 
-def _numero_catalogo_para_evaluacion(campo_db: str, valor):
-    """Resuelve ID de catálogo a score/nivel numérico cuando aplica."""
-    resuelto = _resolver_valor_catalogo(campo_db, valor)
-    if resuelto is None:
-        return valor
+def _resolver_catalogo_numerico(campo_db: str, valor):
+    """Convierte ID de catálogo (o texto) a número para evaluación (horas, frecuencia, etc.)."""
+    if valor is None or valor == "":
+        return None
+
     try:
-        return int(float(resuelto))
+        directo = float(valor)
+        if campo_db == "tiempo_disponible" and 0 < directo <= 168:
+            return directo
+        if campo_db == "frecuencia_lives" and 0 <= directo <= 14:
+            return directo
     except (TypeError, ValueError):
-        return resuelto
+        pass
+
+    try:
+        valor_id = int(valor)
+    except (TypeError, ValueError):
+        try:
+            return float(valor)
+        except (TypeError, ValueError):
+            return None
+
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT b.nivel, b.label, b.score
+                    FROM diagnostico_variable_valor b
+                    INNER JOIN diagnostico_variable a ON a.id = b.variable_id
+                    WHERE b.id = %s AND a.campo_db = %s
+                    LIMIT 1
+                    """,
+                    (valor_id, campo_db),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                nivel, label, score = row
+                if score is not None:
+                    try:
+                        return float(score)
+                    except (TypeError, ValueError):
+                        pass
+                for texto in (nivel, label):
+                    if not texto:
+                        continue
+                    match = re.search(r"\d+", str(texto))
+                    if match:
+                        return float(match.group())
+                return None
+    except Exception:
+        logging.warning(
+            "No se pudo resolver valor numérico de catálogo %s=%s",
+            campo_db,
+            valor,
+            exc_info=True,
+        )
+        return None
 
 
 def _edad_para_evaluacion(edad):
@@ -330,10 +381,10 @@ def actualizar_preferencias(aspirante_id: int, datos: PreferenciasHabitosInput):
             exp_otras=data_dict.get("experiencia_otras_plataformas") or {},
             intereses=data_dict.get("intereses") or {},
             tipo_contenido=data_dict.get("tipo_contenido") or {},
-            tiempo=_numero_catalogo_para_evaluacion(
+            tiempo=_resolver_catalogo_numerico(
                 "tiempo_disponible", data_dict.get("tiempo_disponible")
             ),
-            freq_lives=_numero_catalogo_para_evaluacion(
+            freq_lives=_resolver_catalogo_numerico(
                 "frecuencia_lives", data_dict.get("frecuencia_lives")
             ),
             intencion=_intencion_para_evaluacion(data_dict.get("intencion_trabajo")),

@@ -514,6 +514,15 @@ def evaluar_datos_generales(edad, genero, idiomas, estudios, pais=None, activida
         "puntaje_general_categoria": categoria
     }
 
+def _metrica_opcional_numerica(val):
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
 def evaluar_preferencias_habitos(
     exp_otras: dict,
     intereses: dict,
@@ -522,6 +531,8 @@ def evaluar_preferencias_habitos(
     freq_lives=None,
     intencion=None
 ):
+    tiempo = _metrica_opcional_numerica(tiempo)
+    freq_lives = _metrica_opcional_numerica(freq_lives)
 
     # ==============================
     # 1. Experiencia en otras plataformas
