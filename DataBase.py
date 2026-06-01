@@ -151,7 +151,9 @@ def get_connection_public_context():
 
 
 def limpiar_telefono(telefono):
-    telefono = telefono.strip().replace("+", "").replace(" ", "")
+    if telefono is None:
+        return None
+    telefono = str(telefono).strip().replace("+", "").replace(" ", "")
     # Si el teléfono comienza con 93, cambia a 57
     if telefono.startswith("93"):
         telefono = "57" + telefono[2:]
@@ -2060,6 +2062,52 @@ def obtener_puntajes_aspirantes_perfil(aspirante_id):
         print("❌ Error al obtener perfil del creador:", e)
         return None
 
+_columnas_aspirantes_perfil_cache: Dict[str, set] = {}
+
+# Nombre lógico (API) -> posibles nombres físicos en aspirantes_perfil (por tenant)
+ASPIRANTES_PERFIL_COLUMN_ALIASES = {
+    "puntaje_general": ("puntaje_general", "puntaje_datos_personales"),
+    "puntaje_general_categoria": (
+        "puntaje_general_categoria",
+        "puntaje_datos_personales_categoria",
+    ),
+    "videos": ("videos", "cantidad_videos"),
+    "likes": ("likes", "likes_totales"),
+    "puntaje_estadistica": ("puntaje_estadistica", "puntaje_estadistico"),
+    "puntaje_estadistica_categoria": (
+        "puntaje_estadistica_categoria",
+        "puntaje_estadistico_categoria",
+    ),
+}
+
+
+def _obtener_columnas_aspirantes_perfil(cur) -> set:
+    schema = _sanitize_schema(current_tenant.get() or "public")
+    if schema in _columnas_aspirantes_perfil_cache:
+        return _columnas_aspirantes_perfil_cache[schema]
+
+    cur.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = %s
+          AND table_name = 'aspirantes_perfil'
+        """,
+        (schema,),
+    )
+    columnas = {row[0] for row in cur.fetchall()}
+    _columnas_aspirantes_perfil_cache[schema] = columnas
+    return columnas
+
+
+def _resolver_columna_aspirantes_perfil(columnas_existentes: set, campo_logico: str):
+    candidatos = ASPIRANTES_PERFIL_COLUMN_ALIASES.get(campo_logico, (campo_logico,))
+    for nombre in candidatos:
+        if nombre in columnas_existentes:
+            return nombre
+    return None
+
+
 def actualizar_datos_aspirantes_perfil(aspirante_id, datos_dict):
     try:
         # Debug
@@ -2096,36 +2144,45 @@ def actualizar_datos_aspirantes_perfil(aspirante_id, datos_dict):
             "observaciones_finales", "estado_evaluacion",
         ]
 
-        # Construir UPDATE dinámico para aspirantes_perfil
-        campos = []
-        valores = []
-        for campo in campos_validos:
-            if campo in flat_dict:
-                valor = flat_dict[campo]
-                if isinstance(valor, dict):
-                    print(f"📝 Serializando {campo} →", valor)
-                    valor = json.dumps(valor)
-                campos.append(f"{campo} = %s")
-                valores.append(valor)
-
-        if not campos:
-            raise ValueError("⚠️ No se enviaron campos válidos para actualizar")
-
-        campos.append("actualizado_en = NOW()")
-        valores.append(aspirante_id)
-
-        query_perfil = f"""
-            UPDATE aspirantes_perfil
-            SET {', '.join(campos)}
-            WHERE aspirante_id = %s;
-        """
-
         # Posible update a aspirantes.telefono (opcional, sólo si viene en el payload)
         telefono_nuevo = flat_dict.get("telefono")
         telefono_nuevo = limpiar_telefono(telefono_nuevo) if telefono_nuevo else None
 
         with get_connection_context() as conn:
             with conn.cursor() as cur:
+                columnas_tabla = _obtener_columnas_aspirantes_perfil(cur)
+
+                # Construir UPDATE dinámico solo con columnas que existen en este tenant
+                campos = []
+                valores = []
+                for campo in campos_validos:
+                    if campo not in flat_dict:
+                        continue
+                    columna_db = _resolver_columna_aspirantes_perfil(columnas_tabla, campo)
+                    if not columna_db:
+                        print(
+                            f"⚠️ Campo omitido (columna no existe en aspirantes_perfil): {campo}"
+                        )
+                        continue
+                    valor = flat_dict[campo]
+                    if isinstance(valor, dict):
+                        print(f"📝 Serializando {campo} →", valor)
+                        valor = json.dumps(valor)
+                    campos.append(f"{columna_db} = %s")
+                    valores.append(valor)
+
+                if not campos:
+                    raise ValueError("⚠️ No se enviaron campos válidos para actualizar")
+
+                campos.append("actualizado_en = NOW()")
+                valores.append(aspirante_id)
+
+                query_perfil = f"""
+                    UPDATE aspirantes_perfil
+                    SET {', '.join(campos)}
+                    WHERE aspirante_id = %s;
+                """
+
                 # 1) UPDATE aspirantes_perfil
                 print("📤 Query aspirantes_perfil:", query_perfil)
                 print("📤 Valores aspirantes_perfil:", valores)
