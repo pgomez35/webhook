@@ -31,6 +31,37 @@ SQL_SELECT_CREADOR_ARQUETIPO = """
 """
 
 
+_CATEGORIA_VACIA_LABELS = frozenset({
+    "",
+    "sin categoría",
+    "sin categoria",
+    "sin categoría ",
+    "ninguna",
+    "ninguno",
+    "none",
+    "null",
+    "n/a",
+    "na",
+})
+
+
+def _categoria_sin_asignar(categoria_id=None, categoria_legacy=None) -> bool:
+    if categoria_id is not None and str(categoria_id).strip() != "":
+        try:
+            if int(categoria_id) > 0:
+                return False
+            return True
+        except (TypeError, ValueError):
+            pass
+    if categoria_legacy is not None:
+        leg = str(categoria_legacy).strip().lower()
+        if leg in _CATEGORIA_VACIA_LABELS:
+            return True
+        if leg:
+            return False
+    return categoria_id is None or not str(categoria_id).strip()
+
+
 def resolver_categoria_id_creador(
     cur,
     categoria_id=None,
@@ -39,8 +70,12 @@ def resolver_categoria_id_creador(
     """
     Resuelve FK creadores.categoria_id.
     Acepta categoria_id directo o nombre legado (campo categoria varchar antiguo).
+    Si no se envía categoría (null, 0, 'Sin categoría', etc.), devuelve None.
     """
     from fastapi import HTTPException
+
+    if _categoria_sin_asignar(categoria_id, categoria_legacy):
+        return None
 
     if categoria_id is not None:
         try:
@@ -50,6 +85,8 @@ def resolver_categoria_id_creador(
                 status_code=400,
                 detail=f"categoria_id inválido: {categoria_id}",
             )
+        if cid <= 0:
+            return None
         cur.execute(
             "SELECT id FROM creadores_categoria WHERE id = %s LIMIT 1",
             (cid,),
@@ -63,6 +100,8 @@ def resolver_categoria_id_creador(
 
     if categoria_legacy is not None and str(categoria_legacy).strip():
         leg = str(categoria_legacy).strip()
+        if leg.lower() in _CATEGORIA_VACIA_LABELS:
+            return None
         cur.execute(
             "SELECT id FROM creadores_categoria WHERE nombre ILIKE %s "
             "AND COALESCE(activa, true) = true ORDER BY id LIMIT 1",
