@@ -154,6 +154,26 @@ def _resolver_valor_catalogo(campo_db: str, valor):
         return valor
 
 
+def _intencion_para_evaluacion(valor):
+    resuelto = _resolver_valor_catalogo("intencion_trabajo", valor)
+    if resuelto is None:
+        return valor
+    if isinstance(resuelto, str) and resuelto.strip().isdigit():
+        return _resolver_valor_catalogo("intencion_trabajo", int(resuelto))
+    return resuelto
+
+
+def _numero_catalogo_para_evaluacion(campo_db: str, valor):
+    """Resuelve ID de catálogo a score/nivel numérico cuando aplica."""
+    resuelto = _resolver_valor_catalogo(campo_db, valor)
+    if resuelto is None:
+        return valor
+    try:
+        return int(float(resuelto))
+    except (TypeError, ValueError):
+        return resuelto
+
+
 def _edad_para_evaluacion(edad):
     edad_resuelta = _resolver_valor_catalogo("edad", edad)
     try:
@@ -305,14 +325,18 @@ def actualizar_estadisticas(aspirante_id: int, datos: EstadisticasPerfilInput):
 )
 def actualizar_preferencias(aspirante_id: int, datos: PreferenciasHabitosInput):
     try:
-        data_dict = datos.dict(exclude_unset=True)
+        data_dict = _model_to_dict(datos)
         score = evaluar_preferencias_habitos(
             exp_otras=data_dict.get("experiencia_otras_plataformas") or {},
             intereses=data_dict.get("intereses") or {},
             tipo_contenido=data_dict.get("tipo_contenido") or {},
-            tiempo=data_dict.get("tiempo_disponible"),
-            freq_lives=data_dict.get("frecuencia_lives"),
-            intencion=data_dict.get("intencion_trabajo"),
+            tiempo=_numero_catalogo_para_evaluacion(
+                "tiempo_disponible", data_dict.get("tiempo_disponible")
+            ),
+            freq_lives=_numero_catalogo_para_evaluacion(
+                "frecuencia_lives", data_dict.get("frecuencia_lives")
+            ),
+            intencion=_intencion_para_evaluacion(data_dict.get("intencion_trabajo")),
         )
         data_dict["puntaje_habitos"] = score["puntaje_habitos"]
         data_dict["puntaje_habitos_categoria"] = score["puntaje_habitos_categoria"]
@@ -323,8 +347,19 @@ def actualizar_preferencias(aspirante_id: int, datos: PreferenciasHabitosInput):
             puntaje_habitos=score["puntaje_habitos"],
             puntaje_habitos_categoria=score["puntaje_habitos_categoria"],
         )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error(
+            f"Error en PUT /api/aspirantes_perfil/{aspirante_id}/preferencias: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al actualizar preferencias: {e}",
+        )
 
 
 @router.put("/api/aspirantes_perfil/{aspirante_id}/resumen")

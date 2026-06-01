@@ -618,14 +618,37 @@ class EvaluacionCualitativaOutput(BaseModel):
     potencial_estimado: Optional[str] = None
 
 class PreferenciasHabitosInput(BaseModel):
-    tiempo_disponible: Optional[int] = None
-    frecuencia_lives: Optional[int] = None
-    experiencia_otras_plataformas: Optional[Dict[str, float]] = None  # 👈 aquí el cambio
+    tiempo_disponible: Optional[Union[int, str]] = None
+    frecuencia_lives: Optional[Union[int, str]] = None
+    experiencia_otras_plataformas: Optional[Dict[str, Union[float, int, bool]]] = None
     experiencia_otras_plataformas_otro_nombre: Optional[str] = None
-    intereses: Optional[Dict[str, bool]] = None
-    tipo_contenido: Optional[Dict[str, bool]] = None
-    horario_preferido: Optional[str] = None
-    intencion_trabajo: Optional[str] = None
+    intereses: Optional[Dict[str, Union[bool, int, float]]] = None
+    tipo_contenido: Optional[Dict[str, Union[bool, int, float]]] = None
+    horario_preferido: Optional[Union[str, int]] = None
+    intencion_trabajo: Optional[Union[str, int]] = None
+
+    @field_validator("intencion_trabajo", "horario_preferido", mode="before")
+    @classmethod
+    def coerce_preferencias_str(cls, v):
+        if v is None or v == "":
+            return None
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return str(int(v)) if float(v).is_integer() else str(v)
+        return v
+
+    @field_validator("tiempo_disponible", "frecuencia_lives", mode="before")
+    @classmethod
+    def coerce_preferencias_int(cls, v):
+        if v is None or v == "":
+            return None
+        if isinstance(v, str):
+            v = v.strip().replace(",", "")
+            if not v:
+                return None
+        try:
+            return int(float(v))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Debe ser un valor numérico") from exc
 
 class PreferenciasHabitosOutput(PreferenciasHabitosInput):
     status: Optional[str] = None
