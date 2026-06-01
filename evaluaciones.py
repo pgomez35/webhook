@@ -215,6 +215,12 @@ def diagnostico_aspirantes_perfil(
     return "\n".join(mensaje)
 
 def evaluar_estadisticas(seguidores, siguiendo, videos, likes, duracion):
+    seguidores = to_num(seguidores) if seguidores is not None else None
+    siguiendo = to_num(siguiendo) if siguiendo is not None else None
+    videos = to_num(videos) if videos is not None else None
+    likes = to_num(likes) if likes is not None else None
+    duracion = to_num(duracion) if duracion is not None else None
+
     # Corte duro: si tiene muy pocos seguidores, no cuenta
     if seguidores is None or seguidores < 50:
         return {

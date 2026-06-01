@@ -501,16 +501,56 @@ class PerfilCreadorSchema(BaseModel):
 # === Schema de ENTRADA (lo que envía el cliente) ===
 class DatosPersonalesInput(BaseModel):
     nombre: Optional[str] = None
-    edad: Optional[int] = None
-    genero: Optional[str] = None
-    pais: Optional[str] = None
+    edad: Optional[Union[int, str]] = None
+    genero: Optional[Union[str, int]] = None
+    pais: Optional[Union[str, int]] = None
     ciudad: Optional[str] = None
     zona_horaria: Optional[str] = None
-    idioma: Optional[str] = None
+    idioma: Optional[Union[str, List[str]]] = None
     campo_estudios: Optional[str] = None
-    estudios: Optional[str] = None
-    actividad_actual: Optional[str] = None
-    telefono: Optional[str] = None
+    estudios: Optional[Union[str, dict]] = None
+    actividad_actual: Optional[Union[str, int]] = None
+    telefono: Optional[Union[str, int]] = None
+
+    @field_validator("edad", mode="before")
+    @classmethod
+    def coerce_edad(cls, v):
+        if v is None or v == "":
+            return None
+        if isinstance(v, str) and v.strip().isdigit():
+            return int(v.strip())
+        return v
+
+    @field_validator(
+        "genero", "pais", "actividad_actual", "telefono",
+        "nombre", "ciudad", "zona_horaria", "campo_estudios",
+        mode="before",
+    )
+    @classmethod
+    def coerce_scalar_to_str(cls, v):
+        if v is None or v == "":
+            return None
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return str(int(v)) if float(v).is_integer() else str(v)
+        return v
+
+    @field_validator("idioma", mode="before")
+    @classmethod
+    def coerce_idioma(cls, v):
+        if v is None or v == "":
+            return None
+        if isinstance(v, list):
+            return ", ".join(str(x).strip() for x in v if x is not None and str(x).strip())
+        return v
+
+    @field_validator("estudios", mode="before")
+    @classmethod
+    def coerce_estudios(cls, v):
+        if v is None or v == "":
+            return None
+        if isinstance(v, dict):
+            return v.get("nivel") or v.get("label") or v.get("value")
+        return v
 
 
 # === Schema de SALIDA (lo que devuelve la API) ===
@@ -522,19 +562,41 @@ class DatosPersonalesOutput(DatosPersonalesInput):
 
 # === Input Schema (lo que recibe el endpoint) ===
 class EstadisticasPerfilInput(BaseModel):
-    seguidores: Optional[int] = None
-    siguiendo: Optional[int] = None
-    videos: Optional[int] = None
-    likes: Optional[int] = None
-    duracion_emisiones: Optional[int] = None
-    dias_emisiones: Optional[int] = None
+    seguidores: Optional[Union[int, float, str]] = None
+    siguiendo: Optional[Union[int, float, str]] = None
+    videos: Optional[Union[int, float, str]] = None
+    likes: Optional[Union[int, float, str]] = None
+    duracion_emisiones: Optional[Union[int, float, str]] = None
+    dias_emisiones: Optional[Union[int, float, str]] = None
+
+    @field_validator(
+        "seguidores",
+        "siguiendo",
+        "videos",
+        "likes",
+        "duracion_emisiones",
+        "dias_emisiones",
+        mode="before",
+    )
+    @classmethod
+    def coerce_estadistica_int(cls, v):
+        if v is None or v == "":
+            return None
+        if isinstance(v, str):
+            v = v.strip().replace(",", "")
+            if not v:
+                return None
+        try:
+            return int(float(v))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Debe ser un valor numérico") from exc
 
 # === Output Schema (lo que responde el endpoint) ===
 class EstadisticasPerfilOutput(BaseModel):
     status: str
     mensaje: str
-    puntaje_estadistica: float = None
-    puntaje_estadistica_categoria: str = None
+    puntaje_estadistica: Optional[float] = None
+    puntaje_estadistica_categoria: Optional[str] = None
 
 # === Sección: Evaluación Cualitativa / Manual ===
 class EvaluacionCualitativaInput(BaseModel):

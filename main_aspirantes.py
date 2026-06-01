@@ -97,6 +97,85 @@ def actualizar_aspirantes_perfil_endpoint(aspirante_id: int, evaluacion: PerfilC
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _model_to_dict(model: BaseModel) -> dict:
+    if hasattr(model, "model_dump"):
+        return model.model_dump(exclude_unset=True)
+    return model.dict(exclude_unset=True)
+
+
+def _resolver_valor_catalogo(campo_db: str, valor):
+    """Convierte valor_id del catálogo (frontend) a nivel/label para evaluación."""
+    if valor is None:
+        return None
+    if isinstance(valor, str) and not valor.strip().isdigit():
+        return valor.strip()
+
+    try:
+        valor_id = int(valor)
+    except (TypeError, ValueError):
+        return valor
+
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT b.nivel, b.label, b.score
+                    FROM diagnostico_variable_valor b
+                    INNER JOIN diagnostico_variable a ON a.id = b.variable_id
+                    WHERE b.id = %s AND a.campo_db = %s
+                    LIMIT 1
+                    """,
+                    (valor_id, campo_db),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return valor
+                nivel, label, score = row
+                if campo_db == "edad":
+                    for candidato in (nivel, score):
+                        if candidato is None:
+                            continue
+                        try:
+                            rango = int(candidato)
+                            if 1 <= rango <= 5:
+                                return rango
+                        except (TypeError, ValueError):
+                            continue
+                if nivel:
+                    return str(nivel).strip()
+                if label:
+                    return str(label).strip()
+                return valor
+    except Exception:
+        logging.warning(
+            "No se pudo resolver catálogo %s=%s", campo_db, valor, exc_info=True
+        )
+        return valor
+
+
+def _edad_para_evaluacion(edad):
+    edad_resuelta = _resolver_valor_catalogo("edad", edad)
+    try:
+        n = int(edad_resuelta)
+    except (TypeError, ValueError):
+        return edad_resuelta
+    if 1 <= n <= 5:
+        return n
+    # Edad en años (formularios legacy)
+    if 6 <= n <= 120:
+        if n < 18:
+            return 1
+        if n < 25:
+            return 2
+        if n < 35:
+            return 3
+        if n <= 45:
+            return 4
+        return 5
+    return edad_resuelta
+
+
 @router.put(
     "/api/aspirantes_perfil/{aspirante_id}/datos_personales",
     tags=["Perfil"],
@@ -104,14 +183,16 @@ def actualizar_aspirantes_perfil_endpoint(aspirante_id: int, evaluacion: PerfilC
 )
 def actualizar_datos_personales(aspirante_id: int, datos: DatosPersonalesInput):
     try:
-        data_dict = datos.dict(exclude_unset=True)
+        data_dict = _model_to_dict(datos)
         score = evaluar_datos_generales(
-            edad=data_dict.get("edad"),
-            genero=data_dict.get("genero"),
+            edad=_edad_para_evaluacion(data_dict.get("edad")),
+            genero=_resolver_valor_catalogo("genero", data_dict.get("genero")),
             idiomas=data_dict.get("idioma"),
             estudios=data_dict.get("estudios"),
-            pais=data_dict.get("pais"),
-            actividad_actual=data_dict.get("actividad_actual"),
+            pais=_resolver_valor_catalogo("pais", data_dict.get("pais")),
+            actividad_actual=_resolver_valor_catalogo(
+                "actividad_actual", data_dict.get("actividad_actual")
+            ),
         )
         data_dict["puntaje_general"] = score.get("puntaje_general")
         data_dict["puntaje_general_categoria"] = score.get("puntaje_general_categoria")
@@ -122,9 +203,19 @@ def actualizar_datos_personales(aspirante_id: int, datos: DatosPersonalesInput):
             puntaje_general=score.get("puntaje_general"),
             puntaje_general_categoria=score.get("puntaje_general_categoria"),
         )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
-        logging.error(f"Error en PUT /api/aspirantes_perfil/{aspirante_id}/datos_personales: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Error al actualizar datos personales")
+        logging.error(
+            f"Error en PUT /api/aspirantes_perfil/{aspirante_id}/datos_personales: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al actualizar datos personales: {e}",
+        )
 
 
 @router.put(
@@ -175,7 +266,7 @@ def actualizar_eval_cualitativa(
 )
 def actualizar_estadisticas(aspirante_id: int, datos: EstadisticasPerfilInput):
     try:
-        data_dict = datos.dict(exclude_unset=True)
+        data_dict = _model_to_dict(datos)
         score = evaluar_estadisticas(
             seguidores=data_dict.get("seguidores"),
             siguiendo=data_dict.get("siguiendo"),
@@ -192,9 +283,19 @@ def actualizar_estadisticas(aspirante_id: int, datos: EstadisticasPerfilInput):
             puntaje_estadistica=score["puntaje_estadistica"],
             puntaje_estadistica_categoria=score["puntaje_estadistica_categoria"],
         )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
-        logging.error(f"Error en PUT /api/aspirantes_perfil/{aspirante_id}/estadisticas: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Error al actualizar estadisticas")
+        logging.error(
+            f"Error en PUT /api/aspirantes_perfil/{aspirante_id}/estadisticas: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al actualizar estadisticas: {e}",
+        )
 
 
 @router.put(
