@@ -511,6 +511,7 @@ class DatosPersonalesInput(BaseModel):
     estudios: Optional[Union[str, dict]] = None
     actividad_actual: Optional[Union[str, int]] = None
     telefono: Optional[Union[str, int]] = None
+    tiene_solicitud: Optional[bool] = None
 
     @field_validator("edad", mode="before")
     @classmethod

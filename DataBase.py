@@ -1768,6 +1768,7 @@ def obtener_aspirantes_db():
                         c.nickname, 
                         c.nombre_real, 
                         c.telefono,
+                        COALESCE(c.tiene_solicitud, FALSE) AS tiene_solicitud,
                         ec.nombre AS estado_nombre,
                         COALESCE(c.fecha_solicitud, c.creado_en) AS creado_en
                     FROM aspirantes c
@@ -1929,8 +1930,9 @@ def obtener_aspirantes_perfil(aspirante_id):
                             pc.actividad_actual,
                             pc.idioma,
                             pc.estado_evaluacion,
-                            -- Campo traído desde la tabla aspirantes
-                            c.encuesta_terminada
+                            -- Campos traídos desde la tabla aspirantes
+                            c.encuesta_terminada,
+                            COALESCE(c.tiene_solicitud, FALSE) AS tiene_solicitud
                         FROM aspirantes_perfil pc
                         INNER JOIN aspirantes c
                             ON pc.aspirante_id = c.id
@@ -2147,6 +2149,7 @@ def actualizar_datos_aspirantes_perfil(aspirante_id, datos_dict):
         # Posible update a aspirantes.telefono (opcional, sólo si viene en el payload)
         telefono_nuevo = flat_dict.get("telefono")
         telefono_nuevo = limpiar_telefono(telefono_nuevo) if telefono_nuevo else None
+        tiene_solicitud = flat_dict.pop("tiene_solicitud", None)
 
         with get_connection_context() as conn:
             with conn.cursor() as cur:
@@ -2172,7 +2175,8 @@ def actualizar_datos_aspirantes_perfil(aspirante_id, datos_dict):
                     valores.append(valor)
 
                 if not campos:
-                    raise ValueError("⚠️ No se enviaron campos válidos para actualizar")
+                    if telefono_nuevo is None and tiene_solicitud is None:
+                        raise ValueError("⚠️ No se enviaron campos válidos para actualizar")
 
                 campos.append("actualizado_en = NOW()")
                 valores.append(aspirante_id)
@@ -2184,9 +2188,10 @@ def actualizar_datos_aspirantes_perfil(aspirante_id, datos_dict):
                 """
 
                 # 1) UPDATE aspirantes_perfil
-                print("📤 Query aspirantes_perfil:", query_perfil)
-                print("📤 Valores aspirantes_perfil:", valores)
-                cur.execute(query_perfil, valores)
+                if campos:
+                    print("📤 Query aspirantes_perfil:", query_perfil)
+                    print("📤 Valores aspirantes_perfil:", valores)
+                    cur.execute(query_perfil, valores)
 
                 # 2) UPDATE aspirantes.telefono (si aplica)
                 if telefono_nuevo:
@@ -2195,6 +2200,18 @@ def actualizar_datos_aspirantes_perfil(aspirante_id, datos_dict):
                         (telefono_nuevo, aspirante_id)
                     )
                     print(f"📞 aspirantes.telefono actualizado → {telefono_nuevo}")
+
+                # 3) UPDATE aspirantes.tiene_solicitud (si aplica)
+                if tiene_solicitud is not None:
+                    cur.execute(
+                        """
+                        UPDATE aspirantes
+                        SET tiene_solicitud = %s, actualizado_en = NOW()
+                        WHERE id = %s
+                        """,
+                        (bool(tiene_solicitud), aspirante_id),
+                    )
+                    print(f"📋 aspirantes.tiene_solicitud actualizado → {bool(tiene_solicitud)}")
 
                 conn.commit()
                 print(f"✅ Datos del perfil del creador {aspirante_id} actualizados (y teléfono de aspirantes si aplicaba).")

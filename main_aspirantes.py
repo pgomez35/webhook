@@ -273,6 +273,7 @@ def actualizar_datos_personales(aspirante_id: int, datos: DatosPersonalesInput):
             mensaje="Evaluacion datos Generales actualizada",
             puntaje_general=score.get("puntaje_general"),
             puntaje_general_categoria=score.get("puntaje_general_categoria"),
+            tiene_solicitud=data_dict.get("tiene_solicitud"),
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
