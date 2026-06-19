@@ -1947,6 +1947,40 @@ def obtener_aspirantes_perfil(aspirante_id):
         print("❌ Error al obtener perfil del creador:", e)
         return None
 
+
+def obtener_tiene_solicitud_aspirante(aspirante_id: int) -> Optional[bool]:
+    """None si el aspirante no existe; bool si existe."""
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COALESCE(tiene_solicitud, FALSE)
+                    FROM aspirantes
+                    WHERE id = %s
+                    """,
+                    (aspirante_id,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                return bool(row[0])
+    except Exception as e:
+        print(f"❌ Error al obtener tiene_solicitud del aspirante {aspirante_id}: {e}")
+        raise
+
+
+def require_aspirante_tiene_solicitud(aspirante_id: int) -> None:
+    """403 si tiene_solicitud es false; 404 si el aspirante no existe."""
+    flag = obtener_tiene_solicitud_aspirante(aspirante_id)
+    if flag is None:
+        raise HTTPException(status_code=404, detail="Aspirante no encontrado.")
+    if not flag:
+        raise HTTPException(
+            status_code=403,
+            detail="El aspirante no tiene solicitud de ingreso registrada.",
+        )
+
 def obtener_aspirantes_perfil_entrevista_invitacion(aspirante_id):
     try:
         with get_connection_context() as conn:

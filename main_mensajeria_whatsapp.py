@@ -14,7 +14,7 @@ from starlette.staticfiles import StaticFiles
 
 from DataBase import obtener_usuario_id_por_telefono, guardar_mensaje, guardar_mensaje_nuevo, \
     obtener_mensajes, obtener_contactos_db, obtener_contactos_db_nueva, get_connection_context, \
-    obtener_cuenta_por_subdominio
+    obtener_cuenta_por_subdominio, require_aspirante_tiene_solicitud
 from enviar_msg_wp import enviar_plantilla_generica, enviar_mensaje_texto_simple, enviar_audio_base64, \
     enviar_plantilla_generica_parametros
 from main_auth import obtener_usuario_actual
@@ -2540,6 +2540,7 @@ def enviar_mensaje_invitacion(
     data: EnviarNoAptoIn,
     usuario_actual: dict = Depends(obtener_usuario_actual)
 ):
+    require_aspirante_tiene_solicitud(data.aspirante_id)
     telefono = None
     nombre = None
     aspirante_id = None
@@ -2796,6 +2797,8 @@ def enviar_link_auto_agendamiento_aspirante(
     El estado del aspirante solo cambia si el mensaje fue enviado exitosamente.
     """
 
+    require_aspirante_tiene_solicitud(data.aspirante_id)
+
     with get_connection_context() as conn:
         cur = conn.cursor()
 
@@ -2987,6 +2990,7 @@ def enviar_mensaje_no_apto(
     data: EnviarNoAptoIn,
     usuario_actual: dict = Depends(obtener_usuario_actual)
 ):
+    require_aspirante_tiene_solicitud(data.aspirante_id)
     with get_connection_context() as conn:
         cur = conn.cursor()
 
