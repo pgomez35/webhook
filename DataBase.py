@@ -1770,11 +1770,12 @@ def obtener_aspirantes_db():
                         c.telefono,
                         COALESCE(c.tiene_solicitud, FALSE) AS tiene_solicitud,
                         ec.nombre AS estado_nombre,
-                        COALESCE(c.fecha_solicitud, c.creado_en) AS creado_en
+                        c.creado_en,
+                        c.fecha_solicitud
                     FROM aspirantes c
                     INNER JOIN aspirantes_estados ec ON c.estado_id = ec.id
                     WHERE c.activo = TRUE
-                    ORDER BY creado_en ASC;
+                    ORDER BY COALESCE(c.fecha_solicitud, c.creado_en) ASC;
                 """
 
                 cur.execute(sql)
