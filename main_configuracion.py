@@ -87,7 +87,7 @@ def listar_grupos_config():
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT DISTINCT grupo
-                FROM configuracion_agencia_keys
+                FROM public.configuracion_agencia_keys
                 ORDER BY grupo ASC
             """)
             rows = cur.fetchall()
@@ -110,7 +110,7 @@ def listar_config_keys():
                     requerido,
                     validacion_regex,
                     actualizado_en
-                FROM configuracion_agencia_keys
+                FROM public.configuracion_agencia_keys
                 ORDER BY grupo ASC, orden ASC, clave ASC
             """)
             rows = cur.fetchall()

@@ -15,7 +15,7 @@ from fastapi import APIRouter, UploadFile, File, Form, Body, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
-from DataBase import get_connection, get_connection_context, limpiar_telefono, safe_int
+from DataBase import get_connection_context, limpiar_telefono, safe_int
 from utils_aspirantes import registrar_cambio_estado  # <-- AJUSTAR IMPORT REAL
 
 logger = logging.getLogger("uvicorn.error")
@@ -415,9 +415,9 @@ def guardar_aspirantes(
     """
     Guarda aspirantes y asegura estado inicial = 1.
     - Nuevos aspirantes: se insertan con estado_id = 1
-    - Aspirantes existentes: se actualizan y luego se normaliza estado con registrar_cambio_estado()
+    - Aspirantes existentes: se actualizan (incl. tiene_solicitud = TRUE) y luego se normaliza estado con registrar_cambio_estado()
     """
-    conn = get_connection()
+    conn = get_connection_context()
     cur = conn.cursor()
 
     resultados = []
@@ -483,6 +483,7 @@ def guardar_aspirantes(
                             email = %s,
                             telefono = %s,
                             fecha_solicitud = %s,
+                            tiene_solicitud = TRUE,
                             actualizado_en = NOW()
                         WHERE id = %s
                         """,
@@ -501,6 +502,7 @@ def guardar_aspirantes(
                         SET nickname = %s,
                             email = %s,
                             telefono = %s,
+                            tiene_solicitud = TRUE,
                             actualizado_en = NOW()
                         WHERE id = %s
                         """,
@@ -1156,19 +1158,40 @@ def crear_aspirante_manual(data: AspiranteManualCreate):
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT id
+                    SELECT id, tiene_solicitud
                     FROM aspirantes
                     WHERE usuario = %s
                     LIMIT 1
                     """,
                     (usuario,),
                 )
-                if cur.fetchone():
-                    logger.warning(f"⚠️ Usuario ya existe en aspirantes: {usuario}")
-                    raise HTTPException(
-                        status_code=409,
-                        detail="Ya existe un aspirante con ese usuario",
+                existente = cur.fetchone()
+                if existente:
+                    aspirante_id = existente[0]
+                    cur.execute(
+                        """
+                        UPDATE aspirantes
+                        SET tiene_solicitud = TRUE,
+                            actualizado_en = NOW()
+                        WHERE id = %s
+                        """,
+                        (aspirante_id,),
                     )
+                    logger.info(
+                        f"✅ Usuario ya existía; tiene_solicitud actualizado id={aspirante_id} usuario={usuario}"
+                    )
+                    return {
+                        "status": "ok",
+                        "mensaje": "Aspirante ya existía; tiene_solicitud actualizado a true",
+                        "aspirante": {
+                            "id": aspirante_id,
+                            "usuario": usuario,
+                            "nickname": nickname,
+                            "tiene_solicitud": True,
+                            "fecha_solicitud": None,
+                            "actualizado": True,
+                        },
+                    }
 
                 cur.execute(
                     """
