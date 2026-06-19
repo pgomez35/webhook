@@ -90,6 +90,12 @@ class DiagnosticoPortalOut(BaseModel):
     diagnostico_resumen: Optional[str] = None
 
 
+class SolicitudIngresoOut(BaseModel):
+    visible: bool = False
+    url: Optional[str] = None
+    label: Optional[str] = None
+
+
 class PortalSoporteConfigOut(BaseModel):
     texto: Optional[str] = None
     telefono: Optional[str] = None
@@ -127,6 +133,8 @@ class PortalResumenOut(BaseModel):
     mensaje_estado: str
     tiempo_estimado: Optional[str] = None
     encuesta_terminada: bool = False
+    tiene_solicitud: bool = False
+    solicitud_ingreso: SolicitudIngresoOut = Field(default_factory=SolicitudIngresoOut)
     paso_actual: int
     total_pasos: int = TOTAL_PASOS_PORTAL
     diagnostico: DiagnosticoPortalOut
@@ -213,6 +221,7 @@ def resolver_token_vigente_o_error(token: str) -> dict:
                     a.whatsapp,
                     a.email,
                     COALESCE(a.encuesta_terminada, false) AS encuesta_terminada,
+                    COALESCE(a.tiene_solicitud, false) AS tiene_solicitud,
 
                     ae.nombre AS estado_nombre
 
@@ -259,7 +268,8 @@ def resolver_token_vigente_o_error(token: str) -> dict:
                 "whatsapp": row[8],
                 "email": row[9],
                 "encuesta_terminada": row[10],
-                "estado_nombre": row[11] or "Proceso",
+                "tiene_solicitud": bool(row[11]),
+                "estado_nombre": row[12] or "Proceso",
                 "usuario": row[5],
                 "tipo_portal": "aspirante",
             }
@@ -541,12 +551,43 @@ def obtener_paso_actual(estado_id: Optional[int], encuesta_terminada: bool = Fal
     return 1
 
 
+def _url_solicitud_agencia_valida(url: Optional[str]) -> Optional[str]:
+    if url is None:
+        return None
+    s = str(url).strip()
+    if not s.lower().startswith("https://"):
+        return None
+    return s
+
+
+def construir_solicitud_ingreso(
+    encuesta_terminada: bool,
+    tiene_solicitud: bool,
+    url: Optional[str],
+) -> Dict[str, Any]:
+    url_ok = _url_solicitud_agencia_valida(url)
+    visible = bool(encuesta_terminada and not tiene_solicitud and url_ok)
+    return {
+        "visible": visible,
+        "url": url_ok if visible else None,
+        "label": "Solicitar ingreso a la agencia",
+    }
+
+
 def construir_modulos(
     estado_id: Optional[int],
     tiene_agendamiento_pendiente: bool = False,
     diagnostico_existe: bool = False,
+    encuesta_terminada: bool = False,
+    tiene_solicitud: bool = False,
 ) -> dict:
-    diagnostico_visible = estado_id in (3, 4, 5, 6, 7)
+    diagnostico_visible_estado = estado_id in (3, 4, 5, 6, 7)
+    diagnostico_visible_sin_solicitud = (
+        estado_id in (ESTADO_ASPIRANTE_NUEVO, ESTADO_ASPIRANTE_PRESELECCION)
+        and encuesta_terminada
+        and not tiene_solicitud
+    )
+    diagnostico_visible = diagnostico_visible_estado or diagnostico_visible_sin_solicitud
     return {
         "proceso": True,
         "faq": True,
@@ -635,6 +676,19 @@ def construir_siguiente_paso_portal(
                 "cta_url": url_encuesta,
                 "cta_externa": True if url_encuesta else False,
                 "modulo_destino": "proceso",
+                "entrevista_id": None,
+                "agendamiento_id": None,
+            }
+
+        if diagnostico.get("existe"):
+            return {
+                "codigo": "ver_diagnostico",
+                "titulo": "Ver tu diagnóstico",
+                "descripcion": "Ya puedes consultar el análisis actual de tu perfil.",
+                "cta_label": "Ver diagnóstico",
+                "cta_url": None,
+                "cta_externa": False,
+                "modulo_destino": "diagnostico",
                 "entrevista_id": None,
                 "agendamiento_id": None,
             }
@@ -994,6 +1048,15 @@ def resumen_portal(token: str = Query(..., min_length=10)):
             )
 
     cfg_portal = obtener_configuracion_soporte_portal()
+    url_solicitud_vals = _map_configuracion_agencia(("tiktok_url_solicitud_agencia",))
+    url_solicitud_raw = _normalizar_texto_config(
+        url_solicitud_vals.get("tiktok_url_solicitud_agencia")
+    )
+    solicitud_ingreso = construir_solicitud_ingreso(
+        encuesta_terminada=info["encuesta_terminada"],
+        tiene_solicitud=info["tiene_solicitud"],
+        url=url_solicitud_raw,
+    )
 
     return PortalResumenOut(
         aspirante_id=info["aspirante_id"],
@@ -1007,6 +1070,8 @@ def resumen_portal(token: str = Query(..., min_length=10)):
         mensaje_estado=mensaje_estado(info["estado_id"]),
         tiempo_estimado=tiempo_estimado_estado(info["estado_id"]),
         encuesta_terminada=info["encuesta_terminada"],
+        tiene_solicitud=info["tiene_solicitud"],
+        solicitud_ingreso=SolicitudIngresoOut(**solicitud_ingreso),
         paso_actual=obtener_paso_actual(
             estado_id=info["estado_id"],
             encuesta_terminada=info["encuesta_terminada"],
@@ -1017,6 +1082,8 @@ def resumen_portal(token: str = Query(..., min_length=10)):
             estado_id=info["estado_id"],
             tiene_agendamiento_pendiente=agendamiento_pendiente is not None,
             diagnostico_existe=bool(diagnostico.get("existe")),
+            encuesta_terminada=info["encuesta_terminada"],
+            tiene_solicitud=info["tiene_solicitud"],
         ),
         siguiente_paso=SiguientePasoOut(**siguiente_paso),
         expiracion_token=info["expiracion"],
