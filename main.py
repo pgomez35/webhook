@@ -93,6 +93,7 @@ from main_creadores_perfil_config import router as main_creadores_perfil_config_
 from main_creadores_categoria import router as main_creadores_categoria_router
 from main_creadores_metricas import router as main_creadores_metricas_router
 from performance_routes import router as main_creadores_performance_router
+from creadores_performance_tablero import router as creadores_performance_tablero_router
 
 
 
@@ -122,6 +123,7 @@ app.include_router(main_creadores_perfil_config_router, tags=["creadores perfil 
 app.include_router(main_creadores_categoria_router, tags=["creadores categorias"])
 app.include_router(main_creadores_metricas_router, tags=["creadores metricas"])
 app.include_router(main_creadores_performance_router, tags=["creadores seguimiento"])
+app.include_router(creadores_performance_tablero_router, tags=["creadores tablero"])
 
 
 

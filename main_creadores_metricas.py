@@ -193,6 +193,31 @@ REQUIRED_COLUMNS = [
     "Estado de graduación",
 ]
 
+ESTADO_RANGO_COLUMNS = [
+    "Estado de rango",
+    "Estado del rango",
+    "Estado de rango del creador",
+    "Rango del creador",
+]
+
+
+def _leer_columna_opcional(row: pd.Series, columnas_posibles: List[str]) -> Optional[str]:
+    for columna in columnas_posibles:
+        if columna in row.index:
+            valor = _to_str(row.get(columna))
+            if valor:
+                return valor
+    return None
+
+
+def _inferir_tipo_periodo(periodo_inicio: date, periodo_fin: date) -> str:
+    dias = (periodo_fin - periodo_inicio).days
+    if dias <= 10:
+        return "semanal"
+    if dias <= 31:
+        return "mensual"
+    return "otro"
+
 
 def _validar_columnas_excel(df: pd.DataFrame) -> None:
     missing = [col for col in REQUIRED_COLUMNS if col not in df.columns]
@@ -225,6 +250,7 @@ def _row_to_reporte(row: pd.Series) -> Dict[str, Any]:
         "hora_incorporacion": _parse_datetime_tiktok(row.get("Hora de incorporación")),
         "dias_desde_incorporacion": _to_int(row.get("Días desde la incorporación")),
         "estado_graduacion": _to_str(row.get("Estado de graduación")),
+        "estado_rango": _leer_columna_opcional(row, ESTADO_RANGO_COLUMNS),
         "diamantes_totales": _to_int(row.get("Diamantes")),
         "duracion_live_minutos": duracion_live_minutos,
         "dias_validos_emisiones_live": _to_int(row.get("Días válidos de emisiones LIVE")),
@@ -288,6 +314,65 @@ def _actualizar_creador_base(cur, creador_id: int, data: Dict[str, Any]) -> None
     )
 
 
+def _registrar_importaciones_desde_df(
+    cur,
+    df: pd.DataFrame,
+    archivo_nombre: Optional[str],
+    archivo_origen: str,
+) -> Dict[Tuple[date, date], int]:
+    periodos_stats: Dict[Tuple[date, date], Dict[str, Any]] = {}
+
+    for _, row in df.iterrows():
+        try:
+            periodo_inicio, periodo_fin = _parse_periodo(row.get("Periodo de datos"))
+            key = (periodo_inicio, periodo_fin)
+            periodos_stats.setdefault(key, {"filas": 0, "creadores": set()})
+            periodos_stats[key]["filas"] += 1
+
+            creador_tiktok_id = _to_str(row.get("ID del creador"))
+            if creador_tiktok_id:
+                periodos_stats[key]["creadores"].add(creador_tiktok_id)
+        except Exception:
+            continue
+
+    importaciones: Dict[Tuple[date, date], int] = {}
+
+    for (periodo_inicio, periodo_fin), stats in periodos_stats.items():
+        tipo_periodo = _inferir_tipo_periodo(periodo_inicio, periodo_fin)
+
+        cur.execute(
+            """
+            INSERT INTO creadores_reporte_importaciones (
+                archivo_nombre,
+                archivo_origen,
+                periodo_inicio,
+                periodo_fin,
+                tipo_periodo,
+                total_filas,
+                total_creadores,
+                estado,
+                metadata_json
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 'procesado', %s::jsonb)
+            RETURNING id_importacion
+            """,
+            (
+                archivo_nombre,
+                archivo_origen,
+                periodo_inicio,
+                periodo_fin,
+                tipo_periodo,
+                stats["filas"],
+                len(stats["creadores"]),
+                "{}",
+            ),
+        )
+
+        importaciones[(periodo_inicio, periodo_fin)] = cur.fetchone()["id_importacion"]
+
+    return importaciones
+
+
 def _upsert_reporte_integral(cur, data: Dict[str, Any], creador_id: Optional[int]) -> int:
     cur.execute(
         """
@@ -302,6 +387,7 @@ def _upsert_reporte_integral(cur, data: Dict[str, Any], creador_id: Optional[int
             hora_incorporacion,
             dias_desde_incorporacion,
             estado_graduacion,
+            estado_rango,
             diamantes_totales,
             duracion_live_minutos,
             dias_validos_emisiones_live,
@@ -328,7 +414,10 @@ def _upsert_reporte_integral(cur, data: Dict[str, Any], creador_id: Optional[int
             diamantes_modo_varios_invitados,
             diamantes_modo_varios_invitados_anfitrion,
             diamantes_modo_varios_invitados_invitado,
-            base_diamantes_antes_unirse
+            base_diamantes_antes_unirse,
+            importacion_id,
+            tipo_periodo,
+            archivo_origen
         ) VALUES (
             %(creador_tiktok_id)s,
             %(creador_id)s,
@@ -340,6 +429,7 @@ def _upsert_reporte_integral(cur, data: Dict[str, Any], creador_id: Optional[int
             %(hora_incorporacion)s,
             %(dias_desde_incorporacion)s,
             %(estado_graduacion)s,
+            %(estado_rango)s,
             %(diamantes_totales)s,
             %(duracion_live_minutos)s,
             %(dias_validos_emisiones_live)s,
@@ -366,7 +456,10 @@ def _upsert_reporte_integral(cur, data: Dict[str, Any], creador_id: Optional[int
             %(diamantes_modo_varios_invitados)s,
             %(diamantes_modo_varios_invitados_anfitrion)s,
             %(diamantes_modo_varios_invitados_invitado)s,
-            %(base_diamantes_antes_unirse)s
+            %(base_diamantes_antes_unirse)s,
+            %(importacion_id)s,
+            %(tipo_periodo)s,
+            %(archivo_origen)s
         )
         ON CONFLICT (creador_tiktok_id, periodo_inicio, periodo_fin)
         DO UPDATE SET
@@ -378,6 +471,7 @@ def _upsert_reporte_integral(cur, data: Dict[str, Any], creador_id: Optional[int
             hora_incorporacion = EXCLUDED.hora_incorporacion,
             dias_desde_incorporacion = EXCLUDED.dias_desde_incorporacion,
             estado_graduacion = EXCLUDED.estado_graduacion,
+            estado_rango = EXCLUDED.estado_rango,
             diamantes_totales = EXCLUDED.diamantes_totales,
             duracion_live_minutos = EXCLUDED.duracion_live_minutos,
             dias_validos_emisiones_live = EXCLUDED.dias_validos_emisiones_live,
@@ -404,7 +498,10 @@ def _upsert_reporte_integral(cur, data: Dict[str, Any], creador_id: Optional[int
             diamantes_modo_varios_invitados = EXCLUDED.diamantes_modo_varios_invitados,
             diamantes_modo_varios_invitados_anfitrion = EXCLUDED.diamantes_modo_varios_invitados_anfitrion,
             diamantes_modo_varios_invitados_invitado = EXCLUDED.diamantes_modo_varios_invitados_invitado,
-            base_diamantes_antes_unirse = EXCLUDED.base_diamantes_antes_unirse
+            base_diamantes_antes_unirse = EXCLUDED.base_diamantes_antes_unirse,
+            importacion_id = EXCLUDED.importacion_id,
+            tipo_periodo = EXCLUDED.tipo_periodo,
+            archivo_origen = EXCLUDED.archivo_origen
         RETURNING id_reporte
         """,
         {**data, "creador_id": creador_id},
@@ -810,9 +907,18 @@ def cargar_reporte_creadores_excel(
         no_encontrados = []
         errores = []
         reportes_procesados = []
+        archivo_origen = "backstage_excel"
+        importaciones_por_periodo: Dict[Tuple[date, date], int] = {}
 
         with get_connection_context() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                importaciones_por_periodo = _registrar_importaciones_desde_df(
+                    cur,
+                    df,
+                    archivo_nombre=file.filename,
+                    archivo_origen=archivo_origen,
+                )
+
                 for idx, row in df.iterrows():
                     try:
                         data = _row_to_reporte(row)
@@ -820,6 +926,14 @@ def cargar_reporte_creadores_excel(
                         if not data["creador_tiktok_id"]:
                             errores.append({"fila": int(idx) + 2, "error": "ID del creador vacío"})
                             continue
+
+                        periodo_key = (data["periodo_inicio"], data["periodo_fin"])
+                        data["tipo_periodo"] = _inferir_tipo_periodo(
+                            data["periodo_inicio"],
+                            data["periodo_fin"],
+                        )
+                        data["archivo_origen"] = archivo_origen
+                        data["importacion_id"] = importaciones_por_periodo.get(periodo_key)
 
                         creador_id = _buscar_creador_por_tiktok(
                             cur,
@@ -904,12 +1018,21 @@ def cargar_reporte_creadores_excel(
                         textos = _generar_textos_insight(reporte, meta)
                         _upsert_insight(cur, reporte, textos)
 
-            conn.commit()
+        importaciones_respuesta = [
+            {
+                "id_importacion": id_importacion,
+                "periodo_inicio": periodo_inicio,
+                "periodo_fin": periodo_fin,
+                "tipo_periodo": _inferir_tipo_periodo(periodo_inicio, periodo_fin),
+            }
+            for (periodo_inicio, periodo_fin), id_importacion in importaciones_por_periodo.items()
+        ]
 
         return {
             "ok": True,
             "filename": file.filename,
             "filas_excel": len(df),
+            "importaciones": importaciones_respuesta,
             "reportes_insertados_o_actualizados": insertados_o_actualizados,
             "creadores_encontrados_en_saas": con_creador_en_saas,
             "creadores_no_encontrados": no_encontrados,
