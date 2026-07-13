@@ -7,6 +7,7 @@ import requests
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any, Literal
+from zoneinfo import ZoneInfo
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -51,6 +52,65 @@ _PARTICIPANTE_TIPO_ID_A_STR: Dict[int, str] = {
 # agendamientos_medio.id (semillas estándar)
 MEDIO_REUNION_GOOGLE_MEET = 1
 MEDIO_REUNION_TIKTOK_LIVE = 2
+
+
+class AgenciaZonaHorariaOut(BaseModel):
+    zona_horaria: str
+
+
+def _fecha_utc_iso_z(dt: Optional[datetime]) -> Optional[str]:
+    """Serializa un timestamp naive (UTC) o aware como ISO 8601 con sufijo Z."""
+    if dt is None:
+        return None
+    if not isinstance(dt, datetime):
+        return str(dt)
+    if dt.tzinfo is None:
+        utc_dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+    else:
+        utc_dt = dt.astimezone(ZoneInfo("UTC"))
+    return utc_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def serializar_evento_out_utc(evento: EventoOut) -> Dict[str, Any]:
+    """Entrega inicio/fin como UTC inequívoco para el Calendario administrativo."""
+    data = evento.model_dump()
+    data["inicio"] = _fecha_utc_iso_z(evento.inicio)
+    data["fin"] = _fecha_utc_iso_z(evento.fin)
+    return data
+
+
+def _resolver_zona_horaria_agencia() -> str:
+    """
+    Lee configuracion_agencia.clave = 'zona_horaria' (campo valor).
+    Devuelve una zona IANA válida o 'UTC' como fallback.
+    """
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT valor
+                    FROM configuracion_agencia
+                    WHERE clave = 'zona_horaria'
+                    LIMIT 1
+                    """
+                )
+                row = cur.fetchone()
+
+        raw = (row[0] if row else "") or ""
+        raw = str(raw).strip()
+        if not raw:
+            return "UTC"
+
+        ZoneInfo(raw)
+        return raw
+    except Exception:
+        return "UTC"
+
+
+@router.get("/api/agendamientos/zona-horaria", response_model=AgenciaZonaHorariaOut)
+def obtener_zona_horaria_agencia():
+    return AgenciaZonaHorariaOut(zona_horaria=_resolver_zona_horaria_agencia())
 
 
 def _fetch_medio_reunion_id_por_tipo(cur, tipo_agendamiento_id: Optional[int]) -> Optional[int]:
@@ -148,7 +208,7 @@ class AgendamientoAspiranteIn(BaseModel):
     timezone: Optional[str] = None      # "America/Santiago"
 
 
-@router.get("/api/eventos/{evento_id}", response_model=EventoOut)
+@router.get("/api/eventos/{evento_id}")
 def obtener_evento(evento_id: str):
     """
     Obtiene un evento desde la BD interna.
@@ -342,7 +402,7 @@ def obtener_evento(evento_id: str):
             # ---------------------------------------------------------
             # 5️⃣ Respuesta
             # ---------------------------------------------------------
-            return EventoOut(
+            evento = EventoOut(
                 agendamiento_id=str(ag_id),
                 titulo=titulo or "Sin título",
                 descripcion=descripcion or "",
@@ -358,6 +418,7 @@ def obtener_evento(evento_id: str):
                 google_event_id=google_event_id,
                 medio_reunion_id=medio_reunion_id,
             )
+            return serializar_evento_out_utc(evento)
 
         except HTTPException:
             raise
@@ -370,17 +431,19 @@ def obtener_evento(evento_id: str):
                 detail="Error interno al obtener el evento."
             )
 
-@router.get("/api/eventos", response_model=List[EventoOut])
+@router.get("/api/eventos")
 def listar_eventos(
     time_min: Optional[datetime] = None,
     time_max: Optional[datetime] = None,
     max_results: Optional[int] = 100
 ):
     try:
-        return obtener_eventos(
+        eventos = obtener_eventos(
             time_min=time_min,
             time_max=time_max,
-            max_results=max_results)
+            max_results=max_results,
+        )
+        return [serializar_evento_out_utc(evento) for evento in eventos]
     except Exception as e:
         logger.error(f"❌ Error al obtener eventos: {str(e)}")
         logger.error(traceback.format_exc())
@@ -2123,9 +2186,6 @@ def obtener_entrevista_id(aspirante_id: int, usuario_evalua: int) -> Optional[di
     except Exception as e:
         print("❌ Error en obtener_entrevista_id:", e)
         return None
-
-
-from zoneinfo import ZoneInfo
 
 
 
