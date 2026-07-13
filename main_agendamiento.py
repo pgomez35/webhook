@@ -1,4 +1,5 @@
 import os
+import json
 import traceback
 import logging
 import secrets
@@ -58,6 +59,34 @@ class AgenciaZonaHorariaOut(BaseModel):
     zona_horaria: str
 
 
+class ZonaHorariaCatalogoOut(BaseModel):
+    id: int
+    codigo: str
+    label: str
+    paises: List[str] = []
+
+
+def _normalizar_paises_zona(paises_raw: Any) -> List[str]:
+    if paises_raw is None:
+        return []
+    if isinstance(paises_raw, list):
+        return [str(p) for p in paises_raw if p is not None and str(p).strip()]
+    if isinstance(paises_raw, str):
+        texto = paises_raw.strip()
+        if not texto:
+            return []
+        try:
+            parsed = json.loads(texto)
+            if isinstance(parsed, list):
+                return [str(p) for p in parsed if p is not None and str(p).strip()]
+        except json.JSONDecodeError:
+            pass
+        if texto.startswith("{") and texto.endswith("}"):
+            return [texto.strip("{}")]
+        return [texto]
+    return [str(paises_raw)]
+
+
 def _fecha_utc_iso_z(dt: Optional[datetime]) -> Optional[str]:
     """Serializa un timestamp naive (UTC) o aware como ISO 8601 con sufijo Z."""
     if dt is None:
@@ -111,6 +140,39 @@ def _resolver_zona_horaria_agencia() -> str:
 @router.get("/api/agendamientos/zona-horaria", response_model=AgenciaZonaHorariaOut)
 def obtener_zona_horaria_agencia():
     return AgenciaZonaHorariaOut(zona_horaria=_resolver_zona_horaria_agencia())
+
+
+@router.get("/api/agendamientos/zonas-horarias", response_model=List[ZonaHorariaCatalogoOut])
+def listar_zonas_horarias_catalogo():
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT id, codigo, label, paises
+                    FROM zona_horaria
+                    WHERE activo = true
+                    ORDER BY label
+                    """
+                )
+                rows = cur.fetchall()
+
+        return [
+            ZonaHorariaCatalogoOut(
+                id=int(row["id"]),
+                codigo=str(row["codigo"]),
+                label=str(row["label"]),
+                paises=_normalizar_paises_zona(row.get("paises")),
+            )
+            for row in rows
+        ]
+    except Exception as e:
+        logger.error(f"❌ Error listando catálogo de zonas horarias: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail="Error listando catálogo de zonas horarias",
+        )
 
 
 def _fetch_medio_reunion_id_por_tipo(cur, tipo_agendamiento_id: Optional[int]) -> Optional[int]:
