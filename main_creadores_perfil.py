@@ -121,6 +121,12 @@ class GuardarPerfilCreadorIn(BaseModel):
     respuestas: List[RespuestaPerfilCreadorIn]
 
 
+class PersonajeUnicoUpdateIn(BaseModel):
+    pasiones_creador: List[Any] = []
+    rasgos_personalidad: List[Any] = []
+    narrativa_unica: Optional[str] = ""
+
+
 # =========================================================
 # FORMULARIO PERFIL CREADOR
 # =========================================================
@@ -355,6 +361,568 @@ def guardar_respuestas_perfil_creador(data: GuardarPerfilCreadorIn):
             status_code=500
         )
 
+
+# =========================================================
+# PERSONAJE ÚNICO (categoría 2)
+# Las variables se resuelven SIEMPRE por campo_db dentro de la
+# categoría, no por IDs fijos. Los IDs de referencia en este
+# ambiente son 39/40/41, pero pueden variar en otros esquemas.
+# =========================================================
+
+PERSONAJE_UNICO_CATEGORIA_ID = 2
+
+CAMPO_PASIONES = "pasiones_creador"
+CAMPO_RASGOS = "rasgos_personalidad"
+CAMPO_NARRATIVA = "narrativa_unica"
+
+# Campos de selección múltiple (mismo formato que intereses_multiples).
+PERSONAJE_UNICO_CAMPOS_MULTIPLE = (CAMPO_PASIONES, CAMPO_RASGOS)
+# Todos los campos de la sección, en orden de presentación.
+PERSONAJE_UNICO_CAMPOS = (CAMPO_PASIONES, CAMPO_RASGOS, CAMPO_NARRATIVA)
+
+NARRATIVA_UNICA_MAX_LENGTH = 4000
+
+
+def _assert_creador_accesible(cur, creador_id: int, usuario: dict) -> None:
+    cur.execute(
+        "SELECT id FROM creadores WHERE id = %s LIMIT 1",
+        (creador_id,),
+    )
+    if not cur.fetchone():
+        raise HTTPException(status_code=404, detail="Creador no encontrado")
+
+    manager_id = manager_id_para_filtro(usuario)
+    if manager_id is None:
+        return
+
+    cur.execute(
+        """
+        SELECT 1
+        FROM creadores_detalle
+        WHERE creador_id = %s
+          AND manager_id = %s
+        LIMIT 1
+        """,
+        (creador_id, manager_id),
+    )
+    if not cur.fetchone():
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permiso para editar este creador",
+        )
+
+
+def _resolver_variables_personaje_unico(cur, encuesta_id: int) -> Dict[str, Dict[str, Any]]:
+    """
+    Resuelve las variables de la sección Personaje único por campo_db,
+    filtrando por categoría 2 y encuesta. Devuelve un dict indexado por
+    campo_db. Valida que existan las tres y que estén activas.
+    """
+    cur.execute(
+        """
+        SELECT
+            v.id,
+            v.categoria_id,
+            v.nombre,
+            v.campo_db,
+            v.tipo,
+            v.tipo_form,
+            v.texto,
+            v.orden,
+            COALESCE(v.activa, true) AS activa,
+            c.nombre_natural
+        FROM creadores_perfil_variable v
+        INNER JOIN creadores_perfil_categoria c
+            ON c.id = v.categoria_id
+        WHERE v.campo_db = ANY(%s)
+          AND v.categoria_id = %s
+          AND v.encuesta_id = %s
+        ORDER BY v.orden ASC NULLS LAST, v.id ASC
+        """,
+        (list(PERSONAJE_UNICO_CAMPOS), PERSONAJE_UNICO_CATEGORIA_ID, encuesta_id),
+    )
+
+    por_campo: Dict[str, Dict[str, Any]] = {}
+    for row in cur.fetchall():
+        campo = (row.get("campo_db") or "").strip()
+        # Ignora duplicados: conserva el primero según el ORDER BY.
+        por_campo.setdefault(campo, row)
+
+    for campo in PERSONAJE_UNICO_CAMPOS:
+        var = por_campo.get(campo)
+        if not var:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"La variable '{campo}' no está configurada en la categoría "
+                    f"{PERSONAJE_UNICO_CATEGORIA_ID} (Personaje único)"
+                ),
+            )
+        if not var.get("activa", True):
+            raise HTTPException(
+                status_code=500,
+                detail=f"La variable '{campo}' no está activa",
+            )
+
+    return por_campo
+
+
+def _cargar_opciones_personaje_unico(cur, variable_ids: List[int]) -> Dict[int, List[Dict[str, Any]]]:
+    if not variable_ids:
+        return {}
+
+    cur.execute(
+        """
+        SELECT id, variable_id, label, score, nivel, orden, valor_padre_id
+        FROM creadores_perfil_valor
+        WHERE variable_id = ANY(%s)
+        ORDER BY variable_id ASC, orden ASC NULLS LAST, id ASC
+        """,
+        (variable_ids,),
+    )
+
+    opciones_por_variable: Dict[int, List[Dict[str, Any]]] = {}
+    for row in cur.fetchall():
+        vid = int(row["variable_id"])
+        opciones_por_variable.setdefault(vid, []).append(row)
+
+    return opciones_por_variable
+
+
+def _maps_opciones_multiple(opciones: List[Dict[str, Any]]) -> tuple:
+    by_id: Dict[int, Dict[str, Any]] = {}
+    by_label: Dict[str, int] = {}
+
+    for opt in opciones:
+        oid = int(opt["id"])
+        by_id[oid] = opt
+        label = str(opt.get("label") or "").strip()
+        if label:
+            by_label[label.lower()] = oid
+
+    return by_id, by_label
+
+
+def _resolver_ids_multiple(
+    seleccion: Optional[List[Any]],
+    opciones_by_id: Dict[int, Dict[str, Any]],
+    opciones_by_label: Dict[str, int],
+    campo_nombre: str,
+) -> List[int]:
+    ids: List[int] = []
+    seen = set()
+
+    for item in seleccion or []:
+        if item is None:
+            continue
+
+        if isinstance(item, bool):
+            continue
+
+        if isinstance(item, int) or (isinstance(item, str) and str(item).strip().isdigit()):
+            vid = int(item)
+            if vid not in opciones_by_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Opción inválida para {campo_nombre}: {item}",
+                )
+            if vid not in seen:
+                ids.append(vid)
+                seen.add(vid)
+            continue
+
+        label = str(item).strip()
+        if not label:
+            continue
+
+        vid = opciones_by_label.get(label.lower())
+        if vid is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Opción no válida para {campo_nombre}: {label}",
+            )
+        if vid not in seen:
+            ids.append(vid)
+            seen.add(vid)
+
+    return ids
+
+
+def _construir_payload_variable_personaje_unico(
+    var_row: Dict[str, Any],
+    opciones: List[Dict[str, Any]],
+    respuesta_row: Optional[Dict[str, Any]],
+    opciones_map: Optional[Dict[int, Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    row_for_norm = {
+        "valor_integer": respuesta_row.get("valor_integer") if respuesta_row else None,
+        "valor_id": respuesta_row.get("valor_id") if respuesta_row else None,
+        "valor_numeric": respuesta_row.get("valor_numeric") if respuesta_row else None,
+        "valor_texto": respuesta_row.get("valor_texto") if respuesta_row else None,
+        "valor_json": respuesta_row.get("valor_json") if respuesta_row else None,
+        "valor_label": None,
+        "valor_score": None,
+        "valor_nivel": None,
+        "respuesta_valor_id": None,
+    }
+
+    respuesta = (
+        normalizar_respuesta(row_for_norm, opciones_map)
+        if respuesta_row
+        else {"tipo": "sin_respuesta", "valor": None}
+    )
+
+    payload: Dict[str, Any] = {
+        "variable_id": var_row["id"],
+        "categoria_id": var_row["categoria_id"],
+        "campo_db": var_row["campo_db"],
+        "nombre": var_row["nombre"],
+        "nombre_natural": var_row.get("nombre_natural"),
+        "texto": var_row.get("texto"),
+        "tipo": var_row.get("tipo"),
+        "tipo_form": var_row.get("tipo_form"),
+        "opciones": [
+            {
+                "id": opt["id"],
+                "label": opt["label"],
+                "orden": opt.get("orden"),
+            }
+            for opt in opciones
+        ],
+        "respuesta": respuesta,
+    }
+
+    if respuesta.get("tipo") == "multiple":
+        raw_ids = respuesta.get("valor") or []
+        payload["respuesta_ids"] = [
+            int(x) for x in raw_ids if str(x).strip().isdigit()
+        ]
+        payload["respuesta_labels"] = [
+            str(o.get("label")).strip()
+            for o in (respuesta.get("opciones") or [])
+            if o and o.get("label")
+        ]
+    elif respuesta.get("tipo") == "texto":
+        payload["respuesta_texto"] = respuesta.get("valor")
+
+    return payload
+
+
+def _cargar_personaje_unico_payload(cur, creador_id: int, encuesta_id: int) -> Dict[str, Any]:
+    cur.execute(
+        """
+        SELECT id, nombre, nombre_natural, descripcion, orden, activa
+        FROM creadores_perfil_categoria
+        WHERE id = %s
+        LIMIT 1
+        """,
+        (PERSONAJE_UNICO_CATEGORIA_ID,),
+    )
+    categoria = cur.fetchone()
+    if not categoria:
+        raise HTTPException(
+            status_code=500,
+            detail="Categoría Personaje único no configurada",
+        )
+
+    # Se resuelven las variables por campo_db (no por ID fijo).
+    variables_por_campo = _resolver_variables_personaje_unico(cur, encuesta_id)
+
+    # IDs reales resueltos dinámicamente.
+    ids_multiple = [
+        int(variables_por_campo[c]["id"]) for c in PERSONAJE_UNICO_CAMPOS_MULTIPLE
+    ]
+    ids_todas = [
+        int(variables_por_campo[c]["id"]) for c in PERSONAJE_UNICO_CAMPOS
+    ]
+
+    opciones_por_variable = _cargar_opciones_personaje_unico(cur, ids_multiple)
+
+    cur.execute(
+        """
+        SELECT
+            variable_id,
+            valor_integer,
+            valor_id,
+            valor_numeric,
+            valor_texto,
+            valor_json
+        FROM creadores_perfil_respuesta
+        WHERE creador_id = %s
+          AND variable_id = ANY(%s)
+        """,
+        (creador_id, ids_todas),
+    )
+    respuestas_por_variable = {
+        int(r["variable_id"]): r for r in cur.fetchall()
+    }
+
+    opciones_map: Dict[int, Dict[str, Any]] = {}
+    for resp in respuestas_por_variable.values():
+        valor_json = parse_jsonb(resp.get("valor_json"))
+        if isinstance(valor_json, list):
+            for item in valor_json:
+                if str(item).isdigit():
+                    opciones_map[int(item)] = {"valor_id": int(item)}
+
+    if opciones_map:
+        cur.execute(
+            """
+            SELECT id, variable_id, label, score, nivel
+            FROM creadores_perfil_valor
+            WHERE id = ANY(%s)
+            """,
+            (list(opciones_map.keys()),),
+        )
+        for opt in cur.fetchall():
+            opciones_map[opt["id"]] = {
+                "valor_id": opt["id"],
+                "variable_id": opt["variable_id"],
+                "label": opt["label"],
+                "score": opt["score"],
+                "nivel": opt["nivel"],
+            }
+
+    variables_payload = []
+    for campo in PERSONAJE_UNICO_CAMPOS:
+        var_row = variables_por_campo[campo]
+        variable_id = int(var_row["id"])
+        es_multiple = campo in PERSONAJE_UNICO_CAMPOS_MULTIPLE
+        opciones = opciones_por_variable.get(variable_id, []) if es_multiple else []
+        respuesta_row = respuestas_por_variable.get(variable_id)
+        variables_payload.append(
+            _construir_payload_variable_personaje_unico(
+                var_row,
+                opciones,
+                respuesta_row,
+                opciones_map if es_multiple else None,
+            )
+        )
+
+    seccion = (
+        categoria.get("nombre_natural")
+        or categoria.get("nombre")
+        or "Personaje único"
+    )
+
+    return {
+        "ok": True,
+        "creador_id": creador_id,
+        "encuesta_id": encuesta_id,
+        "categoria_id": PERSONAJE_UNICO_CATEGORIA_ID,
+        "seccion": seccion,
+        "variables": variables_payload,
+    }
+
+
+def _upsert_respuesta_personaje_unico(
+    cur,
+    creador_id: int,
+    variable_id: int,
+    valor_integer=None,
+    valor_id=None,
+    valor_numeric=None,
+    valor_texto=None,
+    valor_json=None,
+) -> None:
+    cur.execute(
+        """
+        INSERT INTO creadores_perfil_respuesta
+        (
+            creador_id,
+            variable_id,
+            valor_integer,
+            valor_id,
+            valor_numeric,
+            valor_texto,
+            valor_json,
+            created_at,
+            updated_at
+        )
+        VALUES
+        (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+        ON CONFLICT (creador_id, variable_id)
+        DO UPDATE SET
+            valor_integer = EXCLUDED.valor_integer,
+            valor_id = EXCLUDED.valor_id,
+            valor_numeric = EXCLUDED.valor_numeric,
+            valor_texto = EXCLUDED.valor_texto,
+            valor_json = EXCLUDED.valor_json,
+            updated_at = NOW()
+        """,
+        (
+            creador_id,
+            variable_id,
+            valor_integer,
+            valor_id,
+            valor_numeric,
+            valor_texto,
+            Json(valor_json) if valor_json is not None else None,
+        ),
+    )
+
+
+@router.get("/api/creadores/{creador_id}/perfil/personaje-unico")
+def obtener_personaje_unico_creador(
+    creador_id: int,
+    encuesta_id: int = Query(2),
+):
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT id FROM creadores WHERE id = %s LIMIT 1",
+                    (creador_id,),
+                )
+                if not cur.fetchone():
+                    raise HTTPException(status_code=404, detail="Creador no encontrado")
+
+                return _cargar_personaje_unico_payload(cur, creador_id, encuesta_id)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print("❌ Error obteniendo personaje único:", e)
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail="Error obteniendo personaje único del creador",
+        )
+
+
+@router.put("/api/creadores/{creador_id}/perfil/personaje-unico")
+def actualizar_personaje_unico_creador(
+    creador_id: int,
+    data: PersonajeUnicoUpdateIn,
+    encuesta_id: int = Query(2),
+    usuario: dict = Depends(obtener_usuario_actual),
+):
+    if not usuario:
+        raise HTTPException(status_code=401, detail="No autenticado")
+
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                _assert_creador_accesible(cur, creador_id, usuario)
+
+                # Variables resueltas por campo_db (no por ID fijo).
+                variables_por_campo = _resolver_variables_personaje_unico(cur, encuesta_id)
+
+                var_pasiones = variables_por_campo[CAMPO_PASIONES]
+                var_rasgos = variables_por_campo[CAMPO_RASGOS]
+                var_narrativa = variables_por_campo[CAMPO_NARRATIVA]
+
+                id_pasiones = int(var_pasiones["id"])
+                id_rasgos = int(var_rasgos["id"])
+                id_narrativa = int(var_narrativa["id"])
+
+                opciones_por_variable = _cargar_opciones_personaje_unico(
+                    cur, [id_pasiones, id_rasgos]
+                )
+
+                pasiones_by_id, pasiones_by_label = _maps_opciones_multiple(
+                    opciones_por_variable.get(id_pasiones, [])
+                )
+                rasgos_by_id, rasgos_by_label = _maps_opciones_multiple(
+                    opciones_por_variable.get(id_rasgos, [])
+                )
+
+                if not isinstance(data.pasiones_creador, list):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="pasiones_creador debe ser una lista",
+                    )
+                if not isinstance(data.rasgos_personalidad, list):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="rasgos_personalidad debe ser una lista",
+                    )
+                if data.narrativa_unica is not None and not isinstance(data.narrativa_unica, str):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="narrativa_unica debe ser texto",
+                    )
+
+                pasiones_ids = _resolver_ids_multiple(
+                    data.pasiones_creador,
+                    pasiones_by_id,
+                    pasiones_by_label,
+                    "Pasiones",
+                )
+                rasgos_ids = _resolver_ids_multiple(
+                    data.rasgos_personalidad,
+                    rasgos_by_id,
+                    rasgos_by_label,
+                    "Rasgos de personalidad",
+                )
+
+                narrativa_raw = data.narrativa_unica if data.narrativa_unica is not None else ""
+                if narrativa_raw != narrativa_raw.strip() and narrativa_raw.strip() == "":
+                    raise HTTPException(
+                        status_code=400,
+                        detail="La narrativa única no puede contener solo espacios",
+                    )
+                narrativa_texto = narrativa_raw.strip()
+                if len(narrativa_texto) > NARRATIVA_UNICA_MAX_LENGTH:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"La narrativa única no puede superar "
+                            f"{NARRATIVA_UNICA_MAX_LENGTH} caracteres"
+                        ),
+                    )
+
+                _upsert_respuesta_personaje_unico(
+                    cur,
+                    creador_id,
+                    id_pasiones,
+                    valor_json=pasiones_ids,
+                    valor_integer=None,
+                    valor_id=None,
+                    valor_numeric=None,
+                    valor_texto=None,
+                )
+                _upsert_respuesta_personaje_unico(
+                    cur,
+                    creador_id,
+                    id_rasgos,
+                    valor_json=rasgos_ids,
+                    valor_integer=None,
+                    valor_id=None,
+                    valor_numeric=None,
+                    valor_texto=None,
+                )
+                _upsert_respuesta_personaje_unico(
+                    cur,
+                    creador_id,
+                    id_narrativa,
+                    valor_texto=narrativa_texto or None,
+                    valor_integer=None,
+                    valor_id=None,
+                    valor_numeric=None,
+                    valor_json=None,
+                )
+
+            conn.commit()
+
+        with get_connection_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                payload = _cargar_personaje_unico_payload(cur, creador_id, encuesta_id)
+
+        return {
+            **payload,
+            "mensaje": "Personaje único actualizado correctamente",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print("❌ Error actualizando personaje único:", e)
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail="Error actualizando personaje único del creador",
+        )
 
 
 # ---------------------------------------------------------------
