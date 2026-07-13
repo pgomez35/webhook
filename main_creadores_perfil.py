@@ -5,12 +5,13 @@ from datetime import date
 from typing import Optional, Any, List, Dict
 
 import pandas as pd
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Depends
 from fastapi.responses import JSONResponse
 from psycopg2.extras import RealDictCursor, Json
 from pydantic import BaseModel
 
 from DataBase import get_connection_context
+from main_auth import obtener_usuario_actual, manager_id_para_filtro
 from schemas import (
     CreadorActivoDB,
     CreadorActivoCreate,
@@ -383,10 +384,14 @@ def listar_arquetipos_creador(
 
 
 @router.get("/api/creadores/activos", tags=["Creadores"])
-def listar_creadores_activos():
+def listar_creadores_activos(usuario: dict = Depends(obtener_usuario_actual)):
     try:
-        items = obtener_creadores_activos_db()
-        print(f"📋 [creadores/activos] total={len(items)}", flush=True)
+        manager_id = manager_id_para_filtro(usuario)
+        items = obtener_creadores_activos_db(manager_id=manager_id)
+        print(
+            f"📋 [creadores/activos] total={len(items)} manager_id={manager_id}",
+            flush=True,
+        )
         return items
     except Exception as e:
         print(f"❌ [creadores/activos] {e}", flush=True)

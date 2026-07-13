@@ -2344,15 +2344,27 @@ def crear_o_actualizar_creador_desde_aspirante(
 
     return creador_id
 
-def obtener_creadores_activos_db():
+def obtener_creadores_activos_db(manager_id=None):
     """
     Lista creadores activos para la vista de listado (panel izquierdo).
     Incluye nombre de arquetipo vía creadores_arquetipo.
+
+    Si se recibe ``manager_id`` (usuario con rol Manager), solo se devuelven los
+    creadores cuyo ``creadores_detalle.manager_id`` coincide con ese id.
+    Con ``manager_id=None`` (admin u otros roles) se devuelven todos.
     """
     from creadores_catalogo import (
         SQL_JOIN_CREADOR_ARQUETIPO,
         SQL_SELECT_CREADOR_ARQUETIPO,
     )
+
+    filtro_manager_join = ""
+    filtro_manager_where = ""
+    params = [CREADOR_ESTADO_NOMBRE_ACTIVO]
+    if manager_id is not None:
+        filtro_manager_join = "INNER JOIN creadores_detalle cd ON cd.creador_id = c.id"
+        filtro_manager_where = "AND cd.manager_id = %s"
+        params.append(manager_id)
 
     try:
         with get_connection_context() as conn:
@@ -2370,10 +2382,12 @@ def obtener_creadores_activos_db():
                     LEFT JOIN creadores_categoria cat ON cat.id = c.categoria_id
                     {SQL_JOIN_CREADOR_ARQUETIPO}
                     INNER JOIN creadores_estados ce ON ce.id = c.estado_id
+                    {filtro_manager_join}
                     WHERE ce.nombre = %s
                       AND COALESCE(ce.activo, true) = true
+                      {filtro_manager_where}
                     ORDER BY c.id DESC;
-                """, (CREADOR_ESTADO_NOMBRE_ACTIVO,))
+                """, tuple(params))
 
                 rows = cur.fetchall()
                 columns = [desc[0] for desc in cur.description]

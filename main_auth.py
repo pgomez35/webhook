@@ -82,7 +82,7 @@ def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
         with get_connection_context() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT a.id, a.nombre_completo, ur.nombre AS rol, a.activo
+                SELECT a.id, a.nombre_completo, ur.nombre AS rol, a.activo, a.administradores_roles_id
                 FROM administradores a
                 LEFT JOIN administradores_roles ur ON ur.id = a.administradores_roles_id
                 WHERE a.id = %s
@@ -95,13 +95,35 @@ def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
         return {
             "id": row[0],
             "nombre": row[1],
-            "rol": row[2]
+            "rol": row[2],
+            "rol_id": row[4],
         }
 
     except ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expirado")
     except JWTError:
         raise HTTPException(status_code=401, detail="Token inválido")
+
+
+# ID del rol Manager en la tabla administradores_roles.
+ROL_MANAGER_ID = 2
+
+
+def es_manager(usuario: dict) -> bool:
+    """True si el usuario logueado tiene el rol Manager (administradores_roles_id = 2)."""
+    return bool(usuario) and usuario.get("rol_id") == ROL_MANAGER_ID
+
+
+def manager_id_para_filtro(usuario: dict):
+    """
+    Devuelve el administrador.id que debe usarse para filtrar creadores por manager.
+
+    - Si el usuario es Manager -> su propio id (solo ve lo asignado a él).
+    - Cualquier otro rol (admin, etc.) -> None (ve todo, sin filtro).
+    """
+    if es_manager(usuario):
+        return usuario.get("id")
+    return None
 
 
 # ================= ENDPOINTS =================
