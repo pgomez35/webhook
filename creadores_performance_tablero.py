@@ -2,11 +2,16 @@ import traceback
 from datetime import date
 from typing import Optional, Any, Dict, List, Tuple
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, Field, field_validator
 
 from DataBase import get_connection_context
+from main_auth import obtener_usuario_actual, agente_para_filtro, es_manager
+
+# Valor centinela: si un Manager no tiene `agente` asignado, se usa para que
+# no coincida con ningún creador (el manager no ve nada en vez de verlo todo).
+_AGENTE_SIN_ASIGNAR = "\x00__sin_agente__"
 
 
 router = APIRouter()
@@ -788,6 +793,7 @@ def obtener_tablero_actual(
     search: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    usuario: dict = Depends(obtener_usuario_actual),
 ):
     try:
         if semanas_mostradas not in [4, 8]:
@@ -798,6 +804,11 @@ def obtener_tablero_actual(
 
         if semanas_visibles > semanas_mostradas:
             semanas_visibles = semanas_mostradas
+
+        # Si el usuario es Manager (rol_id=2), forzamos el filtro a su propio
+        # agente y se ignora el query param `manager` para que solo vea lo suyo.
+        if es_manager(usuario):
+            manager = agente_para_filtro(usuario) or _AGENTE_SIN_ASIGNAR
 
         with get_connection_context() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1078,10 +1089,16 @@ def guardar_observacion_semana(payload: ObservacionSemanaIn):
 @router.get("/api/creadores/performance/tablero/resumen-managers")
 def obtener_resumen_managers_tablero(
     semanas_mostradas: int = Query(8),
+    usuario: dict = Depends(obtener_usuario_actual),
 ):
     try:
         if semanas_mostradas not in [4, 8]:
             raise HTTPException(status_code=400, detail="semanas_mostradas debe ser 4 u 8.")
+
+        # Manager (rol_id=2) solo ve su propia fila de resumen.
+        agente_manager = None
+        if es_manager(usuario):
+            agente_manager = agente_para_filtro(usuario) or _AGENTE_SIN_ASIGNAR
 
         with get_connection_context() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1141,10 +1158,11 @@ def obtener_resumen_managers_tablero(
 
                     FROM creadores_performance_tablero_creadores
                     WHERE id_corte = %s
+                      AND (%s IS NULL OR LOWER(manager_actual) = LOWER(%s))
                     GROUP BY COALESCE(manager_actual, 'Sin manager')
                     ORDER BY total_diamantes_ultimo_mes DESC
                     """,
-                    (corte["id_corte"],),
+                    (corte["id_corte"], agente_manager, agente_manager),
                 )
 
                 rows = cur.fetchall()

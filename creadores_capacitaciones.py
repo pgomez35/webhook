@@ -2,11 +2,16 @@ import traceback
 from datetime import date
 from typing import Optional, List, Dict, Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel
 
 from DataBase import get_connection_context
+from main_auth import obtener_usuario_actual, agente_para_filtro, es_manager
+
+# Valor centinela: si un Manager no tiene `agente` asignado, se usa para que
+# no coincida con ningún creador (el manager no ve nada en vez de verlo todo).
+_AGENTE_SIN_ASIGNAR = "\x00__sin_agente__"
 
 
 router = APIRouter()
@@ -269,6 +274,7 @@ def obtener_matriz_capacitaciones(
     search: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=1000),
     offset: int = Query(0, ge=0),
+    usuario: dict = Depends(obtener_usuario_actual),
 ):
     """
     Devuelve una matriz tipo Excel:
@@ -277,6 +283,11 @@ def obtener_matriz_capacitaciones(
     """
 
     try:
+        # Manager (rol_id=2) solo ve sus creadores: forzamos el filtro a su
+        # propio agente e ignoramos el query param `manager`.
+        if es_manager(usuario):
+            manager = agente_para_filtro(usuario) or _AGENTE_SIN_ASIGNAR
+
         with get_connection_context() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
 
@@ -540,8 +551,15 @@ def guardar_seguimiento_capacitacion(payload: SeguimientoCapacitacionIn):
 # =========================================================
 
 @router.get("/api/creadores/capacitaciones/resumen-managers")
-def obtener_resumen_capacitaciones_managers():
+def obtener_resumen_capacitaciones_managers(
+    usuario: dict = Depends(obtener_usuario_actual),
+):
     try:
+        # Manager (rol_id=2) solo ve su propia fila de resumen.
+        agente_manager = None
+        if es_manager(usuario):
+            agente_manager = agente_para_filtro(usuario) or _AGENTE_SIN_ASIGNAR
+
         with get_connection_context() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
 
@@ -556,6 +574,7 @@ def obtener_resumen_capacitaciones_managers():
                             COALESCE(r.grupo, 'Sin grupo') AS grupo
                         FROM creadores_reporte_integral r
                         WHERE r.creador_tiktok_id IS NOT NULL
+                          AND (%s IS NULL OR LOWER(r.agente) = LOWER(%s))
                         ORDER BY r.creador_tiktok_id, r.periodo_fin DESC
                     ),
                     caps AS (
@@ -618,7 +637,8 @@ def obtener_resumen_capacitaciones_managers():
                     FROM data
                     GROUP BY manager
                     ORDER BY porcentaje_avance DESC NULLS LAST, manager ASC
-                    """
+                    """,
+                    (agente_manager, agente_manager),
                 )
 
                 rows = cur.fetchall()

@@ -126,6 +126,39 @@ def manager_id_para_filtro(usuario: dict):
     return None
 
 
+def agente_para_filtro(usuario: dict):
+    """
+    Devuelve el valor de `administradores.agente` del usuario logueado cuando es
+    Manager. Se usa para filtrar los módulos que identifican al manager por el
+    campo de texto `agente` (creadores_reporte_integral.agente / manager_actual),
+    es decir Seguimiento semanal y Capacitaciones.
+
+    - Manager -> su `agente` (string). Si no tiene agente asignado -> None.
+    - Cualquier otro rol (admin, etc.) -> None (ve todo, sin filtro).
+
+    La consulta se hace aquí (aislada) para no tocar `obtener_usuario_actual`,
+    que se usa en toda la app.
+    """
+    if not es_manager(usuario):
+        return None
+
+    admin_id = usuario.get("id")
+    if not admin_id:
+        return None
+
+    with get_connection_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT agente FROM administradores WHERE id = %s",
+            (admin_id,),
+        )
+        row = cursor.fetchone()
+
+    if row and row[0] and str(row[0]).strip():
+        return str(row[0]).strip()
+    return None
+
+
 # ================= ENDPOINTS =================
 # === LOGIN ===
 @router.post("/login", response_model=TokenResponse)
