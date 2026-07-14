@@ -82,7 +82,7 @@ def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
         with get_connection_context() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT a.id, a.nombre_completo, ur.nombre AS rol, a.activo
+                SELECT a.id, a.nombre_completo, ur.nombre AS rol, a.activo, a.administradores_roles_id
                 FROM administradores a
                 LEFT JOIN administradores_roles ur ON ur.id = a.administradores_roles_id
                 WHERE a.id = %s
@@ -95,13 +95,93 @@ def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
         return {
             "id": row[0],
             "nombre": row[1],
-            "rol": row[2]
+            "rol": row[2],
+            "rol_id": row[4],
         }
 
     except ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expirado")
     except JWTError:
         raise HTTPException(status_code=401, detail="Token inválido")
+
+
+# ID del rol Manager en la tabla administradores_roles.
+ROL_MANAGER_ID = 2
+
+
+def es_manager(usuario: dict) -> bool:
+    """True si el usuario logueado tiene el rol Manager (administradores_roles_id = 2)."""
+    return bool(usuario) and usuario.get("rol_id") == ROL_MANAGER_ID
+
+
+def manager_id_para_filtro(usuario: dict):
+    """
+    Devuelve el administrador.id que debe usarse para filtrar creadores por manager.
+
+    - Si el usuario es Manager -> su propio id (solo ve lo asignado a él).
+    - Cualquier otro rol (admin, etc.) -> None (ve todo, sin filtro).
+    """
+    if es_manager(usuario):
+        return usuario.get("id")
+    return None
+
+
+def agente_para_filtro(usuario: dict):
+    """
+    Devuelve el valor de `administradores.agente` del usuario logueado cuando es
+    Manager. Se usa para filtrar los módulos que identifican al manager por el
+    campo de texto `agente` (creadores_reporte_integral.agente / manager_actual),
+    es decir Seguimiento semanal y Capacitaciones.
+
+    - Manager -> su `agente` (string). Si no tiene agente asignado -> None.
+    - Cualquier otro rol (admin, etc.) -> None (ve todo, sin filtro).
+
+    La consulta se hace aquí (aislada) para no tocar `obtener_usuario_actual`,
+    que se usa en toda la app.
+    """
+    creds = credenciales_manager_para_filtro(usuario)
+    if not creds:
+        return None
+    return creds.get("agente") or None
+
+
+def credenciales_manager_para_filtro(usuario: dict):
+    """
+    Credenciales del manager logueado para filtrar reportes/tableros.
+
+    - Manager -> {id, agente, email}
+    - Otros roles -> None (sin filtro, ve todo)
+
+    Preferencia de filtrado nueva: manager_id = id.
+    Fallback legacy: comparar agente/email del admin contra el texto
+    de creadores_reporte_integral.agente cuando manager_id IS NULL.
+    """
+    if not es_manager(usuario):
+        return None
+
+    admin_id = usuario.get("id")
+    if not admin_id:
+        return None
+
+    with get_connection_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, agente, email
+            FROM administradores
+            WHERE id = %s
+            LIMIT 1
+            """,
+            (admin_id,),
+        )
+        row = cursor.fetchone()
+
+    if not row:
+        return {"id": admin_id, "agente": None, "email": None}
+
+    agente = str(row[1]).strip() if row[1] and str(row[1]).strip() else None
+    email = str(row[2]).strip() if row[2] and str(row[2]).strip() else None
+    return {"id": int(row[0]), "agente": agente, "email": email}
 
 
 # ================= ENDPOINTS =================

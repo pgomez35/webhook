@@ -2,11 +2,45 @@ import traceback
 from datetime import date
 from typing import Optional, List, Dict, Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel
 
 from DataBase import get_connection_context
+from main_auth import obtener_usuario_actual, es_manager, credenciales_manager_para_filtro
+
+# Valor centinela: si un Manager no tiene credenciales útiles, no ve creadores.
+_AGENTE_SIN_ASIGNAR = "\x00__sin_agente__"
+
+
+def _filtro_sql_manager_reporte(
+    *,
+    col_manager_id: str = "manager_id",
+    col_agente: str = "agente",
+) -> str:
+    """SQL fragment: manager_id preferente + fallback por agente/email."""
+    return f"""
+        (
+            {col_manager_id} = %s
+            OR (
+                {col_manager_id} IS NULL
+                AND (
+                    LOWER(TRIM({col_agente})) = LOWER(TRIM(%s))
+                    OR LOWER(TRIM({col_agente})) = LOWER(TRIM(%s))
+                )
+            )
+        )
+    """
+
+
+def _params_manager_logueado(creds: Optional[Dict[str, Any]]) -> List[Any]:
+    if not creds or not creds.get("id"):
+        return [-1, _AGENTE_SIN_ASIGNAR, _AGENTE_SIN_ASIGNAR]
+    return [
+        creds["id"],
+        creds.get("agente") or _AGENTE_SIN_ASIGNAR,
+        creds.get("email") or _AGENTE_SIN_ASIGNAR,
+    ]
 
 
 router = APIRouter()
@@ -40,6 +74,7 @@ class SeguimientoCapacitacionIn(BaseModel):
     usuario_tiktok: Optional[str] = None
 
     manager: Optional[str] = None
+    manager_id: Optional[int] = None
     grupo: Optional[str] = None
 
     id_capacitacion: int
@@ -269,6 +304,7 @@ def obtener_matriz_capacitaciones(
     search: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=1000),
     offset: int = Query(0, ge=0),
+    usuario: dict = Depends(obtener_usuario_actual),
 ):
     """
     Devuelve una matriz tipo Excel:
@@ -277,6 +313,13 @@ def obtener_matriz_capacitaciones(
     """
 
     try:
+        # Manager (rol_id=2) solo ve sus creadores: filtramos por manager_id
+        # (fallback legacy por agente/email) e ignoramos el query param.
+        manager_creds = None
+        if es_manager(usuario):
+            manager_creds = credenciales_manager_para_filtro(usuario)
+            manager = None
+
         with get_connection_context() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
 
@@ -285,9 +328,17 @@ def obtener_matriz_capacitaciones(
                 filtros = []
                 params = []
 
-                if manager:
-                    filtros.append("LOWER(manager) = LOWER(%s)")
-                    params.append(manager)
+                if manager_creds is not None:
+                    filtros.append(_filtro_sql_manager_reporte())
+                    params.extend(_params_manager_logueado(manager_creds))
+                elif manager:
+                    valor = str(manager).strip()
+                    if valor.isdigit():
+                        filtros.append("manager_id = %s")
+                        params.append(int(valor))
+                    else:
+                        filtros.append("LOWER(TRIM(manager)) = LOWER(TRIM(%s))")
+                        params.append(valor)
 
                 if grupo:
                     filtros.append("LOWER(grupo) = LOWER(%s)")
@@ -315,10 +366,13 @@ def obtener_matriz_capacitaciones(
                             r.creador_tiktok_id,
                             r.creador_id,
                             r.usuario_tiktok,
-                            COALESCE(r.agente, 'Sin manager') AS manager,
+                            r.manager_id,
+                            r.agente,
+                            COALESCE(a.nombre_completo, r.agente, 'Sin manager') AS manager,
                             COALESCE(r.grupo, 'Sin grupo') AS grupo,
                             r.periodo_fin
                         FROM creadores_reporte_integral r
+                        LEFT JOIN administradores a ON a.id = r.manager_id
                         WHERE r.creador_tiktok_id IS NOT NULL
                         ORDER BY r.creador_tiktok_id, r.periodo_fin DESC
                     )
@@ -338,10 +392,13 @@ def obtener_matriz_capacitaciones(
                             r.creador_tiktok_id,
                             r.creador_id,
                             r.usuario_tiktok,
-                            COALESCE(r.agente, 'Sin manager') AS manager,
+                            r.manager_id,
+                            r.agente,
+                            COALESCE(a.nombre_completo, r.agente, 'Sin manager') AS manager,
                             COALESCE(r.grupo, 'Sin grupo') AS grupo,
                             r.periodo_fin
                         FROM creadores_reporte_integral r
+                        LEFT JOIN administradores a ON a.id = r.manager_id
                         WHERE r.creador_tiktok_id IS NOT NULL
                         ORDER BY r.creador_tiktok_id, r.periodo_fin DESC
                     )
@@ -468,6 +525,7 @@ def guardar_seguimiento_capacitacion(payload: SeguimientoCapacitacionIn):
                         creador_tiktok_id,
                         usuario_tiktok,
                         manager,
+                        manager_id,
                         grupo,
                         id_capacitacion,
                         estado,
@@ -479,7 +537,7 @@ def guardar_seguimiento_capacitacion(payload: SeguimientoCapacitacionIn):
                     )
                     VALUES (
                         %s, %s, %s,
-                        %s, %s,
+                        %s, %s, %s,
                         %s,
                         %s,
                         %s,
@@ -493,6 +551,7 @@ def guardar_seguimiento_capacitacion(payload: SeguimientoCapacitacionIn):
                         creador_id = EXCLUDED.creador_id,
                         usuario_tiktok = EXCLUDED.usuario_tiktok,
                         manager = EXCLUDED.manager,
+                        manager_id = EXCLUDED.manager_id,
                         grupo = EXCLUDED.grupo,
                         estado = EXCLUDED.estado,
                         fecha_realizacion = EXCLUDED.fecha_realizacion,
@@ -506,6 +565,7 @@ def guardar_seguimiento_capacitacion(payload: SeguimientoCapacitacionIn):
                         payload.creador_tiktok_id,
                         payload.usuario_tiktok,
                         payload.manager,
+                        payload.manager_id,
                         payload.grupo,
                         payload.id_capacitacion,
                         estado,
@@ -540,22 +600,41 @@ def guardar_seguimiento_capacitacion(payload: SeguimientoCapacitacionIn):
 # =========================================================
 
 @router.get("/api/creadores/capacitaciones/resumen-managers")
-def obtener_resumen_capacitaciones_managers():
+def obtener_resumen_capacitaciones_managers(
+    usuario: dict = Depends(obtener_usuario_actual),
+):
     try:
+        # Manager (rol_id=2) solo ve su propia fila de resumen.
+        manager_creds = None
+        if es_manager(usuario):
+            manager_creds = credenciales_manager_para_filtro(usuario)
+
         with get_connection_context() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
 
+                filtro_manager_sql = "TRUE"
+                filtro_params: List[Any] = []
+                if manager_creds is not None:
+                    filtro_manager_sql = _filtro_sql_manager_reporte(
+                        col_manager_id="r.manager_id",
+                        col_agente="r.agente",
+                    )
+                    filtro_params = _params_manager_logueado(manager_creds)
+
                 cur.execute(
-                    """
+                    f"""
                     WITH creadores_base AS (
                         SELECT DISTINCT ON (r.creador_tiktok_id)
                             r.creador_tiktok_id,
                             r.creador_id,
                             r.usuario_tiktok,
-                            COALESCE(r.agente, 'Sin manager') AS manager,
+                            r.manager_id,
+                            COALESCE(a.nombre_completo, r.agente, 'Sin manager') AS manager,
                             COALESCE(r.grupo, 'Sin grupo') AS grupo
                         FROM creadores_reporte_integral r
+                        LEFT JOIN administradores a ON a.id = r.manager_id
                         WHERE r.creador_tiktok_id IS NOT NULL
+                          AND ({filtro_manager_sql})
                         ORDER BY r.creador_tiktok_id, r.periodo_fin DESC
                     ),
                     caps AS (
@@ -566,6 +645,7 @@ def obtener_resumen_capacitaciones_managers():
                     base AS (
                         SELECT
                             cb.manager,
+                            cb.manager_id,
                             cb.creador_tiktok_id,
                             caps.id_capacitacion,
                             caps.obligatoria
@@ -575,6 +655,7 @@ def obtener_resumen_capacitaciones_managers():
                     data AS (
                         SELECT
                             b.manager,
+                            b.manager_id,
                             b.creador_tiktok_id,
                             b.id_capacitacion,
                             b.obligatoria,
@@ -586,6 +667,7 @@ def obtener_resumen_capacitaciones_managers():
                     )
                     SELECT
                         manager,
+                        manager_id,
 
                         COUNT(DISTINCT creador_tiktok_id) AS total_creadores,
 
@@ -598,6 +680,7 @@ def obtener_resumen_capacitaciones_managers():
                         COUNT(*) FILTER (
                             WHERE estado = 'realizada'
                         ) AS total_realizadas,
+
 
                         COUNT(*) FILTER (
                             WHERE estado = 'pendiente'
@@ -616,9 +699,10 @@ def obtener_resumen_capacitaciones_managers():
                         ) AS porcentaje_avance
 
                     FROM data
-                    GROUP BY manager
+                    GROUP BY manager, manager_id
                     ORDER BY porcentaje_avance DESC NULLS LAST, manager ASC
-                    """
+                    """,
+                    filtro_params,
                 )
 
                 rows = cur.fetchall()
