@@ -7,10 +7,14 @@ from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, Field, field_validator
 
 from DataBase import get_connection_context
-from main_auth import obtener_usuario_actual, agente_para_filtro, es_manager
+from main_auth import (
+    obtener_usuario_actual,
+    es_manager,
+    credenciales_manager_para_filtro,
+)
 
-# Valor centinela: si un Manager no tiene `agente` asignado, se usa para que
-# no coincida con ningún creador (el manager no ve nada en vez de verlo todo).
+# Valor centinela: si un Manager no tiene `agente`/`email` asignado y tampoco
+# hay manager_id, se usa para que no coincida con ningún creador.
 _AGENTE_SIN_ASIGNAR = "\x00__sin_agente__"
 
 
@@ -57,6 +61,81 @@ class ObservacionSemanaIn(BaseModel):
 # =========================================================
 
 _WHERE_PERIODOS_SEMANALES = "COALESCE(tipo_periodo, 'semanal') = 'semanal'"
+
+
+def _nombre_manager_visible(reporte: Dict[str, Any]) -> str:
+    """Preferir nombre_completo del admin; fallback al agente; sino Sin manager."""
+    nombre = reporte.get("manager_nombre")
+    if nombre and str(nombre).strip() and str(nombre).strip() not in {"-", "—", "–"}:
+        return str(nombre).strip()
+    agente = reporte.get("agente")
+    if agente and str(agente).strip() and str(agente).strip() not in {"-", "—", "–"}:
+        return str(agente).strip()
+    return "Sin manager"
+
+
+def _estado_agencia_reporte(reporte: Dict[str, Any]) -> str:
+    estado = (reporte.get("estado_agencia") or "activo").strip().lower()
+    return "abandono" if estado == "abandono" else "activo"
+
+
+def _append_filtro_manager_logueado(
+    filtros: List[str],
+    params: List[Any],
+    *,
+    col_manager_id: str = "manager_id",
+    col_texto: str = "manager_actual",
+    creds: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    Filtra para un Manager logueado:
+    - preferente: manager_id = admin.id
+    - fallback legado: texto (manager_actual/agente) vs agente/email del admin
+    """
+    if not creds or not creds.get("id"):
+        filtros.append(f"LOWER(TRIM({col_texto})) = LOWER(TRIM(%s))")
+        params.append(_AGENTE_SIN_ASIGNAR)
+        return
+
+    agente = creds.get("agente") or _AGENTE_SIN_ASIGNAR
+    email = creds.get("email") or _AGENTE_SIN_ASIGNAR
+    filtros.append(
+        f"""
+        (
+            {col_manager_id} = %s
+            OR (
+                {col_manager_id} IS NULL
+                AND (
+                    LOWER(TRIM({col_texto})) = LOWER(TRIM(%s))
+                    OR LOWER(TRIM({col_texto})) = LOWER(TRIM(%s))
+                )
+            )
+        )
+        """
+    )
+    params.extend([creds["id"], agente, email])
+
+
+def _append_filtro_manager_query(
+    filtros: List[str],
+    params: List[Any],
+    manager: Optional[str],
+    *,
+    col_manager_id: str = "manager_id",
+    col_texto: str = "manager_actual",
+) -> None:
+    """Filtro UI: si manager es numérico, usa manager_id; si no, texto."""
+    if not manager:
+        return
+    valor = str(manager).strip()
+    if not valor:
+        return
+    if valor.isdigit():
+        filtros.append(f"{col_manager_id} = %s")
+        params.append(int(valor))
+    else:
+        filtros.append(f"LOWER(TRIM({col_texto})) = LOWER(TRIM(%s))")
+        params.append(valor)
 
 
 def _minutos_a_horas(minutos: Optional[int]) -> float:
@@ -306,6 +385,9 @@ def _calcular_estado_general(
     estado_horas: str,
     reglas_nuevo: List[Dict[str, Any]],
 ) -> str:
+    if _estado_agencia_reporte(reporte) == "abandono":
+        return "Abandonó agencia"
+
     dias = reporte.get("dias_desde_incorporacion")
     estado_nuevo = _resolver_regla_numerica(
         reglas_nuevo,
@@ -388,40 +470,46 @@ def _obtener_reportes_de_periodos(cur, periodos: List[Dict[str, Any]]) -> List[D
     where_periodos = " OR ".join(conditions)
 
     query = f"""
-        SELECT DISTINCT ON (creador_tiktok_id, periodo_inicio, periodo_fin)
-            id_reporte,
-            creador_tiktok_id,
-            creador_id,
-            usuario_tiktok,
-            grupo,
-            agente,
-            periodo_inicio,
-            periodo_fin,
-            hora_incorporacion,
-            dias_desde_incorporacion,
-            estado_graduacion,
-            estado_rango,
-            diamantes_totales,
-            duracion_live_minutos,
-            dias_validos_emisiones_live,
-            nuevos_seguidores,
-            emisiones_live,
-            diamantes_mes,
-            duracion_live_mes_minutos,
-            dias_validos_live_mes,
-            nuevos_seguidores_mes,
-            emisiones_live_mes,
-            partidas,
-            diamantes_de_partidas
-        FROM creadores_reporte_integral
+        SELECT DISTINCT ON (r.creador_tiktok_id, r.periodo_inicio, r.periodo_fin)
+            r.id_reporte,
+            r.creador_tiktok_id,
+            r.creador_id,
+            r.usuario_tiktok,
+            r.grupo,
+            r.agente,
+            r.manager_id,
+            COALESCE(r.estado_agencia, 'activo') AS estado_agencia,
+            a.nombre_completo AS manager_nombre,
+            a.email AS manager_email,
+            a.agente AS manager_agente,
+            r.periodo_inicio,
+            r.periodo_fin,
+            r.hora_incorporacion,
+            r.dias_desde_incorporacion,
+            r.estado_graduacion,
+            r.estado_rango,
+            r.diamantes_totales,
+            r.duracion_live_minutos,
+            r.dias_validos_emisiones_live,
+            r.nuevos_seguidores,
+            r.emisiones_live,
+            r.diamantes_mes,
+            r.duracion_live_mes_minutos,
+            r.dias_validos_live_mes,
+            r.nuevos_seguidores_mes,
+            r.emisiones_live_mes,
+            r.partidas,
+            r.diamantes_de_partidas
+        FROM creadores_reporte_integral r
+        LEFT JOIN administradores a ON a.id = r.manager_id
         WHERE ({where_periodos})
           AND {_WHERE_PERIODOS_SEMANALES}
         ORDER BY
-            creador_tiktok_id,
-            periodo_inicio,
-            periodo_fin,
-            fecha_carga DESC NULLS LAST,
-            id_reporte DESC
+            r.creador_tiktok_id,
+            r.periodo_inicio,
+            r.periodo_fin,
+            r.fecha_carga DESC NULLS LAST,
+            r.id_reporte DESC
     """
 
     cur.execute(query, params)
@@ -559,6 +647,8 @@ def recalcular_tablero_performance(payload: RecalcularTableroIn):
                             usuario_tiktok,
                             grupo,
                             manager_actual,
+                            manager_id,
+                            estado_agencia,
                             dias_desde_incorporacion,
                             rango_codigo,
                             rango_nombre,
@@ -577,7 +667,7 @@ def recalcular_tablero_performance(payload: RecalcularTableroIn):
                             fecha_actualizacion
                         )
                         VALUES (
-                            %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s, %s, %s, %s,
                             %s, %s, %s,
                             %s, %s, %s,
                             %s, %s,
@@ -594,7 +684,9 @@ def recalcular_tablero_performance(payload: RecalcularTableroIn):
                             latest.get("creador_id"),
                             latest.get("usuario_tiktok"),
                             latest.get("grupo"),
-                            latest.get("agente"),
+                            _nombre_manager_visible(latest),
+                            latest.get("manager_id"),
+                            _estado_agencia_reporte(latest),
                             latest.get("dias_desde_incorporacion"),
                             rango_codigo,
                             rango_nombre,
@@ -631,14 +723,18 @@ def recalcular_tablero_performance(payload: RecalcularTableroIn):
                             estado_auto = _resolver_estado_horas(reglas_horas, horas)
                             diamantes = r.get("diamantes_totales") or 0
                             dias = r.get("dias_validos_emisiones_live") or 0
-                            manager_semana = r.get("agente")
+                            manager_semana = _nombre_manager_visible(r)
+                            manager_id_semana = r.get("manager_id")
+                            estado_agencia_semana = _estado_agencia_reporte(r)
                             variacion = r.get("variacion_diamantes_pct")
                         else:
                             horas = 0
                             estado_auto = "Sin dato"
                             diamantes = 0
                             dias = 0
-                            manager_semana = latest.get("agente")
+                            manager_semana = _nombre_manager_visible(latest)
+                            manager_id_semana = latest.get("manager_id")
+                            estado_agencia_semana = _estado_agencia_reporte(latest)
                             variacion = None
 
                         cur.execute(
@@ -673,6 +769,8 @@ def recalcular_tablero_performance(payload: RecalcularTableroIn):
                                 horas,
                                 dias,
                                 manager_semana,
+                                manager_id,
+                                estado_agencia,
                                 estado_auto,
                                 estado_manual,
                                 variacion_diamantes_pct,
@@ -683,6 +781,7 @@ def recalcular_tablero_performance(payload: RecalcularTableroIn):
                                 %s, %s, %s, %s,
                                 %s, %s, %s,
                                 %s, %s, %s,
+                                %s, %s,
                                 %s, %s,
                                 NOW()
                             )
@@ -696,6 +795,8 @@ def recalcular_tablero_performance(payload: RecalcularTableroIn):
                                 horas,
                                 dias,
                                 manager_semana,
+                                manager_id_semana,
+                                estado_agencia_semana,
                                 estado_auto,
                                 obs.get("estado_manual") if obs else None,
                                 variacion,
@@ -791,6 +892,10 @@ def obtener_tablero_actual(
     manager: Optional[str] = Query(None),
     grupo: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
+    estado_agencia: Optional[str] = Query(
+        "activo",
+        description="activo | abandono | todos",
+    ),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     usuario: dict = Depends(obtener_usuario_actual),
@@ -805,10 +910,19 @@ def obtener_tablero_actual(
         if semanas_visibles > semanas_mostradas:
             semanas_visibles = semanas_mostradas
 
-        # Si el usuario es Manager (rol_id=2), forzamos el filtro a su propio
-        # agente y se ignora el query param `manager` para que solo vea lo suyo.
+        estado_filtro = (estado_agencia or "activo").strip().lower()
+        if estado_filtro not in {"activo", "abandono", "todos"}:
+            raise HTTPException(
+                status_code=400,
+                detail="estado_agencia debe ser activo, abandono o todos",
+            )
+
+        # Si el usuario es Manager (rol_id=2), forzamos filtro por manager_id
+        # (con fallback legacy por agente/email) e ignoramos el query param.
+        manager_creds = None
         if es_manager(usuario):
-            manager = agente_para_filtro(usuario) or _AGENTE_SIN_ASIGNAR
+            manager_creds = credenciales_manager_para_filtro(usuario)
+            manager = None
 
         with get_connection_context() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -836,9 +950,18 @@ def obtener_tablero_actual(
                 filtros = ["id_corte = %s"]
                 params = [corte["id_corte"]]
 
-                if manager:
-                    filtros.append("LOWER(manager_actual) = LOWER(%s)")
-                    params.append(manager)
+                if estado_filtro != "todos":
+                    filtros.append("COALESCE(estado_agencia, 'activo') = %s")
+                    params.append(estado_filtro)
+
+                if manager_creds is not None:
+                    _append_filtro_manager_logueado(
+                        filtros,
+                        params,
+                        creds=manager_creds,
+                    )
+                else:
+                    _append_filtro_manager_query(filtros, params, manager)
 
                 if grupo:
                     filtros.append("LOWER(grupo) = LOWER(%s)")
@@ -1096,9 +1219,9 @@ def obtener_resumen_managers_tablero(
             raise HTTPException(status_code=400, detail="semanas_mostradas debe ser 4 u 8.")
 
         # Manager (rol_id=2) solo ve su propia fila de resumen.
-        agente_manager = None
+        manager_creds = None
         if es_manager(usuario):
-            agente_manager = agente_para_filtro(usuario) or _AGENTE_SIN_ASIGNAR
+            manager_creds = credenciales_manager_para_filtro(usuario)
 
         with get_connection_context() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1123,10 +1246,19 @@ def obtener_resumen_managers_tablero(
                         detail="No hay tablero activo para resumir."
                     )
 
+                filtros = ["id_corte = %s"]
+                params: List[Any] = [corte["id_corte"]]
+                # Por defecto las métricas por manager excluyen abandonos.
+                filtros.append("COALESCE(estado_agencia, 'activo') = 'activo'")
+                if manager_creds is not None:
+                    _append_filtro_manager_logueado(filtros, params, creds=manager_creds)
+                where_sql = " AND ".join(filtros)
+
                 cur.execute(
-                    """
+                    f"""
                     SELECT
                         COALESCE(manager_actual, 'Sin manager') AS manager,
+                        manager_id,
 
                         COUNT(*) AS total_creadores,
 
@@ -1157,12 +1289,11 @@ def obtener_resumen_managers_tablero(
                         ) AS creadores_subiendo
 
                     FROM creadores_performance_tablero_creadores
-                    WHERE id_corte = %s
-                      AND (%s IS NULL OR LOWER(manager_actual) = LOWER(%s))
-                    GROUP BY COALESCE(manager_actual, 'Sin manager')
+                    WHERE {where_sql}
+                    GROUP BY COALESCE(manager_actual, 'Sin manager'), manager_id
                     ORDER BY total_diamantes_ultimo_mes DESC
                     """,
-                    (corte["id_corte"], agente_manager, agente_manager),
+                    params,
                 )
 
                 rows = cur.fetchall()

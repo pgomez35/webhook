@@ -64,6 +64,85 @@ def _to_str(value: Any) -> Optional[str]:
     return text
 
 
+def _es_marcador_vacio(value: Any) -> bool:
+    text = _to_str(value)
+    if text is None:
+        return True
+    return text in {"-", "—", "–"}
+
+
+def _es_id_abandonado(id_creador: Optional[str]) -> bool:
+    """True si el ID del Backstage no es numérico y indica abandono de agencia."""
+    if not id_creador:
+        return False
+    text = str(id_creador).strip()
+    if text.isdigit():
+        return False
+    return "ha abandonado la agencia" in text.lower()
+
+
+def _normalizar_grupo_reporte(grupo: Optional[str]) -> Optional[str]:
+    if not grupo:
+        return None
+    if grupo.strip().lower() in {
+        "no está en ningún grupo",
+        "no esta en ningun grupo",
+        "sin grupo",
+    }:
+        return "Sin grupo"
+    return grupo
+
+
+def _buscar_creador_tiktok_id_previo(cur, usuario_tiktok: Optional[str]) -> Optional[str]:
+    """Busca un creador_tiktok_id previo por usuario en reporte integral."""
+    if not usuario_tiktok:
+        return None
+
+    # Preferir un ID real (numérico) si existe.
+    cur.execute(
+        """
+        SELECT creador_tiktok_id
+        FROM creadores_reporte_integral
+        WHERE LOWER(TRIM(usuario_tiktok)) = LOWER(TRIM(%s))
+          AND creador_tiktok_id IS NOT NULL
+          AND TRIM(creador_tiktok_id) <> ''
+          AND creador_tiktok_id !~ '[^0-9]'
+        ORDER BY periodo_fin DESC NULLS LAST, id_reporte DESC
+        LIMIT 1
+        """,
+        (usuario_tiktok,),
+    )
+    row = cur.fetchone()
+    if row:
+        return row["creador_tiktok_id"] if isinstance(row, dict) else row[0]
+
+    # Fallback: cualquier ID previo del mismo usuario (incl. ABANDONADO:xxx).
+    cur.execute(
+        """
+        SELECT creador_tiktok_id
+        FROM creadores_reporte_integral
+        WHERE LOWER(TRIM(usuario_tiktok)) = LOWER(TRIM(%s))
+          AND creador_tiktok_id IS NOT NULL
+          AND TRIM(creador_tiktok_id) <> ''
+        ORDER BY periodo_fin DESC NULLS LAST, id_reporte DESC
+        LIMIT 1
+        """,
+        (usuario_tiktok,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    return row["creador_tiktok_id"] if isinstance(row, dict) else row[0]
+
+
+def _resolver_creador_tiktok_id_abandono(cur, usuario_tiktok: Optional[str]) -> str:
+    previo = _buscar_creador_tiktok_id_previo(cur, usuario_tiktok)
+    if previo:
+        return previo
+    usuario = (usuario_tiktok or "").strip().lower() or "desconocido"
+    return f"ABANDONADO:{usuario}"
+
+
 def _to_int(value: Any) -> Optional[int]:
     value = _clean_nan(value)
     if value is None:
@@ -240,14 +319,29 @@ def _row_to_reporte(row: pd.Series) -> Dict[str, Any]:
         row.get("Duración de emisiones LIVE (en horas) durante el último mes")
     )
 
+    id_raw = _to_str(row.get("ID del creador"))
+    usuario_tiktok = _to_str(row.get("Nombre de usuario del creador"))
+    grupo = _normalizar_grupo_reporte(_to_str(row.get("Grupo")))
+    agente_raw = _to_str(row.get("Agente"))
+    abandonado = _es_id_abandonado(id_raw)
+
+    hora_raw = row.get("Hora de incorporación")
+    hora_incorporacion = None if _es_marcador_vacio(hora_raw) else _parse_datetime_tiktok(hora_raw)
+
+    # "-" no se usa para resolver manager; se guarda NULL.
+    agente = None if _es_marcador_vacio(agente_raw) else agente_raw
+    estado_agencia = "abandono" if abandonado else "activo"
+
     return {
-        "creador_tiktok_id": _to_str(row.get("ID del creador")),
-        "usuario_tiktok": _to_str(row.get("Nombre de usuario del creador")),
-        "grupo": _to_str(row.get("Grupo")),
-        "agente": _to_str(row.get("Agente")),
+        "creador_tiktok_id": id_raw,  # abandono: se reescribe antes del upsert
+        "usuario_tiktok": usuario_tiktok,
+        "grupo": grupo,
+        "agente": agente,
+        "estado_agencia": estado_agencia,
+        "es_abandono": abandonado,
         "periodo_inicio": periodo_inicio,
         "periodo_fin": periodo_fin,
-        "hora_incorporacion": _parse_datetime_tiktok(row.get("Hora de incorporación")),
+        "hora_incorporacion": hora_incorporacion,
         "dias_desde_incorporacion": _to_int(row.get("Días desde la incorporación")),
         "estado_graduacion": _to_str(row.get("Estado de graduación")),
         "estado_rango": _leer_columna_opcional(row, ESTADO_RANGO_COLUMNS),
@@ -285,19 +379,79 @@ def _row_to_reporte(row: pd.Series) -> Dict[str, Any]:
 # HELPERS DB
 # =========================================================
 
-def _buscar_creador_por_tiktok(cur, creador_tiktok_id: str, usuario_tiktok: Optional[str]) -> Optional[int]:
-    cur.execute(
-        """
-        SELECT id
-        FROM creadores
-        WHERE creador_tiktok_id = %s
-           OR LOWER(usuario_tiktok) = LOWER(%s)
-        LIMIT 1
-        """,
-        (creador_tiktok_id, usuario_tiktok),
-    )
+def _buscar_creador_por_tiktok(cur, creador_tiktok_id: Optional[str], usuario_tiktok: Optional[str]) -> Optional[int]:
+    if creador_tiktok_id and usuario_tiktok:
+        cur.execute(
+            """
+            SELECT id
+            FROM creadores
+            WHERE creador_tiktok_id = %s
+               OR LOWER(usuario_tiktok) = LOWER(%s)
+            LIMIT 1
+            """,
+            (creador_tiktok_id, usuario_tiktok),
+        )
+    elif creador_tiktok_id:
+        cur.execute(
+            """
+            SELECT id
+            FROM creadores
+            WHERE creador_tiktok_id = %s
+            LIMIT 1
+            """,
+            (creador_tiktok_id,),
+        )
+    elif usuario_tiktok:
+        cur.execute(
+            """
+            SELECT id
+            FROM creadores
+            WHERE LOWER(usuario_tiktok) = LOWER(%s)
+            LIMIT 1
+            """,
+            (usuario_tiktok,),
+        )
+    else:
+        return None
+
     row = cur.fetchone()
     return row["id"] if row else None
+
+
+def _resolver_manager_por_agente(cur, agente: Optional[str]) -> Optional[Dict[str, Any]]:
+    """
+    Relaciona el Agente del Backstage con administradores.
+    Prioridad: administradores.agente, luego administradores.email.
+    Solo activos. Comparación case-insensitive + TRIM.
+    """
+    if not agente or not str(agente).strip():
+        return None
+
+    cur.execute(
+        """
+        SELECT
+            id,
+            nombre_completo,
+            email,
+            agente
+        FROM administradores
+        WHERE COALESCE(activo, true) = true
+          AND (
+                LOWER(TRIM(agente)) = LOWER(TRIM(%s))
+                OR LOWER(TRIM(email)) = LOWER(TRIM(%s))
+              )
+        ORDER BY
+            CASE
+                WHEN LOWER(TRIM(agente)) = LOWER(TRIM(%s)) THEN 1
+                WHEN LOWER(TRIM(email)) = LOWER(TRIM(%s)) THEN 2
+                ELSE 3
+            END,
+            id ASC
+        LIMIT 1
+        """,
+        (agente, agente, agente, agente),
+    )
+    return cur.fetchone()
 
 
 def _actualizar_creador_base(cur, creador_id: int, data: Dict[str, Any]) -> None:
@@ -382,6 +536,8 @@ def _upsert_reporte_integral(cur, data: Dict[str, Any], creador_id: Optional[int
             usuario_tiktok,
             grupo,
             agente,
+            manager_id,
+            estado_agencia,
             periodo_inicio,
             periodo_fin,
             hora_incorporacion,
@@ -424,6 +580,8 @@ def _upsert_reporte_integral(cur, data: Dict[str, Any], creador_id: Optional[int
             %(usuario_tiktok)s,
             %(grupo)s,
             %(agente)s,
+            %(manager_id)s,
+            %(estado_agencia)s,
             %(periodo_inicio)s,
             %(periodo_fin)s,
             %(hora_incorporacion)s,
@@ -467,6 +625,8 @@ def _upsert_reporte_integral(cur, data: Dict[str, Any], creador_id: Optional[int
             usuario_tiktok = EXCLUDED.usuario_tiktok,
             grupo = EXCLUDED.grupo,
             agente = EXCLUDED.agente,
+            manager_id = EXCLUDED.manager_id,
+            estado_agencia = EXCLUDED.estado_agencia,
             fecha_carga = NOW(),
             hora_incorporacion = EXCLUDED.hora_incorporacion,
             dias_desde_incorporacion = EXCLUDED.dias_desde_incorporacion,
@@ -906,6 +1066,9 @@ def cargar_reporte_creadores_excel(
         con_creador_en_saas = 0
         no_encontrados = []
         errores = []
+        managers_resueltos = 0
+        managers_no_resueltos = []
+        registros_abandonados = []
         reportes_procesados = []
         archivo_origen = "backstage_excel"
         importaciones_por_periodo: Dict[Tuple[date, date], int] = {}
@@ -922,10 +1085,26 @@ def cargar_reporte_creadores_excel(
                 for idx, row in df.iterrows():
                     try:
                         data = _row_to_reporte(row)
+                        es_abandono = bool(data.get("es_abandono"))
 
-                        if not data["creador_tiktok_id"]:
-                            errores.append({"fila": int(idx) + 2, "error": "ID del creador vacío"})
-                            continue
+                        if es_abandono:
+                            if not data.get("usuario_tiktok"):
+                                errores.append({
+                                    "fila": int(idx) + 2,
+                                    "error": "Usuario TikTok vacío en registro abandonado",
+                                })
+                                continue
+                            data["creador_tiktok_id"] = _resolver_creador_tiktok_id_abandono(
+                                cur,
+                                data.get("usuario_tiktok"),
+                            )
+                            data["manager_id"] = None
+                            data["estado_agencia"] = "abandono"
+                        else:
+                            if not data["creador_tiktok_id"]:
+                                errores.append({"fila": int(idx) + 2, "error": "ID del creador vacío"})
+                                continue
+                            data["estado_agencia"] = data.get("estado_agencia") or "activo"
 
                         periodo_key = (data["periodo_inicio"], data["periodo_fin"])
                         data["tipo_periodo"] = _inferir_tipo_periodo(
@@ -935,15 +1114,40 @@ def cargar_reporte_creadores_excel(
                         data["archivo_origen"] = archivo_origen
                         data["importacion_id"] = importaciones_por_periodo.get(periodo_key)
 
-                        creador_id = _buscar_creador_por_tiktok(
-                            cur,
-                            data["creador_tiktok_id"],
-                            data["usuario_tiktok"],
-                        )
+                        if es_abandono:
+                            manager_id = None
+                        else:
+                            manager = _resolver_manager_por_agente(cur, data.get("agente"))
+                            manager_id = int(manager["id"]) if manager else None
+                            data["manager_id"] = manager_id
+                            if manager_id:
+                                managers_resueltos += 1
+                            elif data.get("agente"):
+                                managers_no_resueltos.append({
+                                    "fila": int(idx) + 2,
+                                    "agente": data.get("agente"),
+                                    "usuario_tiktok": data.get("usuario_tiktok"),
+                                })
+
+                        # No buscar por el texto "El creador ha abandonado...".
+                        tiktok_id_busqueda = data["creador_tiktok_id"]
+                        if es_abandono and str(tiktok_id_busqueda).startswith("ABANDONADO:"):
+                            creador_id = _buscar_creador_por_tiktok(
+                                cur,
+                                None,
+                                data["usuario_tiktok"],
+                            )
+                        else:
+                            creador_id = _buscar_creador_por_tiktok(
+                                cur,
+                                tiktok_id_busqueda,
+                                data["usuario_tiktok"],
+                            )
 
                         if creador_id:
                             con_creador_en_saas += 1
-                            _actualizar_creador_base(cur, creador_id, data)
+                            if not es_abandono:
+                                _actualizar_creador_base(cur, creador_id, data)
                         else:
                             no_encontrados.append({
                                 "fila": int(idx) + 2,
@@ -954,7 +1158,14 @@ def cargar_reporte_creadores_excel(
                         id_reporte = _upsert_reporte_integral(cur, data, creador_id)
                         insertados_o_actualizados += 1
 
-                        if creador_id and actualizar_creadores_activos:
+                        if es_abandono:
+                            registros_abandonados.append({
+                                "fila": int(idx) + 2,
+                                "usuario_tiktok": data.get("usuario_tiktok"),
+                                "creador_tiktok_id": data.get("creador_tiktok_id"),
+                            })
+
+                        if creador_id and actualizar_creadores_activos and not es_abandono:
                             _actualizar_creador_activo(cur, creador_id, data)
 
                         reportes_procesados.append({
@@ -962,6 +1173,8 @@ def cargar_reporte_creadores_excel(
                             "creador_id": creador_id,
                             "periodo_inicio": data["periodo_inicio"],
                             "periodo_fin": data["periodo_fin"],
+                            "manager_id": manager_id,
+                            "estado_agencia": data.get("estado_agencia"),
                         })
 
                     except Exception as row_error:
@@ -1036,6 +1249,10 @@ def cargar_reporte_creadores_excel(
             "reportes_insertados_o_actualizados": insertados_o_actualizados,
             "creadores_encontrados_en_saas": con_creador_en_saas,
             "creadores_no_encontrados": no_encontrados,
+            "managers_resueltos": managers_resueltos,
+            "managers_no_resueltos": managers_no_resueltos,
+            "registros_abandonados": registros_abandonados,
+            "total_abandonados": len(registros_abandonados),
             "errores": errores,
             "actualizo_creadores_activos": actualizar_creadores_activos,
             "genero_metas": generar_metas,

@@ -139,6 +139,23 @@ def agente_para_filtro(usuario: dict):
     La consulta se hace aquí (aislada) para no tocar `obtener_usuario_actual`,
     que se usa en toda la app.
     """
+    creds = credenciales_manager_para_filtro(usuario)
+    if not creds:
+        return None
+    return creds.get("agente") or None
+
+
+def credenciales_manager_para_filtro(usuario: dict):
+    """
+    Credenciales del manager logueado para filtrar reportes/tableros.
+
+    - Manager -> {id, agente, email}
+    - Otros roles -> None (sin filtro, ve todo)
+
+    Preferencia de filtrado nueva: manager_id = id.
+    Fallback legacy: comparar agente/email del admin contra el texto
+    de creadores_reporte_integral.agente cuando manager_id IS NULL.
+    """
     if not es_manager(usuario):
         return None
 
@@ -149,14 +166,22 @@ def agente_para_filtro(usuario: dict):
     with get_connection_context() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT agente FROM administradores WHERE id = %s",
+            """
+            SELECT id, agente, email
+            FROM administradores
+            WHERE id = %s
+            LIMIT 1
+            """,
             (admin_id,),
         )
         row = cursor.fetchone()
 
-    if row and row[0] and str(row[0]).strip():
-        return str(row[0]).strip()
-    return None
+    if not row:
+        return {"id": admin_id, "agente": None, "email": None}
+
+    agente = str(row[1]).strip() if row[1] and str(row[1]).strip() else None
+    email = str(row[2]).strip() if row[2] and str(row[2]).strip() else None
+    return {"id": int(row[0]), "agente": agente, "email": email}
 
 
 # ================= ENDPOINTS =================
