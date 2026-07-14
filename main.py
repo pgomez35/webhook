@@ -95,6 +95,7 @@ from main_creadores_metricas import router as main_creadores_metricas_router
 from performance_routes import router as main_creadores_performance_router
 from creadores_performance_tablero import router as creadores_performance_tablero_router
 from creadores_capacitaciones import router as creadores_capacitaciones_router
+from creadores_importacion import router as creadores_importacion_router
 
 
 
@@ -126,6 +127,7 @@ app.include_router(main_creadores_metricas_router, tags=["creadores metricas"])
 app.include_router(main_creadores_performance_router, tags=["creadores seguimiento"])
 app.include_router(creadores_performance_tablero_router, tags=["creadores tablero"])
 app.include_router(creadores_capacitaciones_router, tags=["creadores capacitaciones"])
+app.include_router(creadores_importacion_router, tags=["creadores importacion"])
 
 
 
