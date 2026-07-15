@@ -387,6 +387,50 @@ def enviar_plantilla_generica(token: str, phone_number_id: str, numero_destino: 
     print("📡 Respuesta de la API:", respuesta_json)
     return response.status_code, respuesta_json
 
+def enviar_mensaje_interactivo(
+    token: str,
+    numero_id: str,
+    telefono_destino: str,
+    interactive: dict,
+):
+    """
+    Envía un mensaje interactivo de WhatsApp (button, list, etc.).
+  """
+    url = f"https://graph.facebook.com/v19.0/{numero_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    mensaje = {
+        "messaging_product": "whatsapp",
+        "to": telefono_destino,
+        "type": "interactive",
+        "interactive": interactive,
+    }
+
+    telefono_safe = (
+        telefono_destino[:4] + "****" + telefono_destino[-2:]
+        if len(telefono_destino) >= 6
+        else telefono_destino
+    )
+    print(f"📤 Enviando interactivo a: {telefono_safe}")
+
+    try:
+        response = requests.post(url, headers=headers, json=mensaje, timeout=15)
+        try:
+            respuesta_json = response.json()
+        except json.JSONDecodeError:
+            respuesta_json = {
+                "error": "Respuesta no válida en formato JSON",
+                "contenido": response.text[:300],
+            }
+        return response.status_code, respuesta_json
+    except requests.Timeout:
+        return 408, {"error": "Timeout enviando mensaje interactivo"}
+    except requests.RequestException as e:
+        return 500, {"error": str(e)}
+
+
 import requests
 import json
 

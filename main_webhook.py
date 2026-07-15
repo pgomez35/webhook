@@ -62,6 +62,7 @@ from utils_whatsapp_flujos import (
     obtener_flujo,
     obtener_flujo_whatsapp,
 )
+from main_encuesta_whatsapp import iniciar_encuesta_onboarding_por_canal
 from utils_aspirantes import obtener_status_24hrs, \
     enviar_plantilla_estado_evaluacion, buscar_estado_creador, \
     accion_menu_estado_evaluacion, _handle_statuses, enviar_confirmacion_interactiva, manejar_input_link_tiktok, \
@@ -1826,6 +1827,7 @@ def _process_new_user_onboarding(
         "esperando_usuario_tiktok",
         "confirmando_nickname",
         "esperando_inicio_encuesta",
+        "encuesta_whatsapp_presentacion",
     ]
 
     if paso not in pasos_validos:
@@ -1964,9 +1966,17 @@ def _process_new_user_onboarding(
                 pass
             usuarios_temp.pop(numero, None)
 
-            # Enviar encuesta
-            enviar_inicio_encuesta(numero)
-            actualizar_flujo(numero, "esperando_inicio_encuesta")
+            # Enviar encuesta según canal configurado
+            resultado_encuesta = iniciar_encuesta_onboarding_por_canal(
+                numero=numero,
+                aspirante=aspirante,
+            )
+
+            if resultado_encuesta.get("canal") == "whatsapp":
+                actualizar_flujo(numero, "encuesta_whatsapp_presentacion")
+            else:
+                actualizar_flujo(numero, "esperando_inicio_encuesta")
+
             return {"status": "ok"}
 
         # -------------------------
@@ -1999,10 +2009,20 @@ def _process_new_user_onboarding(
         return {"status": "ok"}
 
     # =====================================================
-    # PASO 3 – REENVÍO DE LINK (mismo envío que paso 4 de procesar_flujo_aspirante)
+    # PASO 3 – REENVÍO DE LINK (solo formulario web)
     # =====================================================
     if paso == "esperando_inicio_encuesta":
         enviar_inicio_encuesta(numero)
+        return {"status": "ok"}
+
+    # =====================================================
+    # PASO 4 – ENCUESTA WHATSAPP (fase 1: ignorar respuestas)
+    # =====================================================
+    if paso == "encuesta_whatsapp_presentacion":
+        print(
+            f"🧪 [ENCUESTA WHATSAPP] Respuesta recibida de {numero}; "
+            "la captura todavía no está habilitada."
+        )
         return {"status": "ok"}
 
     return None
@@ -3989,6 +4009,16 @@ async def _procesar_mensaje_unico(mensaje, tenant_name, phone_number_id, token):
 
         if resultado:
             return
+
+    # ---------------------------------------------------------
+    # C.1 PROTECCIÓN TEMPORAL ENCUESTA WHATSAPP
+    # ---------------------------------------------------------
+    if paso == "encuesta_whatsapp_presentacion":
+        print(
+            f"🧪 [ENCUESTA WHATSAPP] Respuesta recibida de {wa_id}; "
+            "la captura todavía no está habilitada."
+        )
+        return
 
     # ---------------------------------------------------------
     # D. FLUJO ASPIRANTE
