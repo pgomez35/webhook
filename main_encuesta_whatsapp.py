@@ -1,10 +1,11 @@
 """
-Encuesta inicial del aspirante por WhatsApp (fase 1: solo presentación).
+Encuesta inicial del aspirante por WhatsApp.
 """
 from __future__ import annotations
 
 import re
 import traceback
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from DataBase import obtener_configuracion_agencia
@@ -12,6 +13,28 @@ from encuesta_inicial_service import obtener_encuesta_inicial_normalizada
 from encuesta_portal_utils import ENCUESTA_INICIAL_ID
 from enviar_msg_wp import enviar_mensaje_interactivo, enviar_mensaje_texto_simple
 from tenant import current_phone_id, current_token
+from utils_whatsapp_flujos import (
+    actualizar_flujo_whatsapp,
+    eliminar_flujo_whatsapp,
+    obtener_flujo_whatsapp,
+    ttl_onboarding_encuesta,
+)
+
+TIPO_FLUJO_ENCUESTA = "encuesta_aspirante_whatsapp"
+PASO_ENCUESTA_WHATSAPP = "encuesta_whatsapp_esperando_respuesta"
+MAX_TEXTO_RESPUESTA = 500
+
+_RE_ID_OPCION = re.compile(r"^enc_(\d+)_preg_(\d+)_opc_(\d+)$")
+
+MSG_OPCION_INVALIDA = (
+    "⚠️ Esa opción no corresponde a la pregunta actual. "
+    "Selecciona una de las opciones mostradas."
+)
+MSG_TEXTO_INVALIDO = "⚠️ Por favor escribe tu respuesta en texto."
+MSG_CONSOLIDACION_FALLIDA = (
+    "⚠️ Recibimos tus respuestas, pero no pudimos finalizar el proceso "
+    "en este momento. Intenta nuevamente más tarde."
+)
 
 MENSAJE_INICIO_ENCUESTA_WHATSAPP = (
     "✨ ¡Perfecto, {nombre}!\n\n"
@@ -300,6 +323,254 @@ def enviar_preguntas_encuesta_whatsapp(
     }
 
 
+def parsear_id_opcion_whatsapp(payload_id: Optional[str]) -> Optional[Dict[str, int]]:
+    if not payload_id:
+        return None
+    match = _RE_ID_OPCION.match(str(payload_id).strip())
+    if not match:
+        return None
+    return {
+        "encuesta_id": int(match.group(1)),
+        "variable_id": int(match.group(2)),
+        "valor_id": int(match.group(3)),
+    }
+
+
+def _pregunta_serializable(pregunta: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": pregunta.get("id"),
+        "encuesta_id": pregunta.get("encuesta_id") or ENCUESTA_INICIAL_ID,
+        "orden": pregunta.get("orden"),
+        "campo_db": pregunta.get("campo_db"),
+        "tipo_form": pregunta.get("tipo_form"),
+        "texto": pregunta.get("texto") or "",
+        "opciones": [
+            {"id": o.get("id"), "label": o.get("label") or "", "orden": o.get("orden")}
+            for o in (pregunta.get("opciones") or [])
+            if o and o.get("id") is not None
+        ],
+    }
+
+
+def _crear_payload_sesion(
+    aspirante: Optional[Dict[str, Any]],
+    preguntas: List[Dict[str, Any]],
+    encuesta_id: int,
+) -> Dict[str, Any]:
+    preguntas_ids = [int(p["id"]) for p in preguntas]
+    preguntas_por_id = {str(p["id"]): _pregunta_serializable(p) for p in preguntas}
+    return {
+        "tipo_flujo": TIPO_FLUJO_ENCUESTA,
+        "encuesta_id": encuesta_id,
+        "aspirante_id": aspirante.get("id") if aspirante else None,
+        "preguntas_ids": preguntas_ids,
+        "preguntas_por_id": preguntas_por_id,
+        "indice_actual": 0,
+        "pregunta_actual_id": preguntas_ids[0] if preguntas_ids else None,
+        "respuestas": {},
+        "meta": {},
+        "iniciada_en": datetime.now(timezone.utc).isoformat(),
+        "ultimo_message_id_meta": None,
+    }
+
+
+def _obtener_sesion_encuesta(numero: str) -> Optional[Dict[str, Any]]:
+    row = obtener_flujo_whatsapp(numero)
+    if not row:
+        return None
+    payload = row.get("payload_json")
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("tipo_flujo") != TIPO_FLUJO_ENCUESTA:
+        return None
+    payload["_paso"] = row.get("paso")
+    payload["_aspirante_id_row"] = row.get("aspirante_id")
+    return payload
+
+
+def _persistir_sesion_encuesta(numero: str, payload: Dict[str, Any]) -> None:
+    aspirante_id = payload.get("aspirante_id") or payload.get("_aspirante_id_row")
+    actualizar_flujo_whatsapp(
+        numero,
+        PASO_ENCUESTA_WHATSAPP,
+        aspirante_id=aspirante_id,
+        payload_json=payload,
+        ttl_minutos=ttl_onboarding_encuesta(),
+    )
+
+
+def _aspirante_ctx_desde_sesion(payload: Dict[str, Any]) -> Dict[str, Any]:
+    ctx: Dict[str, Any] = {"id": payload.get("aspirante_id")}
+    preguntas_por_id = payload.get("preguntas_por_id") or {}
+    respuestas = payload.get("respuestas") or {}
+    for pregunta in preguntas_por_id.values():
+        if pregunta.get("campo_db") == "nombre":
+            nombre = respuestas.get(str(pregunta["id"]))
+            if nombre:
+                ctx["nombre"] = nombre
+            break
+    return ctx
+
+
+def _pregunta_actual(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    pid = payload.get("pregunta_actual_id")
+    if pid is None:
+        return None
+    return (payload.get("preguntas_por_id") or {}).get(str(pid))
+
+
+def _es_pregunta_seleccionable(pregunta: Dict[str, Any]) -> bool:
+    tipo = (pregunta.get("tipo_form") or "boton").lower()
+    if tipo in {"text", "file"}:
+        return False
+    return bool(pregunta.get("opciones"))
+
+
+def _validar_opcion_interactiva(
+    payload: Dict[str, Any],
+    parsed: Dict[str, int],
+) -> Optional[str]:
+    if parsed["encuesta_id"] != int(payload.get("encuesta_id") or ENCUESTA_INICIAL_ID):
+        return "encuesta_id"
+    if parsed["variable_id"] != int(payload.get("pregunta_actual_id")):
+        return "variable_id"
+    pregunta = _pregunta_actual(payload)
+    if not pregunta:
+        return "pregunta"
+    opciones_ids = {int(o["id"]) for o in (pregunta.get("opciones") or [])}
+    if parsed["valor_id"] not in opciones_ids:
+        return "valor_id"
+    return None
+
+
+def _respuestas_a_consolidar(payload: Dict[str, Any]) -> Dict[int, str]:
+    out: Dict[int, str] = {}
+    for key, valor in (payload.get("respuestas") or {}).items():
+        if str(key).isdigit():
+            out[int(key)] = str(valor)
+    return out
+
+
+def _finalizar_encuesta_whatsapp(numero: str, payload: Dict[str, Any]) -> bool:
+    from main_webhook import mensaje_encuesta_final
+    from services.encuesta_consolidacion import consolidar_encuesta_inicial
+
+    token, phone_id = _credenciales_whatsapp()
+    if not token or not phone_id:
+        return False
+
+    resultado = consolidar_encuesta_inicial(
+        numero=numero,
+        respuestas=_respuestas_a_consolidar(payload),
+        meta=payload.get("meta"),
+        origen="whatsapp",
+        construir_mensaje_final=mensaje_encuesta_final,
+    )
+
+    if not resultado.get("ok"):
+        print(f"❌ [ENCUESTA WHATSAPP] Consolidación fallida para {numero}: {resultado.get('error')}")
+        enviar_mensaje_texto_simple(token, phone_id, numero, MSG_CONSOLIDACION_FALLIDA)
+        return False
+
+    eliminar_flujo_whatsapp(numero)
+    mensaje = resultado.get("mensaje_final") or ""
+    if mensaje:
+        enviar_mensaje_texto_simple(token, phone_id, numero, mensaje)
+    return True
+
+
+def _avanzar_o_finalizar(numero: str, payload: Dict[str, Any]) -> None:
+    preguntas_ids: List[int] = payload.get("preguntas_ids") or []
+    indice = int(payload.get("indice_actual") or 0)
+    siguiente = indice + 1
+
+    if siguiente >= len(preguntas_ids):
+        _finalizar_encuesta_whatsapp(numero, payload)
+        return
+
+    payload["indice_actual"] = siguiente
+    payload["pregunta_actual_id"] = preguntas_ids[siguiente]
+    _persistir_sesion_encuesta(numero, payload)
+
+    token, phone_id = _credenciales_whatsapp()
+    if not token or not phone_id:
+        return
+
+    pregunta = _pregunta_actual(payload)
+    if not pregunta:
+        return
+
+    ctx = _aspirante_ctx_desde_sesion(payload)
+    enviar_pregunta_whatsapp(numero, pregunta, ctx, token, phone_id)
+
+
+def procesar_respuesta_encuesta_whatsapp(
+    numero: str,
+    tipo: Optional[str],
+    texto: Optional[str],
+    payload_id: Optional[str],
+    message_id_meta: Optional[str] = None,
+) -> Dict[str, Any]:
+    wa_id = (numero or "").strip()
+    payload = _obtener_sesion_encuesta(wa_id)
+    if not payload:
+        return {"status": "sin_sesion"}
+
+    if message_id_meta and payload.get("ultimo_message_id_meta") == message_id_meta:
+        return {"status": "duplicado"}
+
+    pregunta = _pregunta_actual(payload)
+    if not pregunta:
+        return {"status": "sin_pregunta"}
+
+    token, phone_id = _credenciales_whatsapp()
+    if not token or not phone_id:
+        return {"status": "sin_credenciales"}
+
+    variable_id = int(payload["pregunta_actual_id"])
+    valor_guardar: Optional[str] = None
+
+    if _es_pregunta_seleccionable(pregunta):
+        if tipo != "interactive" or not payload_id:
+            enviar_mensaje_texto_simple(token, phone_id, wa_id, MSG_OPCION_INVALIDA)
+            enviar_pregunta_whatsapp(wa_id, pregunta, _aspirante_ctx_desde_sesion(payload), token, phone_id)
+            return {"status": "rechazado", "motivo": "se_esperaba_interactivo"}
+
+        parsed = parsear_id_opcion_whatsapp(payload_id)
+        if not parsed:
+            enviar_mensaje_texto_simple(token, phone_id, wa_id, MSG_OPCION_INVALIDA)
+            enviar_pregunta_whatsapp(wa_id, pregunta, _aspirante_ctx_desde_sesion(payload), token, phone_id)
+            return {"status": "rechazado", "motivo": "id_invalido"}
+
+        error = _validar_opcion_interactiva(payload, parsed)
+        if error:
+            enviar_mensaje_texto_simple(token, phone_id, wa_id, MSG_OPCION_INVALIDA)
+            enviar_pregunta_whatsapp(wa_id, pregunta, _aspirante_ctx_desde_sesion(payload), token, phone_id)
+            return {"status": "rechazado", "motivo": error}
+
+        valor_guardar = str(parsed["valor_id"])
+    else:
+        if tipo != "text" or not (texto or "").strip():
+            enviar_mensaje_texto_simple(token, phone_id, wa_id, MSG_TEXTO_INVALIDO)
+            enviar_pregunta_whatsapp(wa_id, pregunta, _aspirante_ctx_desde_sesion(payload), token, phone_id)
+            return {"status": "rechazado", "motivo": "texto_invalido"}
+
+        valor_limpio = texto.strip()
+        if len(valor_limpio) > MAX_TEXTO_RESPUESTA:
+            valor_limpio = valor_limpio[:MAX_TEXTO_RESPUESTA]
+        valor_guardar = valor_limpio
+
+    respuestas = dict(payload.get("respuestas") or {})
+    respuestas[str(variable_id)] = valor_guardar
+    payload["respuestas"] = respuestas
+    if message_id_meta:
+        payload["ultimo_message_id_meta"] = message_id_meta
+
+    _persistir_sesion_encuesta(wa_id, payload)
+    _avanzar_o_finalizar(wa_id, payload)
+    return {"status": "ok", "variable_id": variable_id, "valor": valor_guardar}
+
+
 def enviar_encuesta_aspirante_whatsapp(
     numero: str,
     aspirante: Optional[Dict[str, Any]] = None,
@@ -309,12 +580,42 @@ def enviar_encuesta_aspirante_whatsapp(
     if not token or not phone_id:
         return {
             "canal": "whatsapp",
-            "enviado": False,
+            "iniciada": False,
             "error": "Contexto WhatsApp no disponible",
         }
 
     encuesta = normalizar_encuesta_para_whatsapp()
     preguntas = encuesta.get("preguntas") or []
+    encuesta_id = int(encuesta.get("encuesta_id") or ENCUESTA_INICIAL_ID)
+
+    if not preguntas:
+        return {
+            "canal": "whatsapp",
+            "iniciada": False,
+            "error": "No hay preguntas disponibles para la encuesta inicial",
+        }
+
+    sesion_existente = _obtener_sesion_encuesta(wa_id)
+    if sesion_existente and sesion_existente.get("pregunta_actual_id"):
+        pregunta = _pregunta_actual(sesion_existente)
+        if pregunta:
+            enviar_pregunta_whatsapp(
+                wa_id,
+                pregunta,
+                _aspirante_ctx_desde_sesion(sesion_existente),
+                token,
+                phone_id,
+            )
+            return {
+                "canal": "whatsapp",
+                "iniciada": True,
+                "reanudada": True,
+                "pregunta_actual_id": sesion_existente.get("pregunta_actual_id"),
+                "total_preguntas": len(sesion_existente.get("preguntas_ids") or []),
+            }
+
+    payload_sesion = _crear_payload_sesion(aspirante, preguntas, encuesta_id)
+    _persistir_sesion_encuesta(wa_id, payload_sesion)
 
     nombre = _nombre_aspirante(aspirante) or "aspirante"
     intro = MENSAJE_INICIO_ENCUESTA_WHATSAPP.format(nombre=nombre)
@@ -322,16 +623,26 @@ def enviar_encuesta_aspirante_whatsapp(
     if codigo_intro is None or codigo_intro >= 300:
         return {
             "canal": "whatsapp",
-            "enviado": False,
+            "iniciada": False,
             "error": "No se pudo enviar mensaje introductorio",
             "http_status": codigo_intro,
         }
 
-    resumen = enviar_preguntas_encuesta_whatsapp(wa_id, preguntas, aspirante, token, phone_id)
+    primera = preguntas[0]
+    res = enviar_pregunta_whatsapp(wa_id, primera, aspirante, token, phone_id)
+    if not res.get("enviado"):
+        return {
+            "canal": "whatsapp",
+            "iniciada": False,
+            "error": "No se pudo enviar la primera pregunta",
+            "detalle": res,
+        }
+
     return {
         "canal": "whatsapp",
-        "enviado": resumen["preguntas_enviadas"] > 0,
-        **resumen,
+        "iniciada": True,
+        "pregunta_actual_id": primera.get("id"),
+        "total_preguntas": len(preguntas),
     }
 
 

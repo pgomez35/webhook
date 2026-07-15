@@ -62,7 +62,10 @@ from utils_whatsapp_flujos import (
     obtener_flujo,
     obtener_flujo_whatsapp,
 )
-from main_encuesta_whatsapp import iniciar_encuesta_onboarding_por_canal
+from main_encuesta_whatsapp import (
+    iniciar_encuesta_onboarding_por_canal,
+    procesar_respuesta_encuesta_whatsapp,
+)
 from utils_aspirantes import obtener_status_24hrs, \
     enviar_plantilla_estado_evaluacion, buscar_estado_creador, \
     accion_menu_estado_evaluacion, _handle_statuses, enviar_confirmacion_interactiva, manejar_input_link_tiktok, \
@@ -1827,7 +1830,7 @@ def _process_new_user_onboarding(
         "esperando_usuario_tiktok",
         "confirmando_nickname",
         "esperando_inicio_encuesta",
-        "encuesta_whatsapp_presentacion",
+        "encuesta_whatsapp_esperando_respuesta",
     ]
 
     if paso not in pasos_validos:
@@ -1972,9 +1975,7 @@ def _process_new_user_onboarding(
                 aspirante=aspirante,
             )
 
-            if resultado_encuesta.get("canal") == "whatsapp":
-                actualizar_flujo(numero, "encuesta_whatsapp_presentacion")
-            else:
+            if resultado_encuesta.get("canal") != "whatsapp":
                 actualizar_flujo(numero, "esperando_inicio_encuesta")
 
             return {"status": "ok"}
@@ -2015,13 +2016,13 @@ def _process_new_user_onboarding(
         enviar_inicio_encuesta(numero)
         return {"status": "ok"}
 
-    # =====================================================
-    # PASO 4 – ENCUESTA WHATSAPP (fase 1: ignorar respuestas)
-    # =====================================================
-    if paso == "encuesta_whatsapp_presentacion":
-        print(
-            f"🧪 [ENCUESTA WHATSAPP] Respuesta recibida de {numero}; "
-            "la captura todavía no está habilitada."
+    if paso == "encuesta_whatsapp_esperando_respuesta":
+        procesar_respuesta_encuesta_whatsapp(
+            numero=numero,
+            tipo=tipo,
+            texto=texto,
+            payload_id=payload,
+            message_id_meta=None,
         )
         return {"status": "ok"}
 
@@ -3983,6 +3984,17 @@ async def _procesar_mensaje_unico(mensaje, tenant_name, phone_number_id, token):
     # C. ONBOARDING (PRIMERO)
     # ---------------------------------------------------------
     paso = obtener_flujo(wa_id)
+
+    if paso == "encuesta_whatsapp_esperando_respuesta":
+        procesar_respuesta_encuesta_whatsapp(
+            numero=wa_id,
+            tipo=tipo,
+            texto=texto,
+            payload_id=payload_id,
+            message_id_meta=mensaje.get("id"),
+        )
+        return
+
     usuario_bd = buscar_usuario_por_telefono(wa_id)
 
     print(
@@ -4009,16 +4021,6 @@ async def _procesar_mensaje_unico(mensaje, tenant_name, phone_number_id, token):
 
         if resultado:
             return
-
-    # ---------------------------------------------------------
-    # C.1 PROTECCIÓN TEMPORAL ENCUESTA WHATSAPP
-    # ---------------------------------------------------------
-    if paso == "encuesta_whatsapp_presentacion":
-        print(
-            f"🧪 [ENCUESTA WHATSAPP] Respuesta recibida de {wa_id}; "
-            "la captura todavía no está habilitada."
-        )
-        return
 
     # ---------------------------------------------------------
     # D. FLUJO ASPIRANTE
@@ -4959,6 +4961,8 @@ def consolidar_perfil_web(
     background_tasks: BackgroundTasks
 ):
     try:
+        from services.encuesta_consolidacion import ORIGEN_PORTAL, consolidar_encuesta_inicial
+
         subdominio = current_tenant.get()
 
         cuenta = obtener_cuenta_por_subdominio(subdominio)
@@ -4976,200 +4980,22 @@ def consolidar_perfil_web(
         current_phone_id.set(phone_id_cliente)
         current_business_name.set(business_name)
 
-        # -------------------------------
-        # Procesar respuestas
-        # -------------------------------
-        respuestas_dict = {}
-
-        if data.respuestas:
-            for key, valor in data.respuestas.items():
-                if isinstance(key, str) and key.isdigit():
-                    key = int(key)
-
-                respuestas_dict[key] = str(valor).strip() if valor is not None else ""
-
-        # -------------------------------
-        # Detectar país
-        # -------------------------------
-        datos_pais = obtener_datos_pais(data.numero)
-
-        pais_id = None
-        pais_texto = None
-
-        if not datos_pais.get("error"):
-            pais_id = datos_pais.get("id_pais")
-
-            if datos_pais.get("es_otro"):
-                pais_texto = datos_pais.get("pais_real_detectado") or datos_pais.get("nombre_pais")
-            else:
-                pais_texto = datos_pais.get("nombre_pais")
-
-            if pais_id is not None:
-                respuestas_dict[VARIABLE_PAIS_ID] = str(pais_id)
-
-        # -------------------------------
-        # Obtener usuario / aspirante
-        # -------------------------------
-        try:
-            usuario_bd = buscar_usuario_por_telefono(data.numero)
-
-            nombre_usuario = usuario_bd.get("nombre") if usuario_bd else None
-            aspirante_id = usuario_bd.get("id") if usuario_bd else None
-
-        except Exception as e:
-            print(f"⚠️ Error obteniendo usuario {data.numero}: {e}")
-            nombre_usuario = None
-            aspirante_id = None
-
-        # -------------------------------
-        # Marcar encuesta completada
-        # -------------------------------
-        marcar_encuesta_completada(data.numero)
-
-        # -------------------------------
-        # Guardar diagnóstico
-        # -------------------------------
-        if aspirante_id and respuestas_dict:
-            with get_connection_context() as conn:
-                with conn.cursor() as cur:
-
-                    cur.execute("""
-                        SELECT id, campo_db
-                        FROM diagnostico_variable
-                        WHERE migrado = true
-                          AND COALESCE(activa, true) = true
-                    """)
-
-                    variables = {row[0]: row[1] for row in cur.fetchall()}
-
-                    for pregunta_id, valor in respuestas_dict.items():
-                        campo_db = variables.get(pregunta_id)
-
-                        # Guardar score solo si es número
-                        if isinstance(valor, str) and valor.isdigit():
-                            valor_int = int(valor)
-
-                            cur.execute("""
-                                INSERT INTO diagnostico_score_variable
-                                    (aspirante_id, variable_id, valor_id)
-                                VALUES (%s, %s, %s)
-                                ON CONFLICT (aspirante_id, variable_id)
-                                DO UPDATE SET
-                                    valor_id = EXCLUDED.valor_id
-                            """, (
-                                aspirante_id,
-                                pregunta_id,
-                                valor_int
-                            ))
-
-                        # Actualizar aspirantes_perfil según campo_db
-                        if campo_db:
-                            if not campo_db.replace("_", "").isalnum():
-                                continue
-
-                            query = f"""
-                                UPDATE aspirantes_perfil
-                                SET {campo_db} = %s
-                                WHERE aspirante_id = %s
-                            """
-
-                            cur.execute(query, (valor, aspirante_id))
-
-                            if campo_db == "nombre":
-                                nombre_usuario = valor
-
-                    # Guardar pais_texto
-                    if pais_texto:
-                        cur.execute("""
-                            UPDATE aspirantes_perfil
-                            SET pais_texto = %s
-                            WHERE aspirante_id = %s
-                        """, (pais_texto, aspirante_id))
-
-                    # Guardar zona_horaria
-                    zona_horaria = None
-                    if data.meta and isinstance(data.meta, dict):
-                        zona_horaria = data.meta.get("zona_horaria")
-
-                    if zona_horaria:
-                        cur.execute("""
-                            UPDATE aspirantes_perfil
-                            SET zona_horaria = %s
-                            WHERE aspirante_id = %s
-                        """, (zona_horaria, aspirante_id))
-
-                    # -------------------------------
-                    # Guardar trazabilidad encuesta inicial
-                    # -------------------------------
-                    cur.execute("""
-                        INSERT INTO aspirantes_encuesta_inicial (
-                            aspirante_id,
-                            respuestas_json,
-                            fecha_inicio,
-                            fecha_fin,
-                            completada,
-                            abandonada,
-                            preguntas_respondidas,
-                            sincronizado,
-                            fecha_sincronizacion,
-                            created_at,
-                            updated_at
-                        )
-                        VALUES (
-                            %s,
-                            %s::jsonb,
-                            now(),
-                            now(),
-                            true,
-                            false,
-                            %s,
-                            true,
-                            now(),
-                            now(),
-                            now()
-                        )
-                    """, (
-                        aspirante_id,
-                        json.dumps(respuestas_dict, ensure_ascii=False),
-                        len(respuestas_dict)
-                    ))
-
-                    conn.commit()
-
-            # -------------------------------
-            # Pasar aspirante a Evaluación
-            # -------------------------------
-            registrar_cambio_estado(
-                aspirante_id=aspirante_id,
-                nuevo_estado_id=3,
-                usuario_id=None,
-                origen_cambio="encuesta_link",
-                observacion="Aspirante pasa a Evaluación al completar la encuesta inicial"
-            )
-
-        # -------------------------------
-        # URL del portal con token universal
-        # -------------------------------
-        portal_data = None
-        url_info = None
-
-        if aspirante_id:
-            portal_data = generar_url_portal(
-                tipo_portal="aspirante",
-                aspirante_id=aspirante_id,
-                creador_id=None,
-                origen="encuesta"
-            )
-
-            url_info = portal_data["url"]
-
-        # -------------------------------
-        # Mensaje final
-        # -------------------------------
-        mensaje_final = mensaje_encuesta_final(
-            nombre=nombre_usuario,
-            url_info=url_info
+        resultado = consolidar_encuesta_inicial(
+            numero=data.numero,
+            respuestas=data.respuestas,
+            meta=data.meta,
+            origen=data.origen or "",
+            construir_mensaje_final=mensaje_encuesta_final,
         )
+
+        if not resultado.get("ok"):
+            return JSONResponse(
+                {
+                    "error": "Error al consolidar el perfil",
+                    "detail": resultado.get("error"),
+                },
+                status_code=500,
+            )
 
         origen = (data.origen or "").strip().lower()
         enviar_mensaje = origen != ORIGEN_PORTAL
@@ -5178,7 +5004,7 @@ def consolidar_perfil_web(
             background_tasks.add_task(
                 enviar_mensaje_whatsapp_texto,
                 data.numero,
-                mensaje_final,
+                resultado["mensaje_final"],
                 token_cliente,
                 phone_id_cliente
             )
@@ -5189,10 +5015,10 @@ def consolidar_perfil_web(
         return {
             "ok": True,
             "msg": "Perfil consolidado correctamente",
-            "aspirante_id": aspirante_id,
-            "pais_texto": pais_texto,
-            "zona_horaria": data.meta.get("zona_horaria") if data.meta else None,
-            "url_portal": url_info,
+            "aspirante_id": resultado.get("aspirante_id"),
+            "pais_texto": resultado.get("pais_texto"),
+            "zona_horaria": resultado.get("zona_horaria"),
+            "url_portal": resultado.get("url_portal"),
             "mensaje_enviado": enviar_mensaje
         }
 
