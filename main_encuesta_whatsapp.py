@@ -451,25 +451,66 @@ def _respuestas_a_consolidar(payload: Dict[str, Any]) -> Dict[int, str]:
     return out
 
 
-def _finalizar_encuesta_whatsapp(numero: str, payload: Dict[str, Any]) -> bool:
-    from main_webhook import mensaje_encuesta_final
-    from services.encuesta_consolidacion import consolidar_encuesta_inicial
+def _todas_respondidas(payload: Dict[str, Any]) -> bool:
+    ids = payload.get("preguntas_ids") or []
+    respuestas = payload.get("respuestas") or {}
+    return bool(ids) and all(str(pid) in respuestas for pid in ids)
 
+
+def _finalizar_encuesta_whatsapp(numero: str, payload: Dict[str, Any]) -> bool:
+    """
+    Consolida y limpia el flujo solo si la consolidación es exitosa.
+    Ante fallo: conserva sesión/respuestas y permite reintento.
+    """
     token, phone_id = _credenciales_whatsapp()
     if not token or not phone_id:
+        print(f"❌ [ENCUESTA WHATSAPP] Sin credenciales al finalizar {numero}")
         return False
 
-    resultado = consolidar_encuesta_inicial(
-        numero=numero,
-        respuestas=_respuestas_a_consolidar(payload),
-        meta=payload.get("meta"),
-        origen="whatsapp",
-        construir_mensaje_final=mensaje_encuesta_final,
-    )
+    try:
+        from main_webhook import mensaje_encuesta_final
+        from encuesta_consolidacion import consolidar_encuesta_inicial
+    except Exception as e:
+        print(f"❌ [ENCUESTA WHATSAPP] Error importando consolidación: {e}")
+        traceback.print_exc()
+        payload["consolidacion_pendiente"] = True
+        _persistir_sesion_encuesta(numero, payload)
+        try:
+            enviar_mensaje_texto_simple(token, phone_id, numero, MSG_CONSOLIDACION_FALLIDA)
+        except Exception:
+            pass
+        return False
+
+    try:
+        resultado = consolidar_encuesta_inicial(
+            numero=numero,
+            respuestas=_respuestas_a_consolidar(payload),
+            meta=payload.get("meta"),
+            origen="whatsapp",
+            construir_mensaje_final=mensaje_encuesta_final,
+        )
+    except Exception as e:
+        print(f"❌ [ENCUESTA WHATSAPP] Excepción consolidando {numero}: {e}")
+        traceback.print_exc()
+        payload["consolidacion_pendiente"] = True
+        _persistir_sesion_encuesta(numero, payload)
+        try:
+            enviar_mensaje_texto_simple(token, phone_id, numero, MSG_CONSOLIDACION_FALLIDA)
+        except Exception:
+            pass
+        return False
 
     if not resultado.get("ok"):
-        print(f"❌ [ENCUESTA WHATSAPP] Consolidación fallida para {numero}: {resultado.get('error')}")
-        enviar_mensaje_texto_simple(token, phone_id, numero, MSG_CONSOLIDACION_FALLIDA)
+        print(
+            f"❌ [ENCUESTA WHATSAPP] Consolidación fallida para {numero}: "
+            f"{resultado.get('error')}"
+        )
+        payload["consolidacion_pendiente"] = True
+        _persistir_sesion_encuesta(numero, payload)
+        try:
+            enviar_mensaje_texto_simple(token, phone_id, numero, MSG_CONSOLIDACION_FALLIDA)
+        except Exception:
+            pass
         return False
 
     eliminar_flujo_whatsapp(numero)
@@ -518,6 +559,14 @@ def procesar_respuesta_encuesta_whatsapp(
 
     if message_id_meta and payload.get("ultimo_message_id_meta") == message_id_meta:
         return {"status": "duplicado"}
+
+    # Reintento de finalización sin repetir preguntas
+    if payload.get("consolidacion_pendiente") and _todas_respondidas(payload):
+        if message_id_meta:
+            payload["ultimo_message_id_meta"] = message_id_meta
+            _persistir_sesion_encuesta(wa_id, payload)
+        ok = _finalizar_encuesta_whatsapp(wa_id, payload)
+        return {"status": "reintento_consolidacion", "ok": ok}
 
     pregunta = _pregunta_actual(payload)
     if not pregunta:

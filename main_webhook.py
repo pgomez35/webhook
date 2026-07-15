@@ -1728,7 +1728,8 @@ def _setup_tenant_context(phone_number_id: str) -> Optional[dict]:
     current_business_name.set(business_name)
     
     print(f"🌐 Tenant actual: {current_tenant.get()}")
-    print(f"🔑 Token actual: {current_token.get()}")
+    token_seguro = f"...{token_cliente[-6:]}" if token_cliente else "None"
+    print(f"🔑 Token actual: {token_seguro}")
     print(f"📞 phone_id actual: {current_phone_id.get()}")
     print(f"📞 business_name: {current_business_name.get()}")
 
@@ -4961,7 +4962,7 @@ def consolidar_perfil_web(
     background_tasks: BackgroundTasks
 ):
     try:
-        from services.encuesta_consolidacion import ORIGEN_PORTAL, consolidar_encuesta_inicial
+        from encuesta_consolidacion import ORIGEN_PORTAL, consolidar_encuesta_inicial
 
         subdominio = current_tenant.get()
 
