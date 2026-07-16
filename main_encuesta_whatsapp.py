@@ -301,6 +301,182 @@ def dividir_texto_whatsapp(texto: str, max_len: int = MAX_WA_TEXT) -> List[str]:
     return [p for p in partes if p]
 
 
+def formatear_faq_para_whatsapp(contenido: str) -> str:
+    """
+    Convierte encabezados Markdown (# ## ###) al inicio de línea
+    en negrita de WhatsApp (*texto*), sin alterar el valor en BD.
+    """
+    if not contenido:
+        return ""
+
+    lineas_out: List[str] = []
+    for linea in str(contenido).replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        m = re.match(r"^\s{0,3}(#{1,6})\s+(.+?)\s*$", linea)
+        if m:
+            titulo = m.group(2).strip()
+            # Evitar negrita duplicada si ya venía con *
+            if titulo.startswith("*") and titulo.endswith("*") and len(titulo) >= 2:
+                lineas_out.append(titulo)
+            else:
+                lineas_out.append(f"*{titulo}*")
+            continue
+        lineas_out.append(linea.rstrip())
+
+    texto = "\n".join(lineas_out)
+    # Colapsar más de 2 saltos seguidos a exactamente 2 (bloque separado)
+    texto = re.sub(r"\n{3,}", "\n\n", texto)
+    return texto.strip()
+
+
+def _separar_bloques_faq(texto_formateado: str) -> List[str]:
+    """
+    Separa bloques FAQ preferentemente por encabezado en negrita *...*
+    o por líneas vacías.
+    """
+    texto = (texto_formateado or "").strip()
+    if not texto:
+        return []
+
+    # Dividir antes de cada línea que sea solo *encabezado*
+    partes = re.split(r"(?m)(?=^\*[^*\n]+\*\s*$)", texto)
+    bloques = [p.strip() for p in partes if p and p.strip()]
+    if len(bloques) > 1:
+        return bloques
+
+    # Fallback: párrafos por doble salto
+    return [b.strip() for b in re.split(r"\n\s*\n", texto) if b.strip()]
+
+
+def dividir_faq_para_whatsapp(contenido: str, max_len: int = MAX_WA_TEXT) -> List[str]:
+    """
+    Formatea FAQ y agrupa bloques completos (pregunta+respuesta)
+    dentro del límite de WhatsApp.
+    """
+    formateado = formatear_faq_para_whatsapp(contenido)
+    bloques = _separar_bloques_faq(formateado)
+    if not bloques:
+        return []
+
+    mensajes: List[str] = []
+    actual = ""
+    for bloque in bloques:
+        if len(bloque) > max_len:
+            if actual:
+                mensajes.append(actual)
+                actual = ""
+            # Bloque enorme: dividir por párrafos/frases
+            mensajes.extend(dividir_texto_whatsapp(bloque, max_len))
+            continue
+
+        candidato = f"{actual}\n\n{bloque}".strip() if actual else bloque
+        if len(candidato) <= max_len:
+            actual = candidato
+        else:
+            if actual:
+                mensajes.append(actual)
+            actual = bloque
+
+    if actual:
+        mensajes.append(actual)
+    return mensajes
+
+
+def _faq_disponible() -> Optional[str]:
+    raw = obtener_configuracion_agencia("preguntas_frecuentes")
+    texto = str(raw or "").strip()
+    return texto or None
+
+
+def _telefono_enmascarado(numero: str) -> str:
+    n = (numero or "").strip()
+    if len(n) < 6:
+        return "****"
+    return f"{n[:3]}****{n[-2:]}"
+
+
+def _log_faq_whatsapp(accion: str, numero: str, canal: str, bloques: int = 0) -> None:
+    try:
+        from tenant import current_tenant
+
+        tenant = current_tenant.get()
+    except Exception:
+        tenant = "?"
+    print(
+        f"[FAQ WHATSAPP] {accion} | tenant={tenant} | canal={canal} | "
+        f"bloques={bloques} | tel={_telefono_enmascarado(numero)}"
+    )
+
+
+# Reply buttons limitan el título a 20 chars; el texto completo
+# "Ver preguntas frecuentes" = 24 chars → lista interactiva (title ≤ 24).
+TITULO_FAQ_LISTA = "Ver preguntas frecuentes"  # 24 chars exactos
+
+
+def _payload_menu_inicio(
+    *,
+    incluir_faq: bool,
+    payload_comenzar: str,
+    payload_faq: str,
+    body_text: str,
+) -> Dict[str, Any]:
+    """
+    Menú de inicio.
+    - Sin FAQ: botón reply (título corto).
+    - Con FAQ: lista interactiva para mostrar el texto completo
+      'Ver preguntas frecuentes' (no cabe en reply button de 20).
+    """
+    if not incluir_faq:
+        return {
+            "type": "button",
+            "body": {"text": body_text[:MAX_BODY_TEXT]},
+            "action": {
+                "buttons": [
+                    {
+                        "type": "reply",
+                        "reply": {
+                            "id": payload_comenzar,
+                            "title": "🚀 Comenzar",
+                        },
+                    }
+                ]
+            },
+        }
+
+    return {
+        "type": "list",
+        "body": {"text": body_text[:MAX_BODY_TEXT]},
+        "action": {
+            "button": "Ver opciones",
+            "sections": [
+                {
+                    "title": "Opciones",
+                    "rows": [
+                        {
+                            "id": payload_comenzar,
+                            "title": "🚀 Comenzar",
+                            "description": "Iniciar ahora",
+                        },
+                        {
+                            "id": payload_faq,
+                            "title": TITULO_FAQ_LISTA,
+                            "description": "❓ Consulta antes de empezar",
+                        },
+                    ],
+                }
+            ],
+        },
+    }
+
+
+def _payload_botones_inicio(*, incluir_faq: bool) -> Dict[str, Any]:
+    return _payload_menu_inicio(
+        incluir_faq=incluir_faq,
+        payload_comenzar=PAYLOAD_COMENZAR,
+        payload_faq=PAYLOAD_FAQ,
+        body_text="¿Listo para comenzar?",
+    )
+
+
 def _decidir_tipo_presentacion(pregunta: Dict[str, Any]) -> str:
     tipo = (pregunta.get("tipo_form") or "boton").lower()
     if tipo == "text":
@@ -315,39 +491,6 @@ def _decidir_tipo_presentacion(pregunta: Dict[str, Any]) -> str:
     if len(opciones) <= MAX_LIST_ROWS:
         return "list"
     return "list_split"
-
-
-def _faq_disponible() -> Optional[str]:
-    raw = obtener_configuracion_agencia("preguntas_frecuentes")
-    texto = str(raw or "").strip()
-    return texto or None
-
-
-def _payload_botones_inicio(*, incluir_faq: bool) -> Dict[str, Any]:
-    buttons = [
-        {
-            "type": "reply",
-            "reply": {
-                "id": PAYLOAD_COMENZAR,
-                "title": "🚀 Comenzar",
-            },
-        }
-    ]
-    if incluir_faq:
-        buttons.append(
-            {
-                "type": "reply",
-                "reply": {
-                    "id": PAYLOAD_FAQ,
-                    "title": "❓ Ver FAQ",
-                },
-            }
-        )
-    return {
-        "type": "button",
-        "body": {"text": "¿Listo para comenzar?"},
-        "action": {"buttons": buttons},
-    }
 
 
 def enviar_pregunta_whatsapp(
@@ -686,8 +829,11 @@ def enviar_faq_encuesta_whatsapp(numero: str, payload: Dict[str, Any]) -> Dict[s
         _persistir_sesion_encuesta(wa_id, payload, PASO_ESPERANDO_INICIO)
         return {"status": "faq_vacio"}
 
-    for parte in dividir_texto_whatsapp(faq):
+    bloques = dividir_faq_para_whatsapp(faq)
+    _log_faq_whatsapp("Contenido formateado", wa_id, "whatsapp", len(bloques))
+    for parte in bloques:
         enviar_mensaje_texto_simple(token, phone_id, wa_id, parte)
+    _log_faq_whatsapp(f"Bloques enviados: {len(bloques)}", wa_id, "whatsapp", len(bloques))
 
     # Solo botón Comenzar después del FAQ
     interactive = {
@@ -703,8 +849,9 @@ def enviar_faq_encuesta_whatsapp(numero: str, payload: Dict[str, Any]) -> Dict[s
         },
     }
     enviar_mensaje_interactivo(token, phone_id, wa_id, interactive)
+    _log_faq_whatsapp("Menú de continuación enviado", wa_id, "whatsapp", 0)
     _persistir_sesion_encuesta(wa_id, payload, PASO_ESPERANDO_INICIO)
-    return {"status": "faq_enviado"}
+    return {"status": "faq_enviado", "bloques": len(bloques)}
 
 
 def procesar_inicio_encuesta_whatsapp(
@@ -737,7 +884,12 @@ def procesar_inicio_encuesta_whatsapp(
     )
     es_faq = (
         payload_id == PAYLOAD_FAQ
-        or cmd in {"preguntas frecuentes", "faq", "preguntas"}
+        or cmd in {
+            "preguntas frecuentes",
+            "ver preguntas frecuentes",
+            "faq",
+            "preguntas",
+        }
     )
 
     if es_comenzar:
@@ -1081,13 +1233,6 @@ MSG_OPCIONES_INICIO_WEB = (
 )
 
 
-def _telefono_enmascarado(numero: str) -> str:
-    n = (numero or "").strip()
-    if len(n) < 6:
-        return "****"
-    return f"{n[:3]}****{n[-2:]}"
-
-
 def _log_encuesta_web(accion: str, numero: str, paso: Optional[str] = None) -> None:
     try:
         from tenant import current_tenant
@@ -1132,30 +1277,12 @@ def _persistir_sesion_web(
 
 
 def _payload_botones_inicio_web(*, incluir_faq: bool) -> Dict[str, Any]:
-    buttons = [
-        {
-            "type": "reply",
-            "reply": {
-                "id": PAYLOAD_WEB_COMENZAR,
-                "title": "🚀 Comenzar",
-            },
-        }
-    ]
-    if incluir_faq:
-        buttons.append(
-            {
-                "type": "reply",
-                "reply": {
-                    "id": PAYLOAD_WEB_FAQ,
-                    "title": "❓ Ver FAQ",
-                },
-            }
-        )
-    return {
-        "type": "button",
-        "body": {"text": "¿Listo para comenzar la evaluación?"},
-        "action": {"buttons": buttons},
-    }
+    return _payload_menu_inicio(
+        incluir_faq=incluir_faq,
+        payload_comenzar=PAYLOAD_WEB_COMENZAR,
+        payload_faq=PAYLOAD_WEB_FAQ,
+        body_text="¿Listo para comenzar la evaluación?",
+    )
 
 
 def _enviar_menu_inicio_web(
@@ -1276,9 +1403,21 @@ def enviar_faq_encuesta_formulario_web(numero: str, payload: Dict[str, Any]) -> 
             token, phone_id, wa_id,
             "Por ahora no hay preguntas frecuentes configuradas.",
         )
-    else:
-        for parte in dividir_texto_whatsapp(faq):
-            enviar_mensaje_texto_simple(token, phone_id, wa_id, parte)
+        _enviar_menu_inicio_web(
+            wa_id,
+            token,
+            phone_id,
+            enviar_intro=False,
+            nombre=payload.get("nombre_saludo") or "aspirante",
+        )
+        _persistir_sesion_web(wa_id, payload, PASO_WEB_ESPERANDO_INICIO)
+        return {"status": "faq_vacio"}
+
+    bloques = dividir_faq_para_whatsapp(faq)
+    _log_faq_whatsapp("Contenido formateado", wa_id, "formulario_web", len(bloques))
+    for parte in bloques:
+        enviar_mensaje_texto_simple(token, phone_id, wa_id, parte)
+    _log_faq_whatsapp(f"Bloques enviados: {len(bloques)}", wa_id, "formulario_web", len(bloques))
 
     interactive = {
         "type": "button",
@@ -1296,9 +1435,10 @@ def enviar_faq_encuesta_formulario_web(numero: str, payload: Dict[str, Any]) -> 
         },
     }
     enviar_mensaje_interactivo(token, phone_id, wa_id, interactive)
+    _log_faq_whatsapp("Menú de continuación enviado", wa_id, "formulario_web", 0)
     # Mantener encuesta_web_esperando_inicio (no pasar a esperando_inicio_encuesta)
     _persistir_sesion_web(wa_id, payload, PASO_WEB_ESPERANDO_INICIO)
-    return {"status": "faq_enviado"}
+    return {"status": "faq_enviado", "bloques": len(bloques)}
 
 
 def procesar_inicio_encuesta_formulario_web(
@@ -1333,7 +1473,12 @@ def procesar_inicio_encuesta_formulario_web(
     )
     es_faq = (
         payload_id == PAYLOAD_WEB_FAQ
-        or cmd in {"preguntas frecuentes", "faq", "preguntas"}
+        or cmd in {
+            "preguntas frecuentes",
+            "ver preguntas frecuentes",
+            "faq",
+            "preguntas",
+        }
     )
 
     if es_comenzar:
