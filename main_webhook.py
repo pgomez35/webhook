@@ -27,7 +27,7 @@ from phonenumbers import geocoder, region_code_for_number
 from pydantic import BaseModel
 from rapidfuzz import process, fuzz
 
-from DataBase import buscar_usuario_por_telefono, get_connection, marcar_encuesta_no_finalizada, guardar_mensaje, \
+from DataBase import buscar_usuario_por_telefono, marcar_encuesta_no_finalizada, guardar_mensaje, \
     obtener_cuenta_por_phone_id, obtener_configuracion_agencia, guardar_mensaje_nuevo, obtener_cuenta_por_subdominio, \
     marcar_encuesta_completada, buscar_aspirante_por_usuario_tiktok, encuesta_finalizada, actualizar_telefono_aspirante
 # ============================
@@ -64,6 +64,7 @@ from utils_whatsapp_flujos import (
 )
 from main_encuesta_whatsapp import (
     iniciar_encuesta_onboarding_por_canal,
+    procesar_inicio_encuesta_whatsapp,
     procesar_respuesta_encuesta_whatsapp,
 )
 from utils_aspirantes import obtener_status_24hrs, \
@@ -578,7 +579,7 @@ def validar_aceptar_ciudad(usuario_ciudad, ciudades=CIUDADES_LATAM, score_minimo
 def enviar_diagnostico(numero: str) -> bool:
 
     try:
-        with get_connection() as conn:
+        with get_connection_context() as conn:
             with conn.cursor() as cur:
                 # 1️⃣ Buscar el creador por su número
                 cur.execute(
@@ -1342,25 +1343,29 @@ def mensaje_encuesta_final(
     nombre: str | None = None,
     url_info: str | None = None
 ) -> str:
-    nombre_agencia = current_business_name.get()
+    nombre_agencia = current_business_name.get() or "nuestra agencia"
+    nombre_ok = (nombre or "").strip()
 
-    saludo = f"¡Gracias, *{nombre}*! 🙌" if nombre else "¡Gracias! 🙌"
+    if nombre_ok:
+        saludo = f"🎉 ¡Listo, *{nombre_ok}*!"
+    else:
+        saludo = "🎉 ¡Listo!"
 
     cuerpo = (
-        f"✅ {saludo}\n\n"
-        f"*{nombre_agencia}* ya recibió tu información y "
-        "nuestro equipo la está evaluando.\n\n"
-        "⏳ El diagnóstico se enviará en las próximas horas.\n\n"
-        "Mientras tanto, puedes conocer cómo funciona el proceso de "
-        "evaluación, incorporación y resolver preguntas frecuentes aquí 👇"
+        f"{saludo}\n\n"
+        f"Ya recibimos tus respuestas correctamente. Gracias por contarnos un poco más "
+        f"sobre ti y tus objetivos en TikTok LIVE.\n\n"
+        f"Ahora el equipo de *{nombre_agencia}* revisará tu perfil y te avisaremos "
+        "cuando esté disponible tu evaluación inicial.\n\n"
+        "Mientras tanto, puedes consultar cómo funciona el proceso y resolver "
+        "preguntas frecuentes aquí 👇"
     )
 
     if url_info:
         cuerpo += f"\n\n🔗 {url_info}"
 
     cuerpo += (
-        "\n\n📌 Importante:\n"
-        "Este enlace se irá actualizando conforme avance tu proceso."
+        "\n\n📌 Guarda este enlace: se irá actualizando a medida que avances en el proceso."
     )
 
     return cuerpo
@@ -1831,6 +1836,7 @@ def _process_new_user_onboarding(
         "esperando_usuario_tiktok",
         "confirmando_nickname",
         "esperando_inicio_encuesta",
+        "encuesta_whatsapp_esperando_inicio",
         "encuesta_whatsapp_esperando_respuesta",
     ]
 
@@ -2015,6 +2021,16 @@ def _process_new_user_onboarding(
     # =====================================================
     if paso == "esperando_inicio_encuesta":
         enviar_inicio_encuesta(numero)
+        return {"status": "ok"}
+
+    if paso == "encuesta_whatsapp_esperando_inicio":
+        procesar_inicio_encuesta_whatsapp(
+            numero=numero,
+            tipo=tipo,
+            texto=texto,
+            payload_id=payload,
+            message_id_meta=None,
+        )
         return {"status": "ok"}
 
     if paso == "encuesta_whatsapp_esperando_respuesta":
@@ -3985,6 +4001,16 @@ async def _procesar_mensaje_unico(mensaje, tenant_name, phone_number_id, token):
     # C. ONBOARDING (PRIMERO)
     # ---------------------------------------------------------
     paso = obtener_flujo(wa_id)
+
+    if paso == "encuesta_whatsapp_esperando_inicio":
+        procesar_inicio_encuesta_whatsapp(
+            numero=wa_id,
+            tipo=tipo,
+            texto=texto,
+            payload_id=payload_id,
+            message_id_meta=mensaje.get("id"),
+        )
+        return
 
     if paso == "encuesta_whatsapp_esperando_respuesta":
         procesar_respuesta_encuesta_whatsapp(

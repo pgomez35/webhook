@@ -262,7 +262,11 @@ def _ttl_para_paso(paso: Any) -> int:
         return ttl_onboarding_confirmacion()
     if p == "esperando_inicio_encuesta":
         return ttl_onboarding_encuesta()
-    if p in ("encuesta_whatsapp_esperando_respuesta", "encuesta_whatsapp_presentacion"):
+    if p in (
+        "encuesta_whatsapp_esperando_respuesta",
+        "encuesta_whatsapp_esperando_inicio",
+        "encuesta_whatsapp_presentacion",
+    ):
         return ttl_onboarding_encuesta()
     if p in (
         "esperando_usuario_tiktok",

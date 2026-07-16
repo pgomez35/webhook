@@ -13,7 +13,6 @@ from gspread.worksheet import JSONResponse as GSpreadJSONResponse
 from fastapi.responses import JSONResponse
 
 from fastapi import HTTPException
-from psycopg2.errors import UniqueViolation
 
 from schemas import ActualizacionContactoInfo
 from creadores_catalogo import CREADOR_ESTADO_NOMBRE_ACTIVO
@@ -1298,10 +1297,17 @@ def crear_usuarios(datos):
                     "password_inicial": password  # 👈 solo para admin
                 }
 
-    except UniqueViolation:
+    except IntegrityError as e:
+        # 23505 = unique_violation (username/email duplicado)
+        if getattr(e, "pgcode", None) == "23505":
+            raise HTTPException(
+                status_code=409,
+                detail="El username o el email ya existe",
+            )
+        print("❌ IntegrityError al crear usuario administrador:", e)
         raise HTTPException(
-            status_code=409,
-            detail="El username o el email ya existe"
+            status_code=500,
+            detail="Error de integridad al crear el usuario",
         )
 
     except Exception as e:
