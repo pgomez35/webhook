@@ -64,6 +64,7 @@ from utils_whatsapp_flujos import (
 )
 from main_encuesta_whatsapp import (
     iniciar_encuesta_onboarding_por_canal,
+    procesar_inicio_encuesta_formulario_web,
     procesar_inicio_encuesta_whatsapp,
     procesar_respuesta_encuesta_whatsapp,
 )
@@ -1836,6 +1837,7 @@ def _process_new_user_onboarding(
         "esperando_usuario_tiktok",
         "confirmando_nickname",
         "esperando_inicio_encuesta",
+        "encuesta_web_esperando_inicio",
         "encuesta_whatsapp_esperando_inicio",
         "encuesta_whatsapp_esperando_respuesta",
     ]
@@ -1977,14 +1979,11 @@ def _process_new_user_onboarding(
             usuarios_temp.pop(numero, None)
 
             # Enviar encuesta según canal configurado
-            resultado_encuesta = iniciar_encuesta_onboarding_por_canal(
+            # (whatsapp / formulario_web definen su propio paso en whatsapp_flujos)
+            iniciar_encuesta_onboarding_por_canal(
                 numero=numero,
                 aspirante=aspirante,
             )
-
-            if resultado_encuesta.get("canal") != "whatsapp":
-                actualizar_flujo(numero, "esperando_inicio_encuesta")
-
             return {"status": "ok"}
 
         # -------------------------
@@ -2019,6 +2018,16 @@ def _process_new_user_onboarding(
     # =====================================================
     # PASO 3 – REENVÍO DE LINK (solo formulario web)
     # =====================================================
+    if paso == "encuesta_web_esperando_inicio":
+        procesar_inicio_encuesta_formulario_web(
+            numero=numero,
+            tipo=tipo,
+            texto=texto,
+            payload_id=payload,
+            message_id_meta=None,
+        )
+        return {"status": "ok"}
+
     if paso == "esperando_inicio_encuesta":
         enviar_inicio_encuesta(numero)
         return {"status": "ok"}
@@ -4001,6 +4010,16 @@ async def _procesar_mensaje_unico(mensaje, tenant_name, phone_number_id, token):
     # C. ONBOARDING (PRIMERO)
     # ---------------------------------------------------------
     paso = obtener_flujo(wa_id)
+
+    if paso == "encuesta_web_esperando_inicio":
+        procesar_inicio_encuesta_formulario_web(
+            numero=wa_id,
+            tipo=tipo,
+            texto=texto,
+            payload_id=payload_id,
+            message_id_meta=mensaje.get("id"),
+        )
+        return
 
     if paso == "encuesta_whatsapp_esperando_inicio":
         procesar_inicio_encuesta_whatsapp(

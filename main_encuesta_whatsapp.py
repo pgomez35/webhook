@@ -1057,6 +1057,302 @@ def _enviar_formulario_web(numero: str) -> None:
     enviar_inicio_encuesta(numero)
 
 
+# =========================================================
+# FORMULARIO WEB: menú previo al enlace (sin enviar link aún)
+# =========================================================
+
+TIPO_FLUJO_ENCUESTA_WEB = "encuesta_aspirante_formulario_web"
+PASO_WEB_ESPERANDO_INICIO = "encuesta_web_esperando_inicio"
+PAYLOAD_WEB_COMENZAR = "ENCUESTA_WEB_COMENZAR"
+PAYLOAD_WEB_FAQ = "ENCUESTA_WEB_FAQ"
+
+MENSAJE_INICIO_ENCUESTA_WEB = (
+    "✨ ¡Perfecto, {nombre}!\n\n"
+    "Antes de continuar, queremos conocerte un poco mejor.\n\n"
+    "Completarás una evaluación breve en el portal. "
+    "Te tomará menos de un minuto.\n\n"
+    "No hay respuestas buenas o malas: queremos conocer tus objetivos "
+    "y disponibilidad para orientarte mejor."
+)
+
+MSG_OPCIONES_INICIO_WEB = (
+    "Para continuar, selecciona *Comenzar evaluación*. "
+    "También puedes consultar las preguntas frecuentes antes de iniciar."
+)
+
+
+def _telefono_enmascarado(numero: str) -> str:
+    n = (numero or "").strip()
+    if len(n) < 6:
+        return "****"
+    return f"{n[:3]}****{n[-2:]}"
+
+
+def _log_encuesta_web(accion: str, numero: str, paso: Optional[str] = None) -> None:
+    try:
+        from tenant import current_tenant
+
+        tenant = current_tenant.get()
+    except Exception:
+        tenant = "?"
+    print(
+        f"[ENCUESTA WEB] {accion} | tenant={tenant} | paso={paso or '-'} | "
+        f"tel={_telefono_enmascarado(numero)}"
+    )
+
+
+def _obtener_sesion_encuesta_web(numero: str) -> Optional[Dict[str, Any]]:
+    row = obtener_flujo_whatsapp(numero)
+    if not row:
+        return None
+    payload = row.get("payload_json")
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("tipo_flujo") != TIPO_FLUJO_ENCUESTA_WEB:
+        return None
+    payload["_paso"] = row.get("paso")
+    payload["_aspirante_id_row"] = row.get("aspirante_id")
+    return payload
+
+
+def _persistir_sesion_web(
+    numero: str,
+    payload: Dict[str, Any],
+    paso: str = PASO_WEB_ESPERANDO_INICIO,
+) -> None:
+    aspirante_id = payload.get("aspirante_id") or payload.get("_aspirante_id_row")
+    clean = {k: v for k, v in payload.items() if not str(k).startswith("_")}
+    actualizar_flujo_whatsapp(
+        numero,
+        paso,
+        aspirante_id=aspirante_id,
+        payload_json=clean,
+        ttl_minutos=ttl_onboarding_encuesta(),
+    )
+
+
+def _payload_botones_inicio_web(*, incluir_faq: bool) -> Dict[str, Any]:
+    buttons = [
+        {
+            "type": "reply",
+            "reply": {
+                "id": PAYLOAD_WEB_COMENZAR,
+                "title": "🚀 Comenzar",
+            },
+        }
+    ]
+    if incluir_faq:
+        buttons.append(
+            {
+                "type": "reply",
+                "reply": {
+                    "id": PAYLOAD_WEB_FAQ,
+                    "title": "❓ Ver FAQ",
+                },
+            }
+        )
+    return {
+        "type": "button",
+        "body": {"text": "¿Listo para comenzar la evaluación?"},
+        "action": {"buttons": buttons},
+    }
+
+
+def _enviar_menu_inicio_web(
+    numero: str,
+    token: str,
+    phone_id: str,
+    *,
+    enviar_intro: bool,
+    nombre: str,
+) -> bool:
+    if enviar_intro:
+        intro = MENSAJE_INICIO_ENCUESTA_WEB.format(nombre=nombre or "aspirante")
+        codigo, _ = enviar_mensaje_texto_simple(token, phone_id, numero, intro)
+        if codigo is None or codigo >= 300:
+            return False
+
+    faq = _faq_disponible()
+    interactive = _payload_botones_inicio_web(incluir_faq=bool(faq))
+    codigo, _ = enviar_mensaje_interactivo(token, phone_id, numero, interactive)
+    ok = codigo is not None and codigo < 300
+    if ok:
+        _log_encuesta_web("Menú inicial enviado", numero, PASO_WEB_ESPERANDO_INICIO)
+    return ok
+
+
+def enviar_menu_encuesta_formulario_web(
+    numero: str,
+    aspirante: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Prepara sesión y muestra intro + botones. NO envía el enlace todavía.
+    """
+    wa_id = (numero or "").strip()
+    token, phone_id = _credenciales_whatsapp()
+    if not token or not phone_id:
+        return {"canal": "formulario_web", "enviado": False, "error": "sin_credenciales"}
+
+    sesion = _obtener_sesion_encuesta_web(wa_id)
+    if sesion and sesion.get("enlace_enviado"):
+        # Ya comenzó: reenviar enlace una sola vía (flujo esperando_inicio_encuesta)
+        _enviar_formulario_web(wa_id)
+        _log_encuesta_web("Enlace reenviado (sesión ya iniciada)", wa_id, "esperando_inicio_encuesta")
+        return {"canal": "formulario_web", "enviado": True, "reenviado": True}
+
+    if sesion:
+        ok = _enviar_menu_inicio_web(
+            wa_id,
+            token,
+            phone_id,
+            enviar_intro=True,
+            nombre=sesion.get("nombre_saludo") or _nombre_aspirante(aspirante) or "aspirante",
+        )
+        _persistir_sesion_web(wa_id, sesion, PASO_WEB_ESPERANDO_INICIO)
+        return {
+            "canal": "formulario_web",
+            "enviado": False,
+            "esperando_inicio": True,
+            "menu_enviado": ok,
+        }
+
+    payload = {
+        "tipo_flujo": TIPO_FLUJO_ENCUESTA_WEB,
+        "aspirante_id": aspirante.get("id") if aspirante else None,
+        "nombre_saludo": _nombre_aspirante(aspirante) or None,
+        "iniciada": False,
+        "enlace_enviado": False,
+        "ultimo_message_id_meta": None,
+        "preparada_en": datetime.now(timezone.utc).isoformat(),
+    }
+    nombre = payload["nombre_saludo"] or "aspirante"
+    ok = _enviar_menu_inicio_web(
+        wa_id, token, phone_id, enviar_intro=True, nombre=nombre
+    )
+    if not ok:
+        return {
+            "canal": "formulario_web",
+            "enviado": False,
+            "error": "No se pudo enviar menú inicial",
+        }
+
+    _persistir_sesion_web(wa_id, payload, PASO_WEB_ESPERANDO_INICIO)
+    return {
+        "canal": "formulario_web",
+        "enviado": False,
+        "esperando_inicio": True,
+        "menu_enviado": True,
+    }
+
+
+def comenzar_encuesta_formulario_web(numero: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    wa_id = (numero or "").strip()
+
+    if payload.get("enlace_enviado"):
+        _log_encuesta_web("Evento duplicado ignorado", wa_id, PASO_WEB_ESPERANDO_INICIO)
+        return {"status": "duplicado_enlace"}
+
+    _log_encuesta_web("Comenzar seleccionado", wa_id, PASO_WEB_ESPERANDO_INICIO)
+    _enviar_formulario_web(wa_id)
+
+    payload["iniciada"] = True
+    payload["enlace_enviado"] = True
+    payload["enlace_enviado_en"] = datetime.now(timezone.utc).isoformat()
+    _persistir_sesion_web(wa_id, payload, "esperando_inicio_encuesta")
+    _log_encuesta_web("Enlace enviado", wa_id, "esperando_inicio_encuesta")
+    return {"status": "ok", "enlace_enviado": True}
+
+
+def enviar_faq_encuesta_formulario_web(numero: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    wa_id = (numero or "").strip()
+    token, phone_id = _credenciales_whatsapp()
+    if not token or not phone_id:
+        return {"status": "sin_credenciales"}
+
+    _log_encuesta_web("FAQ solicitado", wa_id, PASO_WEB_ESPERANDO_INICIO)
+    faq = _faq_disponible()
+    if not faq:
+        enviar_mensaje_texto_simple(
+            token, phone_id, wa_id,
+            "Por ahora no hay preguntas frecuentes configuradas.",
+        )
+    else:
+        for parte in dividir_texto_whatsapp(faq):
+            enviar_mensaje_texto_simple(token, phone_id, wa_id, parte)
+
+    interactive = {
+        "type": "button",
+        "body": {"text": "Cuando quieras, puedes comenzar la evaluación."},
+        "action": {
+            "buttons": [
+                {
+                    "type": "reply",
+                    "reply": {
+                        "id": PAYLOAD_WEB_COMENZAR,
+                        "title": "🚀 Comenzar",
+                    },
+                }
+            ]
+        },
+    }
+    enviar_mensaje_interactivo(token, phone_id, wa_id, interactive)
+    # Mantener encuesta_web_esperando_inicio (no pasar a esperando_inicio_encuesta)
+    _persistir_sesion_web(wa_id, payload, PASO_WEB_ESPERANDO_INICIO)
+    return {"status": "faq_enviado"}
+
+
+def procesar_inicio_encuesta_formulario_web(
+    numero: str,
+    tipo: Optional[str],
+    texto: Optional[str],
+    payload_id: Optional[str],
+    message_id_meta: Optional[str] = None,
+) -> Dict[str, Any]:
+    wa_id = (numero or "").strip()
+    payload = _obtener_sesion_encuesta_web(wa_id)
+    if not payload:
+        # Sin sesión: recrear menú básico
+        return enviar_menu_encuesta_formulario_web(wa_id)
+
+    if message_id_meta and payload.get("ultimo_message_id_meta") == message_id_meta:
+        _log_encuesta_web("Evento duplicado ignorado", wa_id, PASO_WEB_ESPERANDO_INICIO)
+        return {"status": "duplicado"}
+
+    if message_id_meta:
+        payload["ultimo_message_id_meta"] = message_id_meta
+        _persistir_sesion_web(wa_id, payload, PASO_WEB_ESPERANDO_INICIO)
+
+    token, phone_id = _credenciales_whatsapp()
+    if not token or not phone_id:
+        return {"status": "sin_credenciales"}
+
+    cmd = _normalizar_comando(texto)
+    es_comenzar = (
+        payload_id == PAYLOAD_WEB_COMENZAR
+        or cmd in {"comenzar", "empezar", "iniciar", "comenzar evaluacion", "comenzar evaluación"}
+    )
+    es_faq = (
+        payload_id == PAYLOAD_WEB_FAQ
+        or cmd in {"preguntas frecuentes", "faq", "preguntas"}
+    )
+
+    if es_comenzar:
+        return comenzar_encuesta_formulario_web(wa_id, payload)
+
+    if es_faq:
+        return enviar_faq_encuesta_formulario_web(wa_id, payload)
+
+    enviar_mensaje_texto_simple(token, phone_id, wa_id, MSG_OPCIONES_INICIO_WEB)
+    _enviar_menu_inicio_web(
+        wa_id,
+        token,
+        phone_id,
+        enviar_intro=False,
+        nombre=payload.get("nombre_saludo") or "aspirante",
+    )
+    return {"status": "opcion_invalida"}
+
+
 def iniciar_encuesta_onboarding_por_canal(
     numero: str,
     aspirante: Optional[Dict[str, Any]] = None,
@@ -1067,8 +1363,22 @@ def iniciar_encuesta_onboarding_por_canal(
     raw = obtener_configuracion_agencia("canal_encuesta_aspirante")
     canal = str(raw or "").strip().lower()
 
+    try:
+        from tenant import current_tenant, current_phone_id
+
+        tenant = current_tenant.get()
+        phone_id = current_phone_id.get()
+    except Exception:
+        tenant, phone_id = "?", None
+
+    phone_safe = f"...{str(phone_id)[-6:]}" if phone_id else "None"
+    print(
+        f"[ENCUESTA ONBOARDING] canal={canal or 'formulario_web(default)'} | "
+        f"tenant={tenant} | phone_id={phone_safe} | tel={_telefono_enmascarado(numero)}"
+    )
+
     if canal == "whatsapp":
         return enviar_encuesta_aspirante_whatsapp(numero=numero, aspirante=aspirante)
 
-    _enviar_formulario_web(numero)
-    return {"canal": "formulario_web", "enviado": True}
+    # formulario_web (default): menú previo, sin enlace todavía
+    return enviar_menu_encuesta_formulario_web(numero=numero, aspirante=aspirante)

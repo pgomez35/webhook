@@ -265,7 +265,9 @@ def _ttl_para_paso(paso: Any) -> int:
     if p in (
         "encuesta_whatsapp_esperando_respuesta",
         "encuesta_whatsapp_esperando_inicio",
+        "encuesta_web_esperando_inicio",
         "encuesta_whatsapp_presentacion",
+        "esperando_inicio_encuesta",
     ):
         return ttl_onboarding_encuesta()
     if p in (
