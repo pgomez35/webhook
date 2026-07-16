@@ -407,9 +407,8 @@ def _log_faq_whatsapp(accion: str, numero: str, canal: str, bloques: int = 0) ->
     )
 
 
-# Reply buttons limitan el título a 20 chars; el texto completo
-# "Ver preguntas frecuentes" = 24 chars → lista interactiva (title ≤ 24).
-TITULO_FAQ_LISTA = "Ver preguntas frecuentes"  # 24 chars exactos
+# Reply buttons: título ≤ 20 chars. "❓ Tengo preguntas" cabe (17).
+TITULO_FAQ_BOTON = "❓ Tengo preguntas"
 
 
 def _payload_menu_inicio(
@@ -420,51 +419,32 @@ def _payload_menu_inicio(
     body_text: str,
 ) -> Dict[str, Any]:
     """
-    Menú de inicio.
-    - Sin FAQ: botón reply (título corto).
-    - Con FAQ: lista interactiva para mostrar el texto completo
-      'Ver preguntas frecuentes' (no cabe en reply button de 20).
+    Menú de inicio con reply buttons (type=button).
+    Payloads internos se mantienen (ENCUESTA_WA_* / ENCUESTA_WEB_*).
     """
-    if not incluir_faq:
-        return {
-            "type": "button",
-            "body": {"text": body_text[:MAX_BODY_TEXT]},
-            "action": {
-                "buttons": [
-                    {
-                        "type": "reply",
-                        "reply": {
-                            "id": payload_comenzar,
-                            "title": "🚀 Comenzar",
-                        },
-                    }
-                ]
+    buttons: List[Dict[str, Any]] = [
+        {
+            "type": "reply",
+            "reply": {
+                "id": payload_comenzar,
+                "title": "🚀 Comenzar",
             },
         }
-
+    ]
+    if incluir_faq:
+        buttons.append(
+            {
+                "type": "reply",
+                "reply": {
+                    "id": payload_faq,
+                    "title": TITULO_FAQ_BOTON,
+                },
+            }
+        )
     return {
-        "type": "list",
+        "type": "button",
         "body": {"text": body_text[:MAX_BODY_TEXT]},
-        "action": {
-            "button": "Ver opciones",
-            "sections": [
-                {
-                    "title": "Opciones",
-                    "rows": [
-                        {
-                            "id": payload_comenzar,
-                            "title": "🚀 Comenzar",
-                            "description": "Iniciar ahora",
-                        },
-                        {
-                            "id": payload_faq,
-                            "title": TITULO_FAQ_LISTA,
-                            "description": "❓ Consulta antes de empezar",
-                        },
-                    ],
-                }
-            ],
-        },
+        "action": {"buttons": buttons},
     }
 
 
@@ -885,6 +865,7 @@ def procesar_inicio_encuesta_whatsapp(
     es_faq = (
         payload_id == PAYLOAD_FAQ
         or cmd in {
+            "tengo preguntas",
             "preguntas frecuentes",
             "ver preguntas frecuentes",
             "faq",
@@ -1474,6 +1455,7 @@ def procesar_inicio_encuesta_formulario_web(
     es_faq = (
         payload_id == PAYLOAD_WEB_FAQ
         or cmd in {
+            "tengo preguntas",
             "preguntas frecuentes",
             "ver preguntas frecuentes",
             "faq",
