@@ -212,14 +212,14 @@ def procesar_evento_partner_instalado(entry, change, value, event):
 
         print(f"🧩 WABA instalado detectado: {waba_id}")
 
-        session_id = "abc123"  # ideal: pásalo desde tu tenant/middleware
-        resultado_waba_id = guardar_o_actualizar_waba_db(session_id, waba_id)
+        # El onboarding moderno completa la vinculación vía /meta/embedded-signup/complete.
+        # Aquí solo registramos el evento; no usamos session_id fijo.
+        print(
+            "ℹ️ account_update PARTNER_*: esperar complete Embedded Signup "
+            f"para vincular WABA {waba_id} al tenant autenticado."
+        )
+        return {"status": "ok", "waba_id": waba_id, "note": "await_embedded_signup_complete"}
 
-        if resultado_waba_id.get("status") == "completado":
-            actualizado = actualizar_info_phone(resultado_waba_id)
-            print(f"📞 Actualización phone info → {actualizado}")
-
-        return {"status": "ok", "waba_id": waba_id}
 
     except Exception as e:
         print("❌ Error procesando evento PARTNER_APP_INSTALLED:", e)

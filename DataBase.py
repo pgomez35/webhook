@@ -2992,6 +2992,103 @@ def crear_invitacion_minima(aspirante_id: int, usuario_invita: int, manager_id: 
         print(f"❌ Error al crear invitación mínima para creador {aspirante_id}:", e)
         return None
 
+def guardar_o_actualizar_whatsapp_business_account(
+    subdominio: str,
+    access_token: str,
+    waba_id: str,
+    phone_number_id: str,
+    business_id: str | None = None,
+    onboarding_type: str = "whatsapp_business_app_onboarding",
+    coexistence_enabled: bool = True,
+):
+    """
+    Upsert mínimo de conexión WABA por tenant (subdominio).
+    Reutiliza public.whatsapp_business_accounts sin session_id fijo.
+    """
+    try:
+        with get_connection_public_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT id
+                    FROM whatsapp_business_accounts
+                    WHERE subdominio = %s
+                       OR phone_number_id = %s
+                    ORDER BY
+                      CASE WHEN subdominio = %s THEN 0 ELSE 1 END,
+                      updated_at DESC NULLS LAST
+                    LIMIT 1
+                    """,
+                    (subdominio, phone_number_id, subdominio),
+                )
+                existente = cur.fetchone()
+
+                if existente:
+                    cur.execute(
+                        """
+                        UPDATE whatsapp_business_accounts
+                        SET access_token = %s,
+                            waba_id = %s,
+                            phone_number_id = %s,
+                            business_id = COALESCE(%s, business_id),
+                            onboarding_type = %s,
+                            coexistence_enabled = %s,
+                            subdominio = %s,
+                            status = 'connected',
+                            connected_at = NOW(),
+                            updated_at = NOW()
+                        WHERE id = %s
+                        RETURNING id, waba_id, phone_number_id, access_token
+                        """,
+                        (
+                            access_token,
+                            waba_id,
+                            phone_number_id,
+                            business_id,
+                            onboarding_type,
+                            coexistence_enabled,
+                            subdominio,
+                            existente["id"],
+                        ),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO whatsapp_business_accounts (
+                            access_token, waba_id, phone_number_id, business_id,
+                            onboarding_type, coexistence_enabled, subdominio,
+                            status, connected_at, created_at, updated_at
+                        ) VALUES (
+                            %s, %s, %s, %s,
+                            %s, %s, %s,
+                            'connected', NOW(), NOW(), NOW()
+                        )
+                        RETURNING id, waba_id, phone_number_id, access_token
+                        """,
+                        (
+                            access_token,
+                            waba_id,
+                            phone_number_id,
+                            business_id,
+                            onboarding_type,
+                            coexistence_enabled,
+                            subdominio,
+                        ),
+                    )
+
+                row = cur.fetchone()
+                return {
+                    "status": "completado",
+                    "id": row["id"],
+                    "waba_id": row["waba_id"],
+                    "phone_number_id": row["phone_number_id"],
+                    "access_token": row["access_token"],
+                }
+    except Exception as e:
+        print("❌ Error en guardar_o_actualizar_whatsapp_business_account:", e)
+        return {"status": "error", "error": str(e)}
+
+
 def guardar_o_actualizar_token_db(session_id: str, token: str):
     try:
         with get_connection_public_context() as conn:
@@ -3057,7 +3154,7 @@ def obtener_cuenta_por_phone_id(phone_number_id: str) -> dict | None:
                         phone_number,
                         phone_number_id,
                         business_name,
-                        subdominio,       -- ✅ importante
+                        subdominio,
                         status
                     FROM whatsapp_business_accounts
                     WHERE phone_number_id = %s
@@ -3077,7 +3174,7 @@ def obtener_cuenta_por_phone_id(phone_number_id: str) -> dict | None:
             "phone_number": row[3],
             "phone_number_id": row[4],
             "business_name": row[5],
-            "subdominio": row[6],    # ✅ ahora sí lo retorna
+            "subdominio": row[6],
             "status": row[7],
         }
 
@@ -3097,7 +3194,6 @@ def obtener_cuenta_por_phone_number(phone_number: str) -> dict | None:
     """Busca en la base de datos la cuenta de WhatsApp correspondiente al phone_number."""
 
     try:
-        # 🔹 Normalizar número: solo dígitos
         phone_number_normalizado = re.sub(r'\D', '', phone_number or "")
 
         if not phone_number_normalizado:
@@ -3114,7 +3210,7 @@ def obtener_cuenta_por_phone_number(phone_number: str) -> dict | None:
                         phone_number,
                         phone_number_id,
                         business_name,
-                        subdominio,   -- ✅ ahora incluido
+                        subdominio,
                         status
                     FROM whatsapp_business_accounts
                     WHERE phone_number = %s
@@ -3134,7 +3230,7 @@ def obtener_cuenta_por_phone_number(phone_number: str) -> dict | None:
             "phone_number": row[3],
             "phone_number_id": row[4],
             "business_name": row[5],
-            "subdominio": row[6],   # ✅ agregado
+            "subdominio": row[6],
             "status": row[7],
         }
 
@@ -3149,12 +3245,11 @@ def obtener_cuenta_por_phone_number(phone_number: str) -> dict | None:
         return None
 
 def obtener_cuenta_por_subdominio(subdominio: str) -> dict | None:
-    """Busca en la base de datos la cuenta de WhatsApp correspondiente al phone_number."""
+    """Busca en la base de datos la cuenta de WhatsApp correspondiente al subdominio."""
     if not subdominio:
         return None
 
     try:
-        # Usar context manager para asegurar que la conexión se devuelva al pool
         with get_connection_public_context() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
@@ -3165,7 +3260,7 @@ def obtener_cuenta_por_subdominio(subdominio: str) -> dict | None:
                         phone_number,
                         phone_number_id,
                         business_name,
-                        subdominio,   -- ✅ ahora incluido
+                        subdominio,
                         status
                     FROM whatsapp_business_accounts
                     WHERE subdominio = %s
@@ -3185,7 +3280,7 @@ def obtener_cuenta_por_subdominio(subdominio: str) -> dict | None:
             "phone_number": row[3],
             "phone_number_id": row[4],
             "business_name": row[5],
-            "subdominio": row[6],   # ✅ agregado
+            "subdominio": row[6],
             "status": row[7],
         }
 
