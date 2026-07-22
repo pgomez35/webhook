@@ -139,7 +139,7 @@ app.add_middleware(
         "https://talentum-manager.com",
         "https://www.talentum-manager.com",
         "https://test.talentum-manager.com",
-        "https://prestige.talentum-manager.com",
+        "https://agency15-5.talentum-manager.com",
     ],
     allow_credentials=True,
     allow_methods=["*"],
