@@ -40,8 +40,11 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
         tenant_name = self._resolve_tenant_name(request)
         tenant_schema = self._build_schema_name(tenant_name)
-        
-        print(f"🔍 [MIDDLEWARE] Resolviendo tenant - tenant_name: {tenant_name}, tenant_schema: {tenant_schema}")
+
+        print(
+            f"🔍 [MIDDLEWARE] Resolviendo tenant - "
+            f"subdominio: {tenant_name}, schema: {tenant_schema}"
+        )
         print(f"🔍 [MIDDLEWARE] Host: {request.headers.get('host', 'N/A')}")
         print(f"🔍 [MIDDLEWARE] X-Tenant-Name header: {request.headers.get('x-tenant-name', 'N/A')}")
 
@@ -49,10 +52,11 @@ class TenantMiddleware(BaseHTTPMiddleware):
         current_tenant.set(tenant_schema)
         request.state.agencia = tenant_schema
         request.state.tenant_name = tenant_name
+        request.state.tenant_schema = tenant_schema
 
-        # 2️⃣ Obtener credenciales por subdominio/tenant
+        # 2️⃣ Obtener credenciales por subdominio web (columna subdominio en public)
         try:
-            cuenta = obtener_cuenta_por_subdominio(tenant_schema)
+            cuenta = obtener_cuenta_por_subdominio(tenant_name)
             if cuenta:
                 current_token.set(cuenta["access_token"])
                 current_phone_id.set(cuenta["phone_number_id"])
@@ -66,13 +70,19 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 current_business_name.set(business_name)
                 request.state.business_name = business_name
             else:
-                print(f"⚠️ No hay credenciales WABA para tenant '{tenant_schema}'")
+                print(
+                    f"⚠️ No hay credenciales WABA para "
+                    f"subdominio: {tenant_name} (schema: {tenant_schema})"
+                )
                 current_token.set(None)
                 current_phone_id.set(None)
                 current_business_name.set(None)
                 request.state.business_name = None
         except Exception as e:
-            print(f"❌ Error obteniendo credenciales WABA para tenant '{tenant_schema}': {e}")
+            print(
+                f"❌ Error obteniendo credenciales WABA para "
+                f"subdominio: {tenant_name} (schema: {tenant_schema}): {e}"
+            )
             current_token.set(None)
             current_phone_id.set(None)
             current_business_name.set(None)
@@ -150,16 +160,17 @@ class TenantMiddleware(BaseHTTPMiddleware):
     @staticmethod
     def _build_schema_name(tenant_name: str) -> str:
         """
-        Construye el nombre del schema a partir del tenant_name.
+        Construye el nombre del schema PostgreSQL a partir del subdominio web.
         Los schemas en PostgreSQL NO tienen prefijo 'agencia_'.
-        
+
         Args:
-            tenant_name: Nombre del tenant (ej: "test", "prestige")
-        
+            tenant_name: Subdominio web (ej: "agency15-5", "test", "prestige")
+
         Returns:
-            Nombre del schema normalizado (ej: "test", "prestige")
+            Nombre del schema (ej: "agency15_5", "test", "prestige")
         """
-        # Normalizar: convertir guiones a guiones bajos y minúsculas
+        # Único punto donde se convierte subdominio web → schema BD
+        # (guiones → guiones bajos)
         normalized = tenant_name.replace("-", "_").lower().strip()
         
         # Si viene con prefijo 'agencia_', eliminarlo (para compatibilidad)

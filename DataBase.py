@@ -3245,7 +3245,14 @@ def obtener_cuenta_por_phone_number(phone_number: str) -> dict | None:
         return None
 
 def obtener_cuenta_por_subdominio(subdominio: str) -> dict | None:
-    """Busca en la base de datos la cuenta de WhatsApp correspondiente al subdominio."""
+    """
+    Busca la cuenta WABA en public.whatsapp_business_accounts por subdominio web.
+
+    `subdominio` debe ser el valor web (puede incluir guiones), p.ej. "agency15-5".
+    No convierte guiones a guiones bajos: esa normalización es solo para el schema
+    vía TenantMiddleware._build_schema_name().
+    Usa get_connection_public_context() (search_path = public), no el del tenant.
+    """
     if not subdominio:
         return None
 
@@ -3262,7 +3269,7 @@ def obtener_cuenta_por_subdominio(subdominio: str) -> dict | None:
                         business_name,
                         subdominio,
                         status
-                    FROM whatsapp_business_accounts
+                    FROM public.whatsapp_business_accounts
                     WHERE subdominio = %s
                     LIMIT 1;
                 """, (subdominio,))
@@ -3286,12 +3293,12 @@ def obtener_cuenta_por_subdominio(subdominio: str) -> dict | None:
 
         print(
             f"✅ Cuenta WABA encontrada: {cuenta['business_name']} "
-            f"({cuenta['phone_number']}) - Tenant/Subdominio: {cuenta['subdominio']}"
+            f"({cuenta['phone_number']}) - subdominio: {cuenta['subdominio']}"
         )
         return cuenta
 
     except Exception as e:
-        print(f"❌ Error al obtener cuenta WhatsApp (phone_number={subdominio}): {e}")
+        print(f"❌ Error al obtener cuenta WhatsApp (subdominio={subdominio}): {e}")
         import traceback
         traceback.print_exc()
         return None
