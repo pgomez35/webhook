@@ -24,7 +24,8 @@ from DataBase import actualizar_contacto_info_db, actualizar_nombre_contacto, el
     obtener_todos_usuarioss, crear_usuarios, obtener_usuarios_por_id, eliminar_usuarios, cambiar_estado_usuarios, \
     obtener_usuarios_por_username, es_admin, actualiza_password_usuario, actualizar_usuarios, \
     obtener_estadisticas_evaluacion, obtener_todos_responsables_agendas, obtener_todos_manager, \
-    guardar_o_actualizar_whatsapp_business_account, hash_password
+    guardar_o_actualizar_token_db, guardar_o_actualizar_whatsapp_business_account, \
+    get_connection_public_context, hash_password
 from schemas import *
 
 # Tu propio código/librerías
@@ -536,8 +537,9 @@ def _subscribe_app_to_waba(access_token: str, waba_id: str) -> bool:
 @app.post("/meta/exchange_code")
 async def exchange_code(request: Request):
     """
-    Completa Embedded Signup en modo coexistencia
-    (whatsapp_business_app_onboarding).
+    Embedded Signup:
+    - whatsapp_business_app_onboarding → coexistencia (número en app del celular)
+    - cloud_api → flujo tradicional existente (session_id + guardar_o_actualizar_token_db)
     """
     try:
         payload = await request.json()
@@ -545,23 +547,28 @@ async def exchange_code(request: Request):
         return _meta_error_response("JSON inválido", error="invalid_payload")
 
     code = (payload.get("code") or "").strip()
-    waba_id = (payload.get("waba_id") or "").strip()
-    phone_number_id = (payload.get("phone_number_id") or "").strip()
+    waba_id = (payload.get("waba_id") or "").strip() or None
+    phone_number_id = (
+        payload.get("phone_number_id") or payload.get("phone_id") or ""
+    ).strip() or None
     business_id = payload.get("business_id")
     if isinstance(business_id, str):
         business_id = business_id.strip() or None
-    onboarding_type = (payload.get("onboarding_type") or "").strip()
+    onboarding_type = (payload.get("onboarding_type") or "cloud_api").strip()
     redirect_uri = (payload.get("redirect_uri") or META_REDIRECT_URL or "").strip() or None
 
-    if not code or not waba_id or not phone_number_id:
+    if not code:
         return _meta_error_response(
-            "Se requieren code, waba_id y phone_number_id",
-            error="missing_fields",
+            "Se requiere el parámetro code",
+            error="missing_code",
         )
 
-    if onboarding_type != "whatsapp_business_app_onboarding":
+    if onboarding_type not in (
+        "whatsapp_business_app_onboarding",
+        "cloud_api",
+    ):
         return _meta_error_response(
-            "onboarding_type debe ser whatsapp_business_app_onboarding",
+            "onboarding_type inválido",
             error="invalid_onboarding_type",
         )
 
@@ -576,12 +583,7 @@ async def exchange_code(request: Request):
         tenant = current_tenant.get()
     except Exception:
         tenant = None
-    subdominio = (tenant or "").strip().lower()
-    if not subdominio:
-        return _meta_error_response(
-            "No se pudo determinar el tenant",
-            error="missing_tenant",
-        )
+    subdominio = (tenant or "").strip().lower() or None
 
     token_url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/oauth/access_token"
     params = {
@@ -589,7 +591,8 @@ async def exchange_code(request: Request):
         "client_id": META_APP_ID,
         "client_secret": META_APP_SECRET,
     }
-    if redirect_uri:
+    # Flujo tradicional histórico NO enviaba redirect_uri a Meta.
+    if onboarding_type == "whatsapp_business_app_onboarding" and redirect_uri:
         params["redirect_uri"] = redirect_uri
 
     try:
@@ -615,55 +618,126 @@ async def exchange_code(request: Request):
 
     access_token = data["access_token"]
 
-    if not _phone_belongs_to_waba(access_token, waba_id, phone_number_id):
-        return _meta_error_response(
-            "El phone_number_id no pertenece a la WABA indicada.",
-            error="phone_waba_mismatch",
-            status_code=422,
+    # 1) COEXISTENCIA
+    if onboarding_type == "whatsapp_business_app_onboarding":
+        if not waba_id or not phone_number_id:
+            return _meta_error_response(
+                "Se requieren waba_id y phone_number_id para coexistencia",
+                error="missing_fields",
+            )
+        if not subdominio:
+            return _meta_error_response(
+                "No se pudo determinar el tenant",
+                error="missing_tenant",
+            )
+
+        if not _phone_belongs_to_waba(access_token, waba_id, phone_number_id):
+            return _meta_error_response(
+                "El phone_number_id no pertenece a la WABA indicada.",
+                error="phone_waba_mismatch",
+                status_code=422,
+            )
+
+        if not _subscribe_app_to_waba(access_token, waba_id):
+            return _meta_error_response(
+                "No fue posible suscribir la aplicación a la WABA.",
+                error="subscribe_failed",
+                status_code=502,
+            )
+
+        resultado = guardar_o_actualizar_whatsapp_business_account(
+            subdominio=subdominio,
+            access_token=access_token,
+            waba_id=waba_id,
+            phone_number_id=phone_number_id,
+            business_id=business_id,
+            onboarding_type=onboarding_type,
+            coexistence_enabled=True,
         )
 
-    if not _subscribe_app_to_waba(access_token, waba_id):
-        return _meta_error_response(
-            "No fue posible suscribir la aplicación a la WABA.",
-            error="subscribe_failed",
-            status_code=502,
-        )
+        if resultado.get("status") == "error":
+            return _meta_error_response(
+                "No fue posible guardar la conexión.",
+                error="db_error",
+                status_code=500,
+            )
 
-    resultado = guardar_o_actualizar_whatsapp_business_account(
-        subdominio=subdominio,
-        access_token=access_token,
-        waba_id=waba_id,
-        phone_number_id=phone_number_id,
-        business_id=business_id,
-        onboarding_type=onboarding_type,
-        coexistence_enabled=True,
-    )
+        try:
+            actualizar_info_phone(
+                {
+                    "id": resultado.get("id"),
+                    "waba_id": waba_id,
+                    "access_token": access_token,
+                }
+            )
+        except Exception:
+            logging.exception("actualizar_info_phone falló tras guardar coexistencia")
 
-    if resultado.get("status") == "error":
-        return _meta_error_response(
-            "No fue posible guardar la conexión.",
-            error="db_error",
-            status_code=500,
-        )
-
-    try:
-        actualizar_info_phone(
-            {
-                "id": resultado.get("id"),
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "connected",
                 "waba_id": waba_id,
-                "access_token": access_token,
-            }
+                "phone_number_id": phone_number_id,
+                "onboarding_type": onboarding_type,
+                "message": "WhatsApp Business conectado correctamente en modo coexistencia.",
+            },
         )
+
+    # 2) CLOUD API — flujo tradicional conservado
+    logging.info("Código OAuth recibido (cloud_api): %s...%s", code[:6], code[-6:])
+
+    session_id = "abc123"
+    resultado_token = guardar_o_actualizar_token_db(session_id, access_token)
+
+    if resultado_token.get("status") == "completado":
+        try:
+            actualizado = actualizar_info_phone(resultado_token)
+            if actualizado:
+                logging.info(
+                    "Phone info actualizada para WABA %s",
+                    resultado_token.get("waba_id"),
+                )
+        except Exception:
+            logging.exception("actualizar_info_phone falló en flujo cloud_api")
+
+    # Flags complementarios (no reemplazan el almacenamiento tradicional)
+    try:
+        if resultado_token.get("id"):
+            with get_connection_public_context() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE whatsapp_business_accounts
+                        SET onboarding_type = 'cloud_api',
+                            coexistence_enabled = false,
+                            updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (resultado_token["id"],),
+                    )
+        elif waba_id and phone_number_id and subdominio:
+            guardar_o_actualizar_whatsapp_business_account(
+                subdominio=subdominio,
+                access_token=access_token,
+                waba_id=waba_id,
+                phone_number_id=phone_number_id,
+                business_id=business_id,
+                onboarding_type="cloud_api",
+                coexistence_enabled=False,
+            )
     except Exception:
-        logging.exception("actualizar_info_phone falló tras guardar conexión")
+        logging.exception("No se pudieron actualizar flags cloud_api (no bloqueante)")
 
     return JSONResponse(
         status_code=200,
         content={
-            "status": "connected",
-            "waba_id": waba_id,
+            "status": resultado_token.get("status"),
+            "waba_id": resultado_token.get("waba_id") or waba_id,
+            "id": resultado_token.get("id"),
             "phone_number_id": phone_number_id,
-            "message": "WhatsApp Business conectado correctamente en modo coexistencia.",
+            "onboarding_type": "cloud_api",
+            "message": "Token procesado correctamente.",
         },
     )
 
