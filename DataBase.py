@@ -3000,10 +3000,12 @@ def guardar_o_actualizar_whatsapp_business_account(
     business_id: str | None = None,
     onboarding_type: str = "whatsapp_business_app_onboarding",
     coexistence_enabled: bool = True,
+    phone_number: str | None = None,
+    business_name: str | None = None,
+    session_id: str | None = "",
 ):
     """
-    Upsert mínimo de conexión WABA por tenant (subdominio).
-    Reutiliza public.whatsapp_business_accounts sin session_id fijo.
+    Upsert de coexistencia por phone_number_id en public.whatsapp_business_accounts.
     """
     try:
         with get_connection_public_context() as conn:
@@ -3012,14 +3014,10 @@ def guardar_o_actualizar_whatsapp_business_account(
                     """
                     SELECT id
                     FROM whatsapp_business_accounts
-                    WHERE subdominio = %s
-                       OR phone_number_id = %s
-                    ORDER BY
-                      CASE WHEN subdominio = %s THEN 0 ELSE 1 END,
-                      updated_at DESC NULLS LAST
+                    WHERE phone_number_id = %s
                     LIMIT 1
                     """,
-                    (subdominio, phone_number_id, subdominio),
+                    (phone_number_id,),
                 )
                 existente = cur.fetchone()
 
@@ -3027,52 +3025,61 @@ def guardar_o_actualizar_whatsapp_business_account(
                     cur.execute(
                         """
                         UPDATE whatsapp_business_accounts
-                        SET access_token = %s,
-                            waba_id = %s,
-                            phone_number_id = %s,
-                            business_id = COALESCE(%s, business_id),
+                        SET waba_id = %s,
+                            access_token = %s,
+                            phone_number = COALESCE(%s, phone_number),
+                            business_name = COALESCE(%s, business_name),
+                            status = 'connected',
+                            session_id = %s,
+                            subdominio = %s,
                             onboarding_type = %s,
                             coexistence_enabled = %s,
-                            subdominio = %s,
-                            status = 'connected',
+                            business_id = COALESCE(%s, business_id),
                             connected_at = NOW(),
                             updated_at = NOW()
-                        WHERE id = %s
-                        RETURNING id, waba_id, phone_number_id, access_token
+                        WHERE phone_number_id = %s
+                        RETURNING id, waba_id, phone_number_id
                         """,
                         (
-                            access_token,
                             waba_id,
-                            phone_number_id,
-                            business_id,
+                            access_token,
+                            phone_number,
+                            business_name,
+                            session_id if session_id is not None else "",
+                            subdominio,
                             onboarding_type,
                             coexistence_enabled,
-                            subdominio,
-                            existente["id"],
+                            business_id,
+                            phone_number_id,
                         ),
                     )
                 else:
                     cur.execute(
                         """
                         INSERT INTO whatsapp_business_accounts (
-                            access_token, waba_id, phone_number_id, business_id,
-                            onboarding_type, coexistence_enabled, subdominio,
-                            status, connected_at, created_at, updated_at
+                            waba_id, access_token, phone_number, phone_number_id,
+                            business_name, status, session_id, subdominio,
+                            onboarding_type, coexistence_enabled, business_id,
+                            connected_at, updated_at
                         ) VALUES (
                             %s, %s, %s, %s,
+                            %s, 'connected', %s, %s,
                             %s, %s, %s,
-                            'connected', NOW(), NOW(), NOW()
+                            NOW(), NOW()
                         )
-                        RETURNING id, waba_id, phone_number_id, access_token
+                        RETURNING id, waba_id, phone_number_id
                         """,
                         (
-                            access_token,
                             waba_id,
+                            access_token,
+                            phone_number,
                             phone_number_id,
-                            business_id,
+                            business_name,
+                            session_id if session_id is not None else "",
+                            subdominio,
                             onboarding_type,
                             coexistence_enabled,
-                            subdominio,
+                            business_id,
                         ),
                     )
 
@@ -3082,11 +3089,10 @@ def guardar_o_actualizar_whatsapp_business_account(
                     "id": row["id"],
                     "waba_id": row["waba_id"],
                     "phone_number_id": row["phone_number_id"],
-                    "access_token": row["access_token"],
                 }
     except Exception as e:
         print("❌ Error en guardar_o_actualizar_whatsapp_business_account:", e)
-        return {"status": "error", "error": str(e)}
+        return {"status": "error"}
 
 
 def guardar_o_actualizar_token_db(session_id: str, token: str):

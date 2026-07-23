@@ -25,7 +25,7 @@ from DataBase import actualizar_contacto_info_db, actualizar_nombre_contacto, el
     obtener_usuarios_por_username, es_admin, actualiza_password_usuario, actualizar_usuarios, \
     obtener_estadisticas_evaluacion, obtener_todos_responsables_agendas, obtener_todos_manager, \
     guardar_o_actualizar_token_db, guardar_o_actualizar_whatsapp_business_account, \
-    get_connection_public_context, hash_password
+    hash_password
 from schemas import *
 
 # Tu propio código/librerías
@@ -487,35 +487,71 @@ META_REDIRECT_URL = os.getenv("META_REDIRECT_URL")
 GRAPH_API_VERSION = os.getenv("GRAPH_API_VERSION") or "v24.0"
 
 
-def _meta_error_response(message: str, error: str = "meta_error", status_code: int = 400):
+def _meta_json_error(message, status_code=400, error="meta_error"):
     return JSONResponse(
         status_code=status_code,
         content={"status": "error", "error": error, "message": message},
     )
 
 
-def _phone_belongs_to_waba(access_token: str, waba_id: str, phone_number_id: str) -> bool:
-    url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{waba_id}/phone_numbers"
+def _is_invalid_agency_tenant(subdominio: str) -> bool:
+    s = (subdominio or "").strip().lower()
+    return s in ("", "public", "webhook_axec", "www", "api")
+
+
+def _debug_token_app_id(access_token):
+    """Return data.app_id from Meta debug_token. Never log tokens."""
     try:
+        app_token = f"{META_APP_ID}|{META_APP_SECRET}"
+        url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/debug_token"
         r = requests.get(
             url,
-            headers={"Authorization": f"Bearer {access_token}"},
+            params={"input_token": access_token, "access_token": app_token},
             timeout=30,
         )
         data = r.json() if r.content else {}
-        if r.status_code >= 400 or data.get("error"):
+        payload = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(payload, dict):
+            return None
+        app_id = payload.get("app_id")
+        return str(app_id) if app_id is not None else None
+    except Exception:
+        logging.exception("Error en debug_token (sin token en log)")
+        return None
+
+
+def _fetch_phone_in_waba(access_token, waba_id, phone_number_id):
+    """Return {id, display_phone_number, verified_name} or None."""
+    try:
+        url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{waba_id}/phone_numbers"
+        r = requests.get(
+            url,
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"fields": "id,display_phone_number,verified_name"},
+            timeout=30,
+        )
+        data = r.json() if r.content else {}
+        if r.status_code >= 400 or (isinstance(data, dict) and data.get("error")):
             logging.warning("No se pudieron listar phone_numbers de la WABA")
-            return False
+            return None
         phones = data.get("data") or []
-        return any(str(p.get("id")) == str(phone_number_id) for p in phones)
+        target = str(phone_number_id)
+        for p in phones:
+            if str(p.get("id")) == target:
+                return {
+                    "id": p.get("id"),
+                    "display_phone_number": p.get("display_phone_number"),
+                    "verified_name": p.get("verified_name"),
+                }
+        return None
     except Exception:
         logging.exception("Error validando phone_number_id contra WABA")
-        return False
+        return None
 
 
-def _subscribe_app_to_waba(access_token: str, waba_id: str) -> bool:
-    url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{waba_id}/subscribed_apps"
+def _subscribe_waba(access_token, waba_id) -> bool:
     try:
+        url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{waba_id}/subscribed_apps"
         r = requests.post(
             url,
             headers={"Authorization": f"Bearer {access_token}"},
@@ -527,63 +563,188 @@ def _subscribe_app_to_waba(access_token: str, waba_id: str) -> bool:
         err_msg = str((data.get("error") or {}).get("message") or "").lower()
         if "already" in err_msg or "subscribed" in err_msg:
             return True
-        logging.warning("Suscripción WABA fallida (sin token en log)")
+        logging.warning("Suscripcion WABA fallida (sin token en log) status=%s", r.status_code)
         return False
     except Exception:
         logging.exception("Error suscribiendo app a WABA")
         return False
 
 
-@app.post("/meta/exchange_code")
+def _waba_has_meta_app_subscribed(access_token, waba_id):
+    """Return (ok, list of {id, name}) based on subscribed_apps."""
+    try:
+        url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{waba_id}/subscribed_apps"
+        r = requests.get(
+            url,
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=30,
+        )
+        data = r.json() if r.content else {}
+        if r.status_code >= 400 or (isinstance(data, dict) and data.get("error")):
+            logging.warning("No se pudo listar subscribed_apps de la WABA")
+            return False, []
+        apps = data.get("data") or []
+        summarized = []
+        ok = False
+        target = str(META_APP_ID) if META_APP_ID is not None else ""
+        for app in apps:
+            api_data = app.get("whatsapp_business_api_data") or {}
+            app_id = api_data.get("id")
+            name = api_data.get("name") or app.get("name")
+            summarized.append({"id": app_id, "name": name})
+            if str(app_id) == target:
+                ok = True
+        return ok, summarized
+    except Exception:
+        logging.exception("Error consultando subscribed_apps")
+        return False, []
+
+
+@app.api_route("/meta/exchange_code", methods=["GET", "POST", "OPTIONS"])
 async def exchange_code(request: Request):
+    """Intercambia el 'code' OAuth de Meta por un access_token temporal.
+    Si el WABA ID ya esta en base de datos, completa la vinculacion automaticamente.
     """
-    Embedded Signup:
-    - whatsapp_business_app_onboarding → coexistencia (número en app del celular)
-    - cloud_api → flujo tradicional existente (session_id + guardar_o_actualizar_token_db)
-    """
+    if request.method == "OPTIONS":
+        return JSONResponse(
+            status_code=200,
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            },
+        )
+
+    try:
+        if request.method == "GET":
+            code = request.query_params.get("code")
+            redirect_uri = request.query_params.get("redirect_uri", META_REDIRECT_URL)
+        else:
+            payload = await request.json()
+            code = payload.get("code")
+            redirect_uri = payload.get("redirect_uri", META_REDIRECT_URL)
+
+        if not code:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "missing_code", "message": "El parametro 'code' es requerido"},
+                headers={"Access-Control-Allow-Origin": "*"}
+            )
+
+        logging.info("Codigo OAuth recibido: %s...%s", code[:6], code[-6:])
+        logging.info("Intercambiando code con Meta...")
+
+        token_url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/oauth/access_token"
+        params = {
+            "code": code,
+            "client_id": META_APP_ID,
+            "client_secret": META_APP_SECRET
+        }
+        r = requests.get(token_url, params=params, timeout=30)
+        data = r.json()
+
+        # Do NOT log full token response (security). Log only error keys if fail.
+        access_token = data.get("access_token")
+        if not access_token:
+            err = data.get("error") if isinstance(data.get("error"), dict) else {}
+            logging.warning(
+                "Meta OAuth falló status=%s type=%s code=%s subcode=%s message=%s fbtrace_id=%s",
+                r.status_code,
+                err.get("type"),
+                err.get("code"),
+                err.get("error_subcode"),
+                err.get("message"),
+                err.get("fbtrace_id"),
+            )
+            return JSONResponse(
+                status_code=400,
+                content={"error": "no_access_token", "message": "Meta no devolvio access_token"},
+                headers={"Access-Control-Allow-Origin": "*"}
+            )
+
+        session_id = "abc123"
+        resultado_token = guardar_o_actualizar_token_db(session_id, access_token)
+
+        if resultado_token["status"] == "completado":
+            actualizado = actualizar_info_phone(resultado_token)
+            if actualizado:
+                logging.info("Phone info actualizada para WABA %s", resultado_token.get("waba_id"))
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": resultado_token["status"],
+                "waba_id": resultado_token.get("waba_id"),
+                "id": resultado_token.get("id"),
+                "message": "Token procesado correctamente."
+            },
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
+
+    except Exception:
+        logging.exception("Error inesperado en /meta/exchange_code")
+        return JSONResponse(
+            status_code=500,
+            content={"error": "internal_error", "message": "Error interno al procesar el codigo"},
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
+
+
+@app.post("/meta/exchange_code_business_app")
+async def exchange_code_business_app(request: Request):
+    """Coexistencia: Embedded Signup whatsapp_business_app_onboarding."""
     try:
         payload = await request.json()
     except Exception:
-        return _meta_error_response("JSON inválido", error="invalid_payload")
+        return _meta_json_error("JSON invalido", error="invalid_payload")
 
     code = (payload.get("code") or "").strip()
-    waba_id = (payload.get("waba_id") or "").strip() or None
+    waba_id = (payload.get("waba_id") or "").strip()
     phone_number_id = (
         payload.get("phone_number_id") or payload.get("phone_id") or ""
-    ).strip() or None
+    ).strip()
+    onboarding_type = (payload.get("onboarding_type") or "").strip()
+    redirect_uri = payload.get("redirect_uri")
+    if isinstance(redirect_uri, str):
+        redirect_uri = redirect_uri.strip() or None
+    else:
+        redirect_uri = None
     business_id = payload.get("business_id")
     if isinstance(business_id, str):
         business_id = business_id.strip() or None
-    onboarding_type = (payload.get("onboarding_type") or "cloud_api").strip()
-    redirect_uri = (payload.get("redirect_uri") or META_REDIRECT_URL or "").strip() or None
 
     if not code:
-        return _meta_error_response(
-            "Se requiere el parámetro code",
-            error="missing_code",
+        return _meta_json_error("Se requiere el parametro code", error="missing_code")
+    if not waba_id or not phone_number_id:
+        return _meta_json_error(
+            "Se requieren waba_id y phone_number_id",
+            error="missing_fields",
         )
-
-    if onboarding_type not in (
-        "whatsapp_business_app_onboarding",
-        "cloud_api",
-    ):
-        return _meta_error_response(
-            "onboarding_type inválido",
+    if onboarding_type != "whatsapp_business_app_onboarding":
+        return _meta_json_error(
+            "onboarding_type debe ser whatsapp_business_app_onboarding",
             error="invalid_onboarding_type",
         )
 
+    # subdominio web (X-Tenant-Name / host), no el schema PostgreSQL
+    subdominio = (getattr(request.state, "tenant_name", None) or "").strip().lower()
+    if not subdominio:
+        try:
+            subdominio = (current_tenant.get() or "").strip().lower()
+        except Exception:
+            subdominio = ""
+    if _is_invalid_agency_tenant(subdominio):
+        return _meta_json_error(
+            "No se pudo identificar la agencia que inició la conexión.",
+            error="missing_tenant",
+        )
+
     if not META_APP_ID or not META_APP_SECRET:
-        return _meta_error_response(
-            "Configuración Meta incompleta en el servidor",
+        return _meta_json_error(
+            "Configuracion Meta incompleta en el servidor",
             error="server_config",
             status_code=500,
         )
-
-    try:
-        tenant = current_tenant.get()
-    except Exception:
-        tenant = None
-    subdominio = (tenant or "").strip().lower() or None
 
     token_url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/oauth/access_token"
     params = {
@@ -591,156 +752,110 @@ async def exchange_code(request: Request):
         "client_id": META_APP_ID,
         "client_secret": META_APP_SECRET,
     }
-    # Flujo tradicional histórico NO enviaba redirect_uri a Meta.
-    if onboarding_type == "whatsapp_business_app_onboarding" and redirect_uri:
+    if redirect_uri:
         params["redirect_uri"] = redirect_uri
 
     try:
         r = requests.get(token_url, params=params, timeout=30)
         data = r.json() if r.content else {}
     except Exception:
-        logging.exception("Error contactando Meta oauth/access_token")
-        return _meta_error_response(
-            "No fue posible completar la conexión con Meta.",
+        logging.exception("Error contactando Meta oauth/access_token (Business App)")
+        return _meta_json_error(
+            "No fue posible completar la conexion con Meta.",
             status_code=502,
         )
 
-    if r.status_code >= 400 or data.get("error") or not data.get("access_token"):
+    access_token = data.get("access_token") if isinstance(data, dict) else None
+    if r.status_code >= 400 or (isinstance(data, dict) and data.get("error")) or not access_token:
+        err = data.get("error") if isinstance(data, dict) and isinstance(data.get("error"), dict) else {}
         logging.warning(
-            "Meta OAuth falló status=%s error_code=%s",
+            "Meta OAuth Business App fallo status=%s type=%s code=%s subcode=%s message=%s fbtrace_id=%s",
             r.status_code,
-            (data.get("error") or {}).get("code") if isinstance(data.get("error"), dict) else None,
+            err.get("type"),
+            err.get("code"),
+            err.get("error_subcode"),
+            err.get("message"),
+            err.get("fbtrace_id"),
         )
-        return _meta_error_response(
-            "No fue posible completar la conexión con Meta.",
+        return _meta_json_error(
+            "No fue posible completar la conexion con Meta.",
             error="oauth_failed",
+            status_code=502,
         )
 
-    access_token = data["access_token"]
-
-    # 1) COEXISTENCIA
-    if onboarding_type == "whatsapp_business_app_onboarding":
-        if not waba_id or not phone_number_id:
-            return _meta_error_response(
-                "Se requieren waba_id y phone_number_id para coexistencia",
-                error="missing_fields",
-            )
-        if not subdominio:
-            return _meta_error_response(
-                "No se pudo determinar el tenant",
-                error="missing_tenant",
-            )
-
-        if not _phone_belongs_to_waba(access_token, waba_id, phone_number_id):
-            return _meta_error_response(
-                "El phone_number_id no pertenece a la WABA indicada.",
-                error="phone_waba_mismatch",
-                status_code=422,
-            )
-
-        if not _subscribe_app_to_waba(access_token, waba_id):
-            return _meta_error_response(
-                "No fue posible suscribir la aplicación a la WABA.",
-                error="subscribe_failed",
-                status_code=502,
-            )
-
-        resultado = guardar_o_actualizar_whatsapp_business_account(
-            subdominio=subdominio,
-            access_token=access_token,
-            waba_id=waba_id,
-            phone_number_id=phone_number_id,
-            business_id=business_id,
-            onboarding_type=onboarding_type,
-            coexistence_enabled=True,
+    token_app_id = _debug_token_app_id(access_token)
+    if not token_app_id or str(token_app_id) != str(META_APP_ID):
+        return _meta_json_error(
+            "El token obtenido no corresponde a la aplicación de Meta configurada para Talentum Manager.",
+            error="invalid_app_token",
+            status_code=422,
         )
 
-        if resultado.get("status") == "error":
-            return _meta_error_response(
-                "No fue posible guardar la conexión.",
-                error="db_error",
-                status_code=500,
-            )
-
-        try:
-            actualizar_info_phone(
-                {
-                    "id": resultado.get("id"),
-                    "waba_id": waba_id,
-                    "access_token": access_token,
-                }
-            )
-        except Exception:
-            logging.exception("actualizar_info_phone falló tras guardar coexistencia")
-
-        return JSONResponse(
-            status_code=200,
-            content={
-                "status": "connected",
-                "waba_id": waba_id,
-                "phone_number_id": phone_number_id,
-                "onboarding_type": onboarding_type,
-                "message": "WhatsApp Business conectado correctamente en modo coexistencia.",
-            },
+    phone = _fetch_phone_in_waba(access_token, waba_id, phone_number_id)
+    if not phone:
+        return _meta_json_error(
+            "El número conectado no pertenece a la WABA seleccionada.",
+            error="phone_waba_mismatch",
+            status_code=422,
         )
 
-    # 2) CLOUD API — flujo tradicional conservado
-    logging.info("Código OAuth recibido (cloud_api): %s...%s", code[:6], code[-6:])
+    if not _subscribe_waba(access_token, waba_id):
+        return _meta_json_error(
+            "No fue posible suscribir la aplicación a la WABA.",
+            error="subscribe_failed",
+            status_code=502,
+        )
 
-    session_id = "abc123"
-    resultado_token = guardar_o_actualizar_token_db(session_id, access_token)
+    subscribed_ok, subscribed_apps = _waba_has_meta_app_subscribed(access_token, waba_id)
+    logging.info(
+        "Aplicaciones suscritas a WABA %s: %s",
+        waba_id,
+        [{"id": a.get("id"), "name": a.get("name")} for a in subscribed_apps],
+    )
+    if not subscribed_ok:
+        return _meta_json_error(
+            "La WABA fue procesada, pero no quedó suscrita a la aplicación de Meta configurada para Talentum Manager.",
+            error="app_not_subscribed",
+            status_code=422,
+        )
 
-    if resultado_token.get("status") == "completado":
-        try:
-            actualizado = actualizar_info_phone(resultado_token)
-            if actualizado:
-                logging.info(
-                    "Phone info actualizada para WABA %s",
-                    resultado_token.get("waba_id"),
-                )
-        except Exception:
-            logging.exception("actualizar_info_phone falló en flujo cloud_api")
+    phone_number = phone.get("display_phone_number")
+    business_name = phone.get("verified_name")
 
-    # Flags complementarios (no reemplazan el almacenamiento tradicional)
-    try:
-        if resultado_token.get("id"):
-            with get_connection_public_context() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        UPDATE whatsapp_business_accounts
-                        SET onboarding_type = 'cloud_api',
-                            coexistence_enabled = false,
-                            updated_at = NOW()
-                        WHERE id = %s
-                        """,
-                        (resultado_token["id"],),
-                    )
-        elif waba_id and phone_number_id and subdominio:
-            guardar_o_actualizar_whatsapp_business_account(
-                subdominio=subdominio,
-                access_token=access_token,
-                waba_id=waba_id,
-                phone_number_id=phone_number_id,
-                business_id=business_id,
-                onboarding_type="cloud_api",
-                coexistence_enabled=False,
-            )
-    except Exception:
-        logging.exception("No se pudieron actualizar flags cloud_api (no bloqueante)")
+    resultado = guardar_o_actualizar_whatsapp_business_account(
+        subdominio=subdominio,
+        access_token=access_token,
+        waba_id=waba_id,
+        phone_number_id=phone_number_id,
+        business_id=business_id,
+        onboarding_type="whatsapp_business_app_onboarding",
+        coexistence_enabled=True,
+        phone_number=phone_number,
+        business_name=business_name,
+        session_id="",
+    )
+
+    if resultado.get("status") == "error":
+        return _meta_json_error(
+            "No fue posible guardar la conexión.",
+            error="db_error",
+            status_code=500,
+        )
 
     return JSONResponse(
         status_code=200,
         content={
-            "status": resultado_token.get("status"),
-            "waba_id": resultado_token.get("waba_id") or waba_id,
-            "id": resultado_token.get("id"),
+            "status": "connected",
+            "id": resultado.get("id"),
+            "waba_id": waba_id,
             "phone_number_id": phone_number_id,
-            "onboarding_type": "cloud_api",
-            "message": "Token procesado correctamente.",
+            "phone_number": phone_number,
+            "business_name": business_name,
+            "subdominio": subdominio,
+            "subscribed_app_id": str(META_APP_ID),
+            "message": "WhatsApp Business existente conectado, suscrito y guardado correctamente.",
         },
     )
-
 
 # from borrar_rate_limiter import get_rate_limiter
 

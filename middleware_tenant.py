@@ -35,7 +35,11 @@ class TenantMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         print("🧾 [MIDDLEWARE] REQUEST PATH:", request.url.path)
         print("🧾 [MIDDLEWARE] METHOD:", request.method)
-        print("🧾 [MIDDLEWARE] Authorization header:", request.headers.get("authorization"))
+        auth_header = request.headers.get("authorization")
+        print(
+            "🧾 [MIDDLEWARE] Authorization header:",
+            "presente" if auth_header else "ausente",
+        )
         print("🧾 [MIDDLEWARE] X-Tenant-Name header:", request.headers.get("x-tenant-name"))
 
         tenant_name = self._resolve_tenant_name(request)
