@@ -436,40 +436,6 @@ def _slot_bloqueado(slot_ini: time, slot_fin: time, bloqueos_dia: List[Dict[str,
     return False
 
 
-def _agendamientos_ocupados_utc(cur, desde_utc: datetime, hasta_utc: datetime) -> List[Tuple[datetime, datetime]]:
-    # estado_id 3 = cancelado (no debe bloquear horarios)
-    cur.execute(
-        """
-        SELECT fecha_inicio, fecha_fin
-        FROM agendamientos
-        WHERE fecha_inicio < %s
-          AND fecha_fin > %s
-          AND COALESCE(estado_id, 0) <> 3
-        """,
-        (hasta_utc, desde_utc),
-    )
-    ocupados = []
-    for row in cur.fetchall():
-        ini = row["fecha_inicio"] if isinstance(row, dict) else row[0]
-        fin = row["fecha_fin"] if isinstance(row, dict) else row[1]
-        if ini is None or fin is None:
-            continue
-        if getattr(ini, "tzinfo", None) is None:
-            ini = ini.replace(tzinfo=ZoneInfo("UTC"))
-        else:
-            ini = ini.astimezone(ZoneInfo("UTC"))
-        if getattr(fin, "tzinfo", None) is None:
-            fin = fin.replace(tzinfo=ZoneInfo("UTC"))
-        else:
-            fin = fin.astimezone(ZoneInfo("UTC"))
-        ocupados.append((ini, fin))
-    return ocupados
-
-
-def _solapa_utc(a_ini: datetime, a_fin: datetime, b_ini: datetime, b_fin: datetime) -> bool:
-    return a_ini < b_fin and b_ini < a_fin
-
-
 def calcular_horarios_disponibles(
     cur,
     zona_horaria: str,
@@ -512,9 +478,8 @@ def calcular_horarios_disponibles(
 
     minimo_local, maximo_local = _anticipacion_bounds(tz)
 
-    desde_utc = datetime.combine(fecha_desde, time.min, tzinfo=tz).astimezone(ZoneInfo("UTC"))
-    hasta_utc = datetime.combine(fecha_hasta + timedelta(days=1), time.min, tzinfo=tz).astimezone(ZoneInfo("UTC"))
-    ocupados = _agendamientos_ocupados_utc(cur, desde_utc, hasta_utc)
+    # Varios aspirantes pueden reservar el mismo horario (no se excluyen
+    # citas existentes / solapes con agendamientos).
 
     fechas_out: List[Dict[str, Any]] = []
     dia = fecha_desde
@@ -551,15 +516,9 @@ def calcular_horarios_disponibles(
                     continue
 
                 slot_local = datetime.combine(dia, slot_ini, tzinfo=tz)
-                slot_local_fin = datetime.combine(dia, slot_fin, tzinfo=tz)
                 if slot_local < minimo_local:
                     continue
                 if maximo_local is not None and slot_local > maximo_local:
-                    continue
-
-                slot_utc = slot_local.astimezone(ZoneInfo("UTC"))
-                slot_utc_fin = slot_local_fin.astimezone(ZoneInfo("UTC"))
-                if any(_solapa_utc(slot_utc, slot_utc_fin, o_ini, o_fin) for o_ini, o_fin in ocupados):
                     continue
 
                 clave = _time_to_str(slot_ini)
@@ -591,10 +550,11 @@ def validar_cita_contra_disponibilidad(
     zona_horaria: str,
     inicio_utc: datetime,
     fin_utc: datetime,
-    excluir_agendamiento_id: Optional[int] = None,
+    excluir_agendamiento_id: Optional[int] = None,  # compat; ya no se usa (solapes permitidos)
 ) -> None:
     """
-    Valida en servidor al confirmar/reagendar.
+    Valida en servidor al confirmar/reagendar (franjas + bloqueos + anticipación).
+    No bloquea por solape con otras citas: varios aspirantes pueden el mismo horario.
     Si no hay franjas activas configuradas, no bloquea (modo aditivo / legacy).
     """
     if not hay_disponibilidad_configurada(cur):
@@ -686,21 +646,5 @@ def validar_cita_contra_disponibilidad(
         if hi is not None and hf is not None and _franjas_se_solapan(slot_ini, slot_fin, hi, hf):
             raise HTTPException(status_code=409, detail="El horario seleccionado está bloqueado.")
 
-    params: List[Any] = [fin_utc, inicio_utc]
-    sql = """
-        SELECT id
-        FROM agendamientos
-        WHERE fecha_inicio < %s
-          AND fecha_fin > %s
-          AND COALESCE(estado_id, 0) <> 3
-    """
-    if excluir_agendamiento_id is not None:
-        sql += " AND id <> %s"
-        params.append(excluir_agendamiento_id)
-    sql += " LIMIT 1"
-    cur.execute(sql, params)
-    if cur.fetchone():
-        raise HTTPException(
-            status_code=409,
-            detail="Ese horario ya fue reservado. Elige otro horario disponible.",
-        )
+    # Permitido: varios agendamientos en el mismo horario (portal / link).
+    # No se valida solape contra la tabla agendamientos.
