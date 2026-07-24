@@ -75,6 +75,7 @@ from main_cargar_aspirantes import router as aspirantes_router
 from middleware_tenant import TenantMiddleware   # 👈 importa tu middleware
 # from borrar_middleware_rate_limit import RateLimitMiddleware  # 👈 Rate limiting por tenant
 from main_agendamiento import router as agendamiento_router
+from main_disponibilidad_agendamiento import router as disponibilidad_agendamiento_router
 from main_evaluacion_aspirante import router as EvaluacionAspirante_router
 from main_entrevistas import router as entrevistas_router
 from utils_aspirantes import router as utils_aspirantes_router
@@ -109,6 +110,7 @@ app.include_router(main_auth_router, tags=["auth"])
 app.include_router(aspirantes_perfil_router, tags=["Perfil Creador WhatsApp"])
 app.include_router(aspirantes_router, tags=["Cargar Aspirantes"])
 app.include_router(agendamiento_router, tags=["Agendamiento"])
+app.include_router(disponibilidad_agendamiento_router, tags=["Disponibilidad Agendamiento"])
 app.include_router(EvaluacionAspirante_router, tags=["Evaluacion Aspirante"])
 app.include_router(entrevistas_router, tags=["entrevistas"])
 app.include_router(utils_aspirantes_router, tags=["utils aspirantes"])

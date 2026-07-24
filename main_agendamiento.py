@@ -830,6 +830,14 @@ def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario
                     detail="participante_tipo no válido o no se pudo resolver desde agendamientos_tipo.",
                 )
 
+            from disponibilidad_agendamiento_service import validar_cita_contra_disponibilidad
+            validar_cita_contra_disponibilidad(
+                cur,
+                zona_horaria=_resolver_zona_horaria_agencia(),
+                inicio_utc=evento.inicio,
+                fin_utc=evento.fin,
+            )
+
             cur.execute(
                 """
                 INSERT INTO agendamientos (
@@ -1345,6 +1353,15 @@ def actualizar_fecha_agendamiento(
                     status_code=400,
                     detail="La fecha de fin debe ser posterior a la fecha de inicio."
                 )
+
+            from disponibilidad_agendamiento_service import validar_cita_contra_disponibilidad
+            validar_cita_contra_disponibilidad(
+                cur,
+                zona_horaria=_resolver_zona_horaria_agencia(),
+                inicio_utc=nuevo_inicio,
+                fin_utc=nuevo_fin,
+                excluir_agendamiento_id=ag_id,
+            )
 
             # # 4️⃣ Regla de negocio: Meet solo para ENTREVISTA
             #     link_meet_actual = None
@@ -1896,6 +1913,16 @@ def crear_agendamiento_aspirante(
                         status_code=400,
                         detail="La fecha fin debe ser posterior a la fecha inicio."
                     )
+
+            # Validar disponibilidad de la agencia (franjas, bloqueos y solapes)
+            from disponibilidad_agendamiento_service import validar_cita_contra_disponibilidad
+            zona_agencia = _resolver_zona_horaria_agencia()
+            validar_cita_contra_disponibilidad(
+                cur,
+                zona_horaria=zona_agencia,
+                inicio_utc=fecha_inicio,
+                fin_utc=fecha_fin,
+            )
 
             tipo_agendamiento = (tipo_agendamiento_db or "").upper()
 
