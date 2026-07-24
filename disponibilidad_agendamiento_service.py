@@ -390,6 +390,37 @@ def _anticipacion_bounds(tz: ZoneInfo) -> Tuple[datetime, Optional[datetime]]:
     return minimo, maximo
 
 
+def _generar_inicios_franja(
+    franja_ini: time,
+    franja_fin: time,
+    duracion_minutos: int,
+    intervalo_minutos: int,
+) -> List[time]:
+    """
+    Genera inicios de cita dentro de la franja.
+    Incluye siempre el último inicio posible (fin - duración), p.ej. 11:00
+    en una franja 08:00–12:00 con duración 60.
+    """
+    base = date(2000, 1, 1)
+    inicio_dt = datetime.combine(base, franja_ini)
+    fin_dt = datetime.combine(base, franja_fin)
+    ultimo_dt = fin_dt - timedelta(minutes=duracion_minutos)
+    if ultimo_dt < inicio_dt:
+        return []
+
+    inicios: List[time] = []
+    cursor = inicio_dt
+    while cursor <= ultimo_dt:
+        inicios.append(cursor.time().replace(microsecond=0))
+        cursor += timedelta(minutes=intervalo_minutos)
+
+    ultimo = ultimo_dt.time().replace(microsecond=0)
+    if ultimo not in inicios:
+        inicios.append(ultimo)
+
+    return sorted(set(inicios))
+
+
 def _slot_cubierto_por_franja(slot_ini: time, slot_fin: time, franja_ini: time, franja_fin: time) -> bool:
     return slot_ini >= franja_ini and slot_fin <= franja_fin
 
@@ -499,43 +530,42 @@ def calcular_horarios_disponibles(
             continue
 
         horarios: List[str] = []
+        vistos = set()
         for franja in franjas_dia:
             f_ini = _parse_time(franja["hora_inicio"])
             f_fin = _parse_time(franja["hora_fin"])
             if not f_ini or not f_fin:
                 continue
-            cursor_dt = datetime.combine(dia, f_ini)
-            fin_franja_dt = datetime.combine(dia, f_fin)
-            while cursor_dt + timedelta(minutes=duracion_minutos) <= fin_franja_dt:
-                slot_ini = cursor_dt.time()
-                slot_fin_dt = cursor_dt + timedelta(minutes=duracion_minutos)
-                slot_fin = slot_fin_dt.time()
+
+            for slot_ini in _generar_inicios_franja(
+                f_ini, f_fin, duracion_minutos, intervalo_minutos
+            ):
+                slot_fin_dt = datetime.combine(dia, slot_ini) + timedelta(minutes=duracion_minutos)
+                slot_fin = slot_fin_dt.time().replace(microsecond=0)
 
                 if not _slot_cubierto_por_franja(slot_ini, slot_fin, f_ini, f_fin):
-                    cursor_dt += timedelta(minutes=intervalo_minutos)
                     continue
                 if _slot_bloqueado(slot_ini, slot_fin, bloqueos_dia):
-                    cursor_dt += timedelta(minutes=intervalo_minutos)
                     continue
 
                 slot_local = datetime.combine(dia, slot_ini, tzinfo=tz)
                 slot_local_fin = datetime.combine(dia, slot_fin, tzinfo=tz)
                 if slot_local < minimo_local:
-                    cursor_dt += timedelta(minutes=intervalo_minutos)
                     continue
                 if maximo_local is not None and slot_local > maximo_local:
-                    cursor_dt += timedelta(minutes=intervalo_minutos)
                     continue
 
                 slot_utc = slot_local.astimezone(ZoneInfo("UTC"))
                 slot_utc_fin = slot_local_fin.astimezone(ZoneInfo("UTC"))
                 if any(_solapa_utc(slot_utc, slot_utc_fin, o_ini, o_fin) for o_ini, o_fin in ocupados):
-                    cursor_dt += timedelta(minutes=intervalo_minutos)
                     continue
 
-                horarios.append(_time_to_str(slot_ini))
-                cursor_dt += timedelta(minutes=intervalo_minutos)
+                clave = _time_to_str(slot_ini)
+                if clave and clave not in vistos:
+                    vistos.add(clave)
+                    horarios.append(clave)
 
+        horarios.sort()
         if horarios:
             fechas_out.append(
                 {
