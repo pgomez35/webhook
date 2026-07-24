@@ -830,13 +830,9 @@ def crear_evento(evento: EventoIn, usuario_actual: Any = Depends(obtener_usuario
                     detail="participante_tipo no válido o no se pudo resolver desde agendamientos_tipo.",
                 )
 
-            from disponibilidad_agendamiento_service import validar_cita_contra_disponibilidad
-            validar_cita_contra_disponibilidad(
-                cur,
-                zona_horaria=_resolver_zona_horaria_agencia(),
-                inicio_utc=evento.inicio,
-                fin_utc=evento.fin,
-            )
+            # Nota: la SAS (calendario admin) NO valida franjas/bloqueos/solapes de
+            # disponibilidad_agendamiento. Esa restricción aplica solo a portales
+            # (POST /api/agendamientos/aspirante/{token} y reagendar por aspirante).
 
             cur.execute(
                 """

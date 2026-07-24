@@ -437,12 +437,14 @@ def _slot_bloqueado(slot_ini: time, slot_fin: time, bloqueos_dia: List[Dict[str,
 
 
 def _agendamientos_ocupados_utc(cur, desde_utc: datetime, hasta_utc: datetime) -> List[Tuple[datetime, datetime]]:
+    # estado_id 3 = cancelado (no debe bloquear horarios)
     cur.execute(
         """
         SELECT fecha_inicio, fecha_fin
         FROM agendamientos
         WHERE fecha_inicio < %s
           AND fecha_fin > %s
+          AND COALESCE(estado_id, 0) <> 3
         """,
         (hasta_utc, desde_utc),
     )
@@ -690,6 +692,7 @@ def validar_cita_contra_disponibilidad(
         FROM agendamientos
         WHERE fecha_inicio < %s
           AND fecha_fin > %s
+          AND COALESCE(estado_id, 0) <> 3
     """
     if excluir_agendamiento_id is not None:
         sql += " AND id <> %s"
