@@ -1712,27 +1712,71 @@ def _handle_account_update_event(entry: dict, change: dict, value: dict, event: 
 def _setup_tenant_context(phone_number_id: str) -> Optional[dict]:
     """
     Configura el contexto del tenant basado en phone_number_id.
-    
+    Incluye resolución de agencia del chatbot de captación (schema chatbot).
+
     Returns:
         Dict con información de la cuenta o None si no se encuentra
     """
+    chatbot_agencia_id = None
+    account_id = None
+    onboarding_type = None
+    coexistence_enabled = None
+
+    try:
+        from database_chatbot_captacion import resolver_contexto_webhook
+
+        contexto = resolver_contexto_webhook(phone_number_id)
+        if contexto:
+            token_cliente = contexto["access_token"]
+            phone_id_cliente = contexto["phone_number_id"]
+            tenant_name = contexto.get("tenant_name")
+            business_name = contexto.get("business_name")
+            chatbot_agencia_id = contexto.get("chatbot_agencia_id")
+            account_id = contexto.get("account_id")
+            onboarding_type = contexto.get("onboarding_type")
+            coexistence_enabled = contexto.get("coexistence_enabled")
+
+            current_token.set(token_cliente)
+            current_phone_id.set(phone_id_cliente)
+            current_tenant.set(tenant_name)
+            current_business_name.set(business_name)
+
+            print(f"🌐 Tenant actual: {current_tenant.get()}")
+            token_seguro = f"...{token_cliente[-6:]}" if token_cliente else "None"
+            print(f"🔑 Token actual: {token_seguro}")
+            print(f"📞 phone_id actual: {current_phone_id.get()}")
+            print(f"📞 business_name: {current_business_name.get()}")
+            print(f"🤖 chatbot_agencia_id: {chatbot_agencia_id}")
+
+            return {
+                "account_id": account_id,
+                "chatbot_agencia_id": chatbot_agencia_id,
+                "access_token": token_cliente,
+                "phone_number_id": phone_id_cliente,
+                "tenant_name": tenant_name,
+                "business_name": business_name,
+                "onboarding_type": onboarding_type,
+                "coexistence_enabled": coexistence_enabled,
+            }
+    except Exception as e:
+        print(f"⚠️ Chatbot contexto no disponible, fallback WABA clásico: {e}")
+
     cuenta = obtener_cuenta_por_phone_id(phone_number_id)
     if not cuenta:
         print(f"⚠️ No se encontró cuenta asociada al número {phone_number_id}")
         return None
-    
-    # Extraer info de la cuenta
+
     token_cliente = cuenta["access_token"]
     phone_id_cliente = cuenta["phone_number_id"]
     tenant_name = cuenta["subdominio"]
     business_name = cuenta["business_name"]
-    
-    # Asignar valores de contexto
+    account_id = cuenta.get("id")
+
     current_token.set(token_cliente)
     current_phone_id.set(phone_id_cliente)
     current_tenant.set(tenant_name)
     current_business_name.set(business_name)
-    
+
     print(f"🌐 Tenant actual: {current_tenant.get()}")
     token_seguro = f"...{token_cliente[-6:]}" if token_cliente else "None"
     print(f"🔑 Token actual: {token_seguro}")
@@ -1740,10 +1784,14 @@ def _setup_tenant_context(phone_number_id: str) -> Optional[dict]:
     print(f"📞 business_name: {current_business_name.get()}")
 
     return {
+        "account_id": account_id,
+        "chatbot_agencia_id": chatbot_agencia_id,
         "access_token": token_cliente,
         "phone_number_id": phone_id_cliente,
         "tenant_name": tenant_name,
-        "business_name": business_name
+        "business_name": business_name,
+        "onboarding_type": onboarding_type,
+        "coexistence_enabled": coexistence_enabled,
     }
 
 
@@ -3910,6 +3958,8 @@ async def whatsapp_webhook(request: Request):
         tenant_name = cuenta_info["tenant_name"]
         token_access = cuenta_info["access_token"]
         business_name = cuenta_info["business_name"]
+        chatbot_agencia_id = cuenta_info.get("chatbot_agencia_id")
+        whatsapp_account_id = cuenta_info.get("account_id")
 
         # 3. Statuses
         statuses = value.get("statuses", [])
@@ -3929,7 +3979,9 @@ async def whatsapp_webhook(request: Request):
                 mensaje,
                 tenant_name,
                 phone_number_id,
-                token_access
+                token_access,
+                chatbot_agencia_id,
+                whatsapp_account_id,
             )
 
     except Exception as e:
@@ -3939,14 +3991,22 @@ async def whatsapp_webhook(request: Request):
     return {"status": "ok"}
 
 
-async def _procesar_mensaje_unico(mensaje, tenant_name, phone_number_id, token):
+async def _procesar_mensaje_unico(
+    mensaje,
+    tenant_name,
+    phone_number_id,
+    token,
+    chatbot_agencia_id=None,
+    whatsapp_account_id=None,
+):
     """
     Orquestador principal:
     1. Normaliza
-    2. Registra mensaje
-    3. Onboarding (nuevo usuario)
-    4. Flujo Aspirante
-    5. Flujo General
+    2. Chatbot de captación (si config activa)
+    3. Registra mensaje
+    4. Onboarding (nuevo usuario)
+    5. Flujo Aspirante
+    6. Flujo General
     """
 
     wa_id = mensaje.get("from")
@@ -3956,6 +4016,29 @@ async def _procesar_mensaje_unico(mensaje, tenant_name, phone_number_id, token):
     # ---------------------------------------------------------
     tipo, texto, payload_id = _normalizar_entrada_whatsapp(mensaje)
     texto_lower = (texto or "").lower()
+
+    # ---------------------------------------------------------
+    # A2. CHATBOT DE CAPTACIÓN (antes de tablas tenant)
+    # ---------------------------------------------------------
+    try:
+        from service_chatbot_captacion import procesar_chatbot_captacion
+
+        procesado_chatbot = procesar_chatbot_captacion(
+            agencia_id=chatbot_agencia_id,
+            whatsapp_account_id=whatsapp_account_id,
+            wa_id=wa_id,
+            tipo=tipo,
+            texto=texto,
+            payload_id=payload_id,
+            phone_number_id=phone_number_id,
+            token=token,
+            message_id_meta=mensaje.get("id"),
+        )
+        if procesado_chatbot:
+            return
+    except Exception as e:
+        print(f"⚠️ Error chatbot captación (no crítico para webhook): {e}")
+        traceback.print_exc()
 
     # ---------------------------------------------------------
     # B. LOG EN BD (CON MANEJO ESPECIAL PARA AUDIO)
@@ -4097,32 +4180,47 @@ def _normalizar_entrada_whatsapp(mensaje):
     """
     Convierte la estructura compleja de Meta en 3 variables simples.
     Retorna: (tipo_simple, texto_visible, payload_oculto)
+
+    Usa .get() para no romper con contactos, ubicaciones u payloads incompletos.
     """
+    if not isinstance(mensaje, dict):
+        return None, None, None
+
     tipo = mensaje.get("type")
     texto = None
     payload = None
 
-    if tipo == "text":
-        texto = mensaje["text"]["body"]
+    try:
+        if tipo == "text":
+            texto = (mensaje.get("text") or {}).get("body")
 
-    elif tipo == "button":  # Respuesta de Plantilla
-        texto = mensaje["button"]["text"]
-        payload = mensaje["button"]["payload"]
+        elif tipo == "button":  # Respuesta de Plantilla
+            button = mensaje.get("button") or {}
+            texto = button.get("text")
+            payload = button.get("payload")
 
-    elif tipo == "interactive":  # Respuesta de Menú
-        interactive = mensaje["interactive"]
-        itype = interactive["type"]
+        elif tipo == "interactive":  # Respuesta de Menú
+            interactive = mensaje.get("interactive") or {}
+            itype = interactive.get("type")
 
-        if itype == "button_reply":
-            texto = interactive["button_reply"]["title"]
-            payload = interactive["button_reply"]["id"]
-        elif itype == "list_reply":
-            texto = interactive["list_reply"]["title"]
-            payload = interactive["list_reply"]["id"]
+            if itype == "button_reply":
+                reply = interactive.get("button_reply") or {}
+                texto = reply.get("title")
+                payload = reply.get("id")
+            elif itype == "list_reply":
+                reply = interactive.get("list_reply") or {}
+                texto = reply.get("title")
+                payload = reply.get("id")
 
-    # Manejo de multimedia si es necesario
-    elif tipo in ["image", "audio", "document"]:
-        texto = f"[{tipo}]"
+        elif tipo in ["image", "audio", "document", "video", "sticker"]:
+            texto = f"[{tipo}]"
+
+        elif tipo in ["location", "contacts", "contact", "reaction", "unsupported"]:
+            texto = f"[{tipo}]"
+
+    except Exception as e:
+        print(f"⚠️ Normalización WhatsApp segura falló (tipo={tipo}): {e}")
+        texto = f"[{tipo or 'unknown'}]" if tipo else None
 
     return tipo, texto, payload
 

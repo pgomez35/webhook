@@ -98,6 +98,7 @@ from performance_routes import router as main_creadores_performance_router
 from creadores_performance_tablero import router as creadores_performance_tablero_router
 from creadores_capacitaciones import router as creadores_capacitaciones_router
 from creadores_importacion import router as creadores_importacion_router
+from router_chatbot_captacion import router as chatbot_captacion_router
 
 
 
@@ -131,6 +132,7 @@ app.include_router(main_creadores_performance_router, tags=["creadores seguimien
 app.include_router(creadores_performance_tablero_router, tags=["creadores tablero"])
 app.include_router(creadores_capacitaciones_router, tags=["creadores capacitaciones"])
 app.include_router(creadores_importacion_router, tags=["creadores importacion"])
+app.include_router(chatbot_captacion_router, tags=["Chatbot Captación"])
 
 
 

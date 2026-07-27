@@ -149,6 +149,38 @@ def get_connection_public_context():
             conn.close()
 
 
+def get_connection_chatbot():
+    """
+    Conexión con search_path fijo a chatbot, public.
+    No usa current_tenant ni schemas de agencia Talentum.
+    """
+    conn = psycopg2.connect(INTERNAL_DATABASE_URL)
+    conn.autocommit = False
+    with conn.cursor() as cur:
+        cur.execute("SET search_path TO chatbot, public;")
+    return conn
+
+
+@contextmanager
+def get_connection_chatbot_context():
+    """
+    Context manager para el schema compartido chatbot.
+    """
+    conn = None
+    try:
+        conn = get_connection_chatbot()
+        yield conn
+        if conn:
+            conn.commit()
+    except Exception:
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if conn:
+            conn.close()
+
+
 def limpiar_telefono(telefono):
     if telefono is None:
         return None
@@ -3084,12 +3116,29 @@ def guardar_o_actualizar_whatsapp_business_account(
                     )
 
                 row = cur.fetchone()
-                return {
+                resultado = {
                     "status": "completado",
                     "id": row["id"],
                     "waba_id": row["waba_id"],
                     "phone_number_id": row["phone_number_id"],
                 }
+
+        # Registrar canal en chatbot (schema compartido) sin alterar el flujo WABA
+        try:
+            from database_chatbot_captacion import asegurar_agencia_chatbot_y_canal
+
+            asegurar_agencia_chatbot_y_canal(
+                whatsapp_account_id=resultado["id"],
+                subdominio=subdominio,
+                business_name=business_name,
+            )
+        except Exception as e_chat:
+            print(
+                "⚠️ Chatbot: no se pudo asegurar agencia/canal tras WABA upsert:",
+                e_chat,
+            )
+
+        return resultado
     except Exception as e:
         print("❌ Error en guardar_o_actualizar_whatsapp_business_account:", e)
         return {"status": "error"}
@@ -3384,7 +3433,33 @@ def actualizar_phone_info_db(
                     WHERE id = %s;
                 """, (phone_number, phone_number_id, status, id))
 
+                cur.execute(
+                    """
+                    SELECT id, subdominio, business_name
+                    FROM whatsapp_business_accounts
+                    WHERE id = %s
+                    LIMIT 1
+                    """,
+                    (id,),
+                )
+                cuenta_row = cur.fetchone()
+
         print(f"✅ Registro WABA (id={id}) actualizado correctamente.")
+
+        if status == "connected" and cuenta_row:
+            try:
+                from database_chatbot_captacion import asegurar_agencia_chatbot_y_canal
+
+                sub = cuenta_row[1] if not isinstance(cuenta_row, dict) else cuenta_row.get("subdominio")
+                bname = cuenta_row[2] if not isinstance(cuenta_row, dict) else cuenta_row.get("business_name")
+                asegurar_agencia_chatbot_y_canal(
+                    whatsapp_account_id=id,
+                    subdominio=sub,
+                    business_name=bname,
+                )
+            except Exception as e_chat:
+                print("⚠️ Chatbot: no se pudo asegurar agencia/canal tras phone info:", e_chat)
+
         return True
 
     except Exception as e:
