@@ -539,12 +539,18 @@ MAX_BUTTON_TITLE = 20
 MAX_BUTTONS = 3
 
 def _sanitize_title(title: str) -> str:
-    if title is None:
-        return ""
-    t = " ".join(str(title).split())
+    """
+    Normaliza título de botón reply.
+    No trunca: rechaza vacío o > MAX_BUTTON_TITLE.
+    """
+    t = " ".join(str(title or "").split())
+    if not t:
+        raise ValueError("El título del botón no puede estar vacío")
     if len(t) > MAX_BUTTON_TITLE:
-        logger.warning("Título de botón demasiado largo (%d). Se truncará a %d: %s", len(t), MAX_BUTTON_TITLE, t)
-        t = t[:MAX_BUTTON_TITLE]
+        raise ValueError(
+            f"El título del botón no puede superar {MAX_BUTTON_TITLE} caracteres "
+            f"(límite de WhatsApp). Actual: {len(t)}"
+        )
     return t
 
 def enviar_botones_con_iconos_minimal(
@@ -736,3 +742,150 @@ def enviar_mensaje_animacion_con_media_id(token: str, phone_number_id: str, tele
         resp_json = {"error": "no json", "text": resp.text}
 
     return resp.status_code, resp_json
+
+
+def _graph_api_version() -> str:
+    return (os.getenv("GRAPH_API_VERSION") or GRAPH_API_VERSION or "v19.0").strip()
+
+
+def _enmascarar_url_media(url: Optional[str]) -> str:
+    if not url:
+        return ""
+    texto = str(url).strip()
+    base = texto.split("?", 1)[0]
+    if len(base) <= 48:
+        return base
+    return base[:32] + "..." + base[-12:]
+
+
+def _enviar_media_whatsapp(
+    token: str,
+    numero_id: str,
+    telefono_destino: str,
+    tipo_media: str,
+    media_url: Optional[str] = None,
+    media_id: Optional[str] = None,
+    caption: Optional[str] = None,
+    filename: Optional[str] = None,
+):
+    """
+    Envía video o document a WhatsApp Cloud API.
+    Exige exactamente uno de: media_url | media_id.
+    """
+    tipo = (tipo_media or "").strip().lower()
+    if tipo not in ("video", "document"):
+        raise ValueError("tipo_media debe ser 'video' o 'document'")
+
+    tiene_url = bool(media_url and str(media_url).strip())
+    tiene_id = bool(media_id and str(media_id).strip())
+    if tiene_url == tiene_id:
+        raise ValueError("Debe indicar exactamente uno de: media_url o media_id")
+
+    if tiene_url:
+        url_limpia = str(media_url).strip()
+        if not url_limpia.startswith("https://"):
+            raise ValueError("media_url debe comenzar por https://")
+
+    telefono = _normalize_phone(telefono_destino)
+    if not telefono:
+        raise ValueError("telefono_destino inválido")
+
+    telefono_safe = (
+        telefono[:3] + "****" + telefono[-2:] if len(telefono) >= 6 else "****"
+    )
+
+    media_obj: dict = {}
+    if tiene_url:
+        media_obj["link"] = str(media_url).strip()
+    else:
+        media_obj["id"] = str(media_id).strip()
+
+    if caption is not None:
+        cap = str(caption).strip()
+        if cap:
+            media_obj["caption"] = cap
+
+    if tipo == "document" and filename:
+        media_obj["filename"] = str(filename).strip()
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": telefono,
+        "type": tipo,
+        tipo: media_obj,
+    }
+
+    api_url = f"https://graph.facebook.com/{_graph_api_version()}/{numero_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+    print(f"[WA] Enviando {tipo} a: {telefono_safe}")
+    if tiene_url:
+        print(f"[WA] Media URL: {_enmascarar_url_media(media_url)}")
+    else:
+        print("[WA] Media ID presente (no se imprime)")
+
+    try:
+        response = requests.post(api_url, headers=headers, json=payload, timeout=30)
+    except requests.Timeout:
+        return 504, {"error": "timeout", "detail": "Timeout al enviar media a Meta"}
+    except requests.RequestException as e:
+        return 500, {"error": "request_error", "detail": str(e)}
+
+    try:
+        respuesta_json = response.json()
+    except json.JSONDecodeError:
+        respuesta_json = {
+            "error": "Respuesta no válida en formato JSON",
+            "contenido": (response.text or "")[:300],
+        }
+
+    ok = response.status_code in (200, 201)
+    print(
+        f"[WA] Media {tipo} status={response.status_code} ok={ok} tel={telefono_safe}"
+    )
+    return response.status_code, respuesta_json
+
+
+def enviar_video_whatsapp(
+    token: str,
+    numero_id: str,
+    telefono_destino: str,
+    video_url: Optional[str] = None,
+    media_id: Optional[str] = None,
+    caption: Optional[str] = None,
+):
+    """Envía un video normal (type=video). No usa animation."""
+    return _enviar_media_whatsapp(
+        token=token,
+        numero_id=numero_id,
+        telefono_destino=telefono_destino,
+        tipo_media="video",
+        media_url=video_url,
+        media_id=media_id,
+        caption=caption,
+    )
+
+
+def enviar_documento_whatsapp(
+    token: str,
+    numero_id: str,
+    telefono_destino: str,
+    documento_url: Optional[str] = None,
+    media_id: Optional[str] = None,
+    caption: Optional[str] = None,
+    filename: str = "documento.pdf",
+):
+    """Envía un documento PDF (type=document)."""
+    return _enviar_media_whatsapp(
+        token=token,
+        numero_id=numero_id,
+        telefono_destino=telefono_destino,
+        tipo_media="document",
+        media_url=documento_url,
+        media_id=media_id,
+        caption=caption,
+        filename=filename or "documento.pdf",
+    )

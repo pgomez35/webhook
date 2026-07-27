@@ -1,15 +1,17 @@
 """
 Router administrativo — Chatbot de captación.
+La agencia se resuelve exclusivamente desde el JWT (scope=chatbot_frontend).
+X-Tenant-Name / tenant_name / hostname no autorizan datos.
 """
 from __future__ import annotations
 
 from datetime import date
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 import database_chatbot_captacion as db
-from main_auth import obtener_usuario_actual
+from router_chatbot_auth import obtener_agencia_chatbot_actual
 from schemas_chatbot_captacion import (
     CanalWhatsAppResponse,
     ChatbotAspiranteDetalle,
@@ -18,23 +20,36 @@ from schemas_chatbot_captacion import (
     ChatbotConfiguracionResponse,
     ChatbotConfiguracionUpdate,
     ChatbotResumenResponse,
+    MediaEliminarRequest,
+    MediaEliminarResponse,
+    MediaFirmaRequest,
+    MediaFirmaResponse,
     PaginatedResponse,
     PreguntaFrecuente,
+    RecursoBienvenida,
     AgenciaChatbotResponse,
+)
+from service_cloudinary_chatbot import (
+    destruir_recurso_cloudinary,
+    generar_firma_carga,
+    public_id_pertenece_agencia,
 )
 
 router = APIRouter(prefix="/api/chatbot-captacion", tags=["Chatbot Captación"])
 
 
-def _agencia_from_request(request: Request) -> dict:
-    tenant_name = (getattr(request.state, "tenant_name", None) or "").strip()
-    if not tenant_name:
-        raise HTTPException(status_code=400, detail="No se pudo identificar el tenant.")
-    return db.resolver_agencia_administrativa(tenant_name)
-
-
 def _faqs_out(raw) -> list:
     return [PreguntaFrecuente(**f) for f in db.parse_faqs(raw)]
+
+
+def _recursos_out(raw) -> list:
+    out = []
+    for item in db.parse_recursos_bienvenida(raw):
+        try:
+            out.append(RecursoBienvenida(**item))
+        except Exception:
+            continue
+    return out
 
 
 def _config_response(agencia: dict, cfg: dict) -> ChatbotConfiguracionResponse:
@@ -57,6 +72,7 @@ def _config_response(agencia: dict, cfg: dict) -> ChatbotConfiguracionResponse:
         url_continuar=cfg.get("url_continuar"),
         texto_boton_preguntas=cfg["texto_boton_preguntas"],
         preguntas_frecuentes=_faqs_out(cfg.get("preguntas_frecuentes")),
+        recursos_bienvenida=_recursos_out(cfg.get("recursos_bienvenida")),
         mensaje_error=cfg["mensaje_error"],
         activo=bool(cfg.get("activo")),
         created_at=cfg.get("created_at"),
@@ -87,11 +103,7 @@ def _aspirante_response(row: dict) -> ChatbotAspiranteResponse:
 
 
 @router.get("/configuracion", response_model=ChatbotConfiguracionResponse)
-def get_configuracion(
-    request: Request,
-    usuario_actual: Any = Depends(obtener_usuario_actual),
-):
-    agencia = _agencia_from_request(request)
+def get_configuracion(agencia: dict = Depends(obtener_agencia_chatbot_actual)):
     cfg = db.obtener_configuracion_por_agencia(agencia["id"])
     if not cfg:
         cfg = db.crear_configuracion_default(agencia["id"])
@@ -101,10 +113,8 @@ def get_configuracion(
 @router.put("/configuracion", response_model=ChatbotConfiguracionResponse)
 def put_configuracion(
     payload: ChatbotConfiguracionUpdate,
-    request: Request,
-    usuario_actual: Any = Depends(obtener_usuario_actual),
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
 ):
-    agencia = _agencia_from_request(request)
     existente = db.obtener_configuracion_por_agencia(agencia["id"])
     if not existente:
         db.crear_configuracion_default(agencia["id"])
@@ -114,28 +124,89 @@ def put_configuracion(
     return _config_response(agencia, cfg)
 
 
-@router.get("/canales", response_model=list[CanalWhatsAppResponse])
-def get_canales(
-    request: Request,
-    usuario_actual: Any = Depends(obtener_usuario_actual),
+@router.post("/media/firma", response_model=MediaFirmaResponse)
+def post_media_firma(
+    payload: MediaFirmaRequest,
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
 ):
-    agencia = _agencia_from_request(request)
+    """
+    Firma temporal Cloudinary. agencia_id solo desde JWT.
+    No acepta folder/public_id/resource_type del frontend.
+    """
+    firma = generar_firma_carga(agencia_id=agencia["id"], tipo=payload.tipo)
+    return MediaFirmaResponse(**firma)
+
+
+@router.delete("/media", response_model=MediaEliminarResponse)
+def delete_media(
+    payload: MediaEliminarRequest,
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    """
+    Elimina un asset de Cloudinary si pertenece a la agencia del JWT.
+    Si está en recursos_bienvenida, también lo quita del JSONB.
+    """
+    agencia_id = int(agencia["id"])
+    public_id = payload.public_id
+
+    if not public_id_pertenece_agencia(public_id, agencia_id):
+        raise HTTPException(
+            status_code=403,
+            detail="El recurso no pertenece a esta agencia",
+        )
+
+    cfg = db.obtener_configuracion_por_agencia(agencia_id)
+    if not cfg:
+        raise HTTPException(status_code=404, detail="Configuración no encontrada")
+
+    recursos = db.parse_recursos_bienvenida(cfg.get("recursos_bienvenida"))
+    en_config = [r for r in recursos if (r.get("public_id") or "").strip() == public_id]
+
+    if en_config:
+        rt_cfg = (en_config[0].get("resource_type") or "").strip().lower()
+        if rt_cfg and rt_cfg != payload.resource_type:
+            raise HTTPException(
+                status_code=400,
+                detail="resource_type no coincide con el recurso guardado",
+            )
+    else:
+        # Limpieza de temporales / post-reemplazo: solo bajo prefijo de la agencia
+        # (ya verificado arriba). No permite borrar assets de otra agencia.
+        pass
+
+    destruir_recurso_cloudinary(
+        public_id=public_id,
+        resource_type=payload.resource_type,
+        invalidate=True,
+    )
+
+    eliminado_config = False
+    if en_config:
+        nuevos = [r for r in recursos if (r.get("public_id") or "").strip() != public_id]
+        db.actualizar_recursos_bienvenida(agencia_id, nuevos)
+        eliminado_config = True
+
+    return MediaEliminarResponse(
+        ok=True,
+        public_id=public_id,
+        eliminado_cloudinary=True,
+        eliminado_config=eliminado_config,
+    )
+
+
+@router.get("/canales", response_model=list[CanalWhatsAppResponse])
+def get_canales(agencia: dict = Depends(obtener_agencia_chatbot_actual)):
     rows = db.listar_canales_agencia(agencia["id"])
     return [CanalWhatsAppResponse(**r) for r in rows]
 
 
 @router.get("/resumen", response_model=ChatbotResumenResponse)
-def get_resumen(
-    request: Request,
-    usuario_actual: Any = Depends(obtener_usuario_actual),
-):
-    agencia = _agencia_from_request(request)
+def get_resumen(agencia: dict = Depends(obtener_agencia_chatbot_actual)):
     return ChatbotResumenResponse(**db.resumen_aspirantes(agencia["id"]))
 
 
 @router.get("/aspirantes", response_model=PaginatedResponse)
 def get_aspirantes(
-    request: Request,
     search: Optional[str] = Query(None),
     estado: Optional[str] = Query(None),
     plataforma: Optional[str] = Query(None),
@@ -147,10 +218,8 @@ def get_aspirantes(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=10, le=100),
     order: str = Query("fecha_registro_desc"),
-    usuario_actual: Any = Depends(obtener_usuario_actual),
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
 ):
-    agencia = _agencia_from_request(request)
-
     if whatsapp_account_id is not None:
         if not db.canal_pertenece_agencia(agencia["id"], whatsapp_account_id):
             raise HTTPException(
@@ -183,10 +252,8 @@ def get_aspirantes(
 @router.get("/aspirantes/{aspirante_id}", response_model=ChatbotAspiranteDetalle)
 def get_aspirante_detalle(
     aspirante_id: int,
-    request: Request,
-    usuario_actual: Any = Depends(obtener_usuario_actual),
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
 ):
-    agencia = _agencia_from_request(request)
     row = db.obtener_aspirante(agencia["id"], aspirante_id)
     if not row:
         raise HTTPException(status_code=404, detail="Aspirante no encontrado.")
@@ -202,10 +269,8 @@ def get_aspirante_detalle(
 def patch_aspirante(
     aspirante_id: int,
     payload: ChatbotAspiranteUpdate,
-    request: Request,
-    usuario_actual: Any = Depends(obtener_usuario_actual),
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
 ):
-    agencia = _agencia_from_request(request)
     data = payload.model_dump(exclude_unset=True)
     row = db.actualizar_aspirante_admin(
         agencia["id"],

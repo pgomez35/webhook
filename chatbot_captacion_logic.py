@@ -78,7 +78,20 @@ def interpretar_si_no(
 
 
 def truncar_titulo_boton(titulo: str, max_len: int = 20) -> str:
-    t = (titulo or "").strip()
-    if len(t) <= max_len:
-        return t
-    return t[:max_len]
+    """
+    Normaliza y valida título de botón WhatsApp.
+    Rechaza (> max_len); no trunca silenciosamente.
+    """
+    t = " ".join(str(titulo or "").split())
+    if not t:
+        raise ValueError("El título del botón no puede estar vacío")
+    if len(t) > max_len:
+        raise ValueError(
+            f"El título del botón no puede superar {max_len} caracteres "
+            f"(límite de WhatsApp). Actual: {len(t)}"
+        )
+    return t
+
+
+def validar_titulo_boton(titulo: str, max_len: int = 20) -> str:
+    return truncar_titulo_boton(titulo, max_len=max_len)

@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 FAQ_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,50}$")
 ACCIONES = Literal["asesor", "url", "agendamiento", "finalizar"]
+TIPOS_RECURSO = Literal["video", "document"]
 ESTADOS_ASPIRANTE = Literal[
     "nuevo",
     "en_proceso",
@@ -75,6 +76,101 @@ class PreguntaFrecuente(BaseModel):
         return texto
 
 
+class RecursoBienvenida(BaseModel):
+    """
+    Recurso de bienvenida almacenado en JSONB.
+    Tras Cloudinary: proveedor=cloudinary + metadatos (sin binarios ni secretos).
+    `url` se mantiene como espejo de secure_url para compatibilidad de envío WhatsApp.
+    """
+
+    id: str = Field(..., max_length=50)
+    tipo: TIPOS_RECURSO
+    proveedor: Literal["cloudinary"] = "cloudinary"
+    secure_url: Optional[str] = Field(None, max_length=500)
+    url: Optional[str] = Field(None, max_length=500)
+    public_id: Optional[str] = Field(None, max_length=300)
+    asset_id: Optional[str] = Field(None, max_length=120)
+    resource_type: Optional[Literal["video", "raw"]] = None
+    format: Optional[str] = Field(None, max_length=20)
+    bytes: Optional[int] = Field(None, ge=0)
+    nombre_original: Optional[str] = Field(None, max_length=200)
+    caption: Optional[str] = Field(None, max_length=300)
+    nombre_archivo: Optional[str] = Field(None, max_length=150)
+    orden: int = Field(..., ge=1, le=2)
+    activo: bool = True
+
+    @field_validator("id")
+    @classmethod
+    def validar_id(cls, v: str) -> str:
+        v = _strip_required(v, "id")
+        if len(v) > 50:
+            raise ValueError("id máximo 50 caracteres")
+        if not FAQ_ID_RE.match(v):
+            raise ValueError("id solo admite letras, números, guion y guion bajo (máx. 50)")
+        return v
+
+    @field_validator("secure_url", "url")
+    @classmethod
+    def validar_https(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        texto = str(v).strip()
+        if not texto:
+            return None
+        if not texto.startswith("https://"):
+            raise ValueError("la URL debe comenzar por https://")
+        return texto
+
+    @field_validator("caption")
+    @classmethod
+    def validar_caption(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        texto = str(v).strip()
+        if not texto:
+            return None
+        if len(texto) > 300:
+            raise ValueError("caption máximo 300 caracteres")
+        return texto
+
+    @field_validator("nombre_archivo", "nombre_original", "public_id", "asset_id", "format")
+    @classmethod
+    def strip_opcional(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        texto = str(v).strip()
+        return texto or None
+
+    @model_validator(mode="after")
+    def validar_tipo_archivo(self):
+        secure = self.secure_url or self.url
+        if not secure:
+            raise ValueError("secure_url es obligatorio (carga Cloudinary)")
+        if not self.public_id:
+            raise ValueError("public_id es obligatorio (carga Cloudinary)")
+        if not self.resource_type:
+            raise ValueError("resource_type es obligatorio")
+
+        object.__setattr__(self, "proveedor", "cloudinary")
+        object.__setattr__(self, "secure_url", secure)
+        object.__setattr__(self, "url", secure)
+
+        if self.tipo == "video":
+            if self.resource_type != "video":
+                raise ValueError("video requiere resource_type=video")
+            object.__setattr__(self, "nombre_archivo", None)
+        elif self.tipo == "document":
+            if self.resource_type != "raw":
+                raise ValueError("document requiere resource_type=raw")
+            nombre = self.nombre_archivo or self.nombre_original
+            if not nombre:
+                raise ValueError("nombre_archivo es obligatorio para document")
+            if not str(nombre).lower().endswith(".pdf"):
+                raise ValueError("nombre_archivo debe terminar en .pdf")
+            object.__setattr__(self, "nombre_archivo", nombre)
+        return self
+
+
 class AgenciaChatbotResponse(BaseModel):
     id: int
     nombre: str
@@ -110,6 +206,7 @@ class ChatbotConfiguracionResponse(BaseModel):
     url_continuar: Optional[str] = None
     texto_boton_preguntas: str
     preguntas_frecuentes: List[PreguntaFrecuente] = Field(default_factory=list)
+    recursos_bienvenida: List[RecursoBienvenida] = Field(default_factory=list)
     mensaje_error: str
     activo: bool
     created_at: Optional[datetime] = None
@@ -131,6 +228,7 @@ class ChatbotConfiguracionUpdate(BaseModel):
     url_continuar: Optional[str] = Field(None, max_length=500)
     texto_boton_preguntas: str = Field(..., max_length=20)
     preguntas_frecuentes: List[PreguntaFrecuente] = Field(default_factory=list)
+    recursos_bienvenida: List[RecursoBienvenida] = Field(default_factory=list)
     mensaje_error: str = Field(..., max_length=250)
 
     @field_validator(
@@ -198,6 +296,25 @@ class ChatbotConfiguracionUpdate(BaseModel):
                     f"FAQ '{faq.id}': titulo activo supera 20 caracteres (límite WhatsApp)"
                 )
 
+        recursos = self.recursos_bienvenida or []
+        if len(recursos) > 2:
+            raise ValueError("Máximo 2 recursos de bienvenida")
+
+        videos = [r for r in recursos if r.tipo == "video"]
+        docs = [r for r in recursos if r.tipo == "document"]
+        if len(videos) > 1:
+            raise ValueError("Máximo un video de bienvenida")
+        if len(docs) > 1:
+            raise ValueError("Máximo un documento de bienvenida")
+
+        ids_rec = [r.id.lower() for r in recursos]
+        if len(ids_rec) != len(set(ids_rec)):
+            raise ValueError("Los id de recursos_bienvenida deben ser únicos")
+
+        ordenes = [r.orden for r in recursos]
+        if len(ordenes) != len(set(ordenes)):
+            raise ValueError("No se permiten órdenes duplicados en recursos_bienvenida")
+
         return self
 
 
@@ -250,6 +367,44 @@ class ChatbotResumenResponse(BaseModel):
     contactados: int = 0
     aprobados: int = 0
     descartados: int = 0
+
+
+class MediaFirmaRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    tipo: TIPOS_RECURSO
+
+
+class MediaFirmaResponse(BaseModel):
+    cloud_name: str
+    api_key: str
+    timestamp: int
+    signature: str
+    resource_type: Literal["video", "raw"]
+    asset_folder: str
+    upload_url: str
+    overwrite: bool = False
+    unique_filename: bool = True
+    tags: str
+
+
+class MediaEliminarRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    public_id: str = Field(..., min_length=1, max_length=300)
+    resource_type: Literal["video", "raw"]
+
+    @field_validator("public_id")
+    @classmethod
+    def strip_pid(cls, v: str) -> str:
+        return str(v or "").strip()
+
+
+class MediaEliminarResponse(BaseModel):
+    ok: bool = True
+    public_id: str
+    eliminado_cloudinary: bool = True
+    eliminado_config: bool = False
 
 
 class PaginatedResponse(BaseModel):

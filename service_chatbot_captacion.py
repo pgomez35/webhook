@@ -22,7 +22,12 @@ from chatbot_captacion_logic import (
     truncar_titulo_boton,
 )
 from DataBase import get_connection_chatbot_context
-from enviar_msg_wp import enviar_botones_Completa, enviar_mensaje_texto_simple
+from enviar_msg_wp import (
+    enviar_botones_Completa,
+    enviar_documento_whatsapp,
+    enviar_mensaje_texto_simple,
+    enviar_video_whatsapp,
+)
 import database_chatbot_captacion as db
 
 logger = logging.getLogger("chatbot_captacion")
@@ -73,6 +78,88 @@ def faqs_activas(config: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 def _enviar_texto(token: str, phone_number_id: str, wa_id: str, texto: str) -> None:
     enviar_mensaje_texto_simple(token, phone_number_id, wa_id, texto)
+
+
+def _recursos_activos_ordenados(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    recursos = db.parse_recursos_bienvenida(config.get("recursos_bienvenida"))
+    activos = [r for r in recursos if r.get("activo") is True]
+    activos.sort(key=lambda x: int(x.get("orden") or 0))
+    return activos[:2]
+
+
+def _enviar_recursos_bienvenida(
+    config: Dict[str, Any],
+    token: str,
+    phone_number_id: str,
+    wa_id: str,
+) -> None:
+    """
+    Envía video/PDF opcionales. Errores no detienen el flujo.
+    """
+    for recurso in _recursos_activos_ordenados(config):
+        tipo = (recurso.get("tipo") or "").strip().lower()
+        url = (recurso.get("secure_url") or recurso.get("url") or "").strip()
+        caption = (recurso.get("caption") or "").strip() or None
+        rid = recurso.get("id")
+
+        if not url.startswith("https://"):
+            logger.warning(
+                "chatbot recurso inválido id=%s tipo=%s (URL no https)",
+                rid,
+                tipo,
+            )
+            continue
+
+        try:
+            if tipo == "video":
+                status, body = enviar_video_whatsapp(
+                    token=token,
+                    numero_id=phone_number_id,
+                    telefono_destino=wa_id,
+                    video_url=url,
+                    caption=caption,
+                )
+            elif tipo == "document":
+                filename = (recurso.get("nombre_archivo") or "documento.pdf").strip()
+                status, body = enviar_documento_whatsapp(
+                    token=token,
+                    numero_id=phone_number_id,
+                    telefono_destino=wa_id,
+                    documento_url=url,
+                    caption=caption,
+                    filename=filename,
+                )
+            else:
+                logger.warning("chatbot recurso tipo desconocido id=%s tipo=%s", rid, tipo)
+                continue
+
+            if status not in (200, 201):
+                logger.warning(
+                    "chatbot fallo media id=%s tipo=%s status=%s err=%s tel=%s",
+                    rid,
+                    tipo,
+                    status,
+                    (body or {}).get("error") if isinstance(body, dict) else None,
+                    enmascarar_telefono(wa_id),
+                )
+                # Fallback textual opcional
+                partes = [p for p in (caption, url) if p]
+                if partes:
+                    _enviar_texto(token, phone_number_id, wa_id, "\n\n".join(partes))
+        except Exception as e:
+            logger.exception(
+                "chatbot excepción media id=%s tipo=%s tel=%s: %s",
+                rid,
+                tipo,
+                enmascarar_telefono(wa_id),
+                e,
+            )
+            partes = [p for p in (caption, url) if p]
+            if partes and url.startswith("https://"):
+                try:
+                    _enviar_texto(token, phone_number_id, wa_id, "\n\n".join(partes))
+                except Exception:
+                    pass
 
 
 def _enviar_botones(
@@ -380,9 +467,10 @@ def procesar_chatbot_captacion(
                         )
                         return True
 
-                # Primer contacto / inicio
+                # Primer contacto / inicio — recursos solo aquí
                 if etapa in ("inicio", None):
                     _enviar_texto(token, phone_number_id, telefono, config["mensaje_bienvenida"])
+                    _enviar_recursos_bienvenida(config, token, phone_number_id, telefono)
                     _enviar_texto(token, phone_number_id, telefono, config["pregunta_usuario"])
                     aspirante = db.actualizar_aspirante_flujo(
                         cur,

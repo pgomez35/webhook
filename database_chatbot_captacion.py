@@ -371,6 +371,15 @@ def actualizar_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str,
     else:
         faqs_json = Json(faqs)
 
+    recursos = data.get("recursos_bienvenida") or []
+    if isinstance(recursos, list):
+        recursos_json = Json([
+            r.model_dump() if hasattr(r, "model_dump") else r
+            for r in recursos
+        ])
+    else:
+        recursos_json = Json(recursos)
+
     with get_connection_chatbot_context() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
@@ -389,6 +398,7 @@ def actualizar_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str,
                     url_continuar = %s,
                     texto_boton_preguntas = %s,
                     preguntas_frecuentes = %s,
+                    recursos_bienvenida = %s,
                     mensaje_error = %s,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE agencia_id = %s
@@ -407,9 +417,35 @@ def actualizar_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str,
                     data.get("url_continuar"),
                     data["texto_boton_preguntas"],
                     faqs_json,
+                    recursos_json,
                     data["mensaje_error"],
                     agencia_id,
                 ),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise ValueError("Configuración no encontrada")
+            return dict(row)
+
+
+def actualizar_recursos_bienvenida(
+    agencia_id: int,
+    recursos: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Actualiza solo recursos_bienvenida (p. ej. tras DELETE media)."""
+    recursos_json = Json(list(recursos or []))
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                UPDATE chatbot.chatbot_configuracion
+                SET
+                    recursos_bienvenida = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE agencia_id = %s
+                RETURNING *
+                """,
+                (recursos_json, agencia_id),
             )
             row = cur.fetchone()
             if not row:
@@ -728,3 +764,7 @@ def parse_faqs(raw: Any) -> List[Dict[str, Any]]:
     if isinstance(raw, list):
         return [dict(x) for x in raw if isinstance(x, dict)]
     return []
+
+
+def parse_recursos_bienvenida(raw: Any) -> List[Dict[str, Any]]:
+    return parse_faqs(raw)
