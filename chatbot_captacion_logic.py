@@ -26,7 +26,8 @@ ETAPA_PREGUNTAS_FRECUENTES = "preguntas_frecuentes"
 ETAPA_ASESOR = "asesor"
 ETAPA_FINALIZADO = "finalizado"
 
-ETAPAS_CERRADAS = frozenset(
+# Etapas sin bot automático (solo trazabilidad / chat humano)
+ETAPAS_SIN_AUTO_RESPUESTA = frozenset(
     {
         ETAPA_ASESOR,
         ETAPA_FINALIZADO,

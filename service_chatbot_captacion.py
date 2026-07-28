@@ -28,7 +28,7 @@ from chatbot_captacion_logic import (
     ETAPA_PREGUNTAS_FRECUENTES,
     ETAPA_RESULTADO,
     ETAPA_USUARIO,
-    ETAPAS_CERRADAS,
+    ETAPAS_SIN_AUTO_RESPUESTA,
     FAQ_PREFIX,
     enmascarar_telefono,
     interpretar_si_no,
@@ -197,10 +197,11 @@ def _botones_faqs(config: Dict[str, Any]) -> List[Dict[str, str]]:
     return botones
 
 
-def _mensaje_proceso_cerrado(aspirante: Dict[str, Any]) -> str:
-    if aspirante.get("estado") == "descartado":
-        return "Tu proceso ya fue cerrado. Si necesitas ayuda, contacta a la agencia."
-    return "Tu proceso ya fue completado. Si necesitas ayuda, contacta a la agencia."
+MSG_TRANSFERENCIA_ASESOR = (
+    "Gracias. Tu información fue enviada al equipo de la agencia. "
+    "Puedes escribir aquí cualquier pregunta o información adicional "
+    "y un asesor continuará la conversación."
+)
 
 
 def _persistir_transicion(
@@ -212,17 +213,40 @@ def _persistir_transicion(
     """Persiste etapa y campos; loguea transición. Lanza si falla el commit."""
     payload = dict(campos)
     payload["etapa_chatbot"] = etapa_nueva
-    logger.info(
-        "[CHATBOT] transición etapa %s -> %s",
-        etapa_actual,
-        etapa_nueva,
-    )
+    if etapa_nueva == ETAPA_ASESOR:
+        logger.info(
+            "[CHATBOT] transición %s -> asesor aspirante_id=%s",
+            etapa_actual,
+            aspirante_id,
+        )
+    else:
+        logger.info(
+            "[CHATBOT] transición etapa %s -> %s",
+            etapa_actual,
+            etapa_nueva,
+        )
     actualizado = db.actualizar_aspirante_flujo_commit(aspirante_id, payload)
     logger.info(
         "[CHATBOT] etapa persistida correctamente: %s",
         etapa_nueva,
     )
+    if etapa_nueva == ETAPA_ASESOR:
+        logger.info(
+            "[CHATBOT] conversación transferida a asesor aspirante_id=%s",
+            aspirante_id,
+        )
     return actualizado
+
+
+def _actualizar_trazabilidad_sin_respuesta(
+    aspirante: Dict[str, Any],
+    message_id_meta: Optional[str],
+) -> None:
+    """Chat libre / finalizado: solo marca interacción, sin auto-respuesta."""
+    db.actualizar_aspirante_flujo_commit(
+        aspirante["id"],
+        {"ultimo_message_id_meta": message_id_meta},
+    )
 
 
 def _reenviar_pregunta_actual(
@@ -287,23 +311,36 @@ def _manejar_continuar(
         campos.update(
             {
                 "requiere_asesor": True,
-                "estado": "pendiente_asesor",
+                "estado": "en_proceso",
             }
         )
-        _persistir_transicion(
-            aspirante["id"], etapa_actual, ETAPA_ASESOR, campos
-        )
+        try:
+            _persistir_transicion(
+                aspirante["id"], etapa_actual, ETAPA_ASESOR, campos
+            )
+        except Exception:
+            logger.exception(
+                "[CHATBOT] no se pudo transferir a asesor aspirante_id=%s",
+                aspirante.get("id"),
+            )
+            traceback.print_exc()
+            return
         _enviar_texto(
             token,
             phone_number_id,
             wa_id,
-            "Gracias. Un asesor continuará tu atención pronto.",
+            MSG_TRANSFERENCIA_ASESOR,
         )
     elif accion == "url":
         campos.update({"estado": "completado"})
-        _persistir_transicion(
-            aspirante["id"], etapa_actual, ETAPA_FINALIZADO, campos
-        )
+        try:
+            _persistir_transicion(
+                aspirante["id"], etapa_actual, ETAPA_FINALIZADO, campos
+            )
+        except Exception:
+            logger.exception("[CHATBOT] no se pudo finalizar (url)")
+            traceback.print_exc()
+            return
         _enviar_texto(
             token,
             phone_number_id,
@@ -312,9 +349,14 @@ def _manejar_continuar(
         )
     elif accion == "agendamiento":
         campos.update({"estado": "completado"})
-        _persistir_transicion(
-            aspirante["id"], etapa_actual, ETAPA_FINALIZADO, campos
-        )
+        try:
+            _persistir_transicion(
+                aspirante["id"], etapa_actual, ETAPA_FINALIZADO, campos
+            )
+        except Exception:
+            logger.exception("[CHATBOT] no se pudo finalizar (agendamiento)")
+            traceback.print_exc()
+            return
         _enviar_texto(
             token,
             phone_number_id,
@@ -323,9 +365,14 @@ def _manejar_continuar(
         )
     else:
         campos.update({"estado": "completado"})
-        _persistir_transicion(
-            aspirante["id"], etapa_actual, ETAPA_FINALIZADO, campos
-        )
+        try:
+            _persistir_transicion(
+                aspirante["id"], etapa_actual, ETAPA_FINALIZADO, campos
+            )
+        except Exception:
+            logger.exception("[CHATBOT] no se pudo finalizar")
+            traceback.print_exc()
+            return
         _enviar_texto(
             token,
             phone_number_id,
@@ -500,21 +547,26 @@ def procesar_chatbot_captacion(
         etapa = aspirante.get("etapa_chatbot") or ETAPA_INICIO
         logger.info("[CHATBOT] pregunta_actual/etapa=%s", etapa)
 
-        # --- Procesos cerrados ---
-        if etapa in ETAPAS_CERRADAS:
+        # --- Chat libre (asesor) o cierre real (finalizado): sin auto-respuesta ---
+        if etapa in ETAPAS_SIN_AUTO_RESPUESTA:
             try:
-                db.actualizar_aspirante_flujo_commit(
-                    aspirante["id"],
-                    {"ultimo_message_id_meta": message_id_meta},
-                )
+                _actualizar_trazabilidad_sin_respuesta(aspirante, message_id_meta)
             except Exception:
+                logger.exception(
+                    "[CHATBOT] no se pudo actualizar trazabilidad aspirante_id=%s",
+                    aspirante.get("id"),
+                )
                 traceback.print_exc()
-            _enviar_texto(
-                token,
-                phone_number_id,
-                telefono,
-                _mensaje_proceso_cerrado(aspirante),
-            )
+            if etapa == ETAPA_ASESOR:
+                logger.info(
+                    "[CHATBOT] mensaje recibido en chat libre/asesor aspirante_id=%s",
+                    aspirante.get("id"),
+                )
+            else:
+                logger.info(
+                    "[CHATBOT] mensaje en finalizado (sin auto-respuesta) aspirante_id=%s",
+                    aspirante.get("id"),
+                )
             return True
 
         # --- Primer contacto: persistir avance ANTES de enviar ---
