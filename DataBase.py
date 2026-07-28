@@ -1557,8 +1557,9 @@ def obtener_usuarios_por_username(username):
         return None
 
 def es_admin(usuario_actual: dict):
-    # Asegúrate de que 'rol' esté en el dict del usuario
-    return usuario_actual.get("rol") == "admin"
+    """True si el rol es Admin (tolerante a mayúsculas/minúsculas)."""
+    rol = (usuario_actual or {}).get("rol")
+    return str(rol or "").strip().lower() == "admin"
 
 def actualiza_password_usuario(user_id: int, nuevo_hash: str):
     try:

@@ -83,10 +83,17 @@ def crear_access_token_chatbot(
     usuario_login: str,
     agencia_id: int,
     debe_cambiar_clave: bool,
+    codigo: str = "",
+    nombre: str = "",
 ) -> str:
     payload = {
         "sub": usuario_login,
         "chatbot_agencia_id": int(agencia_id),
+        "agencia_id": int(agencia_id),
+        "product_type": "chatbot",
+        "rol": "chatbot_agencia",
+        "codigo": codigo or "",
+        "nombre": nombre or "",
         "scope": CHATBOT_SCOPE,
         "debe_cambiar_clave": bool(debe_cambiar_clave),
         "exp": datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
@@ -244,6 +251,8 @@ def login_chatbot(payload: ChatbotLoginIn):
         usuario_login=agencia["usuario_login"],
         agencia_id=agencia["id"],
         debe_cambiar_clave=debe,
+        codigo=agencia.get("codigo") or "",
+        nombre=agencia.get("nombre") or "",
     )
     logger.info(
         "chatbot login ok agencia_id=%s usuario=%s",
@@ -281,6 +290,8 @@ def cambiar_clave_chatbot(
         usuario_login=row["usuario_login"],
         agencia_id=agencia_id,
         debe_cambiar_clave=False,
+        codigo=row.get("codigo") or "",
+        nombre=row.get("nombre") or "",
     )
     return ChatbotLoginOut(
         access_token=token,

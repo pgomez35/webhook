@@ -100,6 +100,7 @@ from creadores_capacitaciones import router as creadores_capacitaciones_router
 from creadores_importacion import router as creadores_importacion_router
 from router_chatbot_captacion import router as chatbot_captacion_router
 from router_chatbot_auth import router as chatbot_auth_router
+from router_admin_chatbot_clientes import router as admin_chatbot_clientes_router
 
 
 
@@ -135,6 +136,7 @@ app.include_router(creadores_capacitaciones_router, tags=["creadores capacitacio
 app.include_router(creadores_importacion_router, tags=["creadores importacion"])
 app.include_router(chatbot_auth_router, tags=["Chatbot Auth"])
 app.include_router(chatbot_captacion_router, tags=["Chatbot Captación"])
+app.include_router(admin_chatbot_clientes_router, tags=["Admin Chatbot Clientes"])
 
 
 
@@ -145,8 +147,10 @@ app.add_middleware(
         "https://talentum-manager.com",
         "https://www.talentum-manager.com",
         "https://test.talentum-manager.com",
-        "https://agency15-5.talentum-manager.com",
+        "https://admin.talentum-manager.com",
+        "https://chat.talentum-manager.com",
         "https://chatbot.talentum-manager.com",
+        "https://agency15-5.talentum-manager.com",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ],
