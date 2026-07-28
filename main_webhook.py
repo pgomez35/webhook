@@ -4066,8 +4066,14 @@ async def _procesar_mensaje_unico(
     # ---------------------------------------------------------
     if product_type == "chatbot":
         try:
+            import inspect
+            import service_chatbot_captacion
             from service_chatbot_captacion import procesar_chatbot_captacion
 
+            print(
+                f"🤖 [CHATBOT MODULE] "
+                f"archivo={service_chatbot_captacion.__file__}"
+            )
             print(
                 f"🤖 procesar_chatbot_captacion "
                 f"phone_number_id={phone_number_id} "
@@ -4076,7 +4082,12 @@ async def _procesar_mensaje_unico(
                 f"tenant_name={tenant_name} "
                 f"chatbot_agencia_id={chatbot_agencia_id}"
             )
-            procesar_chatbot_captacion(
+            print(
+                f"🤖 [CHATBOT CALL] "
+                f"es_async={inspect.iscoroutinefunction(procesar_chatbot_captacion)}"
+            )
+
+            procesado_chatbot = procesar_chatbot_captacion(
                 agencia_id=chatbot_agencia_id,
                 whatsapp_account_id=whatsapp_account_id,
                 wa_id=wa_id,
@@ -4086,6 +4097,19 @@ async def _procesar_mensaje_unico(
                 phone_number_id=phone_number_id,
                 token=token,
                 message_id_meta=mensaje.get("id"),
+            )
+            # Defensa: si en algún deploy quedó async, ejecutar la coroutine.
+            if inspect.iscoroutine(procesado_chatbot):
+                print(
+                    "⚠️ [CHATBOT] se obtuvo coroutine sin await; "
+                    "ejecutando con await ahora"
+                )
+                procesado_chatbot = await procesado_chatbot
+
+            print(
+                f"🤖 [CHATBOT RESULT] "
+                f"tipo={type(procesado_chatbot)} "
+                f"resultado={procesado_chatbot}"
             )
         except Exception as e:
             print(f"❌ Error chatbot captación: {e}")

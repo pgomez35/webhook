@@ -18,7 +18,7 @@ from chatbot_captacion_logic import (
 )
 from DataBase import get_connection_chatbot_context, get_connection_public_context
 
-logger = logging.getLogger("chatbot_captacion")
+logger = logging.getLogger("uvicorn.error")
 
 # Re-export para compatibilidad
 __all_helpers__ = (

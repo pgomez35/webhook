@@ -46,7 +46,8 @@ from enviar_msg_wp import (
 )
 import database_chatbot_captacion as db
 
-logger = logging.getLogger("chatbot_captacion")
+# uvicorn.error llega a stdout en Render; chatbot_captacion a menudo no.
+logger = logging.getLogger("uvicorn.error")
 
 TIPOS_NO_TEXTO = frozenset(
     {
@@ -387,19 +388,29 @@ def procesar_chatbot_captacion(
     Siempre retorna True cuando el producto chatbot atendió el mensaje
     (éxito o error controlado), para no caer a Talentum Manager.
     """
+    print(
+        f"[CHATBOT] entrada agencia_id={agencia_id} "
+        f"whatsapp_account_id={whatsapp_account_id} "
+        f"wa_id={enmascarar_telefono(wa_id)} tipo={tipo}"
+    )
+
     if not agencia_id:
         logger.error("[CHATBOT] agencia_id ausente")
+        print("[CHATBOT] abort: agencia_id ausente")
         return True
     if not whatsapp_account_id:
         logger.error("[CHATBOT] whatsapp_account_id ausente agencia_id=%s", agencia_id)
+        print("[CHATBOT] abort: whatsapp_account_id ausente")
         return True
     if not wa_id:
         logger.error("[CHATBOT] wa_id ausente agencia_id=%s", agencia_id)
+        print("[CHATBOT] abort: wa_id ausente")
         return True
 
     telefono = normalizar_telefono_chatbot(wa_id)
     if not telefono:
         logger.error("[CHATBOT] teléfono vacío tras normalizar wa_id=%s", wa_id)
+        print("[CHATBOT] abort: teléfono vacío")
         return True
 
     etapa_anterior = None
@@ -411,6 +422,9 @@ def procesar_chatbot_captacion(
             logger.warning(
                 "[CHATBOT] sin configuración activa agencia_id=%s — mensaje consumido",
                 agencia_id,
+            )
+            print(
+                f"[CHATBOT] abort: sin configuración activa agencia_id={agencia_id}"
             )
             return True
 
