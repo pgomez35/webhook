@@ -20,16 +20,14 @@ from chatbot_captacion_logic import (
     BTN_EDAD_NO,
     BTN_EDAD_SI,
     BTN_PREGUNTAS,
-    ETAPA_COMPLETADO,
+    ETAPA_ASESOR,
     ETAPA_DISPONIBILIDAD,
-    ETAPA_FAQ,
     ETAPA_FINALIZADO,
     ETAPA_INICIO,
     ETAPA_MAYOR_EDAD,
-    ETAPA_MENU,
-    ETAPA_PENDIENTE_ASESOR,
-    ETAPA_RECHAZADO,
-    ETAPA_USUARIO_PLATAFORMA,
+    ETAPA_PREGUNTAS_FRECUENTES,
+    ETAPA_RESULTADO,
+    ETAPA_USUARIO,
     ETAPAS_CERRADAS,
     FAQ_PREFIX,
     enmascarar_telefono,
@@ -199,10 +197,32 @@ def _botones_faqs(config: Dict[str, Any]) -> List[Dict[str, str]]:
     return botones
 
 
-def _mensaje_proceso_cerrado(etapa: str) -> str:
-    if etapa == ETAPA_RECHAZADO:
+def _mensaje_proceso_cerrado(aspirante: Dict[str, Any]) -> str:
+    if aspirante.get("estado") == "descartado":
         return "Tu proceso ya fue cerrado. Si necesitas ayuda, contacta a la agencia."
     return "Tu proceso ya fue completado. Si necesitas ayuda, contacta a la agencia."
+
+
+def _persistir_transicion(
+    aspirante_id: int,
+    etapa_actual: str,
+    etapa_nueva: str,
+    campos: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Persiste etapa y campos; loguea transición. Lanza si falla el commit."""
+    payload = dict(campos)
+    payload["etapa_chatbot"] = etapa_nueva
+    logger.info(
+        "[CHATBOT] transición etapa %s -> %s",
+        etapa_actual,
+        etapa_nueva,
+    )
+    actualizado = db.actualizar_aspirante_flujo_commit(aspirante_id, payload)
+    logger.info(
+        "[CHATBOT] etapa persistida correctamente: %s",
+        etapa_nueva,
+    )
+    return actualizado
 
 
 def _reenviar_pregunta_actual(
@@ -217,7 +237,7 @@ def _reenviar_pregunta_actual(
         "No pudimos procesar tu respuesta. Por favor, intenta nuevamente."
     )
 
-    if etapa == ETAPA_USUARIO_PLATAFORMA:
+    if etapa == ETAPA_USUARIO:
         _enviar_texto(token, phone_number_id, wa_id, error)
         _enviar_texto(token, phone_number_id, wa_id, config["pregunta_usuario"])
     elif etapa == ETAPA_MAYOR_EDAD:
@@ -238,7 +258,7 @@ def _reenviar_pregunta_actual(
             config["pregunta_disponibilidad"],
             _botones_si_no(BTN_DISP_SI, BTN_DISP_NO),
         )
-    elif etapa in (ETAPA_MENU, ETAPA_FAQ):
+    elif etapa in (ETAPA_RESULTADO, ETAPA_PREGUNTAS_FRECUENTES):
         _enviar_texto(token, phone_number_id, wa_id, error)
         _enviar_botones(
             token,
@@ -260,6 +280,7 @@ def _manejar_continuar(
     message_id_meta: Optional[str],
 ) -> None:
     accion = (config.get("accion_continuar") or "asesor").strip()
+    etapa_actual = aspirante.get("etapa_chatbot") or ETAPA_RESULTADO
     campos: Dict[str, Any] = {"ultimo_message_id_meta": message_id_meta}
 
     if accion == "asesor":
@@ -267,10 +288,11 @@ def _manejar_continuar(
             {
                 "requiere_asesor": True,
                 "estado": "pendiente_asesor",
-                "etapa_chatbot": ETAPA_PENDIENTE_ASESOR,
             }
         )
-        db.actualizar_aspirante_flujo_commit(aspirante["id"], campos)
+        _persistir_transicion(
+            aspirante["id"], etapa_actual, ETAPA_ASESOR, campos
+        )
         _enviar_texto(
             token,
             phone_number_id,
@@ -278,10 +300,10 @@ def _manejar_continuar(
             "Gracias. Un asesor continuará tu atención pronto.",
         )
     elif accion == "url":
-        campos.update(
-            {"estado": "completado", "etapa_chatbot": ETAPA_COMPLETADO}
+        campos.update({"estado": "completado"})
+        _persistir_transicion(
+            aspirante["id"], etapa_actual, ETAPA_FINALIZADO, campos
         )
-        db.actualizar_aspirante_flujo_commit(aspirante["id"], campos)
         _enviar_texto(
             token,
             phone_number_id,
@@ -289,10 +311,10 @@ def _manejar_continuar(
             f"Continúa tu proceso aquí: {config.get('url_continuar')}",
         )
     elif accion == "agendamiento":
-        campos.update(
-            {"estado": "completado", "etapa_chatbot": ETAPA_COMPLETADO}
+        campos.update({"estado": "completado"})
+        _persistir_transicion(
+            aspirante["id"], etapa_actual, ETAPA_FINALIZADO, campos
         )
-        db.actualizar_aspirante_flujo_commit(aspirante["id"], campos)
         _enviar_texto(
             token,
             phone_number_id,
@@ -300,10 +322,10 @@ def _manejar_continuar(
             f"Agenda tu cita aquí: {config.get('url_continuar')}",
         )
     else:
-        campos.update(
-            {"estado": "completado", "etapa_chatbot": ETAPA_FINALIZADO}
+        campos.update({"estado": "completado"})
+        _persistir_transicion(
+            aspirante["id"], etapa_actual, ETAPA_FINALIZADO, campos
         )
-        db.actualizar_aspirante_flujo_commit(aspirante["id"], campos)
         _enviar_texto(
             token,
             phone_number_id,
@@ -491,18 +513,19 @@ def procesar_chatbot_captacion(
                 token,
                 phone_number_id,
                 telefono,
-                _mensaje_proceso_cerrado(etapa),
+                _mensaje_proceso_cerrado(aspirante),
             )
             return True
 
         # --- Primer contacto: persistir avance ANTES de enviar ---
         if etapa in (ETAPA_INICIO, None):
             try:
-                aspirante = db.actualizar_aspirante_flujo_commit(
+                aspirante = _persistir_transicion(
                     aspirante["id"],
+                    ETAPA_INICIO,
+                    ETAPA_USUARIO,
                     {
                         "estado": "en_proceso",
-                        "etapa_chatbot": ETAPA_USUARIO_PLATAFORMA,
                         "whatsapp_account_id": whatsapp_account_id,
                         "ultimo_message_id_meta": message_id_meta,
                     },
@@ -514,12 +537,6 @@ def procesar_chatbot_captacion(
                 traceback.print_exc()
                 return True
 
-            logger.info(
-                "[CHATBOT] transición %s -> %s",
-                ETAPA_INICIO,
-                ETAPA_USUARIO_PLATAFORMA,
-            )
-            logger.info("[CHATBOT] etapa persistida correctamente")
             logger.info("[CHATBOT] enviando bienvenida")
             _enviar_texto(
                 token, phone_number_id, telefono, config["mensaje_bienvenida"]
@@ -529,11 +546,11 @@ def procesar_chatbot_captacion(
             _enviar_texto(
                 token, phone_number_id, telefono, config["pregunta_usuario"]
             )
-            etapa_nueva = ETAPA_USUARIO_PLATAFORMA
+            etapa_nueva = ETAPA_USUARIO
             return True
 
-        # --- Esperando usuario de plataforma (TikTok/BIGO/etc.) ---
-        if etapa == ETAPA_USUARIO_PLATAFORMA:
+        # --- Usuario de plataforma (TikTok/BIGO/etc.) ---
+        if etapa == ETAPA_USUARIO:
             if not _es_mensaje_texto_util(tipo, texto):
                 db.actualizar_aspirante_flujo_commit(
                     aspirante["id"], {"ultimo_message_id_meta": message_id_meta}
@@ -553,21 +570,23 @@ def procesar_chatbot_captacion(
                 )
                 return True
 
-            aspirante = db.actualizar_aspirante_flujo_commit(
-                aspirante["id"],
-                {
-                    "usuario_plataforma": usuario,
-                    "etapa_chatbot": ETAPA_MAYOR_EDAD,
-                    "ultimo_message_id_meta": message_id_meta,
-                },
-            )
-            logger.info(
-                "[CHATBOT] transición %s -> %s usuario=%s",
-                ETAPA_USUARIO_PLATAFORMA,
-                ETAPA_MAYOR_EDAD,
-                usuario,
-            )
-            logger.info("[CHATBOT] etapa persistida correctamente")
+            try:
+                aspirante = _persistir_transicion(
+                    aspirante["id"],
+                    ETAPA_USUARIO,
+                    ETAPA_MAYOR_EDAD,
+                    {
+                        "usuario_plataforma": usuario,
+                        "ultimo_message_id_meta": message_id_meta,
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "[CHATBOT] no se pudo persistir usuario; no se envía siguiente pregunta"
+                )
+                traceback.print_exc()
+                return True
+
             _enviar_botones(
                 token,
                 phone_number_id,
@@ -591,35 +610,47 @@ def procesar_chatbot_captacion(
                 return True
 
             if respuesta is False:
-                db.actualizar_aspirante_flujo_commit(
-                    aspirante["id"],
-                    {
-                        "mayor_edad": False,
-                        "cumple_requisitos": False,
-                        "estado": "descartado",
-                        "etapa_chatbot": ETAPA_RECHAZADO,
-                        "ultimo_message_id_meta": message_id_meta,
-                    },
-                )
+                try:
+                    _persistir_transicion(
+                        aspirante["id"],
+                        ETAPA_MAYOR_EDAD,
+                        ETAPA_FINALIZADO,
+                        {
+                            "mayor_edad": False,
+                            "cumple_requisitos": False,
+                            "estado": "descartado",
+                            "ultimo_message_id_meta": message_id_meta,
+                        },
+                    )
+                except Exception:
+                    logger.exception(
+                        "[CHATBOT] no se pudo persistir rechazo por edad"
+                    )
+                    traceback.print_exc()
+                    return True
                 _enviar_texto(
                     token, phone_number_id, telefono, config["mensaje_no_aprobado"]
                 )
-                etapa_nueva = ETAPA_RECHAZADO
+                etapa_nueva = ETAPA_FINALIZADO
                 return True
 
-            db.actualizar_aspirante_flujo_commit(
-                aspirante["id"],
-                {
-                    "mayor_edad": True,
-                    "etapa_chatbot": ETAPA_DISPONIBILIDAD,
-                    "ultimo_message_id_meta": message_id_meta,
-                },
-            )
-            logger.info(
-                "[CHATBOT] transición %s -> %s",
-                ETAPA_MAYOR_EDAD,
-                ETAPA_DISPONIBILIDAD,
-            )
+            try:
+                _persistir_transicion(
+                    aspirante["id"],
+                    ETAPA_MAYOR_EDAD,
+                    ETAPA_DISPONIBILIDAD,
+                    {
+                        "mayor_edad": True,
+                        "ultimo_message_id_meta": message_id_meta,
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "[CHATBOT] no se pudo persistir mayor_edad; no se envía pregunta"
+                )
+                traceback.print_exc()
+                return True
+
             _enviar_botones(
                 token,
                 phone_number_id,
@@ -646,37 +677,49 @@ def procesar_chatbot_captacion(
             cumple = bool(mayor and respuesta)
 
             if not cumple:
-                db.actualizar_aspirante_flujo_commit(
-                    aspirante["id"],
-                    {
-                        "disponibilidad_live": bool(respuesta),
-                        "cumple_requisitos": False,
-                        "estado": "descartado",
-                        "etapa_chatbot": ETAPA_RECHAZADO,
-                        "ultimo_message_id_meta": message_id_meta,
-                    },
-                )
+                try:
+                    _persistir_transicion(
+                        aspirante["id"],
+                        ETAPA_DISPONIBILIDAD,
+                        ETAPA_FINALIZADO,
+                        {
+                            "disponibilidad_live": bool(respuesta),
+                            "cumple_requisitos": False,
+                            "estado": "descartado",
+                            "ultimo_message_id_meta": message_id_meta,
+                        },
+                    )
+                except Exception:
+                    logger.exception(
+                        "[CHATBOT] no se pudo persistir rechazo por disponibilidad"
+                    )
+                    traceback.print_exc()
+                    return True
                 _enviar_texto(
                     token, phone_number_id, telefono, config["mensaje_no_aprobado"]
                 )
-                etapa_nueva = ETAPA_RECHAZADO
+                etapa_nueva = ETAPA_FINALIZADO
                 return True
 
-            db.actualizar_aspirante_flujo_commit(
-                aspirante["id"],
-                {
-                    "disponibilidad_live": True,
-                    "cumple_requisitos": True,
-                    "estado": "completado",
-                    "etapa_chatbot": ETAPA_MENU,
-                    "ultimo_message_id_meta": message_id_meta,
-                },
-            )
-            logger.info(
-                "[CHATBOT] transición %s -> %s",
-                ETAPA_DISPONIBILIDAD,
-                ETAPA_MENU,
-            )
+            try:
+                _persistir_transicion(
+                    aspirante["id"],
+                    ETAPA_DISPONIBILIDAD,
+                    ETAPA_RESULTADO,
+                    {
+                        "disponibilidad_live": True,
+                        "cumple_requisitos": True,
+                        "estado": "completado",
+                        "ultimo_message_id_meta": message_id_meta,
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "[CHATBOT] no se pudo persistir resultado; no se envía menú"
+                )
+                traceback.print_exc()
+                return True
+
             _enviar_botones(
                 token,
                 phone_number_id,
@@ -684,11 +727,11 @@ def procesar_chatbot_captacion(
                 config["mensaje_aprobado"],
                 _botones_menu(config),
             )
-            etapa_nueva = ETAPA_MENU
+            etapa_nueva = ETAPA_RESULTADO
             return True
 
-        # --- Menú / FAQ ---
-        if etapa in (ETAPA_MENU, ETAPA_FAQ):
+        # --- Resultado / FAQ ---
+        if etapa in (ETAPA_RESULTADO, ETAPA_PREGUNTAS_FRECUENTES):
             if payload_id == BTN_CONTINUAR:
                 _manejar_continuar(
                     config,
@@ -701,13 +744,17 @@ def procesar_chatbot_captacion(
                 return True
 
             if payload_id == BTN_PREGUNTAS:
-                db.actualizar_aspirante_flujo_commit(
-                    aspirante["id"],
-                    {
-                        "etapa_chatbot": ETAPA_FAQ,
-                        "ultimo_message_id_meta": message_id_meta,
-                    },
-                )
+                try:
+                    _persistir_transicion(
+                        aspirante["id"],
+                        etapa,
+                        ETAPA_PREGUNTAS_FRECUENTES,
+                        {"ultimo_message_id_meta": message_id_meta},
+                    )
+                except Exception:
+                    logger.exception("[CHATBOT] no se pudo persistir FAQ")
+                    traceback.print_exc()
+                    return True
                 _manejar_preguntas(config, token, phone_number_id, telefono)
                 return True
 
@@ -715,13 +762,19 @@ def procesar_chatbot_captacion(
                 ok = _manejar_faq_seleccionada(
                     config, payload_id, token, phone_number_id, telefono
                 )
-                db.actualizar_aspirante_flujo_commit(
-                    aspirante["id"],
-                    {
-                        "etapa_chatbot": ETAPA_MENU,
-                        "ultimo_message_id_meta": message_id_meta,
-                    },
-                )
+                try:
+                    _persistir_transicion(
+                        aspirante["id"],
+                        etapa,
+                        ETAPA_RESULTADO,
+                        {"ultimo_message_id_meta": message_id_meta},
+                    )
+                except Exception:
+                    logger.exception(
+                        "[CHATBOT] no se pudo volver a etapa resultado"
+                    )
+                    traceback.print_exc()
+                    return True
                 if not ok:
                     _reenviar_pregunta_actual(
                         config, aspirante, token, phone_number_id, telefono

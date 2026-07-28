@@ -16,24 +16,20 @@ BTN_PREGUNTAS = "CHATBOT_PREGUNTAS"
 FAQ_PREFIX = "CHATBOT_FAQ_"
 
 # Etapas de chatbot.chatbot_aspirantes.etapa_chatbot
-# (deben coincidir con chk_chatbot_aspirante_etapa en PostgreSQL)
+# Deben coincidir exactamente con chk_chatbot_aspirante_etapa
 ETAPA_INICIO = "inicio"
-ETAPA_USUARIO_PLATAFORMA = "esperando_usuario_plataforma"
-ETAPA_MAYOR_EDAD = "esperando_mayor_edad"
-ETAPA_DISPONIBILIDAD = "esperando_disponibilidad"
-ETAPA_MENU = "menu_principal"
-ETAPA_FAQ = "preguntas_frecuentes"
-ETAPA_PENDIENTE_ASESOR = "pendiente_asesor"
-ETAPA_COMPLETADO = "completado"
-ETAPA_RECHAZADO = "rechazado"
+ETAPA_USUARIO = "usuario"
+ETAPA_MAYOR_EDAD = "mayor_edad"
+ETAPA_DISPONIBILIDAD = "disponibilidad"
+ETAPA_RESULTADO = "resultado"
+ETAPA_PREGUNTAS_FRECUENTES = "preguntas_frecuentes"
+ETAPA_ASESOR = "asesor"
 ETAPA_FINALIZADO = "finalizado"
 
 ETAPAS_CERRADAS = frozenset(
     {
-        ETAPA_RECHAZADO,
+        ETAPA_ASESOR,
         ETAPA_FINALIZADO,
-        ETAPA_COMPLETADO,
-        ETAPA_PENDIENTE_ASESOR,
     }
 )
 
