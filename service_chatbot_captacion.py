@@ -20,6 +20,17 @@ from chatbot_captacion_logic import (
     BTN_EDAD_NO,
     BTN_EDAD_SI,
     BTN_PREGUNTAS,
+    ETAPA_COMPLETADO,
+    ETAPA_DISPONIBILIDAD,
+    ETAPA_FAQ,
+    ETAPA_FINALIZADO,
+    ETAPA_INICIO,
+    ETAPA_MAYOR_EDAD,
+    ETAPA_MENU,
+    ETAPA_PENDIENTE_ASESOR,
+    ETAPA_RECHAZADO,
+    ETAPA_USUARIO_PLATAFORMA,
+    ETAPAS_CERRADAS,
     FAQ_PREFIX,
     enmascarar_telefono,
     interpretar_si_no,
@@ -48,10 +59,6 @@ TIPOS_NO_TEXTO = frozenset(
         "contacts",
         "reaction",
     }
-)
-
-ETAPAS_CERRADAS = frozenset(
-    {"rechazado", "finalizado", "completado", "pendiente_asesor"}
 )
 
 
@@ -192,7 +199,7 @@ def _botones_faqs(config: Dict[str, Any]) -> List[Dict[str, str]]:
 
 
 def _mensaje_proceso_cerrado(etapa: str) -> str:
-    if etapa == "rechazado":
+    if etapa == ETAPA_RECHAZADO:
         return "Tu proceso ya fue cerrado. Si necesitas ayuda, contacta a la agencia."
     return "Tu proceso ya fue completado. Si necesitas ayuda, contacta a la agencia."
 
@@ -209,10 +216,10 @@ def _reenviar_pregunta_actual(
         "No pudimos procesar tu respuesta. Por favor, intenta nuevamente."
     )
 
-    if etapa == "esperando_usuario":
+    if etapa == ETAPA_USUARIO_PLATAFORMA:
         _enviar_texto(token, phone_number_id, wa_id, error)
         _enviar_texto(token, phone_number_id, wa_id, config["pregunta_usuario"])
-    elif etapa == "esperando_mayor_edad":
+    elif etapa == ETAPA_MAYOR_EDAD:
         _enviar_texto(token, phone_number_id, wa_id, error)
         _enviar_botones(
             token,
@@ -221,7 +228,7 @@ def _reenviar_pregunta_actual(
             config["pregunta_mayor_edad"],
             _botones_si_no(BTN_EDAD_SI, BTN_EDAD_NO),
         )
-    elif etapa == "esperando_disponibilidad":
+    elif etapa == ETAPA_DISPONIBILIDAD:
         _enviar_texto(token, phone_number_id, wa_id, error)
         _enviar_botones(
             token,
@@ -230,7 +237,7 @@ def _reenviar_pregunta_actual(
             config["pregunta_disponibilidad"],
             _botones_si_no(BTN_DISP_SI, BTN_DISP_NO),
         )
-    elif etapa in ("menu_principal", "preguntas_frecuentes"):
+    elif etapa in (ETAPA_MENU, ETAPA_FAQ):
         _enviar_texto(token, phone_number_id, wa_id, error)
         _enviar_botones(
             token,
@@ -259,7 +266,7 @@ def _manejar_continuar(
             {
                 "requiere_asesor": True,
                 "estado": "pendiente_asesor",
-                "etapa_chatbot": "pendiente_asesor",
+                "etapa_chatbot": ETAPA_PENDIENTE_ASESOR,
             }
         )
         db.actualizar_aspirante_flujo_commit(aspirante["id"], campos)
@@ -270,7 +277,9 @@ def _manejar_continuar(
             "Gracias. Un asesor continuará tu atención pronto.",
         )
     elif accion == "url":
-        campos.update({"estado": "completado", "etapa_chatbot": "completado"})
+        campos.update(
+            {"estado": "completado", "etapa_chatbot": ETAPA_COMPLETADO}
+        )
         db.actualizar_aspirante_flujo_commit(aspirante["id"], campos)
         _enviar_texto(
             token,
@@ -279,7 +288,9 @@ def _manejar_continuar(
             f"Continúa tu proceso aquí: {config.get('url_continuar')}",
         )
     elif accion == "agendamiento":
-        campos.update({"estado": "completado", "etapa_chatbot": "completado"})
+        campos.update(
+            {"estado": "completado", "etapa_chatbot": ETAPA_COMPLETADO}
+        )
         db.actualizar_aspirante_flujo_commit(aspirante["id"], campos)
         _enviar_texto(
             token,
@@ -288,7 +299,9 @@ def _manejar_continuar(
             f"Agenda tu cita aquí: {config.get('url_continuar')}",
         )
     else:
-        campos.update({"estado": "completado", "etapa_chatbot": "finalizado"})
+        campos.update(
+            {"estado": "completado", "etapa_chatbot": ETAPA_FINALIZADO}
+        )
         db.actualizar_aspirante_flujo_commit(aspirante["id"], campos)
         _enviar_texto(
             token,
@@ -433,7 +446,7 @@ def procesar_chatbot_captacion(
             aspirante.get("estado"),
         )
 
-        etapa_anterior = aspirante.get("etapa_chatbot") or "inicio"
+        etapa_anterior = aspirante.get("etapa_chatbot") or ETAPA_INICIO
 
         if (
             message_id_meta
@@ -448,7 +461,7 @@ def procesar_chatbot_captacion(
             )
             return True
 
-        etapa = aspirante.get("etapa_chatbot") or "inicio"
+        etapa = aspirante.get("etapa_chatbot") or ETAPA_INICIO
         logger.info("[CHATBOT] pregunta_actual/etapa=%s", etapa)
 
         # --- Procesos cerrados ---
@@ -469,13 +482,13 @@ def procesar_chatbot_captacion(
             return True
 
         # --- Primer contacto: persistir avance ANTES de enviar ---
-        if etapa in ("inicio", None):
+        if etapa in (ETAPA_INICIO, None):
             try:
                 aspirante = db.actualizar_aspirante_flujo_commit(
                     aspirante["id"],
                     {
                         "estado": "en_proceso",
-                        "etapa_chatbot": "esperando_usuario",
+                        "etapa_chatbot": ETAPA_USUARIO_PLATAFORMA,
                         "whatsapp_account_id": whatsapp_account_id,
                         "ultimo_message_id_meta": message_id_meta,
                     },
@@ -488,21 +501,25 @@ def procesar_chatbot_captacion(
                 return True
 
             logger.info(
-                "[CHATBOT] aspirante creado/actualizado id=%s etapa→esperando_usuario",
-                aspirante.get("id"),
+                "[CHATBOT] transición %s -> %s",
+                ETAPA_INICIO,
+                ETAPA_USUARIO_PLATAFORMA,
             )
+            logger.info("[CHATBOT] etapa persistida correctamente")
+            logger.info("[CHATBOT] enviando bienvenida")
             _enviar_texto(
                 token, phone_number_id, telefono, config["mensaje_bienvenida"]
             )
             _enviar_recursos_bienvenida(config, token, phone_number_id, telefono)
+            logger.info("[CHATBOT] enviando pregunta usuario plataforma")
             _enviar_texto(
                 token, phone_number_id, telefono, config["pregunta_usuario"]
             )
-            etapa_nueva = "esperando_usuario"
+            etapa_nueva = ETAPA_USUARIO_PLATAFORMA
             return True
 
-        # --- Esperando usuario (TikTok/BIGO/etc.) ---
-        if etapa == "esperando_usuario":
+        # --- Esperando usuario de plataforma (TikTok/BIGO/etc.) ---
+        if etapa == ETAPA_USUARIO_PLATAFORMA:
             if not _es_mensaje_texto_util(tipo, texto):
                 db.actualizar_aspirante_flujo_commit(
                     aspirante["id"], {"ultimo_message_id_meta": message_id_meta}
@@ -526,14 +543,17 @@ def procesar_chatbot_captacion(
                 aspirante["id"],
                 {
                     "usuario_plataforma": usuario,
-                    "etapa_chatbot": "esperando_mayor_edad",
+                    "etapa_chatbot": ETAPA_MAYOR_EDAD,
                     "ultimo_message_id_meta": message_id_meta,
                 },
             )
             logger.info(
-                "[CHATBOT] respuesta guardada usuario=%s siguiente=esperando_mayor_edad",
+                "[CHATBOT] transición %s -> %s usuario=%s",
+                ETAPA_USUARIO_PLATAFORMA,
+                ETAPA_MAYOR_EDAD,
                 usuario,
             )
+            logger.info("[CHATBOT] etapa persistida correctamente")
             _enviar_botones(
                 token,
                 phone_number_id,
@@ -541,11 +561,11 @@ def procesar_chatbot_captacion(
                 config["pregunta_mayor_edad"],
                 _botones_si_no(BTN_EDAD_SI, BTN_EDAD_NO),
             )
-            etapa_nueva = "esperando_mayor_edad"
+            etapa_nueva = ETAPA_MAYOR_EDAD
             return True
 
         # --- Mayor de edad ---
-        if etapa == "esperando_mayor_edad":
+        if etapa == ETAPA_MAYOR_EDAD:
             respuesta = interpretar_si_no(payload_id, texto, BTN_EDAD_SI, BTN_EDAD_NO)
             if respuesta is None:
                 db.actualizar_aspirante_flujo_commit(
@@ -563,25 +583,29 @@ def procesar_chatbot_captacion(
                         "mayor_edad": False,
                         "cumple_requisitos": False,
                         "estado": "descartado",
-                        "etapa_chatbot": "rechazado",
+                        "etapa_chatbot": ETAPA_RECHAZADO,
                         "ultimo_message_id_meta": message_id_meta,
                     },
                 )
                 _enviar_texto(
                     token, phone_number_id, telefono, config["mensaje_no_aprobado"]
                 )
-                etapa_nueva = "rechazado"
+                etapa_nueva = ETAPA_RECHAZADO
                 return True
 
             db.actualizar_aspirante_flujo_commit(
                 aspirante["id"],
                 {
                     "mayor_edad": True,
-                    "etapa_chatbot": "esperando_disponibilidad",
+                    "etapa_chatbot": ETAPA_DISPONIBILIDAD,
                     "ultimo_message_id_meta": message_id_meta,
                 },
             )
-            logger.info("[CHATBOT] siguiente pregunta=esperando_disponibilidad")
+            logger.info(
+                "[CHATBOT] transición %s -> %s",
+                ETAPA_MAYOR_EDAD,
+                ETAPA_DISPONIBILIDAD,
+            )
             _enviar_botones(
                 token,
                 phone_number_id,
@@ -589,11 +613,11 @@ def procesar_chatbot_captacion(
                 config["pregunta_disponibilidad"],
                 _botones_si_no(BTN_DISP_SI, BTN_DISP_NO),
             )
-            etapa_nueva = "esperando_disponibilidad"
+            etapa_nueva = ETAPA_DISPONIBILIDAD
             return True
 
         # --- Disponibilidad LIVE ---
-        if etapa == "esperando_disponibilidad":
+        if etapa == ETAPA_DISPONIBILIDAD:
             respuesta = interpretar_si_no(payload_id, texto, BTN_DISP_SI, BTN_DISP_NO)
             if respuesta is None:
                 db.actualizar_aspirante_flujo_commit(
@@ -614,14 +638,14 @@ def procesar_chatbot_captacion(
                         "disponibilidad_live": bool(respuesta),
                         "cumple_requisitos": False,
                         "estado": "descartado",
-                        "etapa_chatbot": "rechazado",
+                        "etapa_chatbot": ETAPA_RECHAZADO,
                         "ultimo_message_id_meta": message_id_meta,
                     },
                 )
                 _enviar_texto(
                     token, phone_number_id, telefono, config["mensaje_no_aprobado"]
                 )
-                etapa_nueva = "rechazado"
+                etapa_nueva = ETAPA_RECHAZADO
                 return True
 
             db.actualizar_aspirante_flujo_commit(
@@ -630,11 +654,15 @@ def procesar_chatbot_captacion(
                     "disponibilidad_live": True,
                     "cumple_requisitos": True,
                     "estado": "completado",
-                    "etapa_chatbot": "menu_principal",
+                    "etapa_chatbot": ETAPA_MENU,
                     "ultimo_message_id_meta": message_id_meta,
                 },
             )
-            logger.info("[CHATBOT] flujo aprobado → menu_principal")
+            logger.info(
+                "[CHATBOT] transición %s -> %s",
+                ETAPA_DISPONIBILIDAD,
+                ETAPA_MENU,
+            )
             _enviar_botones(
                 token,
                 phone_number_id,
@@ -642,11 +670,11 @@ def procesar_chatbot_captacion(
                 config["mensaje_aprobado"],
                 _botones_menu(config),
             )
-            etapa_nueva = "menu_principal"
+            etapa_nueva = ETAPA_MENU
             return True
 
         # --- Menú / FAQ ---
-        if etapa in ("menu_principal", "preguntas_frecuentes"):
+        if etapa in (ETAPA_MENU, ETAPA_FAQ):
             if payload_id == BTN_CONTINUAR:
                 _manejar_continuar(
                     config,
@@ -662,7 +690,7 @@ def procesar_chatbot_captacion(
                 db.actualizar_aspirante_flujo_commit(
                     aspirante["id"],
                     {
-                        "etapa_chatbot": "preguntas_frecuentes",
+                        "etapa_chatbot": ETAPA_FAQ,
                         "ultimo_message_id_meta": message_id_meta,
                     },
                 )
@@ -676,7 +704,7 @@ def procesar_chatbot_captacion(
                 db.actualizar_aspirante_flujo_commit(
                     aspirante["id"],
                     {
-                        "etapa_chatbot": "menu_principal",
+                        "etapa_chatbot": ETAPA_MENU,
                         "ultimo_message_id_meta": message_id_meta,
                     },
                 )

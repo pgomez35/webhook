@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from psycopg2.extras import RealDictCursor, Json
 
 from chatbot_captacion_logic import (
+    ETAPA_INICIO,
     enmascarar_telefono,
     nombre_agencia_desde_cuenta,
     normalizar_codigo_agencia,
@@ -852,13 +853,13 @@ def crear_aspirante(
             etapa_chatbot,
             ultimo_message_id_meta
         ) VALUES (
-            %s, %s, %s, 'tiktok', 'nuevo', 'inicio', %s
+            %s, %s, %s, 'tiktok', 'nuevo', %s, %s
         )
         ON CONFLICT (agencia_id, telefono) DO UPDATE
         SET updated_at = chatbot.chatbot_aspirantes.updated_at
         RETURNING *
         """,
-        (agencia_id, whatsapp_account_id, telefono, message_id_meta),
+        (agencia_id, whatsapp_account_id, telefono, ETAPA_INICIO, message_id_meta),
     )
     row = cur.fetchone()
     if not row:

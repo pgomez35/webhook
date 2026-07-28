@@ -15,6 +15,28 @@ BTN_CONTINUAR = "CHATBOT_CONTINUAR"
 BTN_PREGUNTAS = "CHATBOT_PREGUNTAS"
 FAQ_PREFIX = "CHATBOT_FAQ_"
 
+# Etapas de chatbot.chatbot_aspirantes.etapa_chatbot
+# (deben coincidir con chk_chatbot_aspirante_etapa en PostgreSQL)
+ETAPA_INICIO = "inicio"
+ETAPA_USUARIO_PLATAFORMA = "esperando_usuario_plataforma"
+ETAPA_MAYOR_EDAD = "esperando_mayor_edad"
+ETAPA_DISPONIBILIDAD = "esperando_disponibilidad"
+ETAPA_MENU = "menu_principal"
+ETAPA_FAQ = "preguntas_frecuentes"
+ETAPA_PENDIENTE_ASESOR = "pendiente_asesor"
+ETAPA_COMPLETADO = "completado"
+ETAPA_RECHAZADO = "rechazado"
+ETAPA_FINALIZADO = "finalizado"
+
+ETAPAS_CERRADAS = frozenset(
+    {
+        ETAPA_RECHAZADO,
+        ETAPA_FINALIZADO,
+        ETAPA_COMPLETADO,
+        ETAPA_PENDIENTE_ASESOR,
+    }
+)
+
 
 def enmascarar_telefono(telefono: Optional[str]) -> str:
     if not telefono:

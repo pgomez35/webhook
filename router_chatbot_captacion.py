@@ -11,6 +11,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 import database_chatbot_captacion as db
+from chatbot_captacion_logic import ETAPA_INICIO
 from router_chatbot_auth import obtener_agencia_chatbot_actual
 from schemas_chatbot_captacion import (
     CanalWhatsAppResponse,
@@ -90,7 +91,7 @@ def _aspirante_response(row: dict) -> ChatbotAspiranteResponse:
         mayor_edad=row.get("mayor_edad"),
         disponibilidad_live=row.get("disponibilidad_live"),
         estado=row.get("estado") or "nuevo",
-        etapa_chatbot=row.get("etapa_chatbot") or "inicio",
+        etapa_chatbot=row.get("etapa_chatbot") or ETAPA_INICIO,
         cumple_requisitos=row.get("cumple_requisitos"),
         requiere_asesor=bool(row.get("requiere_asesor")),
         observaciones=row.get("observaciones"),
