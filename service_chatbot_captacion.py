@@ -1,12 +1,17 @@
 """
 Servicio — máquina de estados del Chatbot de captación.
+
+Orden obligatorio:
+1) persistir estado en chatbot.chatbot_aspirantes (commit)
+2) enviar mensajes WhatsApp
+
+Así un fallo de Meta o de UPDATE no deja bienvenida enviada sin fila persistida.
 """
 from __future__ import annotations
 
 import logging
+import traceback
 from typing import Any, Dict, List, Optional
-
-from psycopg2.extras import RealDictCursor
 
 from chatbot_captacion_logic import (
     BTN_CONTINUAR,
@@ -18,10 +23,10 @@ from chatbot_captacion_logic import (
     FAQ_PREFIX,
     enmascarar_telefono,
     interpretar_si_no,
+    normalizar_telefono_chatbot,
     normalizar_usuario_plataforma,
     truncar_titulo_boton,
 )
-from DataBase import get_connection_chatbot_context
 from enviar_msg_wp import (
     enviar_botones_Completa,
     enviar_documento_whatsapp,
@@ -32,7 +37,6 @@ import database_chatbot_captacion as db
 
 logger = logging.getLogger("chatbot_captacion")
 
-# Tipos Meta que no aportan texto útil en etapas que esperan input de texto
 TIPOS_NO_TEXTO = frozenset(
     {
         "image",
@@ -42,31 +46,21 @@ TIPOS_NO_TEXTO = frozenset(
         "sticker",
         "location",
         "contacts",
-        "contact",
         "reaction",
-        "unsupported",
-        "order",
-        "system",
-        "unknown",
     }
+)
+
+ETAPAS_CERRADAS = frozenset(
+    {"rechazado", "finalizado", "completado", "pendiente_asesor"}
 )
 
 
 def _es_mensaje_texto_util(tipo: Optional[str], texto: Optional[str]) -> bool:
-    """True solo si el inbound es texto usable (no multimedia / contactos / etc.)."""
-    t = (tipo or "").strip().lower()
-    if not t or t in TIPOS_NO_TEXTO:
+    if (tipo or "").strip().lower() in TIPOS_NO_TEXTO:
         return False
-    if t != "text":
-        # button / interactive se manejan por payload en otras etapas;
-        # en esperando_usuario solo text.
+    if (tipo or "").strip().lower() in ("button", "interactive"):
         return False
-    if texto is None:
-        return False
-    # Placeholders de normalización multimedia: "[image]", "[audio]", ...
-    if str(texto).strip().startswith("[") and str(texto).strip().endswith("]"):
-        return False
-    return True
+    return bool((texto or "").strip())
 
 
 def faqs_activas(config: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -93,9 +87,6 @@ def _enviar_recursos_bienvenida(
     phone_number_id: str,
     wa_id: str,
 ) -> None:
-    """
-    Envía video/PDF opcionales. Errores no detienen el flujo.
-    """
     for recurso in _recursos_activos_ordenados(config):
         tipo = (recurso.get("tipo") or "").strip().lower()
         url = (recurso.get("secure_url") or recurso.get("url") or "").strip()
@@ -130,73 +121,66 @@ def _enviar_recursos_bienvenida(
                     filename=filename,
                 )
             else:
-                logger.warning("chatbot recurso tipo desconocido id=%s tipo=%s", rid, tipo)
                 continue
 
             if status not in (200, 201):
-                logger.warning(
-                    "chatbot fallo media id=%s tipo=%s status=%s err=%s tel=%s",
-                    rid,
-                    tipo,
-                    status,
-                    (body or {}).get("error") if isinstance(body, dict) else None,
-                    enmascarar_telefono(wa_id),
-                )
-                # Fallback textual opcional
                 partes = [p for p in (caption, url) if p]
                 if partes:
                     _enviar_texto(token, phone_number_id, wa_id, "\n\n".join(partes))
         except Exception as e:
-            logger.exception(
-                "chatbot excepción media id=%s tipo=%s tel=%s: %s",
+            logger.warning(
+                "chatbot excepción media id=%s tipo=%s: %s",
                 rid,
                 tipo,
-                enmascarar_telefono(wa_id),
                 e,
             )
-            partes = [p for p in (caption, url) if p]
-            if partes and url.startswith("https://"):
-                try:
-                    _enviar_texto(token, phone_number_id, wa_id, "\n\n".join(partes))
-                except Exception:
-                    pass
 
 
 def _enviar_botones(
     token: str,
     phone_number_id: str,
     wa_id: str,
-    texto: str,
+    cuerpo: str,
     botones: List[Dict[str, str]],
 ) -> None:
-    safe = [
-        {"id": b["id"], "title": truncar_titulo_boton(b["title"])}
-        for b in botones[:3]
-    ]
-    enviar_botones_Completa(token, phone_number_id, wa_id, texto, safe)
+    if not botones:
+        _enviar_texto(token, phone_number_id, wa_id, cuerpo)
+        return
+    enviar_botones_Completa(
+        token,
+        phone_number_id,
+        wa_id,
+        cuerpo,
+        botones,
+    )
 
 
 def _botones_si_no(id_si: str, id_no: str) -> List[Dict[str, str]]:
     return [
-        {"id": id_si, "title": "Sí"},
-        {"id": id_no, "title": "No"},
+        {"id": id_si, "title": truncar_titulo_boton("Sí")},
+        {"id": id_no, "title": truncar_titulo_boton("No")},
     ]
 
 
 def _botones_menu(config: Dict[str, Any]) -> List[Dict[str, str]]:
-    return [
+    botones = [
         {
             "id": BTN_CONTINUAR,
-            "title": truncar_titulo_boton(config.get("texto_boton_continuar") or "Continuar proceso"),
+            "title": truncar_titulo_boton(
+                str(config.get("texto_boton_continuar") or "Continuar")
+            ),
         },
         {
             "id": BTN_PREGUNTAS,
-            "title": truncar_titulo_boton(config.get("texto_boton_preguntas") or "Tengo preguntas"),
+            "title": truncar_titulo_boton(
+                str(config.get("texto_boton_preguntas") or "Preguntas")
+            ),
         },
     ]
+    return botones
 
 
-def _botones_faq(config: Dict[str, Any]) -> List[Dict[str, str]]:
+def _botones_faqs(config: Dict[str, Any]) -> List[Dict[str, str]]:
     botones = []
     for faq in faqs_activas(config):
         faq_id = str(faq.get("id") or "").strip()
@@ -221,7 +205,9 @@ def _reenviar_pregunta_actual(
     wa_id: str,
 ) -> None:
     etapa = aspirante.get("etapa_chatbot")
-    error = config.get("mensaje_error") or "No pudimos procesar tu respuesta. Por favor, intenta nuevamente."
+    error = config.get("mensaje_error") or (
+        "No pudimos procesar tu respuesta. Por favor, intenta nuevamente."
+    )
 
     if etapa == "esperando_usuario":
         _enviar_texto(token, phone_number_id, wa_id, error)
@@ -258,7 +244,6 @@ def _reenviar_pregunta_actual(
 
 
 def _manejar_continuar(
-    cur,
     config: Dict[str, Any],
     aspirante: Dict[str, Any],
     token: str,
@@ -277,7 +262,7 @@ def _manejar_continuar(
                 "etapa_chatbot": "pendiente_asesor",
             }
         )
-        db.actualizar_aspirante_flujo(cur, aspirante["id"], campos)
+        db.actualizar_aspirante_flujo_commit(aspirante["id"], campos)
         _enviar_texto(
             token,
             phone_number_id,
@@ -286,7 +271,7 @@ def _manejar_continuar(
         )
     elif accion == "url":
         campos.update({"estado": "completado", "etapa_chatbot": "completado"})
-        db.actualizar_aspirante_flujo(cur, aspirante["id"], campos)
+        db.actualizar_aspirante_flujo_commit(aspirante["id"], campos)
         _enviar_texto(
             token,
             phone_number_id,
@@ -295,21 +280,21 @@ def _manejar_continuar(
         )
     elif accion == "agendamiento":
         campos.update({"estado": "completado", "etapa_chatbot": "completado"})
-        db.actualizar_aspirante_flujo(cur, aspirante["id"], campos)
+        db.actualizar_aspirante_flujo_commit(aspirante["id"], campos)
         _enviar_texto(
             token,
             phone_number_id,
             wa_id,
             f"Agenda tu cita aquí: {config.get('url_continuar')}",
         )
-    else:  # finalizar
+    else:
         campos.update({"estado": "completado", "etapa_chatbot": "finalizado"})
-        db.actualizar_aspirante_flujo(cur, aspirante["id"], campos)
+        db.actualizar_aspirante_flujo_commit(aspirante["id"], campos)
         _enviar_texto(
             token,
             phone_number_id,
             wa_id,
-            "Proceso finalizado. ¡Gracias por tu interés!",
+            "Gracias por completar el proceso.",
         )
 
 
@@ -319,13 +304,13 @@ def _manejar_preguntas(
     phone_number_id: str,
     wa_id: str,
 ) -> None:
-    botones = _botones_faq(config)
-    if not botones:
+    faqs = faqs_activas(config)
+    if not faqs:
         _enviar_texto(
             token,
             phone_number_id,
             wa_id,
-            "Por ahora no hay preguntas frecuentes activas.",
+            "Por ahora no hay preguntas frecuentes disponibles.",
         )
         _enviar_botones(
             token,
@@ -335,13 +320,12 @@ def _manejar_preguntas(
             _botones_menu(config),
         )
         return
-
     _enviar_botones(
         token,
         phone_number_id,
         wa_id,
         "Elige una pregunta:",
-        botones,
+        _botones_faqs(config),
     )
 
 
@@ -352,12 +336,9 @@ def _manejar_faq_seleccionada(
     phone_number_id: str,
     wa_id: str,
 ) -> bool:
-    if not payload_id.startswith(FAQ_PREFIX):
-        return False
-    faq_id = payload_id[len(FAQ_PREFIX):].strip()
-    faqs = db.parse_faqs(config.get("preguntas_frecuentes"))
+    faq_id = payload_id[len(FAQ_PREFIX) :].strip()
     encontrada = None
-    for f in faqs:
+    for f in faqs_activas(config):
         if str(f.get("id") or "").strip() == faq_id and f.get("activo") is True:
             encontrada = f
             break
@@ -389,11 +370,24 @@ def procesar_chatbot_captacion(
 ) -> bool:
     """
     Procesa un mensaje del chatbot de captación.
-    Retorna True si el mensaje fue consumido por el chatbot.
-    Retorna False si no hay config activa (continuar flujo Talentum).
+
+    Siempre retorna True cuando el producto chatbot atendió el mensaje
+    (éxito o error controlado), para no caer a Talentum Manager.
     """
-    if not agencia_id or not whatsapp_account_id or not wa_id:
-        return False
+    if not agencia_id:
+        logger.error("[CHATBOT] agencia_id ausente")
+        return True
+    if not whatsapp_account_id:
+        logger.error("[CHATBOT] whatsapp_account_id ausente agencia_id=%s", agencia_id)
+        return True
+    if not wa_id:
+        logger.error("[CHATBOT] wa_id ausente agencia_id=%s", agencia_id)
+        return True
+
+    telefono = normalizar_telefono_chatbot(wa_id)
+    if not telefono:
+        logger.error("[CHATBOT] teléfono vacío tras normalizar wa_id=%s", wa_id)
+        return True
 
     etapa_anterior = None
     etapa_nueva = None
@@ -401,300 +395,317 @@ def procesar_chatbot_captacion(
     try:
         config = db.obtener_configuracion_activa(agencia_id)
         if not config:
-            return False
+            logger.warning(
+                "[CHATBOT] sin configuración activa agencia_id=%s — mensaje consumido",
+                agencia_id,
+            )
+            return True
 
-        telefono = str(wa_id).strip()
+        logger.info(
+            "[CHATBOT] entrada agencia_id=%s whatsapp_account_id=%s "
+            "telefono=%s tipo=%s",
+            agencia_id,
+            whatsapp_account_id,
+            enmascarar_telefono(telefono),
+            tipo,
+        )
 
-        with get_connection_chatbot_context() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                aspirante = db.aspirante_for_update(cur, agencia_id, telefono)
+        # --- Persistencia previa (commit) ---
+        try:
+            aspirante = db.crear_o_obtener_aspirante(
+                agencia_id=agencia_id,
+                whatsapp_account_id=whatsapp_account_id,
+                telefono=telefono,
+            )
+        except Exception:
+            logger.exception(
+                "[CHATBOT] fallo al crear/obtener aspirante agencia_id=%s tel=%s",
+                agencia_id,
+                enmascarar_telefono(telefono),
+            )
+            traceback.print_exc()
+            return True
 
-                if not aspirante:
-                    aspirante = db.crear_aspirante(
-                        cur,
-                        agencia_id=agencia_id,
-                        whatsapp_account_id=whatsapp_account_id,
-                        telefono=telefono,
-                        message_id_meta=None,
-                    )
-                    # Re-lock
-                    aspirante = db.aspirante_for_update(cur, agencia_id, telefono)
+        logger.info(
+            "[CHATBOT] aspirante id=%s etapa=%s estado=%s",
+            aspirante.get("id"),
+            aspirante.get("etapa_chatbot"),
+            aspirante.get("estado"),
+        )
 
-                etapa_anterior = aspirante.get("etapa_chatbot")
+        etapa_anterior = aspirante.get("etapa_chatbot") or "inicio"
 
-                # Idempotencia por message_id_meta
-                if (
-                    message_id_meta
-                    and aspirante.get("ultimo_message_id_meta")
-                    and aspirante["ultimo_message_id_meta"] == message_id_meta
-                ):
-                    logger.info(
-                        "chatbot idempotente agencia=%s wa=%s msg=%s",
-                        agencia_id,
-                        enmascarar_telefono(telefono),
-                        message_id_meta,
-                    )
-                    return True
+        if (
+            message_id_meta
+            and aspirante.get("ultimo_message_id_meta")
+            and aspirante["ultimo_message_id_meta"] == message_id_meta
+        ):
+            logger.info(
+                "[CHATBOT] idempotente agencia=%s tel=%s msg=%s",
+                agencia_id,
+                enmascarar_telefono(telefono),
+                message_id_meta,
+            )
+            return True
 
-                etapa = aspirante.get("etapa_chatbot") or "inicio"
+        etapa = aspirante.get("etapa_chatbot") or "inicio"
+        logger.info("[CHATBOT] pregunta_actual/etapa=%s", etapa)
 
-                # Procesos cerrados
-                if etapa in ("rechazado", "finalizado", "completado", "pendiente_asesor"):
-                    # Permitir menú solo en menu_principal; completado/finalizado/etc. informan
-                    if etapa == "completado" and (payload_id in (BTN_CONTINUAR, BTN_PREGUNTAS) or (payload_id or "").startswith(FAQ_PREFIX)):
-                        pass  # raro; tratar abajo vía menu si aún estuviera
-                    else:
-                        _enviar_texto(
-                            token,
-                            phone_number_id,
-                            telefono,
-                            _mensaje_proceso_cerrado(etapa),
-                        )
-                        db.actualizar_aspirante_flujo(
-                            cur,
-                            aspirante["id"],
-                            {"ultimo_message_id_meta": message_id_meta},
-                        )
-                        etapa_nueva = etapa
-                        logger.info(
-                            "chatbot cerrado agencia=%s account=%s tel=%s tipo=%s payload=%s etapa=%s",
-                            agencia_id,
-                            whatsapp_account_id,
-                            enmascarar_telefono(telefono),
-                            tipo,
-                            payload_id,
-                            etapa,
-                        )
-                        return True
+        # --- Procesos cerrados ---
+        if etapa in ETAPAS_CERRADAS:
+            try:
+                db.actualizar_aspirante_flujo_commit(
+                    aspirante["id"],
+                    {"ultimo_message_id_meta": message_id_meta},
+                )
+            except Exception:
+                traceback.print_exc()
+            _enviar_texto(
+                token,
+                phone_number_id,
+                telefono,
+                _mensaje_proceso_cerrado(etapa),
+            )
+            return True
 
-                # Primer contacto / inicio — recursos solo aquí
-                if etapa in ("inicio", None):
-                    _enviar_texto(token, phone_number_id, telefono, config["mensaje_bienvenida"])
-                    _enviar_recursos_bienvenida(config, token, phone_number_id, telefono)
-                    _enviar_texto(token, phone_number_id, telefono, config["pregunta_usuario"])
-                    aspirante = db.actualizar_aspirante_flujo(
-                        cur,
-                        aspirante["id"],
-                        {
-                            "estado": "en_proceso",
-                            "etapa_chatbot": "esperando_usuario",
-                            "whatsapp_account_id": whatsapp_account_id,
-                            "ultimo_message_id_meta": message_id_meta,
-                        },
-                    )
-                    etapa_nueva = "esperando_usuario"
-                    logger.info(
-                        "chatbot inicio agencia=%s account=%s tel=%s %s→%s",
-                        agencia_id,
-                        whatsapp_account_id,
-                        enmascarar_telefono(telefono),
-                        etapa_anterior,
-                        etapa_nueva,
-                    )
-                    return True
+        # --- Primer contacto: persistir avance ANTES de enviar ---
+        if etapa in ("inicio", None):
+            try:
+                aspirante = db.actualizar_aspirante_flujo_commit(
+                    aspirante["id"],
+                    {
+                        "estado": "en_proceso",
+                        "etapa_chatbot": "esperando_usuario",
+                        "whatsapp_account_id": whatsapp_account_id,
+                        "ultimo_message_id_meta": message_id_meta,
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "[CHATBOT] no se pudo persistir inicio; no se envía bienvenida"
+                )
+                traceback.print_exc()
+                return True
 
-                if etapa == "esperando_usuario":
-                    # Solo texto libre. image/audio/contact/location/etc. → inválida, sin avanzar.
-                    if not _es_mensaje_texto_util(tipo, texto):
-                        logger.info(
-                            "chatbot respuesta inválida (tipo=%s) agencia=%s tel=%s etapa=%s",
-                            tipo,
-                            agencia_id,
-                            enmascarar_telefono(telefono),
-                            etapa,
-                        )
-                        _reenviar_pregunta_actual(config, aspirante, token, phone_number_id, telefono)
-                        db.actualizar_aspirante_flujo(
-                            cur, aspirante["id"], {"ultimo_message_id_meta": message_id_meta}
-                        )
-                        return True
+            logger.info(
+                "[CHATBOT] aspirante creado/actualizado id=%s etapa→esperando_usuario",
+                aspirante.get("id"),
+            )
+            _enviar_texto(
+                token, phone_number_id, telefono, config["mensaje_bienvenida"]
+            )
+            _enviar_recursos_bienvenida(config, token, phone_number_id, telefono)
+            _enviar_texto(
+                token, phone_number_id, telefono, config["pregunta_usuario"]
+            )
+            etapa_nueva = "esperando_usuario"
+            return True
 
-                    usuario = normalizar_usuario_plataforma(texto)
-                    if not usuario:
-                        _reenviar_pregunta_actual(config, aspirante, token, phone_number_id, telefono)
-                        db.actualizar_aspirante_flujo(
-                            cur, aspirante["id"], {"ultimo_message_id_meta": message_id_meta}
-                        )
-                        return True
+        # --- Esperando usuario (TikTok/BIGO/etc.) ---
+        if etapa == "esperando_usuario":
+            if not _es_mensaje_texto_util(tipo, texto):
+                db.actualizar_aspirante_flujo_commit(
+                    aspirante["id"], {"ultimo_message_id_meta": message_id_meta}
+                )
+                _reenviar_pregunta_actual(
+                    config, aspirante, token, phone_number_id, telefono
+                )
+                return True
 
-                    db.actualizar_aspirante_flujo(
-                        cur,
-                        aspirante["id"],
-                        {
-                            "usuario_plataforma": usuario,
-                            "etapa_chatbot": "esperando_mayor_edad",
-                            "ultimo_message_id_meta": message_id_meta,
-                        },
-                    )
-                    _enviar_botones(
-                        token,
-                        phone_number_id,
-                        telefono,
-                        config["pregunta_mayor_edad"],
-                        _botones_si_no(BTN_EDAD_SI, BTN_EDAD_NO),
-                    )
-                    etapa_nueva = "esperando_mayor_edad"
-                    logger.info(
-                        "chatbot usuario ok agencia=%s tel=%s %s→%s",
-                        agencia_id,
-                        enmascarar_telefono(telefono),
-                        etapa_anterior,
-                        etapa_nueva,
-                    )
-                    return True
+            usuario = normalizar_usuario_plataforma(texto)
+            if not usuario:
+                db.actualizar_aspirante_flujo_commit(
+                    aspirante["id"], {"ultimo_message_id_meta": message_id_meta}
+                )
+                _reenviar_pregunta_actual(
+                    config, aspirante, token, phone_number_id, telefono
+                )
+                return True
 
-                if etapa == "esperando_mayor_edad":
-                    respuesta = interpretar_si_no(payload_id, texto, BTN_EDAD_SI, BTN_EDAD_NO)
-                    if respuesta is None:
-                        _reenviar_pregunta_actual(config, aspirante, token, phone_number_id, telefono)
-                        db.actualizar_aspirante_flujo(
-                            cur, aspirante["id"], {"ultimo_message_id_meta": message_id_meta}
-                        )
-                        return True
+            aspirante = db.actualizar_aspirante_flujo_commit(
+                aspirante["id"],
+                {
+                    "usuario_plataforma": usuario,
+                    "etapa_chatbot": "esperando_mayor_edad",
+                    "ultimo_message_id_meta": message_id_meta,
+                },
+            )
+            logger.info(
+                "[CHATBOT] respuesta guardada usuario=%s siguiente=esperando_mayor_edad",
+                usuario,
+            )
+            _enviar_botones(
+                token,
+                phone_number_id,
+                telefono,
+                config["pregunta_mayor_edad"],
+                _botones_si_no(BTN_EDAD_SI, BTN_EDAD_NO),
+            )
+            etapa_nueva = "esperando_mayor_edad"
+            return True
 
-                    if respuesta is False:
-                        db.actualizar_aspirante_flujo(
-                            cur,
-                            aspirante["id"],
-                            {
-                                "mayor_edad": False,
-                                "cumple_requisitos": False,
-                                "estado": "descartado",
-                                "etapa_chatbot": "rechazado",
-                                "ultimo_message_id_meta": message_id_meta,
-                            },
-                        )
-                        _enviar_texto(
-                            token, phone_number_id, telefono, config["mensaje_no_aprobado"]
-                        )
-                        etapa_nueva = "rechazado"
-                        return True
+        # --- Mayor de edad ---
+        if etapa == "esperando_mayor_edad":
+            respuesta = interpretar_si_no(payload_id, texto, BTN_EDAD_SI, BTN_EDAD_NO)
+            if respuesta is None:
+                db.actualizar_aspirante_flujo_commit(
+                    aspirante["id"], {"ultimo_message_id_meta": message_id_meta}
+                )
+                _reenviar_pregunta_actual(
+                    config, aspirante, token, phone_number_id, telefono
+                )
+                return True
 
-                    db.actualizar_aspirante_flujo(
-                        cur,
-                        aspirante["id"],
-                        {
-                            "mayor_edad": True,
-                            "etapa_chatbot": "esperando_disponibilidad",
-                            "ultimo_message_id_meta": message_id_meta,
-                        },
-                    )
-                    _enviar_botones(
-                        token,
-                        phone_number_id,
-                        telefono,
-                        config["pregunta_disponibilidad"],
-                        _botones_si_no(BTN_DISP_SI, BTN_DISP_NO),
-                    )
-                    etapa_nueva = "esperando_disponibilidad"
-                    return True
-
-                if etapa == "esperando_disponibilidad":
-                    respuesta = interpretar_si_no(payload_id, texto, BTN_DISP_SI, BTN_DISP_NO)
-                    if respuesta is None:
-                        _reenviar_pregunta_actual(config, aspirante, token, phone_number_id, telefono)
-                        db.actualizar_aspirante_flujo(
-                            cur, aspirante["id"], {"ultimo_message_id_meta": message_id_meta}
-                        )
-                        return True
-
-                    mayor = bool(aspirante.get("mayor_edad"))
-                    cumple = bool(mayor and respuesta)
-
-                    if not cumple:
-                        db.actualizar_aspirante_flujo(
-                            cur,
-                            aspirante["id"],
-                            {
-                                "disponibilidad_live": bool(respuesta),
-                                "cumple_requisitos": False,
-                                "estado": "descartado",
-                                "etapa_chatbot": "rechazado",
-                                "ultimo_message_id_meta": message_id_meta,
-                            },
-                        )
-                        _enviar_texto(
-                            token, phone_number_id, telefono, config["mensaje_no_aprobado"]
-                        )
-                        etapa_nueva = "rechazado"
-                        return True
-
-                    db.actualizar_aspirante_flujo(
-                        cur,
-                        aspirante["id"],
-                        {
-                            "disponibilidad_live": True,
-                            "cumple_requisitos": True,
-                            "estado": "completado",
-                            "etapa_chatbot": "menu_principal",
-                            "ultimo_message_id_meta": message_id_meta,
-                        },
-                    )
-                    _enviar_botones(
-                        token,
-                        phone_number_id,
-                        telefono,
-                        config["mensaje_aprobado"],
-                        _botones_menu(config),
-                    )
-                    etapa_nueva = "menu_principal"
-                    return True
-
-                if etapa in ("menu_principal", "preguntas_frecuentes"):
-                    if payload_id == BTN_CONTINUAR:
-                        _manejar_continuar(
-                            cur, config, aspirante, token, phone_number_id, telefono, message_id_meta
-                        )
-                        return True
-
-                    if payload_id == BTN_PREGUNTAS:
-                        db.actualizar_aspirante_flujo(
-                            cur,
-                            aspirante["id"],
-                            {
-                                "etapa_chatbot": "preguntas_frecuentes",
-                                "ultimo_message_id_meta": message_id_meta,
-                            },
-                        )
-                        _manejar_preguntas(config, token, phone_number_id, telefono)
-                        return True
-
-                    if payload_id and payload_id.startswith(FAQ_PREFIX):
-                        ok = _manejar_faq_seleccionada(
-                            config, payload_id, token, phone_number_id, telefono
-                        )
-                        db.actualizar_aspirante_flujo(
-                            cur,
-                            aspirante["id"],
-                            {
-                                "etapa_chatbot": "menu_principal",
-                                "ultimo_message_id_meta": message_id_meta,
-                            },
-                        )
-                        if not ok:
-                            _reenviar_pregunta_actual(
-                                config, aspirante, token, phone_number_id, telefono
-                            )
-                        return True
-
-                    _reenviar_pregunta_actual(config, aspirante, token, phone_number_id, telefono)
-                    db.actualizar_aspirante_flujo(
-                        cur, aspirante["id"], {"ultimo_message_id_meta": message_id_meta}
-                    )
-                    return True
-
-                # Etapa desconocida: consumir sin romper webhook
+            if respuesta is False:
+                db.actualizar_aspirante_flujo_commit(
+                    aspirante["id"],
+                    {
+                        "mayor_edad": False,
+                        "cumple_requisitos": False,
+                        "estado": "descartado",
+                        "etapa_chatbot": "rechazado",
+                        "ultimo_message_id_meta": message_id_meta,
+                    },
+                )
                 _enviar_texto(
+                    token, phone_number_id, telefono, config["mensaje_no_aprobado"]
+                )
+                etapa_nueva = "rechazado"
+                return True
+
+            db.actualizar_aspirante_flujo_commit(
+                aspirante["id"],
+                {
+                    "mayor_edad": True,
+                    "etapa_chatbot": "esperando_disponibilidad",
+                    "ultimo_message_id_meta": message_id_meta,
+                },
+            )
+            logger.info("[CHATBOT] siguiente pregunta=esperando_disponibilidad")
+            _enviar_botones(
+                token,
+                phone_number_id,
+                telefono,
+                config["pregunta_disponibilidad"],
+                _botones_si_no(BTN_DISP_SI, BTN_DISP_NO),
+            )
+            etapa_nueva = "esperando_disponibilidad"
+            return True
+
+        # --- Disponibilidad LIVE ---
+        if etapa == "esperando_disponibilidad":
+            respuesta = interpretar_si_no(payload_id, texto, BTN_DISP_SI, BTN_DISP_NO)
+            if respuesta is None:
+                db.actualizar_aspirante_flujo_commit(
+                    aspirante["id"], {"ultimo_message_id_meta": message_id_meta}
+                )
+                _reenviar_pregunta_actual(
+                    config, aspirante, token, phone_number_id, telefono
+                )
+                return True
+
+            mayor = bool(aspirante.get("mayor_edad"))
+            cumple = bool(mayor and respuesta)
+
+            if not cumple:
+                db.actualizar_aspirante_flujo_commit(
+                    aspirante["id"],
+                    {
+                        "disponibilidad_live": bool(respuesta),
+                        "cumple_requisitos": False,
+                        "estado": "descartado",
+                        "etapa_chatbot": "rechazado",
+                        "ultimo_message_id_meta": message_id_meta,
+                    },
+                )
+                _enviar_texto(
+                    token, phone_number_id, telefono, config["mensaje_no_aprobado"]
+                )
+                etapa_nueva = "rechazado"
+                return True
+
+            db.actualizar_aspirante_flujo_commit(
+                aspirante["id"],
+                {
+                    "disponibilidad_live": True,
+                    "cumple_requisitos": True,
+                    "estado": "completado",
+                    "etapa_chatbot": "menu_principal",
+                    "ultimo_message_id_meta": message_id_meta,
+                },
+            )
+            logger.info("[CHATBOT] flujo aprobado → menu_principal")
+            _enviar_botones(
+                token,
+                phone_number_id,
+                telefono,
+                config["mensaje_aprobado"],
+                _botones_menu(config),
+            )
+            etapa_nueva = "menu_principal"
+            return True
+
+        # --- Menú / FAQ ---
+        if etapa in ("menu_principal", "preguntas_frecuentes"):
+            if payload_id == BTN_CONTINUAR:
+                _manejar_continuar(
+                    config,
+                    aspirante,
                     token,
                     phone_number_id,
                     telefono,
-                    config.get("mensaje_error")
-                    or "No pudimos procesar tu respuesta. Por favor, intenta nuevamente.",
-                )
-                db.actualizar_aspirante_flujo(
-                    cur, aspirante["id"], {"ultimo_message_id_meta": message_id_meta}
+                    message_id_meta,
                 )
                 return True
+
+            if payload_id == BTN_PREGUNTAS:
+                db.actualizar_aspirante_flujo_commit(
+                    aspirante["id"],
+                    {
+                        "etapa_chatbot": "preguntas_frecuentes",
+                        "ultimo_message_id_meta": message_id_meta,
+                    },
+                )
+                _manejar_preguntas(config, token, phone_number_id, telefono)
+                return True
+
+            if payload_id and payload_id.startswith(FAQ_PREFIX):
+                ok = _manejar_faq_seleccionada(
+                    config, payload_id, token, phone_number_id, telefono
+                )
+                db.actualizar_aspirante_flujo_commit(
+                    aspirante["id"],
+                    {
+                        "etapa_chatbot": "menu_principal",
+                        "ultimo_message_id_meta": message_id_meta,
+                    },
+                )
+                if not ok:
+                    _reenviar_pregunta_actual(
+                        config, aspirante, token, phone_number_id, telefono
+                    )
+                return True
+
+            db.actualizar_aspirante_flujo_commit(
+                aspirante["id"], {"ultimo_message_id_meta": message_id_meta}
+            )
+            _reenviar_pregunta_actual(
+                config, aspirante, token, phone_number_id, telefono
+            )
+            return True
+
+        # Etapa desconocida
+        db.actualizar_aspirante_flujo_commit(
+            aspirante["id"], {"ultimo_message_id_meta": message_id_meta}
+        )
+        _enviar_texto(
+            token,
+            phone_number_id,
+            telefono,
+            config.get("mensaje_error")
+            or "No pudimos procesar tu respuesta. Por favor, intenta nuevamente.",
+        )
+        return True
 
     except Exception as e:
         logger.exception(
@@ -704,18 +715,16 @@ def procesar_chatbot_captacion(
             enmascarar_telefono(wa_id),
             e,
         )
-        # No destruir el webhook ni forzar flujo Talentum
+        traceback.print_exc()
         return True
 
     finally:
         if etapa_nueva and etapa_anterior != etapa_nueva:
             logger.info(
-                "chatbot resultado agencia=%s account=%s tel=%s tipo=%s payload=%s %s→%s",
+                "[CHATBOT] resultado agencia=%s account=%s tel=%s %s→%s",
                 agencia_id,
                 whatsapp_account_id,
-                enmascarar_telefono(wa_id),
-                tipo,
-                payload_id,
+                enmascarar_telefono(telefono),
                 etapa_anterior,
                 etapa_nueva,
             )

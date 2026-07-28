@@ -26,15 +26,38 @@ __all_helpers__ = (
     normalizar_codigo_agencia,
 )
 
+PRODUCTOS_CONOCIDOS = frozenset({"talentum_manager", "chatbot"})
+
+
+def normalizar_product_type(raw: Any) -> str:
+    """NULL / vacío → talentum_manager (compatibilidad)."""
+    valor = (str(raw).strip().lower() if raw is not None else "") or "talentum_manager"
+    return valor
+
+
+def validar_producto_chatbot(product_type: str, whatsapp_account_id: int) -> None:
+    """
+    Defensa obligatoria antes de escribir en chatbot.agencias /
+    chatbot.agencia_whatsapp_accounts.
+    """
+    pt = normalizar_product_type(product_type)
+    if pt != "chatbot":
+        raise ValueError(
+            f"No se puede relacionar la cuenta {whatsapp_account_id} "
+            f"con el producto chatbot porque product_type={pt}"
+        )
+
 
 def asegurar_agencia_chatbot_y_canal(
     whatsapp_account_id: int,
     subdominio: Optional[str] = None,
     business_name: Optional[str] = None,
+    product_type: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Crea/actualiza chatbot.agencias y la relación con el canal WABA.
-    Idempotente.
+    Solo escribe si product_type == 'chatbot'.
+    Idempotente. Una sola transacción (agencia + relación).
     """
     if not whatsapp_account_id:
         raise ValueError("whatsapp_account_id es obligatorio")
@@ -43,7 +66,13 @@ def asegurar_agencia_chatbot_y_canal(
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
-                SELECT id, subdominio, business_name, status
+                SELECT
+                    id,
+                    subdominio,
+                    business_name,
+                    status,
+                    phone_number_id,
+                    product_type
                 FROM public.whatsapp_business_accounts
                 WHERE id = %s
                 LIMIT 1
@@ -55,6 +84,48 @@ def asegurar_agencia_chatbot_y_canal(
                 raise ValueError(
                     f"No existe public.whatsapp_business_accounts.id={whatsapp_account_id}"
                 )
+
+            # Fuente de verdad: columna en public.whatsapp_business_accounts
+            pt_db = normalizar_product_type(cuenta.get("product_type"))
+            if product_type is not None:
+                pt_arg = normalizar_product_type(product_type)
+                if pt_arg != pt_db:
+                    logger.warning(
+                        "product_type argumento=%s difiere de DB=%s "
+                        "whatsapp_account_id=%s; se usa DB",
+                        pt_arg,
+                        pt_db,
+                        whatsapp_account_id,
+                    )
+            product_type_efectivo = pt_db
+
+            if product_type_efectivo not in PRODUCTOS_CONOCIDOS:
+                raise ValueError(
+                    f"product_type desconocido='{product_type_efectivo}' "
+                    f"para whatsapp_account_id={whatsapp_account_id}"
+                )
+
+            if product_type_efectivo != "chatbot":
+                logger.info(
+                    "omitir escritura chatbot: whatsapp_account_id=%s "
+                    "phone_number_id=%s product_type=%s operacion=skip",
+                    whatsapp_account_id,
+                    cuenta.get("phone_number_id"),
+                    product_type_efectivo,
+                )
+                print(
+                    f"ℹ️ Chatbot omitido (product_type={product_type_efectivo}) "
+                    f"whatsapp_account_id={whatsapp_account_id} "
+                    f"phone_number_id={cuenta.get('phone_number_id')}"
+                )
+                return {
+                    "skipped": True,
+                    "product_type": product_type_efectivo,
+                    "whatsapp_account_id": whatsapp_account_id,
+                    "agencia_id": None,
+                }
+
+            validar_producto_chatbot(product_type_efectivo, whatsapp_account_id)
 
             sub = subdominio if subdominio is not None else cuenta.get("subdominio")
             bname = business_name if business_name is not None else cuenta.get("business_name")
@@ -92,7 +163,6 @@ def asegurar_agencia_chatbot_y_canal(
             rel = cur.fetchone()
             if rel:
                 if rel["agencia_id"] != agencia_id:
-                    # Un número no puede pertenecer a dos agencias: mantener la existente
                     logger.warning(
                         "Canal whatsapp_account_id=%s ya ligado a agencia_id=%s "
                         "(intento agencia_id=%s). Se conserva la relación actual.",
@@ -131,9 +201,18 @@ def asegurar_agencia_chatbot_y_canal(
                     (agencia_id, whatsapp_account_id, not tiene_principal),
                 )
 
+            print(
+                f"✅ Chatbot asegurado whatsapp_account_id={whatsapp_account_id} "
+                f"phone_number_id={cuenta.get('phone_number_id')} "
+                f"product_type=chatbot codigo={codigo} "
+                f"chatbot_agencia_id={agencia_id} operacion=upsert"
+            )
             return {
+                "skipped": False,
+                "product_type": "chatbot",
                 "agencia_id": agencia_id,
                 "whatsapp_account_id": whatsapp_account_id,
+                "codigo": codigo,
             }
 
 
@@ -153,7 +232,8 @@ def obtener_cuenta_conectada_por_phone_id(phone_number_id: str) -> Optional[Dict
                     subdominio,
                     onboarding_type,
                     coexistence_enabled,
-                    business_id
+                    business_id,
+                    product_type
                 FROM public.whatsapp_business_accounts
                 WHERE phone_number_id = %s
                   AND status = 'connected'
@@ -161,7 +241,12 @@ def obtener_cuenta_conectada_por_phone_id(phone_number_id: str) -> Optional[Dict
                 """,
                 (phone_number_id,),
             )
-            return cur.fetchone()
+            row = cur.fetchone()
+            if not row:
+                return None
+            data = dict(row)
+            data["product_type"] = normalizar_product_type(data.get("product_type"))
+            return data
 
 
 def obtener_relacion_agencia_activa(whatsapp_account_id: int) -> Optional[Dict[str, Any]]:
@@ -171,7 +256,9 @@ def obtener_relacion_agencia_activa(whatsapp_account_id: int) -> Optional[Dict[s
                 """
                 SELECT
                     aw.agencia_id,
-                    aw.whatsapp_account_id
+                    aw.whatsapp_account_id,
+                    aw.activo,
+                    a.estado AS agencia_estado
                 FROM chatbot.agencia_whatsapp_accounts aw
                 INNER JOIN chatbot.agencias a ON a.id = aw.agencia_id
                 WHERE aw.whatsapp_account_id = %s
@@ -184,49 +271,71 @@ def obtener_relacion_agencia_activa(whatsapp_account_id: int) -> Optional[Dict[s
             return cur.fetchone()
 
 
+def obtener_relacion_agencia_canal(whatsapp_account_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Relación canal↔agencia chatbot (activa o no).
+    Sirve para distinguir 'sin relación' vs 'relación inactiva'.
+    """
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT
+                    aw.agencia_id,
+                    aw.whatsapp_account_id,
+                    aw.activo,
+                    a.estado AS agencia_estado
+                FROM chatbot.agencia_whatsapp_accounts aw
+                INNER JOIN chatbot.agencias a ON a.id = aw.agencia_id
+                WHERE aw.whatsapp_account_id = %s
+                LIMIT 1
+                """,
+                (whatsapp_account_id,),
+            )
+            return cur.fetchone()
+
+
 def resolver_contexto_webhook(phone_number_id: str) -> Optional[Dict[str, Any]]:
     """
     Resuelve cuenta WABA conectada + agencia chatbot.
+    Solo asegura escritura en schema chatbot si product_type=chatbot.
     """
     cuenta = obtener_cuenta_conectada_por_phone_id(phone_number_id)
     if not cuenta:
         return None
 
     whatsapp_account_id = cuenta["id"]
+    product_type = normalizar_product_type(cuenta.get("product_type"))
     rel = obtener_relacion_agencia_activa(whatsapp_account_id)
-    if not rel:
-        try:
-            asegurado = asegurar_agencia_chatbot_y_canal(
-                whatsapp_account_id=whatsapp_account_id,
-                subdominio=cuenta.get("subdominio"),
-                business_name=cuenta.get("business_name"),
-            )
-            chatbot_agencia_id = asegurado["agencia_id"]
-        except Exception as e:
-            logger.exception(
-                "No se pudo asegurar agencia chatbot para whatsapp_account_id=%s: %s",
-                whatsapp_account_id,
-                e,
-            )
-            return {
-                "account_id": whatsapp_account_id,
-                "chatbot_agencia_id": None,
-                "access_token": cuenta["access_token"],
-                "phone_number_id": cuenta["phone_number_id"],
-                "tenant_name": cuenta.get("subdominio"),
-                "business_name": cuenta.get("business_name"),
-                "onboarding_type": cuenta.get("onboarding_type"),
-                "coexistence_enabled": cuenta.get("coexistence_enabled"),
-            }
-    else:
+    chatbot_agencia_id = None
+
+    if rel:
         chatbot_agencia_id = rel["agencia_id"]
+    elif product_type == "chatbot":
+        asegurado = asegurar_agencia_chatbot_y_canal(
+            whatsapp_account_id=whatsapp_account_id,
+            subdominio=cuenta.get("subdominio"),
+            business_name=cuenta.get("business_name"),
+            product_type=product_type,
+        )
+        if not asegurado.get("skipped"):
+            chatbot_agencia_id = asegurado.get("agencia_id")
+    else:
+        # talentum_manager / otro: no crear registros chatbot
+        logger.info(
+            "resolver_contexto_webhook: omitir asegurar chatbot "
+            "whatsapp_account_id=%s product_type=%s",
+            whatsapp_account_id,
+            product_type,
+        )
 
     return {
         "account_id": whatsapp_account_id,
+        "product_type": product_type,
         "chatbot_agencia_id": chatbot_agencia_id,
         "access_token": cuenta["access_token"],
         "phone_number_id": cuenta["phone_number_id"],
-        "tenant_name": cuenta.get("subdominio"),
+        "tenant_name": "chatbot" if product_type == "chatbot" else cuenta.get("subdominio"),
         "business_name": cuenta.get("business_name"),
         "onboarding_type": cuenta.get("onboarding_type"),
         "coexistence_enabled": cuenta.get("coexistence_enabled"),
@@ -262,7 +371,8 @@ def listar_cuentas_conectadas_por_subdominio(subdominio: str) -> List[Dict[str, 
                 """
                 SELECT
                     id, waba_id, phone_number, phone_number_id, business_name,
-                    status, subdominio, onboarding_type, coexistence_enabled
+                    status, subdominio, onboarding_type, coexistence_enabled,
+                    product_type
                 FROM public.whatsapp_business_accounts
                 WHERE LOWER(TRIM(subdominio)) = LOWER(TRIM(%s))
                   AND status = 'connected'
@@ -297,10 +407,14 @@ def resolver_agencia_administrativa(tenant_name: str) -> Dict[str, Any]:
         )
 
     for cuenta in cuentas:
+        pt = normalizar_product_type(cuenta.get("product_type"))
+        if pt != "chatbot":
+            continue
         asegurar_agencia_chatbot_y_canal(
             whatsapp_account_id=cuenta["id"],
             subdominio=cuenta.get("subdominio") or tenant_norm,
             business_name=cuenta.get("business_name"),
+            product_type=pt,
         )
 
     agencia = obtener_agencia_por_codigo(tenant_norm)
@@ -679,6 +793,27 @@ def actualizar_aspirante_admin(
 
 # ---------- Runtime aspirantes (flujo WhatsApp) ----------
 
+def obtener_aspirante_por_telefono(
+    agencia_id: int,
+    telefono: str,
+) -> Optional[Dict[str, Any]]:
+    """Busca por agencia_id + telefono (sin lock)."""
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT *
+                FROM chatbot.chatbot_aspirantes
+                WHERE agencia_id = %s
+                  AND telefono = %s
+                LIMIT 1
+                """,
+                (agencia_id, telefono),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
 def aspirante_for_update(cur, agencia_id: int, telefono: str) -> Optional[Dict[str, Any]]:
     cur.execute(
         """
@@ -700,8 +835,12 @@ def crear_aspirante(
     agencia_id: int,
     whatsapp_account_id: int,
     telefono: str,
-    message_id_meta: Optional[str],
+    message_id_meta: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """
+    Inserta aspirante inicial. Debe ejecutarse dentro de una transacción abierta.
+    El commit lo hace get_connection_chatbot_context al salir sin error.
+    """
     cur.execute(
         """
         INSERT INTO chatbot.chatbot_aspirantes (
@@ -721,7 +860,43 @@ def crear_aspirante(
         """,
         (agencia_id, whatsapp_account_id, telefono, message_id_meta),
     )
-    return dict(cur.fetchone())
+    row = cur.fetchone()
+    if not row:
+        raise RuntimeError(
+            f"INSERT chatbot_aspirantes no retornó fila "
+            f"(agencia_id={agencia_id}, telefono={telefono})"
+        )
+    return dict(row)
+
+
+def crear_o_obtener_aspirante(
+    *,
+    agencia_id: int,
+    whatsapp_account_id: int,
+    telefono: str,
+) -> Dict[str, Any]:
+    """
+    Transacción completa: busca o crea aspirante y hace commit.
+    """
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            existente = aspirante_for_update(cur, agencia_id, telefono)
+            if existente:
+                return dict(existente)
+            creado = crear_aspirante(
+                cur,
+                agencia_id=agencia_id,
+                whatsapp_account_id=whatsapp_account_id,
+                telefono=telefono,
+                message_id_meta=None,
+            )
+            logger.info(
+                "[CHATBOT] aspirante creado id=%s agencia_id=%s tel=%s",
+                creado.get("id"),
+                agencia_id,
+                telefono,
+            )
+            return creado
 
 
 def actualizar_aspirante_flujo(cur, aspirante_id: int, campos: Dict[str, Any]) -> Dict[str, Any]:
@@ -750,7 +925,20 @@ def actualizar_aspirante_flujo(cur, aspirante_id: int, campos: Dict[str, Any]) -
         """,
         params,
     )
-    return dict(cur.fetchone())
+    row = cur.fetchone()
+    if not row:
+        raise RuntimeError(f"UPDATE chatbot_aspirantes id={aspirante_id} no retornó fila")
+    return dict(row)
+
+
+def actualizar_aspirante_flujo_commit(
+    aspirante_id: int,
+    campos: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Actualiza progreso y confirma la transacción."""
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            return actualizar_aspirante_flujo(cur, aspirante_id, campos)
 
 
 def parse_faqs(raw: Any) -> List[Dict[str, Any]]:

@@ -1711,73 +1711,116 @@ def _handle_account_update_event(entry: dict, change: dict, value: dict, event: 
 
 def _setup_tenant_context(phone_number_id: str) -> Optional[dict]:
     """
-    Configura el contexto del tenant basado en phone_number_id.
-    Incluye resolución de agencia del chatbot de captación (schema chatbot).
+    Configura el contexto del tenant según product_type de la cuenta WABA.
 
-    Returns:
-        Dict con información de la cuenta o None si no se encuentra
+    - talentum_manager (o NULL legacy): subdominio → esquema de agencia (comportamiento actual)
+    - chatbot: tenant fijo "chatbot" + agencia_id desde chatbot.agencia_whatsapp_accounts
     """
-    chatbot_agencia_id = None
-    account_id = None
-    onboarding_type = None
-    coexistence_enabled = None
-
-    try:
-        from database_chatbot_captacion import resolver_contexto_webhook
-
-        contexto = resolver_contexto_webhook(phone_number_id)
-        if contexto:
-            token_cliente = contexto["access_token"]
-            phone_id_cliente = contexto["phone_number_id"]
-            tenant_name = contexto.get("tenant_name")
-            business_name = contexto.get("business_name")
-            chatbot_agencia_id = contexto.get("chatbot_agencia_id")
-            account_id = contexto.get("account_id")
-            onboarding_type = contexto.get("onboarding_type")
-            coexistence_enabled = contexto.get("coexistence_enabled")
-
-            current_token.set(token_cliente)
-            current_phone_id.set(phone_id_cliente)
-            current_tenant.set(tenant_name)
-            current_business_name.set(business_name)
-
-            print(f"🌐 Tenant actual: {current_tenant.get()}")
-            token_seguro = f"...{token_cliente[-6:]}" if token_cliente else "None"
-            print(f"🔑 Token actual: {token_seguro}")
-            print(f"📞 phone_id actual: {current_phone_id.get()}")
-            print(f"📞 business_name: {current_business_name.get()}")
-            print(f"🤖 chatbot_agencia_id: {chatbot_agencia_id}")
-
-            return {
-                "account_id": account_id,
-                "chatbot_agencia_id": chatbot_agencia_id,
-                "access_token": token_cliente,
-                "phone_number_id": phone_id_cliente,
-                "tenant_name": tenant_name,
-                "business_name": business_name,
-                "onboarding_type": onboarding_type,
-                "coexistence_enabled": coexistence_enabled,
-            }
-    except Exception as e:
-        print(f"⚠️ Chatbot contexto no disponible, fallback WABA clásico: {e}")
-
     cuenta = obtener_cuenta_por_phone_id(phone_number_id)
     if not cuenta:
         print(f"⚠️ No se encontró cuenta asociada al número {phone_number_id}")
         return None
 
+    product_type = (cuenta.get("product_type") or "talentum_manager").strip().lower()
+    account_id = cuenta.get("id")
     token_cliente = cuenta["access_token"]
     phone_id_cliente = cuenta["phone_number_id"]
-    tenant_name = cuenta["subdominio"]
-    business_name = cuenta["business_name"]
-    account_id = cuenta.get("id")
+    business_name = cuenta.get("business_name")
+    onboarding_type = cuenta.get("onboarding_type")
+    coexistence_enabled = cuenta.get("coexistence_enabled")
+    chatbot_agencia_id = None
+
+    if product_type == "chatbot":
+        tenant_name = "chatbot"
+        try:
+            from database_chatbot_captacion import obtener_relacion_agencia_canal
+
+            rel = obtener_relacion_agencia_canal(account_id)
+        except Exception as e:
+            print(
+                f"❌ Chatbot: error consultando agencia_whatsapp_accounts "
+                f"whatsapp_account_id={account_id} phone_number_id={phone_number_id}: {e}"
+            )
+            return None
+
+        if not rel:
+            print(
+                f"❌ Chatbot mal configurado: sin relación en "
+                f"chatbot.agencia_whatsapp_accounts "
+                f"(whatsapp_account_id={account_id}, phone_number_id={phone_number_id}). "
+                f"No se procesa ni se deriva a Talentum Manager."
+            )
+            return None
+
+        if not rel.get("activo") or (rel.get("agencia_estado") or "").strip().lower() != "activa":
+            print(
+                f"❌ Chatbot: relación inactiva o agencia no activa "
+                f"(whatsapp_account_id={account_id}, agencia_id={rel.get('agencia_id')}, "
+                f"activo={rel.get('activo')}, agencia_estado={rel.get('agencia_estado')}). "
+                f"No se procesa ni se deriva a Talentum Manager."
+            )
+            return None
+
+        chatbot_agencia_id = rel["agencia_id"]
+        if not chatbot_agencia_id:
+            print(
+                f"❌ Chatbot: relación sin agencia_id "
+                f"(whatsapp_account_id={account_id}, phone_number_id={phone_number_id})"
+            )
+            return None
+
+        current_token.set(token_cliente)
+        current_phone_id.set(phone_id_cliente)
+        current_tenant.set(tenant_name)
+        current_business_name.set(business_name)
+
+        print(
+            f"🌐 product_type=chatbot phone_number_id={phone_number_id} "
+            f"whatsapp_account_id={account_id} tenant_name={tenant_name} "
+            f"chatbot_agencia_id={chatbot_agencia_id}"
+        )
+        token_seguro = f"...{token_cliente[-6:]}" if token_cliente else "None"
+        print(f"🔑 Token actual: {token_seguro}")
+        print(f"📞 phone_id actual: {current_phone_id.get()}")
+        print(f"📞 business_name: {current_business_name.get()}")
+
+        return {
+            "account_id": account_id,
+            "product_type": product_type,
+            "chatbot_agencia_id": chatbot_agencia_id,
+            "access_token": token_cliente,
+            "phone_number_id": phone_id_cliente,
+            "tenant_name": tenant_name,
+            "business_name": business_name,
+            "onboarding_type": onboarding_type,
+            "coexistence_enabled": coexistence_enabled,
+        }
+
+    if product_type != "talentum_manager":
+        print(
+            f"❌ product_type desconocido='{product_type}' "
+            f"(whatsapp_account_id={account_id}, phone_number_id={phone_number_id}). "
+            f"Procesamiento detenido."
+        )
+        return None
+
+    # --- talentum_manager (comportamiento actual) ---
+    tenant_name = cuenta.get("subdominio")
+    if not tenant_name:
+        print(
+            f"⚠️ Talentum Manager sin subdominio "
+            f"(whatsapp_account_id={account_id}, phone_number_id={phone_number_id})"
+        )
 
     current_token.set(token_cliente)
     current_phone_id.set(phone_id_cliente)
     current_tenant.set(tenant_name)
     current_business_name.set(business_name)
 
-    print(f"🌐 Tenant actual: {current_tenant.get()}")
+    print(
+        f"🌐 product_type=talentum_manager phone_number_id={phone_number_id} "
+        f"whatsapp_account_id={account_id} tenant_name={tenant_name}"
+    )
     token_seguro = f"...{token_cliente[-6:]}" if token_cliente else "None"
     print(f"🔑 Token actual: {token_seguro}")
     print(f"📞 phone_id actual: {current_phone_id.get()}")
@@ -1785,7 +1828,8 @@ def _setup_tenant_context(phone_number_id: str) -> Optional[dict]:
 
     return {
         "account_id": account_id,
-        "chatbot_agencia_id": chatbot_agencia_id,
+        "product_type": product_type,
+        "chatbot_agencia_id": None,
         "access_token": token_cliente,
         "phone_number_id": phone_id_cliente,
         "tenant_name": tenant_name,
@@ -3960,6 +4004,7 @@ async def whatsapp_webhook(request: Request):
         business_name = cuenta_info["business_name"]
         chatbot_agencia_id = cuenta_info.get("chatbot_agencia_id")
         whatsapp_account_id = cuenta_info.get("account_id")
+        product_type = cuenta_info.get("product_type") or "talentum_manager"
 
         # 3. Statuses
         statuses = value.get("statuses", [])
@@ -3982,6 +4027,7 @@ async def whatsapp_webhook(request: Request):
                 token_access,
                 chatbot_agencia_id,
                 whatsapp_account_id,
+                product_type,
             )
 
     except Exception as e:
@@ -3998,18 +4044,16 @@ async def _procesar_mensaje_unico(
     token,
     chatbot_agencia_id=None,
     whatsapp_account_id=None,
+    product_type="talentum_manager",
 ):
     """
     Orquestador principal:
-    1. Normaliza
-    2. Chatbot de captación (si config activa)
-    3. Registra mensaje
-    4. Onboarding (nuevo usuario)
-    5. Flujo Aspirante
-    6. Flujo General
+    - product_type=chatbot -> solo procesar_chatbot_captacion y return
+    - product_type=talentum_manager -> flujo completo actual
     """
 
     wa_id = mensaje.get("from")
+    product_type = (product_type or "talentum_manager").strip().lower()
 
     # ---------------------------------------------------------
     # A. NORMALIZACIÓN
@@ -4018,27 +4062,35 @@ async def _procesar_mensaje_unico(
     texto_lower = (texto or "").lower()
 
     # ---------------------------------------------------------
-    # A2. CHATBOT DE CAPTACIÓN (antes de tablas tenant)
+    # A2. PRODUCTO CHATBOT (aislado; nunca continua a Talentum Manager)
     # ---------------------------------------------------------
-    try:
-        from service_chatbot_captacion import procesar_chatbot_captacion
+    if product_type == "chatbot":
+        try:
+            from service_chatbot_captacion import procesar_chatbot_captacion
 
-        procesado_chatbot = procesar_chatbot_captacion(
-            agencia_id=chatbot_agencia_id,
-            whatsapp_account_id=whatsapp_account_id,
-            wa_id=wa_id,
-            tipo=tipo,
-            texto=texto,
-            payload_id=payload_id,
-            phone_number_id=phone_number_id,
-            token=token,
-            message_id_meta=mensaje.get("id"),
-        )
-        if procesado_chatbot:
-            return
-    except Exception as e:
-        print(f"⚠️ Error chatbot captación (no crítico para webhook): {e}")
-        traceback.print_exc()
+            print(
+                f"🤖 procesar_chatbot_captacion "
+                f"phone_number_id={phone_number_id} "
+                f"whatsapp_account_id={whatsapp_account_id} "
+                f"product_type={product_type} "
+                f"tenant_name={tenant_name} "
+                f"chatbot_agencia_id={chatbot_agencia_id}"
+            )
+            procesar_chatbot_captacion(
+                agencia_id=chatbot_agencia_id,
+                whatsapp_account_id=whatsapp_account_id,
+                wa_id=wa_id,
+                tipo=tipo,
+                texto=texto,
+                payload_id=payload_id,
+                phone_number_id=phone_number_id,
+                token=token,
+                message_id_meta=mensaje.get("id"),
+            )
+        except Exception as e:
+            print(f"❌ Error chatbot captación: {e}")
+            traceback.print_exc()
+        return
 
     # ---------------------------------------------------------
     # B. LOG EN BD (CON MANEJO ESPECIAL PARA AUDIO)

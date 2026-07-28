@@ -3123,15 +3123,39 @@ def guardar_o_actualizar_whatsapp_business_account(
                     "phone_number_id": row["phone_number_id"],
                 }
 
-        # Registrar canal en chatbot (schema compartido) sin alterar el flujo WABA
+        # Solo cuentas product_type=chatbot escriben en schema chatbot
         try:
-            from database_chatbot_captacion import asegurar_agencia_chatbot_y_canal
-
-            asegurar_agencia_chatbot_y_canal(
-                whatsapp_account_id=resultado["id"],
-                subdominio=subdominio,
-                business_name=business_name,
+            from database_chatbot_captacion import (
+                asegurar_agencia_chatbot_y_canal,
+                normalizar_product_type,
             )
+
+            with get_connection_public_context() as conn_pt:
+                with conn_pt.cursor() as cur_pt:
+                    cur_pt.execute(
+                        """
+                        SELECT product_type, phone_number_id
+                        FROM whatsapp_business_accounts
+                        WHERE id = %s
+                        LIMIT 1
+                        """,
+                        (resultado["id"],),
+                    )
+                    row_pt = cur_pt.fetchone()
+
+            pt = normalizar_product_type(row_pt[0] if row_pt else None)
+            if pt == "chatbot":
+                asegurar_agencia_chatbot_y_canal(
+                    whatsapp_account_id=resultado["id"],
+                    subdominio=subdominio,
+                    business_name=business_name,
+                    product_type=pt,
+                )
+            else:
+                print(
+                    f"ℹ️ Tras WABA upsert: omitir chatbot "
+                    f"(whatsapp_account_id={resultado['id']}, product_type={pt})"
+                )
         except Exception as e_chat:
             print(
                 "⚠️ Chatbot: no se pudo asegurar agencia/canal tras WABA upsert:",
@@ -3210,7 +3234,10 @@ def obtener_cuenta_por_phone_id(phone_number_id: str) -> dict | None:
                         phone_number_id,
                         business_name,
                         subdominio,
-                        status
+                        status,
+                        onboarding_type,
+                        coexistence_enabled,
+                        product_type
                     FROM whatsapp_business_accounts
                     WHERE phone_number_id = %s
                     LIMIT 1;
@@ -3222,6 +3249,11 @@ def obtener_cuenta_por_phone_id(phone_number_id: str) -> dict | None:
             print(f"⚠️ No se encontró cuenta para phone_number_id={phone_number_id}")
             return None
 
+        # NULL legacy → talentum_manager (compatibilidad)
+        product_type = (row[10] or "talentum_manager").strip().lower()
+        if not product_type:
+            product_type = "talentum_manager"
+
         cuenta = {
             "id": row[0],
             "waba_id": row[1],
@@ -3231,11 +3263,15 @@ def obtener_cuenta_por_phone_id(phone_number_id: str) -> dict | None:
             "business_name": row[5],
             "subdominio": row[6],
             "status": row[7],
+            "onboarding_type": row[8],
+            "coexistence_enabled": row[9],
+            "product_type": product_type,
         }
 
         print(
             f"✅ Cuenta WABA encontrada: {cuenta.get('business_name')} "
-            f"({cuenta.get('phone_number')}) - Tenant/Subdominio: {cuenta.get('subdominio')}"
+            f"({cuenta.get('phone_number')}) - product_type={product_type} "
+            f"subdominio={cuenta.get('subdominio')}"
         )
 
         return cuenta
@@ -3435,7 +3471,7 @@ def actualizar_phone_info_db(
 
                 cur.execute(
                     """
-                    SELECT id, subdominio, business_name
+                    SELECT id, subdominio, business_name, product_type, phone_number_id
                     FROM whatsapp_business_accounts
                     WHERE id = %s
                     LIMIT 1
@@ -3448,15 +3484,32 @@ def actualizar_phone_info_db(
 
         if status == "connected" and cuenta_row:
             try:
-                from database_chatbot_captacion import asegurar_agencia_chatbot_y_canal
-
-                sub = cuenta_row[1] if not isinstance(cuenta_row, dict) else cuenta_row.get("subdominio")
-                bname = cuenta_row[2] if not isinstance(cuenta_row, dict) else cuenta_row.get("business_name")
-                asegurar_agencia_chatbot_y_canal(
-                    whatsapp_account_id=id,
-                    subdominio=sub,
-                    business_name=bname,
+                from database_chatbot_captacion import (
+                    asegurar_agencia_chatbot_y_canal,
+                    normalizar_product_type,
                 )
+
+                if isinstance(cuenta_row, dict):
+                    sub = cuenta_row.get("subdominio")
+                    bname = cuenta_row.get("business_name")
+                    pt = normalizar_product_type(cuenta_row.get("product_type"))
+                else:
+                    sub = cuenta_row[1]
+                    bname = cuenta_row[2]
+                    pt = normalizar_product_type(cuenta_row[3] if len(cuenta_row) > 3 else None)
+
+                if pt == "chatbot":
+                    asegurar_agencia_chatbot_y_canal(
+                        whatsapp_account_id=id,
+                        subdominio=sub,
+                        business_name=bname,
+                        product_type=pt,
+                    )
+                else:
+                    print(
+                        f"ℹ️ Tras phone info: omitir chatbot "
+                        f"(whatsapp_account_id={id}, product_type={pt})"
+                    )
             except Exception as e_chat:
                 print("⚠️ Chatbot: no se pudo asegurar agencia/canal tras phone info:", e_chat)
 

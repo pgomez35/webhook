@@ -25,6 +25,11 @@ def enmascarar_telefono(telefono: Optional[str]) -> str:
     return f"{t[:3]}****{t[-2:]}"
 
 
+def normalizar_telefono_chatbot(telefono: Optional[str]) -> str:
+    """Solo dígitos. Misma forma para buscar, insertar y actualizar."""
+    return re.sub(r"\D", "", str(telefono or ""))
+
+
 def normalizar_codigo_agencia(subdominio: Optional[str], whatsapp_account_id: int) -> str:
     codigo = (subdominio or "").strip().lower()
     if codigo:
