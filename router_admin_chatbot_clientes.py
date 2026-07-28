@@ -57,6 +57,8 @@ class AgenciaAdminOut(BaseModel):
     waba_product_type: Optional[str] = None
     waba_principal: Optional[bool] = None
     waba_relacion_activa: Optional[bool] = None
+    total_aspirantes: Optional[int] = 0
+    requieren_asesor: Optional[int] = 0
 
 
 class AgenciaCreateIn(BaseModel):
@@ -154,6 +156,15 @@ def listar_agencias(_admin: dict = Depends(require_admin)):
 @router.get("/agencias/{agencia_id}", response_model=AgenciaAdminOut)
 def obtener_agencia(agencia_id: int, _admin: dict = Depends(require_admin)):
     row = db.obtener_agencia_admin(agencia_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Agencia no encontrada")
+    return row
+
+
+@router.get("/agencias/{agencia_id}/resumen")
+def resumen_agencia(agencia_id: int, _admin: dict = Depends(require_admin)):
+    """Resumen de soporte: estado config + totales aspirantes (sin edición operativa)."""
+    row = db.obtener_resumen_agencia_admin(agencia_id)
     if not row:
         raise HTTPException(status_code=404, detail="Agencia no encontrada")
     return row

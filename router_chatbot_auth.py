@@ -4,10 +4,11 @@ Autenticación del frontend centralizado Chatbot de captación.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from jose import ExpiredSignatureError, JWTError, jwt
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -20,6 +21,7 @@ logger = logging.getLogger("chatbot_auth")
 
 CHATBOT_SCOPE = "chatbot_frontend"
 MSG_CREDENCIALES = "Usuario o contraseña incorrectos."
+USUARIO_RE = re.compile(r"^[a-z0-9._-]{3,80}$")
 
 router = APIRouter(prefix="/api/chatbot-auth", tags=["Chatbot Auth"])
 
@@ -54,6 +56,52 @@ class ChatbotCambiarClaveIn(BaseModel):
         if len(self.password_nueva.strip()) < 8:
             raise ValueError("La nueva contraseña debe tener al menos 8 caracteres")
         return self
+
+
+class ChatbotActivarCuentaIn(BaseModel):
+    model_config = {"extra": "forbid"}
+    usuario_nuevo: str = Field(..., min_length=3, max_length=80)
+    password_actual: str = Field(..., min_length=1, max_length=200)
+    password_nueva: str = Field(..., min_length=8, max_length=200)
+    confirmacion_password: str = Field(..., min_length=8, max_length=200)
+
+    @field_validator("usuario_nuevo")
+    @classmethod
+    def norm_usuario_nuevo(cls, v: str) -> str:
+        u = str(v or "").strip().lower()
+        if not USUARIO_RE.match(u):
+            raise ValueError(
+                "El usuario debe tener 3-80 caracteres y solo letras minúsculas, "
+                "números, punto, guion o guion bajo"
+            )
+        return u
+
+    @model_validator(mode="after")
+    def validar_activar(self):
+        if self.password_nueva != self.confirmacion_password:
+            raise ValueError("La nueva contraseña y la confirmación no coinciden")
+        if self.password_nueva == self.password_actual:
+            raise ValueError("La nueva contraseña debe ser distinta a la temporal")
+        if len(self.password_nueva.strip()) < 8:
+            raise ValueError("La nueva contraseña debe tener al menos 8 caracteres")
+        return self
+
+
+class ChatbotCambiarUsuarioIn(BaseModel):
+    model_config = {"extra": "forbid"}
+    password_actual: str = Field(..., min_length=1, max_length=200)
+    usuario_nuevo: str = Field(..., min_length=3, max_length=80)
+
+    @field_validator("usuario_nuevo")
+    @classmethod
+    def norm_usuario_nuevo(cls, v: str) -> str:
+        u = str(v or "").strip().lower()
+        if not USUARIO_RE.match(u):
+            raise ValueError(
+                "El usuario debe tener 3-80 caracteres y solo letras minúsculas, "
+                "números, punto, guion o guion bajo"
+            )
+        return u
 
 
 class AgenciaAuthOut(BaseModel):
@@ -125,6 +173,23 @@ def _buscar_agencia_login(usuario_norm: str) -> Optional[dict]:
             return dict(row) if row else None
 
 
+def _obtener_agencia_por_id(agencia_id: int) -> Optional[dict]:
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT id, nombre, codigo, estado, usuario_login,
+                       password_hash, debe_cambiar_clave, login_activo
+                FROM chatbot.agencias
+                WHERE id = %s
+                LIMIT 1
+                """,
+                (agencia_id,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
 def _obtener_agencia_activa_por_id(agencia_id: int) -> Optional[dict]:
     with get_connection_chatbot_context() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -172,6 +237,70 @@ def _actualizar_password(agencia_id: int, password_hash: str) -> None:
             )
 
 
+def _usuario_ocupado(usuario: str, exclude_agencia_id: int) -> bool:
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id
+                FROM chatbot.agencias
+                WHERE LOWER(TRIM(usuario_login)) = %s
+                  AND id <> %s
+                LIMIT 1
+                """,
+                (usuario, exclude_agencia_id),
+            )
+            return cur.fetchone() is not None
+
+
+def _activar_cuenta_db(
+    *,
+    agencia_id: int,
+    usuario_nuevo: str,
+    password_hash: str,
+) -> dict:
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                UPDATE chatbot.agencias
+                SET usuario_login = %s,
+                    password_hash = %s,
+                    debe_cambiar_clave = FALSE,
+                    login_activo = TRUE,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                RETURNING id, nombre, codigo, estado, usuario_login, debe_cambiar_clave
+                """,
+                (usuario_nuevo, password_hash, agencia_id),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise ValueError("No se pudo activar la cuenta")
+            out = dict(row)
+            out.pop("password_hash", None)
+            return out
+
+
+def _actualizar_usuario_login(agencia_id: int, usuario_nuevo: str) -> dict:
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                UPDATE chatbot.agencias
+                SET usuario_login = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                RETURNING id, nombre, codigo, estado, usuario_login, debe_cambiar_clave
+                """,
+                (usuario_nuevo, agencia_id),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise ValueError("No se pudo actualizar el usuario")
+            return dict(row)
+
+
 def obtener_sesion_chatbot(token: str = Depends(oauth2_chatbot)) -> dict:
     """
     Valida JWT del frontend chatbot (scope=chatbot_frontend)
@@ -187,7 +316,7 @@ def obtener_sesion_chatbot(token: str = Depends(oauth2_chatbot)) -> dict:
     if payload.get("scope") != CHATBOT_SCOPE:
         raise HTTPException(status_code=403, detail="Token no autorizado para el chatbot")
 
-    agencia_id = payload.get("chatbot_agencia_id")
+    agencia_id = payload.get("chatbot_agencia_id") or payload.get("agencia_id")
     if not agencia_id:
         raise HTTPException(status_code=401, detail="Token inválido")
 
@@ -214,12 +343,30 @@ def obtener_sesion_chatbot(token: str = Depends(oauth2_chatbot)) -> dict:
 
 def obtener_agencia_chatbot_actual(sesion: dict = Depends(obtener_sesion_chatbot)) -> dict:
     """Para endpoints /api/chatbot-captacion/* — agencia solo desde JWT."""
+    if sesion.get("debe_cambiar_clave"):
+        raise HTTPException(
+            status_code=403,
+            detail="Debes completar la activación de cuenta antes de continuar",
+        )
     return {
         "id": sesion["agencia_id"],
         "nombre": sesion["agencia"]["nombre"],
         "codigo": sesion["agencia"]["codigo"],
         "estado": sesion["agencia"]["estado"],
     }
+
+
+def _login_out_from_row(row: dict, *, debe_cambiar_clave: bool, token: str) -> ChatbotLoginOut:
+    return ChatbotLoginOut(
+        access_token=token,
+        debe_cambiar_clave=debe_cambiar_clave,
+        agencia=AgenciaAuthOut(
+            id=row["id"],
+            nombre=row["nombre"],
+            codigo=row["codigo"],
+            estado=row.get("estado"),
+        ),
+    )
 
 
 # ---------- Endpoints ----------
@@ -229,20 +376,28 @@ def login_chatbot(payload: ChatbotLoginIn):
     usuario = payload.usuario
     agencia = _buscar_agencia_login(usuario)
 
-    # Respuesta genérica siempre (no filtrar por causa)
-    ok = False
-    if (
-        agencia
-        and agencia.get("estado") == "activa"
-        and agencia.get("login_activo") is True
-        and agencia.get("password_hash")
-    ):
+    causa = None
+    if not agencia:
+        causa = "usuario_inexistente"
+    elif agencia.get("estado") != "activa":
+        causa = "cuenta_suspendida"
+    elif agencia.get("login_activo") is not True:
+        causa = "login_desactivado"
+    elif not agencia.get("password_hash"):
+        causa = "hash_vacio"
+    else:
         try:
-            ok = verify_password(payload.password, agencia["password_hash"])
+            if not verify_password(payload.password, agencia["password_hash"]):
+                causa = "password_incorrecta"
         except Exception:
-            ok = False
+            causa = "hash_invalido"
 
-    if not ok:
+    if causa:
+        logger.info(
+            "chatbot login fallido causa=%s usuario=%s",
+            causa,
+            (usuario or "")[:3] + "***",
+        )
         raise HTTPException(status_code=401, detail=MSG_CREDENCIALES)
 
     _marcar_ultimo_login(agencia["id"])
@@ -255,19 +410,55 @@ def login_chatbot(payload: ChatbotLoginIn):
         nombre=agencia.get("nombre") or "",
     )
     logger.info(
-        "chatbot login ok agencia_id=%s usuario=%s",
+        "chatbot login ok agencia_id=%s usuario=%s debe_cambiar_clave=%s",
         agencia["id"],
         (agencia.get("usuario_login") or "")[:3] + "***",
+        debe,
     )
-    return ChatbotLoginOut(
-        access_token=token,
-        debe_cambiar_clave=debe,
-        agencia=AgenciaAuthOut(
-            id=agencia["id"],
-            nombre=agencia["nombre"],
-            codigo=agencia["codigo"],
-        ),
+    return _login_out_from_row(agencia, debe_cambiar_clave=debe, token=token)
+
+
+@router.post("/activar-cuenta", response_model=ChatbotLoginOut)
+def activar_cuenta_chatbot(
+    payload: ChatbotActivarCuentaIn,
+    sesion: dict = Depends(obtener_sesion_chatbot),
+):
+    """Primer acceso: define usuario definitivo + contraseña y quita debe_cambiar_clave."""
+    if not sesion.get("debe_cambiar_clave"):
+        raise HTTPException(
+            status_code=403,
+            detail="La cuenta ya está activada; usa Mi cuenta para cambios posteriores",
+        )
+
+    agencia_id = int(sesion["agencia_id"])
+    row = _obtener_agencia_por_id(agencia_id)
+    if not row or not row.get("password_hash"):
+        raise HTTPException(status_code=401, detail=MSG_CREDENCIALES)
+
+    if not verify_password(payload.password_actual, row["password_hash"]):
+        raise HTTPException(status_code=401, detail="La contraseña actual es incorrecta")
+
+    if _usuario_ocupado(payload.usuario_nuevo, agencia_id):
+        raise HTTPException(
+            status_code=409,
+            detail="El usuario ya está en uso por otra agencia",
+        )
+
+    nuevo_hash = hash_password(payload.password_nueva)
+    out = _activar_cuenta_db(
+        agencia_id=agencia_id,
+        usuario_nuevo=payload.usuario_nuevo,
+        password_hash=nuevo_hash,
     )
+    token = crear_access_token_chatbot(
+        usuario_login=out["usuario_login"],
+        agencia_id=agencia_id,
+        debe_cambiar_clave=False,
+        codigo=out.get("codigo") or "",
+        nombre=out.get("nombre") or "",
+    )
+    logger.info("chatbot activar-cuenta ok agencia_id=%s", agencia_id)
+    return _login_out_from_row(out, debe_cambiar_clave=False, token=token)
 
 
 @router.post("/cambiar-clave", response_model=ChatbotLoginOut)
@@ -293,15 +484,60 @@ def cambiar_clave_chatbot(
         codigo=row.get("codigo") or "",
         nombre=row.get("nombre") or "",
     )
-    return ChatbotLoginOut(
-        access_token=token,
+    return _login_out_from_row(row, debe_cambiar_clave=False, token=token)
+
+
+@router.put("/cuenta/usuario", response_model=ChatbotLoginOut)
+def cambiar_usuario_cuenta(
+    payload: ChatbotCambiarUsuarioIn,
+    sesion: dict = Depends(obtener_sesion_chatbot),
+):
+    if sesion.get("debe_cambiar_clave"):
+        raise HTTPException(
+            status_code=403,
+            detail="Debes completar la activación de cuenta primero",
+        )
+
+    agencia_id = int(sesion["agencia_id"])
+    row = _obtener_agencia_por_id(agencia_id)
+    if not row or not row.get("password_hash"):
+        raise HTTPException(status_code=401, detail=MSG_CREDENCIALES)
+
+    if not verify_password(payload.password_actual, row["password_hash"]):
+        raise HTTPException(status_code=401, detail="La contraseña actual es incorrecta")
+
+    if payload.usuario_nuevo == (row.get("usuario_login") or "").strip().lower():
+        raise HTTPException(status_code=400, detail="El nuevo usuario es igual al actual")
+
+    if _usuario_ocupado(payload.usuario_nuevo, agencia_id):
+        raise HTTPException(
+            status_code=409,
+            detail="El usuario ya está en uso por otra agencia",
+        )
+
+    out = _actualizar_usuario_login(agencia_id, payload.usuario_nuevo)
+    token = crear_access_token_chatbot(
+        usuario_login=out["usuario_login"],
+        agencia_id=agencia_id,
         debe_cambiar_clave=False,
-        agencia=AgenciaAuthOut(
-            id=row["id"],
-            nombre=row["nombre"],
-            codigo=row["codigo"],
-        ),
+        codigo=out.get("codigo") or "",
+        nombre=out.get("nombre") or "",
     )
+    logger.info("chatbot cambiar-usuario ok agencia_id=%s", agencia_id)
+    return _login_out_from_row(out, debe_cambiar_clave=False, token=token)
+
+
+@router.put("/cuenta/password", response_model=ChatbotLoginOut)
+def cambiar_password_cuenta(
+    payload: ChatbotCambiarClaveIn,
+    sesion: dict = Depends(obtener_sesion_chatbot),
+):
+    if sesion.get("debe_cambiar_clave"):
+        raise HTTPException(
+            status_code=403,
+            detail="Debes completar la activación de cuenta primero",
+        )
+    return cambiar_clave_chatbot(payload, sesion)
 
 
 @router.get("/me", response_model=ChatbotMeOut)
@@ -325,6 +561,8 @@ def asignar_usuario_inicial_agencia(
     usuario = (usuario_login or "").strip().lower()
     if not usuario:
         raise ValueError("usuario_login es obligatorio")
+    if not USUARIO_RE.match(usuario):
+        raise ValueError("usuario_login tiene formato inválido")
     if len(password_temporal or "") < 8:
         raise ValueError("password_temporal debe tener al menos 8 caracteres")
 
@@ -372,6 +610,5 @@ def asignar_usuario_inicial_agencia(
                 (usuario, pwd_hash, agencia_id),
             )
             out = dict(cur.fetchone())
-            # Nunca devolver password_hash
             out.pop("password_hash", None)
             return out

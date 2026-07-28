@@ -49,12 +49,22 @@ def listar_agencias_admin() -> List[Dict[str, Any]]:
                     w.phone_number AS waba_phone_number,
                     w.phone_number_id AS waba_phone_number_id,
                     w.status AS waba_status,
-                    w.product_type AS waba_product_type
+                    w.product_type AS waba_product_type,
+                    COALESCE(asp.total_aspirantes, 0)::int AS total_aspirantes,
+                    COALESCE(asp.requieren_asesor, 0)::int AS requieren_asesor
                 FROM chatbot.agencias a
                 LEFT JOIN chatbot.agencia_whatsapp_accounts aw
                     ON aw.agencia_id = a.id AND aw.principal = TRUE
                 LEFT JOIN public.whatsapp_business_accounts w
                     ON w.id = aw.whatsapp_account_id
+                LEFT JOIN (
+                    SELECT
+                        agencia_id,
+                        COUNT(*)::int AS total_aspirantes,
+                        COUNT(*) FILTER (WHERE requiere_asesor IS TRUE)::int AS requieren_asesor
+                    FROM chatbot.chatbot_aspirantes
+                    GROUP BY agencia_id
+                ) asp ON asp.agencia_id = a.id
                 ORDER BY a.id ASC
                 """
             )
@@ -74,22 +84,109 @@ def obtener_agencia_admin(agencia_id: int) -> Optional[Dict[str, Any]]:
                     a.usuario_login, a.login_activo, a.debe_cambiar_clave,
                     a.ultimo_login, a.created_at, a.updated_at,
                     aw.whatsapp_account_id,
+                    aw.principal AS waba_principal,
+                    aw.activo AS waba_relacion_activa,
                     w.business_name AS waba_business_name,
                     w.phone_number AS waba_phone_number,
                     w.phone_number_id AS waba_phone_number_id,
                     w.status AS waba_status,
-                    w.product_type AS waba_product_type
+                    w.product_type AS waba_product_type,
+                    COALESCE(asp.total_aspirantes, 0)::int AS total_aspirantes,
+                    COALESCE(asp.requieren_asesor, 0)::int AS requieren_asesor
                 FROM chatbot.agencias a
                 LEFT JOIN chatbot.agencia_whatsapp_accounts aw
                     ON aw.agencia_id = a.id AND aw.principal = TRUE
                 LEFT JOIN public.whatsapp_business_accounts w
                     ON w.id = aw.whatsapp_account_id
+                LEFT JOIN (
+                    SELECT
+                        agencia_id,
+                        COUNT(*)::int AS total_aspirantes,
+                        COUNT(*) FILTER (WHERE requiere_asesor IS TRUE)::int AS requieren_asesor
+                    FROM chatbot.chatbot_aspirantes
+                    WHERE agencia_id = %s
+                    GROUP BY agencia_id
+                ) asp ON asp.agencia_id = a.id
                 WHERE a.id = %s
+                LIMIT 1
+                """,
+                (agencia_id, agencia_id),
+            )
+            return _safe_agencia_row(cur.fetchone())
+
+
+def obtener_resumen_agencia_admin(agencia_id: int) -> Optional[Dict[str, Any]]:
+    """Resumen de soporte (sin edición operativa de mensajes/FAQ/media)."""
+    agencia = obtener_agencia_admin(agencia_id)
+    if not agencia:
+        return None
+
+    config_activa = None
+    config_completa = False
+    total_faqs = 0
+    total_recursos = 0
+    config_updated_at = None
+    cfg = None
+
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT
+                    activo,
+                    mensaje_bienvenida,
+                    pregunta_usuario,
+                    pregunta_mayor_edad,
+                    pregunta_disponibilidad,
+                    mensaje_aprobado,
+                    mensaje_no_aprobado,
+                    preguntas_frecuentes,
+                    recursos_bienvenida,
+                    updated_at
+                FROM chatbot.chatbot_configuracion
+                WHERE agencia_id = %s
                 LIMIT 1
                 """,
                 (agencia_id,),
             )
-            return _safe_agencia_row(cur.fetchone())
+            cfg = cur.fetchone()
+
+    if cfg:
+        config_activa = bool(cfg.get("activo"))
+        config_updated_at = cfg.get("updated_at")
+        faqs = cfg.get("preguntas_frecuentes") or []
+        recursos = cfg.get("recursos_bienvenida") or []
+        if not isinstance(faqs, list):
+            faqs = []
+        if not isinstance(recursos, list):
+            recursos = []
+        total_faqs = len(faqs)
+        total_recursos = len(recursos)
+        campos = [
+            cfg.get("mensaje_bienvenida"),
+            cfg.get("pregunta_usuario"),
+            cfg.get("pregunta_mayor_edad"),
+            cfg.get("pregunta_disponibilidad"),
+            cfg.get("mensaje_aprobado"),
+            cfg.get("mensaje_no_aprobado"),
+        ]
+        config_completa = all(bool(str(c or "").strip()) for c in campos)
+
+    return {
+        "agencia": agencia,
+        "configuracion": {
+            "existe": cfg is not None,
+            "activa": config_activa,
+            "completa": config_completa if cfg else False,
+            "total_preguntas_frecuentes": total_faqs,
+            "total_recursos": total_recursos,
+            "updated_at": config_updated_at,
+        },
+        "aspirantes": {
+            "total": int(agencia.get("total_aspirantes") or 0),
+            "requieren_asesor": int(agencia.get("requieren_asesor") or 0),
+        },
+    }
 
 
 def _assert_codigo_unico(cur, codigo: str, exclude_id: Optional[int] = None) -> None:
