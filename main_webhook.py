@@ -2715,6 +2715,63 @@ def guardar_diagnostico_aspirantes_perfil(aspirante_id: int, diagnostico: str):
                 print(f"✅ Observaciones guardadas en aspirantes_perfil (aspirante_id={aspirante_id})")
 
 
+def _normalizar_tipo_mensaje_db(tipo: Optional[str]) -> str:
+    """
+    Normaliza el tipo de mensaje WhatsApp a un valor válido para
+    mensajes_whatsapp.tipo (varchar(10)).
+
+    No trunca a ciegas: mapea a nombres cortos y semánticos.
+    """
+    raw = (tipo or "").strip().lower()
+    if not raw:
+        return "text"
+
+    # Respuestas interactivas (Meta: type=interactive / button_reply / list_reply)
+    if raw in ("interactive", "button_reply", "button"):
+        return "button"
+    if raw in ("list_reply", "list"):
+        return "list"
+
+    permitidos = {
+        "text",
+        "image",
+        "video",
+        "audio",
+        "document",
+        "sticker",
+        "location",
+        "contacts",
+        "contact",
+        "reaction",
+        "unknown",
+        "other",
+    }
+    if raw in permitidos:
+        return raw
+
+    if raw == "unsupported":
+        return "unsupport"  # 9 chars; evita truncar a "unsupporte"
+
+    # Cualquier otro valor corto y alfanumérico se conserva si cabe
+    if len(raw) <= 10 and raw.replace("_", "").isalnum():
+        return raw
+
+    return "other"
+
+
+def _normalizar_direccion_mensaje_db(direccion: Optional[str]) -> str:
+    """
+    Normaliza dirección a valores cortos y consistentes (varchar(10)).
+    inbound / outbound (también acepta aliases legados recibido/enviado).
+    """
+    raw = (direccion or "").strip().lower()
+    if raw in ("inbound", "recibido", "in", "received"):
+        return "inbound"
+    if raw in ("outbound", "enviado", "out", "sent"):
+        return "outbound"
+    return "inbound"
+
+
 def registrar_mensaje_recibido(
     telefono: str,
     message_id_meta: str,
@@ -2748,6 +2805,17 @@ def registrar_mensaje_recibido(
                 else:
                     print(f"🆕 Mensaje sin creador (aspirante_id=NULL)")
 
+                direccion_db = _normalizar_direccion_mensaje_db("inbound")
+                tipo_db = _normalizar_tipo_mensaje_db(tipo)
+
+                # Log temporal diagnóstico varchar(10) — sin teléfono/contenido
+                print(
+                    f"[MSG-WA-INSERT] direccion={direccion_db!r} "
+                    f"len(direccion)={len(direccion_db)} "
+                    f"tipo={tipo_db!r} len(tipo)={len(tipo_db)} "
+                    f"(raw_tipo={tipo!r})"
+                )
+
                 # ----------------------------------------
                 # 2️⃣ Insert mensaje
                 # ----------------------------------------
@@ -2770,8 +2838,8 @@ def registrar_mensaje_recibido(
                     (
                         aspirante_id,        # Puede ser NULL
                         telefono,
-                        "recibido",
-                        tipo,
+                        direccion_db,
+                        tipo_db,
                         contenido,
                         media_url,
                         message_id_meta,
@@ -4154,11 +4222,17 @@ async def _procesar_mensaje_unico(
 
         # 🔵 OTROS TIPOS (texto, botones, etc.)
         else:
+            tipo_registro = tipo
+            # Distinguir button_reply vs list_reply para el INSERT (varchar(10))
+            if tipo == "interactive":
+                itype = ((mensaje.get("interactive") or {}).get("type") or "").strip()
+                if itype in ("button_reply", "list_reply"):
+                    tipo_registro = itype
 
             registrar_mensaje_recibido(
                 telefono=wa_id,
                 message_id_meta=mensaje.get("id"),
-                tipo=tipo,
+                tipo=tipo_registro,
                 contenido=f"{texto or ''} {payload_id or ''}".strip()
             )
 
