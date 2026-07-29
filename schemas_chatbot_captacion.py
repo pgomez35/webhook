@@ -10,7 +10,7 @@ from typing import Any, List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
-FAQ_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,50}$")
+FAQ_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 ACCIONES = Literal["asesor", "url", "agendamiento", "finalizar"]
 TIPOS_RECURSO = Literal["video", "document"]
 ESTADOS_ASPIRANTE = Literal[
@@ -83,12 +83,12 @@ class RecursoBienvenida(BaseModel):
     `url` se mantiene como espejo de secure_url para compatibilidad de envío WhatsApp.
     """
 
-    id: str = Field(..., max_length=50)
+    id: str = Field(..., max_length=80)
     tipo: TIPOS_RECURSO
     proveedor: Literal["cloudinary"] = "cloudinary"
-    secure_url: Optional[str] = Field(None, max_length=500)
-    url: Optional[str] = Field(None, max_length=500)
-    public_id: Optional[str] = Field(None, max_length=300)
+    secure_url: Optional[str] = Field(None, max_length=2000)
+    url: Optional[str] = Field(None, max_length=2000)
+    public_id: Optional[str] = Field(None, max_length=500)
     asset_id: Optional[str] = Field(None, max_length=120)
     resource_type: Optional[Literal["video", "raw"]] = None
     format: Optional[str] = Field(None, max_length=20)
@@ -103,10 +103,10 @@ class RecursoBienvenida(BaseModel):
     @classmethod
     def validar_id(cls, v: str) -> str:
         v = _strip_required(v, "id")
-        if len(v) > 50:
-            raise ValueError("id máximo 50 caracteres")
+        if len(v) > 80:
+            raise ValueError("id máximo 80 caracteres")
         if not FAQ_ID_RE.match(v):
-            raise ValueError("id solo admite letras, números, guion y guion bajo (máx. 50)")
+            raise ValueError("id solo admite letras, números, guion y guion bajo (máx. 80)")
         return v
 
     @field_validator("secure_url", "url")
@@ -140,6 +140,41 @@ class RecursoBienvenida(BaseModel):
             return None
         texto = str(v).strip()
         return texto or None
+
+    @field_validator("bytes", mode="before")
+    @classmethod
+    def coerce_bytes(cls, v: Any) -> Optional[int]:
+        if v is None or v == "":
+            return None
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalizar_entrada(cls, data: Any) -> Any:
+        """Compatibilidad: completa resource_type / url desde campos parciales."""
+        if not isinstance(data, dict):
+            return data
+        out = dict(data)
+        tipo = out.get("tipo")
+        if not out.get("resource_type"):
+            if tipo == "video":
+                out["resource_type"] = "video"
+            elif tipo == "document":
+                out["resource_type"] = "raw"
+        secure = out.get("secure_url") or out.get("url")
+        if secure:
+            out["secure_url"] = secure
+            out.setdefault("url", secure)
+        if tipo == "document":
+            nombre = out.get("nombre_archivo") or out.get("nombre_original")
+            if nombre and not str(nombre).lower().endswith(".pdf"):
+                out["nombre_archivo"] = f"{nombre}.pdf"
+            elif nombre:
+                out["nombre_archivo"] = nombre
+        return out
 
     @model_validator(mode="after")
     def validar_tipo_archivo(self):

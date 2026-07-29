@@ -479,21 +479,28 @@ def crear_configuracion_default(agencia_id: int) -> Dict[str, Any]:
 def actualizar_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
     faqs = data.get("preguntas_frecuentes") or []
     if isinstance(faqs, list):
-        faqs_json = Json([
-            f.model_dump() if hasattr(f, "model_dump") else f
+        faqs_plain = [
+            f.model_dump(mode="json") if hasattr(f, "model_dump") else dict(f)
             for f in faqs
-        ])
+        ]
     else:
-        faqs_json = Json(faqs)
+        faqs_plain = faqs if isinstance(faqs, list) else []
 
     recursos = data.get("recursos_bienvenida") or []
     if isinstance(recursos, list):
-        recursos_json = Json([
-            r.model_dump() if hasattr(r, "model_dump") else r
+        recursos_plain = [
+            r.model_dump(mode="json") if hasattr(r, "model_dump") else dict(r)
             for r in recursos
-        ])
+        ]
     else:
-        recursos_json = Json(recursos)
+        recursos_plain = []
+
+    logger.info(
+        "[CHATBOT-CONFIG] actualizar_configuracion agencia_id=%s faqs=%s recursos=%s",
+        agencia_id,
+        len(faqs_plain),
+        len(recursos_plain),
+    )
 
     with get_connection_chatbot_context() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -531,8 +538,8 @@ def actualizar_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str,
                     data["accion_continuar"],
                     data.get("url_continuar"),
                     data["texto_boton_preguntas"],
-                    faqs_json,
-                    recursos_json,
+                    Json(faqs_plain),
+                    Json(recursos_plain),
                     data["mensaje_error"],
                     agencia_id,
                 ),
@@ -540,7 +547,14 @@ def actualizar_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str,
             row = cur.fetchone()
             if not row:
                 raise ValueError("Configuración no encontrada")
-            return dict(row)
+            out = dict(row)
+            n_db = len(parse_recursos_bienvenida(out.get("recursos_bienvenida")))
+            logger.info(
+                "[CHATBOT-CONFIG] actualizar_configuracion agencia_id=%s recursos_en_returning=%s",
+                agencia_id,
+                n_db,
+            )
+            return out
 
 
 def actualizar_recursos_bienvenida(

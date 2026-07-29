@@ -5,6 +5,7 @@ X-Tenant-Name / tenant_name / hostname no autorizan datos.
 """
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import Any, Optional
 
@@ -37,6 +38,8 @@ from service_cloudinary_chatbot import (
     public_id_pertenece_agencia,
 )
 
+logger = logging.getLogger("uvicorn.error")
+
 router = APIRouter(prefix="/api/chatbot-captacion", tags=["Chatbot Captación"])
 
 
@@ -45,12 +48,26 @@ def _faqs_out(raw) -> list:
 
 
 def _recursos_out(raw) -> list:
+    parsed = db.parse_recursos_bienvenida(raw)
     out = []
-    for item in db.parse_recursos_bienvenida(raw):
+    for item in parsed:
         try:
             out.append(RecursoBienvenida(**item))
-        except Exception:
-            continue
+        except Exception as e:
+            # No silenciar: diagnosticar sin exponer URLs completas
+            pid = str((item or {}).get("public_id") or "")[:40]
+            tipo = (item or {}).get("tipo")
+            logger.warning(
+                "[CHATBOT-CONFIG] recurso omitido en respuesta tipo=%s public_id_prefix=%s causa=%s",
+                tipo,
+                pid,
+                type(e).__name__,
+            )
+    if parsed and not out:
+        logger.error(
+            "[CHATBOT-CONFIG] %s recursos en DB pero 0 válidos al serializar respuesta",
+            len(parsed),
+        )
     return out
 
 
@@ -109,7 +126,19 @@ def get_configuracion(agencia: dict = Depends(obtener_agencia_chatbot_actual)):
     cfg = db.obtener_configuracion_por_agencia(agencia["id"])
     if not cfg:
         cfg = db.crear_configuracion_default(agencia["id"])
-    return _config_response(agencia, cfg)
+    n = len(db.parse_recursos_bienvenida(cfg.get("recursos_bienvenida")))
+    logger.info(
+        "[CHATBOT-CONFIG] get agencia_id=%s recursos_en_db=%s",
+        agencia["id"],
+        n,
+    )
+    resp = _config_response(agencia, cfg)
+    logger.info(
+        "[CHATBOT-CONFIG] get agencia_id=%s recursos_devueltos=%s",
+        agencia["id"],
+        len(resp.recursos_bienvenida or []),
+    )
+    return resp
 
 
 @router.put("/configuracion", response_model=ChatbotConfiguracionResponse)
@@ -121,9 +150,44 @@ def put_configuracion(
     if not existente:
         db.crear_configuracion_default(agencia["id"])
 
-    data = payload.model_dump()
-    cfg = db.actualizar_configuracion(agencia["id"], data)
-    return _config_response(agencia, cfg)
+    data = payload.model_dump(mode="json")
+    n_recibidos = len(data.get("recursos_bienvenida") or [])
+    logger.info(
+        "[CHATBOT-CONFIG] put agencia_id=%s recursos_recibidos=%s",
+        agencia["id"],
+        n_recibidos,
+    )
+
+    try:
+        cfg = db.actualizar_configuracion(agencia["id"], data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    n_persistidos = len(db.parse_recursos_bienvenida(cfg.get("recursos_bienvenida")))
+    logger.info(
+        "[CHATBOT-CONFIG] put agencia_id=%s recursos_persistidos=%s",
+        agencia["id"],
+        n_persistidos,
+    )
+    if n_recibidos != n_persistidos:
+        logger.error(
+            "[CHATBOT-CONFIG] mismatch persistencia agencia_id=%s recibidos=%s persistidos=%s",
+            agencia["id"],
+            n_recibidos,
+            n_persistidos,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudieron persistir los recursos de bienvenida",
+        )
+
+    resp = _config_response(agencia, cfg)
+    logger.info(
+        "[CHATBOT-CONFIG] put agencia_id=%s recursos_devueltos=%s",
+        agencia["id"],
+        len(resp.recursos_bienvenida or []),
+    )
+    return resp
 
 
 @router.post("/media/firma", response_model=MediaFirmaResponse)
