@@ -38,7 +38,7 @@ from chatbot_captacion_logic import (
 )
 from enviar_msg_wp import (
     enviar_botones_Completa,
-    enviar_documento_whatsapp,
+    enviar_documento_pdf_via_media_id_desde_url,
     enviar_mensaje_texto_simple,
     enviar_video_whatsapp,
 )
@@ -145,6 +145,18 @@ def _meta_message_id(body: Any) -> Optional[str]:
     return None
 
 
+def _meta_error_resumen(body: Any) -> str:
+    if not isinstance(body, dict):
+        return ""
+    err = body.get("error")
+    if not isinstance(err, dict):
+        return str(body.get("error") or "")[:160]
+    code = err.get("code")
+    title = err.get("title") or err.get("error_user_title") or ""
+    detail = err.get("message") or err.get("error_user_msg") or ""
+    return f"code={code} title={title!r} detail={detail!r}"[:240]
+
+
 def _filtrar_recursos_por_momento(
     recursos: List[Dict[str, Any]],
     momento_envio: str,
@@ -182,20 +194,29 @@ def enviar_recursos_chatbot_whatsapp(
     Envía PDF/video activos de la agencia para un momento concreto.
     Errores por recurso no detienen el flujo del chatbot.
     No reenvía URL de Cloudinary como texto.
+
+    - video: secure_url vía video.link (sin re-subir a Meta)
+    - document/PDF: descarga Cloudinary → media_id Meta → document.id
     """
     if recursos is None:
         raw = (config or {}).get("recursos_bienvenida")
         recursos = db.parse_recursos_bienvenida(raw)
 
     momento = _normalizar_momento_envio(momento_envio)
+    logger.info(
+        "[CHATBOT-MEDIA] momento solicitado=%s agencia_id=%s aspirante_id=%s",
+        momento,
+        agencia_id,
+        aspirante_id,
+    )
     seleccion = _filtrar_recursos_por_momento(list(recursos or []), momento)
+    logger.info(
+        "[CHATBOT-MEDIA] recursos encontrados=%s momento=%s agencia_id=%s",
+        len(seleccion),
+        momento,
+        agencia_id,
+    )
     if not seleccion:
-        logger.info(
-            "[CHATBOT-MEDIA] sin recursos agencia_id=%s aspirante_id=%s momento=%s",
-            agencia_id,
-            aspirante_id,
-            momento,
-        )
         return
 
     for recurso in seleccion:
@@ -205,6 +226,15 @@ def enviar_recursos_chatbot_whatsapp(
         caption = caption_raw or None
         public_id = (recurso.get("public_id") or recurso.get("id") or "")[:80]
         rid = recurso.get("id")
+        tipo_log = "PDF" if tipo == "document" else ("video" if tipo == "video" else tipo)
+
+        logger.info(
+            "[CHATBOT-MEDIA] enviando recurso id=%s tipo=%s public_id=%s momento=%s",
+            rid,
+            tipo_log,
+            public_id,
+            momento,
+        )
 
         if not url.startswith("https://"):
             logger.warning(
@@ -212,7 +242,7 @@ def enviar_recursos_chatbot_whatsapp(
                 "tipo=%s public_id=%s momento=%s",
                 agencia_id,
                 aspirante_id,
-                tipo,
+                tipo_log,
                 public_id,
                 momento,
             )
@@ -230,7 +260,8 @@ def enviar_recursos_chatbot_whatsapp(
                     caption=caption,
                 )
             elif tipo == "document":
-                status, body = enviar_documento_whatsapp(
+                # PDF: media_id (no document.link) para evitar Meta 131053
+                status, body = enviar_documento_pdf_via_media_id_desde_url(
                     token=access_token,
                     numero_id=phone_number_id,
                     telefono_destino=telefono,
@@ -252,7 +283,7 @@ def enviar_recursos_chatbot_whatsapp(
                 "tipo=%s public_id=%s momento=%s causa=%s",
                 agencia_id,
                 aspirante_id,
-                tipo,
+                tipo_log,
                 public_id,
                 momento,
                 type(e).__name__,
@@ -263,22 +294,23 @@ def enviar_recursos_chatbot_whatsapp(
         if status not in (200, 201):
             logger.warning(
                 "[CHATBOT-MEDIA] fallo Meta agencia_id=%s aspirante_id=%s "
-                "tipo=%s public_id=%s momento=%s http=%s",
+                "tipo=%s public_id=%s momento=%s http=%s meta=%s",
                 agencia_id,
                 aspirante_id,
-                tipo,
+                tipo_log,
                 public_id,
                 momento,
                 status,
+                _meta_error_resumen(body),
             )
             continue
 
         logger.info(
             "[CHATBOT-MEDIA] ok agencia_id=%s aspirante_id=%s tipo=%s "
-            "public_id=%s momento=%s http=%s message_id=%s",
+            "public_id=%s momento=%s http=%s wamid=%s",
             agencia_id,
             aspirante_id,
-            tipo,
+            tipo_log,
             public_id,
             momento,
             status,
@@ -289,6 +321,11 @@ def enviar_recursos_chatbot_whatsapp(
         if extra:
             try:
                 _enviar_texto(access_token, phone_number_id, telefono, extra)
+                logger.info(
+                    "[CHATBOT-MEDIA] mensaje_adicional enviado public_id=%s momento=%s",
+                    public_id,
+                    momento,
+                )
             except Exception:
                 logger.warning(
                     "[CHATBOT-MEDIA] fallo mensaje_adicional agencia_id=%s "
@@ -771,15 +808,27 @@ def procesar_chatbot_captacion(
             _enviar_texto(
                 token, phone_number_id, telefono, config["mensaje_bienvenida"]
             )
-            enviar_recursos_chatbot_whatsapp(
-                agencia_id=agencia_id,
-                aspirante_id=aspirante.get("id"),
-                telefono=telefono,
-                phone_number_id=phone_number_id,
-                access_token=token,
-                momento_envio=MOMENTO_DESPUES_BIENVENIDA,
-                config=config,
-            )
+            # Orden obligatorio inicio:
+            # bienvenida → recursos despues_bienvenida (+ mensaje_adicional) → pregunta_usuario
+            try:
+                logger.info(
+                    "[CHATBOT] enviando recursos despues_bienvenida "
+                    "(antes de pregunta_usuario)"
+                )
+                enviar_recursos_chatbot_whatsapp(
+                    agencia_id=agencia_id,
+                    aspirante_id=aspirante.get("id"),
+                    telefono=telefono,
+                    phone_number_id=phone_number_id,
+                    access_token=token,
+                    momento_envio=MOMENTO_DESPUES_BIENVENIDA,
+                    config=config,
+                )
+            except Exception:
+                logger.exception(
+                    "[CHATBOT] error enviando recursos despues_bienvenida; "
+                    "se continúa con pregunta_usuario"
+                )
             logger.info("[CHATBOT] enviando pregunta usuario plataforma")
             _enviar_texto(
                 token, phone_number_id, telefono, config["pregunta_usuario"]
@@ -961,15 +1010,27 @@ def procesar_chatbot_captacion(
             _enviar_texto(
                 token, phone_number_id, telefono, config["mensaje_aprobado"]
             )
-            enviar_recursos_chatbot_whatsapp(
-                agencia_id=agencia_id,
-                aspirante_id=aspirante.get("id"),
-                telefono=telefono,
-                phone_number_id=phone_number_id,
-                access_token=token,
-                momento_envio=MOMENTO_DESPUES_APROBACION,
-                config=config,
-            )
+            # Orden obligatorio aprobación:
+            # mensaje_aprobado → recursos despues_aprobacion (+ mensaje_adicional) → botones
+            try:
+                logger.info(
+                    "[CHATBOT] enviando recursos despues_aprobacion "
+                    "(antes de botones de resultado)"
+                )
+                enviar_recursos_chatbot_whatsapp(
+                    agencia_id=agencia_id,
+                    aspirante_id=aspirante.get("id"),
+                    telefono=telefono,
+                    phone_number_id=phone_number_id,
+                    access_token=token,
+                    momento_envio=MOMENTO_DESPUES_APROBACION,
+                    config=config,
+                )
+            except Exception:
+                logger.exception(
+                    "[CHATBOT] error enviando recursos despues_aprobacion; "
+                    "se continúa con botones de resultado"
+                )
             _enviar_botones(
                 token,
                 phone_number_id,

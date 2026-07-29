@@ -1033,29 +1033,64 @@ def actualizar_mensaje_desde_status(
         traceback.print_exc()
 
 async def _procesar_error_envio(status_obj, tenant, phone_id, token, business_name):
-    errors = status_obj.get("errors", [])
+    """
+    Registra fallos de entrega Meta y actúa en ventana 24h (131047).
+    No usa columnas inexistentes (p. ej. error_codigo). Solo actualiza `estado`.
+    Código/título/detalle se registran en log sin interrumpir el webhook.
+    """
+    errors = status_obj.get("errors", []) or []
     recipient_id = status_obj.get("recipient_id")
     message_id_meta = status_obj.get("id")
+    recip_safe = (
+        str(recipient_id)[:3] + "****" + str(recipient_id)[-2:]
+        if recipient_id and len(str(recipient_id)) >= 6
+        else "****"
+    )
 
     for error in errors:
+        if not isinstance(error, dict):
+            continue
         code = error.get("code")
-        message = error.get("message")
+        title = error.get("title") or error.get("error_user_title") or ""
+        message = error.get("message") or ""
+        detail = (
+            error.get("error_data")
+            or error.get("error_user_msg")
+            or error.get("details")
+            or ""
+        )
+        if isinstance(detail, dict):
+            detail = detail.get("details") or str(detail)
 
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE mensajes_whatsapp
-                    SET estado  = 'failed',
-                        error_codigo  = %s,
-                        error_mensaje = %s
-                    WHERE message_id_meta = %s
-                    """,
-                    (None if code is None else str(code), message, message_id_meta)
-                )
+        print(
+            f"❌ Error entrega Meta tel={recip_safe} "
+            f"code={code} title={title!r} detail={message!r} extra={str(detail)[:160]!r}"
+        )
+
+        # Solo columnas reales: estado (no error_codigo / error_mensaje).
+        try:
+            if message_id_meta:
+                with get_connection_context() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            UPDATE mensajes_whatsapp
+                            SET estado = 'failed'
+                            WHERE message_id_meta = %s
+                            """,
+                            (message_id_meta,),
+                        )
+        except Exception as e:
+            print(
+                f"⚠️ No se pudo marcar failed en mensajes_whatsapp "
+                f"(code={code}): {type(e).__name__}: {e}"
+            )
 
         if code == 131047:
-            print(f"🔄 Ventana cerrada para {recipient_id}. Enviando plantilla reconexion_general_corta")
+            print(
+                f"🔄 Ventana cerrada para {recip_safe}. "
+                f"Enviando plantilla reconexion_general_corta"
+            )
 
             usuario = buscar_usuario_por_telefono(recipient_id)
 
@@ -1075,6 +1110,12 @@ async def _procesar_error_envio(status_obj, tenant, phone_id, token, business_na
                 phone_number_id=phone_id,
                 agencia_nombre=business_name,
                 plantilla="reconexion_general_corta"
+            )
+        elif code == 131053:
+            # Media / documento no aceptado por Meta (p. ej. link externo de PDF).
+            print(
+                f"⚠️ Meta 131053 (media) tel={recip_safe} title={title!r} "
+                f"message={message!r} — no se interrumpe el webhook"
             )
 
 async def enviar_plantilla_por_ventana_cerrada(
