@@ -15,8 +15,14 @@ from starlette.staticfiles import StaticFiles
 from DataBase import obtener_usuario_id_por_telefono, guardar_mensaje, guardar_mensaje_nuevo, \
     obtener_mensajes, obtener_contactos_db, obtener_contactos_db_nueva, get_connection_context, \
     obtener_cuenta_por_subdominio, require_aspirante_tiene_solicitud
-from enviar_msg_wp import enviar_plantilla_generica, enviar_mensaje_texto_simple, enviar_audio_base64, \
-    enviar_plantilla_generica_parametros
+from enviar_msg_wp import (
+    enviar_plantilla_generica,
+    enviar_mensaje_texto_simple,
+    enviar_audio_base64,
+    enviar_plantilla_generica_parametros,
+    subir_media_whatsapp,
+    enviar_documento_id,
+)
 from main_auth import obtener_usuario_actual
 from tenant import current_token, current_phone_id, current_business_name, current_tenant
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -803,55 +809,10 @@ def enviar_imagen_link(
 
 
 # --------------------------------------------------
-# 🔹 Subir archivo a WhatsApp /media
+# 🔹 Subir archivo / enviar documento: ver enviar_msg_wp
+#    (subir_media_whatsapp, enviar_documento_id)
 # --------------------------------------------------
-def subir_media_whatsapp(token: str, phone_number_id: str, ruta_archivo: str, mime: str):
-    url = f"https://graph.facebook.com/v19.0/{phone_number_id}/media"
 
-    headers = {
-        "Authorization": f"Bearer {token}"
-    }
-
-    with open(ruta_archivo, "rb") as f:
-        files = {
-            "file": (os.path.basename(ruta_archivo), f, mime)
-        }
-        data = {
-            "messaging_product": "whatsapp"
-        }
-
-        response = requests.post(url, headers=headers, files=files, data=data)
-
-    return response.status_code, response.json()
-
-
-# --------------------------------------------------
-# 🔹 Enviar documento usando media_id
-# --------------------------------------------------
-def enviar_documento_id(token, numero_id, telefono_destino, media_id, filename, caption=None):
-    url = f"https://graph.facebook.com/v19.0/{numero_id}/messages"
-
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
-
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": telefono_destino,
-        "type": "document",
-        "document": {
-            "id": media_id,
-            "filename": filename
-        }
-    }
-
-    if caption:
-        payload["document"]["caption"] = caption
-
-    response = requests.post(url, headers=headers, json=payload)
-
-    return response.status_code, response.json()
 
 @router.post("/mensajes/documento")
 async def api_enviar_documento(

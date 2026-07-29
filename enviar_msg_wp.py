@@ -904,33 +904,83 @@ def _resumen_error_meta(body: Optional[dict]) -> str:
     return f"code={code} title={title!r} detail={msg!r}"[:240]
 
 
-def subir_media_whatsapp_archivo(
-    token: str,
-    phone_number_id: str,
-    ruta_archivo: str,
-    mime: str = "application/pdf",
-    filename: Optional[str] = None,
-):
+def subir_media_whatsapp(token: str, phone_number_id: str, ruta_archivo: str, mime: str):
     """
-    Sube un archivo a Meta WhatsApp Cloud API:
+    Sube un archivo a WhatsApp Cloud API (multipart/form-data).
     POST /{version}/{phone_number_id}/media
+
+    Misma estrategia usada en mensajería para PDF (media_id).
+    Retorna (status_code, json_body). El media_id viene en body['id'].
     """
     version = _graph_api_version()
-    api_url = f"https://graph.facebook.com/{version}/{phone_number_id}/media"
+    url = f"https://graph.facebook.com/{version}/{phone_number_id}/media"
     headers = {"Authorization": f"Bearer {token}"}
-    nombre = (filename or os.path.basename(ruta_archivo) or "documento.pdf").strip()
 
     with open(ruta_archivo, "rb") as f:
-        files = {"file": (nombre, f, mime)}
+        files = {"file": (os.path.basename(ruta_archivo), f, mime)}
         data = {"messaging_product": "whatsapp"}
         try:
             response = requests.post(
-                api_url, headers=headers, files=files, data=data, timeout=60
+                url, headers=headers, files=files, data=data, timeout=60
             )
         except requests.Timeout:
             return 504, {"error": "timeout", "detail": "Timeout al subir media a Meta"}
         except requests.RequestException as e:
             return 500, {"error": "request_error", "detail": str(e)}
+
+    try:
+        body = response.json()
+    except json.JSONDecodeError:
+        body = {
+            "error": "Respuesta no válida en formato JSON",
+            "contenido": (response.text or "")[:300],
+        }
+    return response.status_code, body
+
+
+def enviar_documento_id(
+    token,
+    numero_id,
+    telefono_destino,
+    media_id,
+    filename,
+    caption=None,
+):
+    """
+    Envía un documento usando media_id (document.id).
+    Misma estrategia usada en mensajería WhatsApp.
+    Omite caption si está vacío; no envía null.
+    """
+    version = _graph_api_version()
+    url = f"https://graph.facebook.com/{version}/{numero_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+    telefono = _normalize_phone(telefono_destino)
+    document = {
+        "id": media_id,
+        "filename": filename,
+    }
+    cap = (caption or "").strip() if caption is not None else ""
+    if cap:
+        document["caption"] = cap
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": telefono,
+        "type": "document",
+        "document": document,
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+    except requests.Timeout:
+        return 504, {"error": "timeout", "detail": "Timeout al enviar documento a Meta"}
+    except requests.RequestException as e:
+        return 500, {"error": "request_error", "detail": str(e)}
 
     try:
         body = response.json()
@@ -951,11 +1001,11 @@ def enviar_documento_pdf_via_media_id_desde_url(
     caption: Optional[str] = None,
 ):
     """
-    PDF desde Cloudinary (secure_url) → descarga temporal → upload Meta /media
-    → envío document.id (media_id).
+    PDF desde Cloudinary (secure_url) → temp → subir_media_whatsapp →
+    media_id → enviar_documento_id (document.id).
 
-    Evita el fallo Meta 131053 típico al usar document.link con URLs externas.
-    El archivo temporal se elimina siempre (finally). No conserva descargas en disco.
+    Reutiliza la estrategia de mensajería (no document.link).
+    El archivo temporal se elimina siempre en finally.
     """
     import tempfile
 
@@ -967,12 +1017,9 @@ def enviar_documento_pdf_via_media_id_desde_url(
     if not nombre.lower().endswith(".pdf"):
         nombre = f"{nombre}.pdf"
 
+    caption_envio = (caption or "").strip() or None
     tmp_path = None
     try:
-        print(
-            f"[WA-PDF] descarga Cloudinary url={_enmascarar_url_media(url)} "
-            f"filename={nombre}"
-        )
         try:
             with requests.get(url, stream=True, timeout=(10, 60)) as resp:
                 http_dl = resp.status_code
@@ -980,8 +1027,8 @@ def enviar_documento_pdf_via_media_id_desde_url(
                 ctype = ctype_raw.split(";")[0].strip().lower()
                 if http_dl != 200:
                     print(
-                        f"[WA-PDF] descarga fallida http={http_dl} "
-                        f"content_type={ctype_raw!r}"
+                        f"[CHATBOT-PDF] descarga Cloudinary fallida "
+                        f"HTTP={http_dl} content_type={ctype_raw!r}"
                     )
                     return http_dl, {
                         "error": "cloudinary_download_failed",
@@ -989,7 +1036,6 @@ def enviar_documento_pdf_via_media_id_desde_url(
                         "content_type": ctype_raw,
                     }
 
-                # Escribir a temp mientras validamos
                 fd, tmp_path = tempfile.mkstemp(suffix=".pdf", prefix="wa_pdf_")
                 os.close(fd)
                 size = 0
@@ -1001,16 +1047,15 @@ def enviar_documento_pdf_via_media_id_desde_url(
                         size += len(chunk)
 
                 if size <= 0:
-                    print("[WA-PDF] descarga vacía")
+                    print("[CHATBOT-PDF] descarga Cloudinary vacía")
                     return 400, {
                         "error": "cloudinary_empty",
                         "detail": "Contenido vacío",
                         "content_type": ctype_raw,
                     }
 
-                # Validar Content-Type PDF; si Cloudinary manda octet-stream, magic %PDF
-                es_pdf_ctype = "application/pdf" in ctype
-                if not es_pdf_ctype:
+                es_pdf = "application/pdf" in ctype
+                if not es_pdf:
                     with open(tmp_path, "rb") as chk:
                         magic = chk.read(5)
                     if magic.startswith(b"%PDF") and ctype in (
@@ -1018,13 +1063,12 @@ def enviar_documento_pdf_via_media_id_desde_url(
                         "application/octet-stream",
                         "binary/octet-stream",
                     ):
-                        es_pdf_ctype = True
-                        print(
-                            f"[WA-PDF] content_type={ctype_raw!r} aceptado vía magic %PDF"
-                        )
+                        es_pdf = True
+                        ctype_raw = "application/pdf"
                     else:
                         print(
-                            f"[WA-PDF] content_type inválido={ctype_raw!r} size={size}"
+                            f"[CHATBOT-PDF] content_type inválido={ctype_raw!r} "
+                            f"size={size}"
                         )
                         return 415, {
                             "error": "content_type_invalido",
@@ -1033,26 +1077,26 @@ def enviar_documento_pdf_via_media_id_desde_url(
                         }
 
                 print(
-                    f"[WA-PDF] descarga ok http=200 size={size} "
-                    f"content_type={ctype_raw!r}"
+                    f"[CHATBOT-PDF] descarga Cloudinary HTTP=200 "
+                    f"content_type={ctype_raw or 'application/pdf'} size={size}"
                 )
         except requests.Timeout:
-            print("[WA-PDF] timeout descarga Cloudinary")
+            print("[CHATBOT-PDF] timeout descarga Cloudinary")
             return 504, {"error": "timeout", "detail": "Timeout descarga Cloudinary"}
         except requests.RequestException as e:
-            print(f"[WA-PDF] error descarga Cloudinary: {type(e).__name__}")
-            return 500, {"error": "download_error", "detail": str(e)}
+            print(f"[CHATBOT-PDF] error descarga Cloudinary: {type(e).__name__}")
+            return 500, {"error": "download_error", "detail": type(e).__name__}
 
-        status_up, body_up = subir_media_whatsapp_archivo(
+        print("[CHATBOT-PDF] subida a Meta iniciada")
+        status_up, body_up = subir_media_whatsapp(
             token=token,
             phone_number_id=numero_id,
             ruta_archivo=tmp_path,
             mime="application/pdf",
-            filename=nombre,
         )
         if status_up not in (200, 201):
             print(
-                f"[WA-PDF] upload Meta falló http={status_up} "
+                f"[CHATBOT-PDF] subida Meta falló HTTP={status_up} "
                 f"meta={_resumen_error_meta(body_up)}"
             )
             return status_up, body_up if isinstance(body_up, dict) else {
@@ -1060,35 +1104,41 @@ def enviar_documento_pdf_via_media_id_desde_url(
                 "body": body_up,
             }
 
-        media_id = None
-        if isinstance(body_up, dict):
-            media_id = body_up.get("id")
+        media_id = body_up.get("id") if isinstance(body_up, dict) else None
         if not media_id:
-            print(f"[WA-PDF] upload sin media_id http={status_up}")
-            return 502, {
-                "error": "media_id_ausente",
-                "detail": body_up,
-            }
+            print(f"[CHATBOT-PDF] subida sin media_id HTTP={status_up}")
+            return 502, {"error": "media_id_ausente", "detail": "sin id"}
 
-        print(f"[WA-PDF] media_id generado ok (no se imprime token)")
-        # Log parcial del id (sin exponer de más)
         mid = str(media_id)
         mid_safe = mid[:6] + "..." + mid[-4:] if len(mid) > 12 else mid[:4] + "..."
-        print(f"[WA-PDF] media_id={mid_safe}")
+        print(f"[CHATBOT-PDF] media_id obtenido={mid_safe}")
 
-        return enviar_documento_whatsapp(
+        status_send, body_send = enviar_documento_id(
             token=token,
             numero_id=numero_id,
             telefono_destino=telefono_destino,
             media_id=str(media_id),
-            caption=caption,
             filename=nombre,
+            caption=caption_envio,
         )
+        wamid = None
+        if isinstance(body_send, dict):
+            msgs = body_send.get("messages")
+            if isinstance(msgs, list) and msgs and isinstance(msgs[0], dict):
+                wamid = msgs[0].get("id")
+        if status_send in (200, 201):
+            print(f"[CHATBOT-PDF] documento enviado wamid={wamid}")
+        else:
+            print(
+                f"[CHATBOT-PDF] envío falló HTTP={status_send} "
+                f"meta={_resumen_error_meta(body_send)}"
+            )
+        return status_send, body_send
     finally:
         if tmp_path:
             try:
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
-                    print("[WA-PDF] archivo temporal eliminado")
             except OSError as e:
-                print(f"[WA-PDF] no se pudo borrar temp: {type(e).__name__}")
+                print(f"[CHATBOT-PDF] no se pudo borrar temp: {type(e).__name__}")
+

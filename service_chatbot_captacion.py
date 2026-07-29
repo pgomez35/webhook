@@ -260,7 +260,14 @@ def enviar_recursos_chatbot_whatsapp(
                     caption=caption,
                 )
             elif tipo == "document":
-                # PDF: media_id (no document.link) para evitar Meta 131053
+                logger.info(
+                    "[CHATBOT-PDF] recurso encontrado id=%s public_id=%s momento=%s",
+                    rid,
+                    public_id,
+                    momento,
+                )
+                # PDF: media_id vía subir_media_whatsapp + enviar_documento_id
+                # (no document.link) para evitar Meta 131053
                 status, body = enviar_documento_pdf_via_media_id_desde_url(
                     token=access_token,
                     numero_id=phone_number_id,
