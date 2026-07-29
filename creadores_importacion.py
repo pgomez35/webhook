@@ -329,7 +329,6 @@ def _cargar_managers_index(cur) -> Dict[str, Any]:
         """
         SELECT
             a.id,
-            a.agente,
             a.email,
             a.nombre_completo,
             a.username
@@ -341,19 +340,15 @@ def _cargar_managers_index(cur) -> Dict[str, Any]:
     )
     rows = cur.fetchall()
 
-    by_agente: Dict[str, List[int]] = {}
     by_email: Dict[str, List[int]] = {}
     by_nombre: Dict[str, List[int]] = {}
 
     for row in rows:
         mid = int(row["id"])
-        agente = (row.get("agente") or "").strip().lower()
         email = (row.get("email") or "").strip().lower()
         nombre = (row.get("nombre_completo") or "").strip().lower()
         username = (row.get("username") or "").strip().lower()
 
-        if agente:
-            by_agente.setdefault(agente, []).append(mid)
         if email:
             by_email.setdefault(email, []).append(mid)
         if nombre:
@@ -362,7 +357,6 @@ def _cargar_managers_index(cur) -> Dict[str, Any]:
             by_nombre.setdefault(username, []).append(mid)
 
     return {
-        "by_agente": by_agente,
         "by_email": by_email,
         "by_nombre": by_nombre,
     }
@@ -376,22 +370,14 @@ def _resolver_manager(valor: Any, index: Dict[str, Any]) -> Tuple[Optional[int],
     raw = _celda_texto(valor)
     clave = raw.lower()
 
-    # 1. Por agente
-    ids = index["by_agente"].get(clave, [])
+    # 1. Por email (identificador del administrador)
+    ids = index["by_email"].get(clave, [])
     if len(ids) == 1:
         return ids[0], [], "ok"
     if len(ids) > 1:
-        return None, [f'Manager "{raw}" es ambiguo (agente)'], "error"
+        return None, [f'Manager "{raw}" es ambiguo (email)'], "error"
 
-    # 2. Por email
-    if "@" in raw:
-        ids = index["by_email"].get(clave, [])
-        if len(ids) == 1:
-            return ids[0], [], "ok"
-        if len(ids) > 1:
-            return None, [f'Manager "{raw}" es ambiguo (email)'], "error"
-
-    # 3. Por nombre / username
+    # 2. Por nombre / username
     ids = index["by_nombre"].get(clave, [])
     if len(ids) == 1:
         return ids[0], [], "ok"

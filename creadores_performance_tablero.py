@@ -13,7 +13,7 @@ from main_auth import (
     credenciales_manager_para_filtro,
 )
 
-# Valor centinela: si un Manager no tiene `agente`/`email` asignado y tampoco
+# Valor centinela: si un Manager no tiene `email` asignado y tampoco
 # hay manager_id, se usa para que no coincida con ningún creador.
 _AGENTE_SIN_ASIGNAR = "\x00__sin_agente__"
 
@@ -90,14 +90,13 @@ def _append_filtro_manager_logueado(
     """
     Filtra para un Manager logueado:
     - preferente: manager_id = admin.id
-    - fallback legado: texto (manager_actual/agente) vs agente/email del admin
+    - fallback legado: texto (manager_actual/agente del reporte) vs email del admin
     """
     if not creds or not creds.get("id"):
         filtros.append(f"LOWER(TRIM({col_texto})) = LOWER(TRIM(%s))")
         params.append(_AGENTE_SIN_ASIGNAR)
         return
 
-    agente = creds.get("agente") or _AGENTE_SIN_ASIGNAR
     email = creds.get("email") or _AGENTE_SIN_ASIGNAR
     filtros.append(
         f"""
@@ -105,15 +104,12 @@ def _append_filtro_manager_logueado(
             {col_manager_id} = %s
             OR (
                 {col_manager_id} IS NULL
-                AND (
-                    LOWER(TRIM({col_texto})) = LOWER(TRIM(%s))
-                    OR LOWER(TRIM({col_texto})) = LOWER(TRIM(%s))
-                )
+                AND LOWER(TRIM({col_texto})) = LOWER(TRIM(%s))
             )
         )
         """
     )
-    params.extend([creds["id"], agente, email])
+    params.extend([creds["id"], email])
 
 
 def _append_filtro_manager_query(
@@ -481,7 +477,6 @@ def _obtener_reportes_de_periodos(cur, periodos: List[Dict[str, Any]]) -> List[D
             COALESCE(r.estado_agencia, 'activo') AS estado_agencia,
             a.nombre_completo AS manager_nombre,
             a.email AS manager_email,
-            a.agente AS manager_agente,
             r.periodo_inicio,
             r.periodo_fin,
             r.hora_incorporacion,
@@ -918,7 +913,7 @@ def obtener_tablero_actual(
             )
 
         # Si el usuario es Manager (rol_id=2), forzamos filtro por manager_id
-        # (con fallback legacy por agente/email) e ignoramos el query param.
+        # (con fallback legacy por email vs texto del reporte) e ignoramos el query param.
         manager_creds = None
         if es_manager(usuario):
             manager_creds = credenciales_manager_para_filtro(usuario)

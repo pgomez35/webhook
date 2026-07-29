@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from DataBase import get_connection_context
 from main_auth import obtener_usuario_actual, es_manager, credenciales_manager_para_filtro
 
-# Valor centinela: si un Manager no tiene credenciales útiles, no ve creadores.
+# Valor centinela: si un Manager no tiene email útil, no ve creadores.
 _AGENTE_SIN_ASIGNAR = "\x00__sin_agente__"
 
 
@@ -18,16 +18,13 @@ def _filtro_sql_manager_reporte(
     col_manager_id: str = "manager_id",
     col_agente: str = "agente",
 ) -> str:
-    """SQL fragment: manager_id preferente + fallback por agente/email."""
+    """SQL fragment: manager_id preferente + fallback por email del admin vs texto reporte."""
     return f"""
         (
             {col_manager_id} = %s
             OR (
                 {col_manager_id} IS NULL
-                AND (
-                    LOWER(TRIM({col_agente})) = LOWER(TRIM(%s))
-                    OR LOWER(TRIM({col_agente})) = LOWER(TRIM(%s))
-                )
+                AND LOWER(TRIM({col_agente})) = LOWER(TRIM(%s))
             )
         )
     """
@@ -35,10 +32,9 @@ def _filtro_sql_manager_reporte(
 
 def _params_manager_logueado(creds: Optional[Dict[str, Any]]) -> List[Any]:
     if not creds or not creds.get("id"):
-        return [-1, _AGENTE_SIN_ASIGNAR, _AGENTE_SIN_ASIGNAR]
+        return [-1, _AGENTE_SIN_ASIGNAR]
     return [
         creds["id"],
-        creds.get("agente") or _AGENTE_SIN_ASIGNAR,
         creds.get("email") or _AGENTE_SIN_ASIGNAR,
     ]
 
@@ -314,7 +310,7 @@ def obtener_matriz_capacitaciones(
 
     try:
         # Manager (rol_id=2) solo ve sus creadores: filtramos por manager_id
-        # (fallback legacy por agente/email) e ignoramos el query param.
+        # (fallback legacy por email vs texto del reporte) e ignoramos el query param.
         manager_creds = None
         if es_manager(usuario):
             manager_creds = credenciales_manager_para_filtro(usuario)

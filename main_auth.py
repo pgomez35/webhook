@@ -128,33 +128,30 @@ def manager_id_para_filtro(usuario: dict):
 
 def agente_para_filtro(usuario: dict):
     """
-    Devuelve el valor de `administradores.agente` del usuario logueado cuando es
-    Manager. Se usa para filtrar los módulos que identifican al manager por el
-    campo de texto `agente` (creadores_reporte_integral.agente / manager_actual),
-    es decir Seguimiento semanal y Capacitaciones.
+    Compatibilidad: antes devolvía `administradores.agente`.
+    Ahora devuelve el `email` del manager logueado para filtrar módulos
+    que aún comparan texto legacy (creadores_reporte_integral.agente /
+    manager_actual) contra el identificador del admin.
 
-    - Manager -> su `agente` (string). Si no tiene agente asignado -> None.
-    - Cualquier otro rol (admin, etc.) -> None (ve todo, sin filtro).
-
-    La consulta se hace aquí (aislada) para no tocar `obtener_usuario_actual`,
-    que se usa en toda la app.
+    - Manager -> su `email`. Si no tiene email -> None.
+    - Cualquier otro rol -> None (ve todo, sin filtro).
     """
     creds = credenciales_manager_para_filtro(usuario)
     if not creds:
         return None
-    return creds.get("agente") or None
+    return creds.get("email") or None
 
 
 def credenciales_manager_para_filtro(usuario: dict):
     """
     Credenciales del manager logueado para filtrar reportes/tableros.
 
-    - Manager -> {id, agente, email}
+    - Manager -> {id, email}
     - Otros roles -> None (sin filtro, ve todo)
 
-    Preferencia de filtrado nueva: manager_id = id.
-    Fallback legacy: comparar agente/email del admin contra el texto
-    de creadores_reporte_integral.agente cuando manager_id IS NULL.
+    Preferencia de filtrado: manager_id = id.
+    Fallback legacy: comparar email del admin contra el texto
+    de creadores_reporte_integral.agente / manager_actual cuando manager_id IS NULL.
     """
     if not es_manager(usuario):
         return None
@@ -167,7 +164,7 @@ def credenciales_manager_para_filtro(usuario: dict):
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT id, agente, email
+            SELECT id, email
             FROM administradores
             WHERE id = %s
             LIMIT 1
@@ -177,11 +174,10 @@ def credenciales_manager_para_filtro(usuario: dict):
         row = cursor.fetchone()
 
     if not row:
-        return {"id": admin_id, "agente": None, "email": None}
+        return {"id": admin_id, "email": None}
 
-    agente = str(row[1]).strip() if row[1] and str(row[1]).strip() else None
-    email = str(row[2]).strip() if row[2] and str(row[2]).strip() else None
-    return {"id": int(row[0]), "agente": agente, "email": email}
+    email = str(row[1]).strip() if row[1] and str(row[1]).strip() else None
+    return {"id": int(row[0]), "email": email}
 
 
 # ================= ENDPOINTS =================

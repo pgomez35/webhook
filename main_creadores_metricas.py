@@ -420,9 +420,9 @@ def _buscar_creador_por_tiktok(cur, creador_tiktok_id: Optional[str], usuario_ti
 
 def _resolver_manager_por_agente(cur, agente: Optional[str]) -> Optional[Dict[str, Any]]:
     """
-    Relaciona el Agente del Backstage con administradores.
-    Prioridad: administradores.agente, luego administradores.email.
-    Solo activos. Comparación case-insensitive + TRIM.
+    Relaciona el Agente del Backstage (texto en el Excel/reporte) con administradores.
+    Matching únicamente por administradores.email (case-insensitive + TRIM).
+    Solo activos.
     """
     if not agente or not str(agente).strip():
         return None
@@ -432,24 +432,14 @@ def _resolver_manager_por_agente(cur, agente: Optional[str]) -> Optional[Dict[st
         SELECT
             id,
             nombre_completo,
-            email,
-            agente
+            email
         FROM administradores
         WHERE COALESCE(activo, true) = true
-          AND (
-                LOWER(TRIM(agente)) = LOWER(TRIM(%s))
-                OR LOWER(TRIM(email)) = LOWER(TRIM(%s))
-              )
-        ORDER BY
-            CASE
-                WHEN LOWER(TRIM(agente)) = LOWER(TRIM(%s)) THEN 1
-                WHEN LOWER(TRIM(email)) = LOWER(TRIM(%s)) THEN 2
-                ELSE 3
-            END,
-            id ASC
+          AND LOWER(TRIM(email)) = LOWER(TRIM(%s))
+        ORDER BY id ASC
         LIMIT 1
         """,
-        (agente, agente, agente, agente),
+        (agente,),
     )
     return cur.fetchone()
 
