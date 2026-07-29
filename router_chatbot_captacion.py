@@ -17,6 +17,7 @@ from schemas_chatbot_captacion import (
     CanalWhatsAppResponse,
     ChatbotAspiranteDetalle,
     ChatbotAspiranteResponse,
+    ChatbotAspiranteReiniciarFlujoIn,
     ChatbotAspiranteUpdate,
     ChatbotConfiguracionResponse,
     ChatbotConfiguracionUpdate,
@@ -279,6 +280,34 @@ def patch_aspirante(
         estado=data.get("estado"),
         requiere_asesor=data.get("requiere_asesor"),
         observaciones=data.get("observaciones"),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Aspirante no encontrado.")
+    base = _aspirante_response(row)
+    return ChatbotAspiranteDetalle(
+        **base.model_dump(),
+        agencia_id=row["agencia_id"],
+        updated_at=row.get("updated_at"),
+    )
+
+
+@router.post(
+    "/aspirantes/{aspirante_id}/reiniciar-flujo",
+    response_model=ChatbotAspiranteDetalle,
+)
+def reiniciar_flujo_aspirante(
+    aspirante_id: int,
+    payload: ChatbotAspiranteReiniciarFlujoIn,
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    """
+    Reinicia el flujo conversacional (etapa_chatbot=inicio).
+    No altera telefono, agencia_id, whatsapp_account_id ni fecha_registro.
+    """
+    row = db.reiniciar_flujo_aspirante(
+        agencia["id"],
+        aspirante_id,
+        limpiar_respuestas=bool(payload.limpiar_respuestas),
     )
     if not row:
         raise HTTPException(status_code=404, detail="Aspirante no encontrado.")

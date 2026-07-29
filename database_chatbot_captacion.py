@@ -792,6 +792,53 @@ def actualizar_aspirante_admin(
     return obtener_aspirante(agencia_id, aspirante_id)
 
 
+def reiniciar_flujo_aspirante(
+    agencia_id: int,
+    aspirante_id: int,
+    *,
+    limpiar_respuestas: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """
+    Reinicia el flujo conversacional del chatbot para un aspirante de la agencia.
+    No elimina el registro ni altera telefono, agencia_id, whatsapp_account_id o fecha_registro.
+    """
+    sets = [
+        "estado = %s",
+        "etapa_chatbot = %s",
+        "requiere_asesor = FALSE",
+        "cumple_requisitos = NULL",
+        "updated_at = CURRENT_TIMESTAMP",
+    ]
+    params: List[Any] = ["nuevo", "inicio"]
+
+    if limpiar_respuestas:
+        sets.extend(
+            [
+                "usuario_plataforma = NULL",
+                "mayor_edad = NULL",
+                "disponibilidad_live = NULL",
+            ]
+        )
+
+    params.extend([aspirante_id, agencia_id])
+
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                f"""
+                UPDATE chatbot.chatbot_aspirantes
+                SET {", ".join(sets)}
+                WHERE id = %s AND agencia_id = %s
+                RETURNING id
+                """,
+                params,
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+    return obtener_aspirante(agencia_id, aspirante_id)
+
+
 # ---------- Runtime aspirantes (flujo WhatsApp) ----------
 
 def obtener_aspirante_por_telefono(

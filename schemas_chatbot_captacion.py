@@ -358,6 +358,12 @@ class ChatbotAspiranteUpdate(BaseModel):
         return str(v).strip() or None
 
 
+class ChatbotAspiranteReiniciarFlujoIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    limpiar_respuestas: bool = False
+
+
 class ChatbotResumenResponse(BaseModel):
     total: int = 0
     nuevos: int = 0
