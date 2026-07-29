@@ -80,11 +80,223 @@ def _enviar_texto(token: str, phone_number_id: str, wa_id: str, texto: str) -> N
     enviar_mensaje_texto_simple(token, phone_number_id, wa_id, texto)
 
 
-def _recursos_activos_ordenados(config: Dict[str, Any]) -> List[Dict[str, Any]]:
-    recursos = db.parse_recursos_bienvenida(config.get("recursos_bienvenida"))
-    activos = [r for r in recursos if r.get("activo") is True]
-    activos.sort(key=lambda x: int(x.get("orden") or 0))
-    return activos[:2]
+# Momentos de envío de recursos (valores usados / compatibles con el JSON guardado).
+MOMENTO_DESPUES_BIENVENIDA = "despues_bienvenida"
+MOMENTO_DESPUES_APROBACION = "despues_aprobacion"
+MOMENTO_SIN_ENVIO = "sin_envio"
+
+_MOMENTO_ALIASES = {
+    "despues_bienvenida": MOMENTO_DESPUES_BIENVENIDA,
+    "despues_de_bienvenida": MOMENTO_DESPUES_BIENVENIDA,
+    "bienvenida": MOMENTO_DESPUES_BIENVENIDA,
+    "despues_aprobacion": MOMENTO_DESPUES_APROBACION,
+    "despues_de_aprobacion": MOMENTO_DESPUES_APROBACION,
+    "aprobacion": MOMENTO_DESPUES_APROBACION,
+    "aprobado": MOMENTO_DESPUES_APROBACION,
+    "sin_envio": MOMENTO_SIN_ENVIO,
+    "ninguno": MOMENTO_SIN_ENVIO,
+    "none": MOMENTO_SIN_ENVIO,
+    "manual": MOMENTO_SIN_ENVIO,
+}
+
+
+def _normalizar_momento_envio(raw: Any) -> str:
+    """
+    Sin momento en el JSON legado → despues_bienvenida (comportamiento histórico).
+    """
+    if raw is None:
+        return MOMENTO_DESPUES_BIENVENIDA
+    clave = str(raw).strip().lower()
+    if not clave:
+        return MOMENTO_DESPUES_BIENVENIDA
+    return _MOMENTO_ALIASES.get(clave, clave)
+
+
+def _recurso_esta_activo(recurso: Dict[str, Any]) -> bool:
+    activo = recurso.get("activo")
+    if activo is False or activo == 0:
+        return False
+    if isinstance(activo, str) and activo.strip().lower() in ("false", "0", "no"):
+        return False
+    return True
+
+
+def _nombre_archivo_pdf(recurso: Dict[str, Any]) -> str:
+    nombre = (
+        recurso.get("nombre_archivo")
+        or recurso.get("nombre_original")
+        or "documento.pdf"
+    )
+    nombre = str(nombre).strip() or "documento.pdf"
+    if not nombre.lower().endswith(".pdf"):
+        nombre = f"{nombre}.pdf"
+    # Nombre seguro básico para Meta
+    seguro = "".join(c if c.isalnum() or c in "._- " else "_" for c in nombre).strip()
+    return (seguro or "documento.pdf")[:150]
+
+
+def _meta_message_id(body: Any) -> Optional[str]:
+    if not isinstance(body, dict):
+        return None
+    msgs = body.get("messages")
+    if isinstance(msgs, list) and msgs:
+        mid = msgs[0].get("id") if isinstance(msgs[0], dict) else None
+        return str(mid) if mid else None
+    return None
+
+
+def _filtrar_recursos_por_momento(
+    recursos: List[Dict[str, Any]],
+    momento_envio: str,
+) -> List[Dict[str, Any]]:
+    momento = _normalizar_momento_envio(momento_envio)
+    if momento == MOMENTO_SIN_ENVIO:
+        return []
+
+    filtrados: List[Dict[str, Any]] = []
+    for recurso in recursos:
+        if not _recurso_esta_activo(recurso):
+            continue
+        m = _normalizar_momento_envio(recurso.get("momento_envio"))
+        if m == MOMENTO_SIN_ENVIO:
+            continue
+        if m == momento:
+            filtrados.append(recurso)
+
+    filtrados.sort(key=lambda x: int(x.get("orden") or 0))
+    return filtrados
+
+
+def enviar_recursos_chatbot_whatsapp(
+    *,
+    agencia_id: int,
+    aspirante_id: Optional[int],
+    telefono: str,
+    phone_number_id: str,
+    access_token: str,
+    momento_envio: str,
+    config: Optional[Dict[str, Any]] = None,
+    recursos: Optional[List[Dict[str, Any]]] = None,
+) -> None:
+    """
+    Envía PDF/video activos de la agencia para un momento concreto.
+    Errores por recurso no detienen el flujo del chatbot.
+    No reenvía URL de Cloudinary como texto.
+    """
+    if recursos is None:
+        raw = (config or {}).get("recursos_bienvenida")
+        recursos = db.parse_recursos_bienvenida(raw)
+
+    momento = _normalizar_momento_envio(momento_envio)
+    seleccion = _filtrar_recursos_por_momento(list(recursos or []), momento)
+    if not seleccion:
+        logger.info(
+            "[CHATBOT-MEDIA] sin recursos agencia_id=%s aspirante_id=%s momento=%s",
+            agencia_id,
+            aspirante_id,
+            momento,
+        )
+        return
+
+    for recurso in seleccion:
+        tipo = (recurso.get("tipo") or "").strip().lower()
+        url = (recurso.get("secure_url") or recurso.get("url") or "").strip()
+        caption_raw = (recurso.get("caption") or "").strip()
+        caption = caption_raw or None
+        public_id = (recurso.get("public_id") or recurso.get("id") or "")[:80]
+        rid = recurso.get("id")
+
+        if not url.startswith("https://"):
+            logger.warning(
+                "[CHATBOT-MEDIA] URL inválida agencia_id=%s aspirante_id=%s "
+                "tipo=%s public_id=%s momento=%s",
+                agencia_id,
+                aspirante_id,
+                tipo,
+                public_id,
+                momento,
+            )
+            continue
+
+        status = None
+        body: Any = None
+        try:
+            if tipo == "video":
+                status, body = enviar_video_whatsapp(
+                    token=access_token,
+                    numero_id=phone_number_id,
+                    telefono_destino=telefono,
+                    video_url=url,
+                    caption=caption,
+                )
+            elif tipo == "document":
+                status, body = enviar_documento_whatsapp(
+                    token=access_token,
+                    numero_id=phone_number_id,
+                    telefono_destino=telefono,
+                    documento_url=url,
+                    caption=caption,
+                    filename=_nombre_archivo_pdf(recurso),
+                )
+            else:
+                logger.warning(
+                    "[CHATBOT-MEDIA] tipo no soportado agencia_id=%s tipo=%s id=%s",
+                    agencia_id,
+                    tipo,
+                    rid,
+                )
+                continue
+        except Exception as e:
+            logger.warning(
+                "[CHATBOT-MEDIA] excepción agencia_id=%s aspirante_id=%s "
+                "tipo=%s public_id=%s momento=%s causa=%s",
+                agencia_id,
+                aspirante_id,
+                tipo,
+                public_id,
+                momento,
+                type(e).__name__,
+            )
+            continue
+
+        meta_mid = _meta_message_id(body)
+        if status not in (200, 201):
+            logger.warning(
+                "[CHATBOT-MEDIA] fallo Meta agencia_id=%s aspirante_id=%s "
+                "tipo=%s public_id=%s momento=%s http=%s",
+                agencia_id,
+                aspirante_id,
+                tipo,
+                public_id,
+                momento,
+                status,
+            )
+            continue
+
+        logger.info(
+            "[CHATBOT-MEDIA] ok agencia_id=%s aspirante_id=%s tipo=%s "
+            "public_id=%s momento=%s http=%s message_id=%s",
+            agencia_id,
+            aspirante_id,
+            tipo,
+            public_id,
+            momento,
+            status,
+            meta_mid,
+        )
+
+        extra = (recurso.get("mensaje_adicional") or "").strip()
+        if extra:
+            try:
+                _enviar_texto(access_token, phone_number_id, telefono, extra)
+            except Exception:
+                logger.warning(
+                    "[CHATBOT-MEDIA] fallo mensaje_adicional agencia_id=%s "
+                    "aspirante_id=%s public_id=%s",
+                    agencia_id,
+                    aspirante_id,
+                    public_id,
+                )
 
 
 def _enviar_recursos_bienvenida(
@@ -92,54 +304,20 @@ def _enviar_recursos_bienvenida(
     token: str,
     phone_number_id: str,
     wa_id: str,
+    *,
+    agencia_id: Optional[int] = None,
+    aspirante_id: Optional[int] = None,
 ) -> None:
-    for recurso in _recursos_activos_ordenados(config):
-        tipo = (recurso.get("tipo") or "").strip().lower()
-        url = (recurso.get("secure_url") or recurso.get("url") or "").strip()
-        caption = (recurso.get("caption") or "").strip() or None
-        rid = recurso.get("id")
-
-        if not url.startswith("https://"):
-            logger.warning(
-                "chatbot recurso inválido id=%s tipo=%s (URL no https)",
-                rid,
-                tipo,
-            )
-            continue
-
-        try:
-            if tipo == "video":
-                status, body = enviar_video_whatsapp(
-                    token=token,
-                    numero_id=phone_number_id,
-                    telefono_destino=wa_id,
-                    video_url=url,
-                    caption=caption,
-                )
-            elif tipo == "document":
-                filename = (recurso.get("nombre_archivo") or "documento.pdf").strip()
-                status, body = enviar_documento_whatsapp(
-                    token=token,
-                    numero_id=phone_number_id,
-                    telefono_destino=wa_id,
-                    documento_url=url,
-                    caption=caption,
-                    filename=filename,
-                )
-            else:
-                continue
-
-            if status not in (200, 201):
-                partes = [p for p in (caption, url) if p]
-                if partes:
-                    _enviar_texto(token, phone_number_id, wa_id, "\n\n".join(partes))
-        except Exception as e:
-            logger.warning(
-                "chatbot excepción media id=%s tipo=%s: %s",
-                rid,
-                tipo,
-                e,
-            )
+    """Compatibilidad: recursos con momento despues_bienvenida."""
+    enviar_recursos_chatbot_whatsapp(
+        agencia_id=int(agencia_id or 0),
+        aspirante_id=aspirante_id,
+        telefono=wa_id,
+        phone_number_id=phone_number_id,
+        access_token=token,
+        momento_envio=MOMENTO_DESPUES_BIENVENIDA,
+        config=config,
+    )
 
 
 def _enviar_botones(
@@ -593,7 +771,15 @@ def procesar_chatbot_captacion(
             _enviar_texto(
                 token, phone_number_id, telefono, config["mensaje_bienvenida"]
             )
-            _enviar_recursos_bienvenida(config, token, phone_number_id, telefono)
+            enviar_recursos_chatbot_whatsapp(
+                agencia_id=agencia_id,
+                aspirante_id=aspirante.get("id"),
+                telefono=telefono,
+                phone_number_id=phone_number_id,
+                access_token=token,
+                momento_envio=MOMENTO_DESPUES_BIENVENIDA,
+                config=config,
+            )
             logger.info("[CHATBOT] enviando pregunta usuario plataforma")
             _enviar_texto(
                 token, phone_number_id, telefono, config["pregunta_usuario"]
@@ -772,11 +958,23 @@ def procesar_chatbot_captacion(
                 traceback.print_exc()
                 return True
 
+            _enviar_texto(
+                token, phone_number_id, telefono, config["mensaje_aprobado"]
+            )
+            enviar_recursos_chatbot_whatsapp(
+                agencia_id=agencia_id,
+                aspirante_id=aspirante.get("id"),
+                telefono=telefono,
+                phone_number_id=phone_number_id,
+                access_token=token,
+                momento_envio=MOMENTO_DESPUES_APROBACION,
+                config=config,
+            )
             _enviar_botones(
                 token,
                 phone_number_id,
                 telefono,
-                config["mensaje_aprobado"],
+                "Selecciona una opción:",
                 _botones_menu(config),
             )
             etapa_nueva = ETAPA_RESULTADO

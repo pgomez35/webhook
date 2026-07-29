@@ -96,6 +96,8 @@ class RecursoBienvenida(BaseModel):
     nombre_original: Optional[str] = Field(None, max_length=200)
     caption: Optional[str] = Field(None, max_length=300)
     nombre_archivo: Optional[str] = Field(None, max_length=150)
+    momento_envio: Optional[str] = Field(None, max_length=40)
+    mensaje_adicional: Optional[str] = Field(None, max_length=1000)
     orden: int = Field(..., ge=1, le=2)
     activo: bool = True
 
@@ -133,13 +135,25 @@ class RecursoBienvenida(BaseModel):
             raise ValueError("caption máximo 300 caracteres")
         return texto
 
-    @field_validator("nombre_archivo", "nombre_original", "public_id", "asset_id", "format")
+    @field_validator("nombre_archivo", "nombre_original", "public_id", "asset_id", "format", "momento_envio")
     @classmethod
     def strip_opcional(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
             return None
         texto = str(v).strip()
         return texto or None
+
+    @field_validator("mensaje_adicional")
+    @classmethod
+    def strip_mensaje_adicional(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        texto = str(v).strip()
+        if not texto:
+            return None
+        if len(texto) > 1000:
+            raise ValueError("mensaje_adicional máximo 1000 caracteres")
+        return texto
 
     @field_validator("bytes", mode="before")
     @classmethod
