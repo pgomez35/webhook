@@ -47,6 +47,84 @@ cloudinary.config(
 
 router = APIRouter()
 
+
+class PrepararEncuestaFormularioManualInput(BaseModel):
+    telefono: str
+
+
+@router.post("/api/mensajes-whatsapp/preparar-encuesta-formulario")
+def preparar_encuesta_formulario_manual(
+    data: PrepararEncuestaFormularioManualInput,
+    usuario=Depends(obtener_usuario_actual),
+):
+    """
+    Prepara el mensaje con enlace de evaluación React para el editor de Mensajes.
+    No envía a Meta ni registra mensaje enviado ni modifica flujos.
+    """
+    tenant = None
+    try:
+        tenant = current_tenant.get()
+    except LookupError:
+        tenant = None
+    if not tenant:
+        raise HTTPException(status_code=400, detail="Tenant no disponible en el contexto")
+
+    telefono = (data.telefono or "").strip()
+    if not telefono:
+        raise HTTPException(status_code=400, detail="Teléfono requerido")
+
+    # Import tardío para evitar ciclo main_webhook <-> main_mensajeria
+    from main_webhook import preparar_inicio_encuesta_formulario_manual as _preparar
+
+    resultado = _preparar(telefono)
+    if not resultado.get("ok"):
+        status = int(resultado.get("http_status") or 500)
+        detail = resultado.get("detail") or "No fue posible preparar el mensaje."
+        raise HTTPException(status_code=status, detail=detail)
+
+    return {
+        "ok": True,
+        "canal": resultado.get("canal"),
+        "modo": resultado.get("modo"),
+        "aspirante_id": resultado.get("aspirante_id"),
+        "nombre": resultado.get("nombre"),
+        "mensaje": resultado.get("mensaje"),
+    }
+
+
+@router.get("/api/mensajes-whatsapp/modo-chatbot")
+def obtener_modo_chatbot_mensajes(usuario=Depends(obtener_usuario_actual)):
+    """Expone modo/canal al frontend de Mensajes (tenant del middleware)."""
+    try:
+        tenant = current_tenant.get()
+    except LookupError:
+        tenant = None
+    if not tenant:
+        raise HTTPException(status_code=400, detail="Tenant no disponible en el contexto")
+
+    from main_webhook import (
+        obtener_modo_inicio_chatbot,
+        obtener_canal_encuesta_aspirante,
+    )
+
+    return {
+        "modo_inicio_chatbot": obtener_modo_inicio_chatbot(),
+        "canal_encuesta_aspirante": obtener_canal_encuesta_aspirante(),
+    }
+
+
+@router.get("/api/mensajes-whatsapp/ventana-24h")
+def obtener_ventana_24h_mensajes(
+    telefono: str,
+    usuario=Depends(obtener_usuario_actual),
+):
+    telefono = (telefono or "").strip()
+    if not telefono:
+        raise HTTPException(status_code=400, detail="Teléfono requerido")
+    abierta = bool(obtener_status_24hrs(telefono))
+    return {"telefono_ok": True, "ventana_abierta": abierta}
+
+
 @router.get("/contactos")
 def listar_contactos(
     tipo: Optional[str] = None,   # aspirante | creador | admin
@@ -121,6 +199,21 @@ async def api_enviar_mensaje(request: Request, data: dict):
         return JSONResponse(
             {"error": "Credenciales de WhatsApp no configuradas para este tenant"},
             status_code=500
+        )
+
+    # Ventana 24h: mensaje libre solo si está abierta
+    if not obtener_status_24hrs(telefono):
+        return JSONResponse(
+            {
+                "status": "error",
+                "error": "ventana_24h_cerrada",
+                "mensaje": (
+                    "La ventana de 24 horas está cerrada. "
+                    "Usa primero una plantilla de reconexión (reconexion_general_corta) "
+                    "y espera la respuesta del aspirante."
+                ),
+            },
+            status_code=409,
         )
 
     # ======================================================

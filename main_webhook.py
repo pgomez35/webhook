@@ -2367,6 +2367,75 @@ def _process_new_user_onboardingV1(
     return None
 
 
+def obtener_modo_inicio_chatbot() -> str:
+    """
+    Lee configuracion_agencia.modo_inicio_chatbot.
+    Valores: automatico | manual | desactivado (default: automatico).
+    """
+    raw = obtener_configuracion_agencia("modo_inicio_chatbot")
+    modo = str(raw or "automatico").strip().lower()
+    if modo not in ("automatico", "manual", "desactivado"):
+        return "automatico"
+    return modo
+
+
+def obtener_canal_encuesta_aspirante() -> str:
+    """
+    Lee configuracion_agencia.canal_encuesta_aspirante.
+    Valores: formulario_web | whatsapp (default: formulario_web).
+    """
+    raw = obtener_configuracion_agencia("canal_encuesta_aspirante")
+    canal = str(raw or "formulario_web").strip().lower()
+    if canal not in ("formulario_web", "whatsapp"):
+        return "formulario_web"
+    return canal
+
+
+def _construir_mensaje_portal(
+    *,
+    tipo_portal: str,
+    aspirante_id: Optional[int],
+    creador_id: Optional[int],
+    nombre: str,
+    origen: str = "whatsapp",
+    plantilla: Optional[str] = None,
+) -> dict:
+    """
+    Construye el texto del portal (URL + plantilla) sin enviar ni persistir.
+    """
+    url_portal = generar_url_portal_usuario(
+        tipo_portal=tipo_portal,
+        aspirante_id=aspirante_id,
+        creador_id=creador_id,
+        origen=origen,
+    )
+
+    if plantilla is not None and str(plantilla).strip():
+        plantilla_final = str(plantilla).strip()
+    else:
+        plantilla_final = obtener_plantilla_mensaje_portal(tipo_portal)
+
+    mensaje_portal = construir_mensaje_portal(
+        plantilla=plantilla_final,
+        nombre=nombre,
+        url_portal=url_portal,
+        tipo_portal=tipo_portal,
+    )
+
+    if not (mensaje_portal or "").strip():
+        raise ValueError("El mensaje del portal quedó vacío.")
+
+    return {
+        "ok": True,
+        "mensaje": mensaje_portal,
+        "url_portal": url_portal,
+        "tipo_portal": tipo_portal,
+        "aspirante_id": aspirante_id,
+        "creador_id": creador_id,
+        "nombre": nombre,
+    }
+
+
 def _enviar_link_portal_paso4_flujo_aspirante(
     wa_id: str,
     *,
@@ -2378,36 +2447,21 @@ def _enviar_link_portal_paso4_flujo_aspirante(
     phone_number_id: str,
     origen: str = "whatsapp",
     plantilla: Optional[str] = None,
-) -> bool:
+) -> dict:
     """
-    Mismo envío que el paso 4 de procesar_flujo_aspirante:
-    generar_url_portal_usuario, plantilla configurable, API y guardar_mensaje_nuevo.
-
-    Si plantilla viene con texto (p. ej. mensaje_inicio_encuesta_form), se usa tal cual;
-    si no, se usa obtener_plantilla_mensaje_portal(tipo_portal).
+    Envía el link del portal (mismo comportamiento que el paso 4 de
+    procesar_flujo_aspirante). Reutiliza _construir_mensaje_portal.
     """
     try:
-        url_portal = generar_url_portal_usuario(
+        construido = _construir_mensaje_portal(
             tipo_portal=tipo_portal,
             aspirante_id=aspirante_id,
             creador_id=creador_id,
-            origen=origen,
-        )
-
-        if plantilla is not None and str(plantilla).strip():
-            plantilla_final = str(plantilla).strip()
-        else:
-            plantilla_final = obtener_plantilla_mensaje_portal(tipo_portal)
-
-        mensaje_portal = construir_mensaje_portal(
-            plantilla=plantilla_final,
             nombre=nombre,
-            url_portal=url_portal,
-            tipo_portal=tipo_portal,
+            origen=origen,
+            plantilla=plantilla,
         )
-
-        if not mensaje_portal.strip():
-            raise ValueError("El mensaje del portal quedó vacío.")
+        mensaje_portal = construido["mensaje"]
 
         codigo_api, respuesta_api = enviar_mensaje_texto_simple(
             token=token_cliente,
@@ -2418,14 +2472,12 @@ def _enviar_link_portal_paso4_flujo_aspirante(
 
         print(
             f"📤 [PORTAL] Envío portal -> código={codigo_api} "
-            f"| wa_id={wa_id} "
             f"| tipo_portal={tipo_portal} "
             f"| aspirante_id={aspirante_id} "
             f"| creador_id={creador_id}"
         )
 
         message_id_meta = None
-
         if isinstance(respuesta_api, dict):
             mensajes = respuesta_api.get("messages") or []
             if mensajes:
@@ -2440,38 +2492,197 @@ def _enviar_link_portal_paso4_flujo_aspirante(
                 message_id_meta=message_id_meta,
                 estado="sent" if codigo_api == 200 else "error",
             )
-
         except Exception as e:
             print(f"⚠️ [PORTAL] No se pudo guardar log del mensaje enviado: {e}")
 
-        return True
+        if codigo_api not in (200, 201):
+            return {
+                "ok": False,
+                "error": f"Meta HTTP {codigo_api}",
+                "codigo_api": codigo_api,
+                "mensaje": mensaje_portal,
+                "message_id_meta": message_id_meta,
+            }
+
+        return {
+            "ok": True,
+            "mensaje": mensaje_portal,
+            "message_id_meta": message_id_meta,
+            "codigo_api": codigo_api,
+        }
 
     except Exception as e:
         print(f"❌ [PORTAL] Error enviando link del portal: {e}")
-        return True
+        return {"ok": False, "error": str(e)}
+
+
+def enviar_inicio_encuesta(numero: str):
+    """
+    Envía el acceso al portal tipo aspirante (siempre tipo_portal='aspirante'),
+    con el mismo mecanismo de envío que el paso 4 de procesar_flujo_aspirante.
+    Retorna el resultado real del envío (dict con ok True/False).
+    """
+    wa_id = (numero or "").strip()
+    if not wa_id:
+        print("❌ [PORTAL] enviar_inicio_encuesta: número vacío")
+        return {"ok": False, "error": "número vacío"}
+
+    try:
+        token_cliente = current_token.get()
+        phone_number_id = current_phone_id.get()
+    except LookupError as e:
+        print(f"❌ [PORTAL] Contexto tenant no disponible en enviar_inicio_encuesta: {e}")
+        return {"ok": False, "error": "contexto tenant no disponible"}
+
+    if not token_cliente or not phone_number_id:
+        print("❌ [PORTAL] No hay token o phone_number_id en contexto (enviar_inicio_encuesta).")
+        return {"ok": False, "error": "credenciales WhatsApp no disponibles"}
+
+    datos = obtener_aspirante_portal_por_telefono(wa_id)
+    if not datos:
+        print("❌ [PORTAL] enviar_inicio_encuesta: sin aspirante para el número")
+        try:
+            enviar_mensaje_texto_simple(
+                token=token_cliente,
+                numero_id=phone_number_id,
+                telefono_destino=wa_id,
+                texto="⚠️ No pudimos identificar tu registro en este momento.",
+            )
+        except Exception as e:
+            print(f"❌ [PORTAL] Error enviando aviso sin aspirante: {e}")
+        return {"ok": False, "error": "aspirante no encontrado"}
+
+    aspirante_id = datos.get("aspirante_id")
+    nombre = (datos.get("nombre") or "").strip() or "aspirante"
+
+    plantilla = obtener_configuracion_agencia("mensaje_inicio_encuesta_form")
+
+    resultado = _enviar_link_portal_paso4_flujo_aspirante(
+        wa_id,
+        tipo_portal="aspirante",
+        aspirante_id=aspirante_id,
+        creador_id=None,
+        nombre=nombre,
+        token_cliente=token_cliente,
+        phone_number_id=phone_number_id,
+        origen="whatsapp",
+        plantilla=plantilla,
+    )
+    if resultado.get("ok"):
+        print("🔗 [PORTAL] enviar_inicio_encuesta (portal aspirante) enviado")
+    return resultado
+
+
+def preparar_inicio_encuesta_formulario_manual(numero: str) -> dict:
+    """
+    Prepara el mensaje con enlace React (formulario_web) sin enviarlo.
+    Solo válido con modo_inicio_chatbot=manual y canal=formulario_web.
+    """
+    wa_id = (numero or "").strip()
+    if not wa_id:
+        return {"ok": False, "error": "numero_vacio", "http_status": 400}
+
+    modo = obtener_modo_inicio_chatbot()
+    canal = obtener_canal_encuesta_aspirante()
+
+    if modo != "manual":
+        return {
+            "ok": False,
+            "error": "modo_no_manual",
+            "http_status": 409,
+            "detail": "Esta acción solo está disponible cuando el inicio del chatbot es manual.",
+            "modo": modo,
+            "canal": canal,
+        }
+
+    if canal != "formulario_web":
+        return {
+            "ok": False,
+            "error": "canal_whatsapp",
+            "http_status": 409,
+            "detail": "La agencia tiene configurada la encuesta directamente por WhatsApp.",
+            "modo": modo,
+            "canal": canal,
+        }
+
+    datos = obtener_aspirante_portal_por_telefono(wa_id)
+    if not datos:
+        return {
+            "ok": False,
+            "error": "aspirante_no_encontrado",
+            "http_status": 404,
+            "detail": "No se encontró un aspirante asociado a este número.",
+            "modo": modo,
+            "canal": canal,
+        }
+
+    aspirante_id = datos.get("aspirante_id")
+    nombre = (datos.get("nombre") or "").strip() or "aspirante"
+    plantilla = obtener_configuracion_agencia("mensaje_inicio_encuesta_form")
+
+    try:
+        construido = _construir_mensaje_portal(
+            tipo_portal="aspirante",
+            aspirante_id=aspirante_id,
+            creador_id=None,
+            nombre=nombre,
+            origen="whatsapp_manual",
+            plantilla=plantilla,
+        )
+    except Exception as e:
+        print(f"❌ [PORTAL-MANUAL] No fue posible construir el mensaje: {type(e).__name__}")
+        return {
+            "ok": False,
+            "error": "construccion_fallida",
+            "http_status": 500,
+            "detail": "No fue posible construir el mensaje de evaluación.",
+            "modo": modo,
+            "canal": canal,
+        }
+
+    return {
+        "ok": True,
+        "canal": canal,
+        "modo": modo,
+        "aspirante_id": aspirante_id,
+        "nombre": nombre,
+        "mensaje": construido["mensaje"],
+    }
+
+
+# ⚠️ DEPRECADO: Ya no se usa. Las respuestas se envían todas juntas a /consolidar
+# class RespuestaInput(BaseModel):
+#     numero: str
+#     paso: int
+#     respuesta: str
+
+class ConsolidarInput(BaseModel):
+    numero: str
+    respuestas: Optional[dict] = None  # Diccionario opcional: {1: "Ricardo", 2: "5", 3: "1", ...}
+                                      # Si es None, se leen de la tabla aspirantes_perfil_flujo_temp
 
 
 def _process_aspirante_message(mensaje: dict, numero: str, texto_lower: str, rol: str, tenant_name: str) -> dict:
     """
     Procesa mensajes de usuarios con rol 'aspirante'.
-    
+
     Returns:
         Dict con status
     """
     finalizada = encuesta_finalizada(numero)
-    
+
     # Si encuesta finalizada, SIEMPRE muestra el menú para cualquier mensaje
     if finalizada:
         manejar_menu(numero, texto_lower, rol)
         return {"status": "ok"}
-    
+
     # Si no ha terminado la encuesta
     if texto_lower in {"brillar", "menu", "menú", "inicio"}:
-        # ✅ Validación mínima solo para evitar URLs inválidas si tenant_name es None/vacío
+        # Validación mínima solo para evitar URLs inválidas si tenant_name es None/vacío
         if not tenant_name:
             print(f"⚠️ tenant_name es None o vacío para {numero}, usando fallback")
             tenant_name = "default"  # Fallback solo si es necesario
-        
+
         url_web = construir_url_actualizar_perfil(numero, tenant_name=tenant_name)
         mensaje_texto = (
             f"💬 🚩 No has finalizado tu encuesta. Por favor haz clic en el enlace para completar la encuesta 📋\n\n"
@@ -2483,7 +2694,7 @@ def _process_aspirante_message(mensaje: dict, numero: str, texto_lower: str, rol
         actualizar_flujo(numero, ultimo_paso)
         enviar_inicio_encuesta(numero)
         return {"status": "ok"}
-    
+
     # Obtener texto original (sin normalizar) para manejar_respuesta
     texto_original = mensaje.get("text", {}).get("body", "").strip()
     manejar_respuesta(numero, texto_original)
@@ -2563,73 +2774,6 @@ def _process_single_message(mensaje: dict, tenant_name: str, datos_normalizados:
 #         f"🔒 Tu información será tratada de forma privada y segura.\n\n"
 #         "Ingresa aquí para comenzar 👇"
 #     )
-
-def enviar_inicio_encuesta(numero: str):
-    """
-    Envía el acceso al portal tipo aspirante (siempre tipo_portal='aspirante'),
-    con el mismo mecanismo de envío que el paso 4 de procesar_flujo_aspirante:
-    generar_url_portal_usuario, plantilla configurable, API y guardar_mensaje_nuevo.
-    """
-    wa_id = (numero or "").strip()
-    if not wa_id:
-        print("❌ [PORTAL] enviar_inicio_encuesta: número vacío")
-        return
-
-    try:
-        token_cliente = current_token.get()
-        phone_number_id = current_phone_id.get()
-    except LookupError as e:
-        print(f"❌ [PORTAL] Contexto tenant no disponible en enviar_inicio_encuesta: {e}")
-        return
-
-    if not token_cliente or not phone_number_id:
-        print("❌ [PORTAL] No hay token o phone_number_id en contexto (enviar_inicio_encuesta).")
-        return
-
-    datos = obtener_aspirante_portal_por_telefono(wa_id)
-    if not datos:
-        print(f"❌ [PORTAL] enviar_inicio_encuesta: sin aspirante para número: {wa_id}")
-        try:
-            enviar_mensaje_texto_simple(
-                token=token_cliente,
-                numero_id=phone_number_id,
-                telefono_destino=wa_id,
-                texto="⚠️ No pudimos identificar tu proceso en este momento.",
-            )
-        except Exception as e:
-            print(f"❌ [PORTAL] Error enviando aviso sin aspirante: {e}")
-        return
-
-    aspirante_id = datos.get("aspirante_id")
-    nombre = (datos.get("nombre") or "").strip() or "aspirante"
-
-    plantilla = obtener_configuracion_agencia("mensaje_inicio_encuesta_form")
-
-    _enviar_link_portal_paso4_flujo_aspirante(
-        wa_id,
-        tipo_portal="aspirante",
-        aspirante_id=aspirante_id,
-        creador_id=None,
-        nombre=nombre,
-        token_cliente=token_cliente,
-        phone_number_id=phone_number_id,
-        origen="whatsapp",
-        plantilla=plantilla,
-    )
-    print(f"🔗 [PORTAL] enviar_inicio_encuesta (portal aspirante) enviado a {wa_id}")
-
-
-# ⚠️ DEPRECADO: Ya no se usa. Las respuestas se envían todas juntas a /consolidar
-# class RespuestaInput(BaseModel):
-#     numero: str
-#     paso: int
-#     respuesta: str
-
-class ConsolidarInput(BaseModel):
-    numero: str
-    respuestas: Optional[dict] = None  # Diccionario opcional: {1: "Ricardo", 2: "5", 3: "1", ...}
-                                      # Si es None, se leen de la tabla aspirantes_perfil_flujo_temp
-
 
 @router.post("/enviar_solicitud_informacion")
 async def api_enviar_solicitar_informacion(data: dict):
@@ -4238,6 +4382,24 @@ async def _procesar_mensaje_unico(
 
     except Exception as e:
         print(f"⚠️ Log Error (No crítico): {e}")
+
+    # ---------------------------------------------------------
+    # B2. MODO INICIO CHATBOT (manual / desactivado)
+    # Tras registrar el inbound; antes de onboarding y flujos automáticos.
+    # ---------------------------------------------------------
+    modo_chatbot = obtener_modo_inicio_chatbot()
+    if modo_chatbot == "desactivado":
+        print(
+            f"⏸️ [CHATBOT-MODO] desactivado — mensaje registrado; "
+            f"sin onboarding ni respuestas automáticas"
+        )
+        return
+    if modo_chatbot == "manual":
+        print(
+            f"⏸️ [CHATBOT-MODO] manual — mensaje registrado; "
+            f"conversación humana desde Mensajes WhatsApp"
+        )
+        return
 
     # ---------------------------------------------------------
     # C. ONBOARDING (PRIMERO)

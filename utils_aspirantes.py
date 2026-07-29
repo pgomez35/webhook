@@ -1542,7 +1542,7 @@ def obtener_status_24hrs(telefono):
                     SELECT fecha
                     FROM mensajes_whatsapp
                     WHERE telefono = %s
-                      AND direccion = 'recibido'
+                      AND direccion IN ('recibido', 'inbound')
                     ORDER BY fecha DESC
                     LIMIT 1
                 """
