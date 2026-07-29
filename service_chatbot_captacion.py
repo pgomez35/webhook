@@ -83,7 +83,7 @@ def _enviar_texto(token: str, phone_number_id: str, wa_id: str, texto: str) -> N
 # Momentos de envío de recursos (valores usados / compatibles con el JSON guardado).
 MOMENTO_DESPUES_BIENVENIDA = "despues_bienvenida"
 MOMENTO_DESPUES_APROBACION = "despues_aprobacion"
-MOMENTO_SIN_ENVIO = "sin_envio"
+MOMENTO_SIN_ENVIO = "ninguno"
 
 _MOMENTO_ALIASES = {
     "despues_bienvenida": MOMENTO_DESPUES_BIENVENIDA,
@@ -102,13 +102,13 @@ _MOMENTO_ALIASES = {
 
 def _normalizar_momento_envio(raw: Any) -> str:
     """
-    Sin momento en el JSON legado → despues_bienvenida (comportamiento histórico).
+    Sin momento en el JSON legado → ninguno (no envío automático accidental).
     """
     if raw is None:
-        return MOMENTO_DESPUES_BIENVENIDA
+        return MOMENTO_SIN_ENVIO
     clave = str(raw).strip().lower()
     if not clave:
-        return MOMENTO_DESPUES_BIENVENIDA
+        return MOMENTO_SIN_ENVIO
     return _MOMENTO_ALIASES.get(clave, clave)
 
 
