@@ -225,6 +225,8 @@ class AgenciaChatbotResponse(BaseModel):
     nombre: str
     codigo: str
     estado: str
+    mensaje_seleccion_configuracion: Optional[str] = None
+    seleccion_por_palabras_activa: bool = False
 
 
 class CanalWhatsAppResponse(BaseModel):
@@ -241,9 +243,37 @@ class CanalWhatsAppResponse(BaseModel):
     activo: bool = True
 
 
+class PlataformaResponse(BaseModel):
+    codigo: str
+    nombre: str
+    activo: bool = True
+
+
+class ChatbotConfiguracionResumen(BaseModel):
+    """Tarjeta/listado de configuraciones de la agencia."""
+
+    id: int
+    codigo: str
+    nombre: str
+    plataforma_codigo: str
+    plataforma_nombre: Optional[str] = None
+    texto_opcion: str
+    es_predeterminada: bool = False
+    orden: int = 1
+    activo: bool = True
+    updated_at: Optional[datetime] = None
+
+
 class ChatbotConfiguracionResponse(BaseModel):
     id: int
     agencia: AgenciaChatbotResponse
+    codigo: str = "tiktok"
+    nombre: str = "TikTok"
+    plataforma_codigo: str = "tiktok"
+    plataforma_nombre: Optional[str] = None
+    texto_opcion: str = "TikTok"
+    es_predeterminada: bool = False
+    orden: int = 1
     mensaje_bienvenida: str
     pregunta_usuario: str
     pregunta_mayor_edad: str
@@ -262,23 +292,122 @@ class ChatbotConfiguracionResponse(BaseModel):
     updated_at: Optional[datetime] = None
 
 
-class ChatbotConfiguracionUpdate(BaseModel):
+class ChatbotConfiguracionCreate(BaseModel):
     model_config = {"extra": "forbid"}
 
-    activo: bool
+    codigo: str = Field(..., max_length=80)
+    nombre: str = Field(..., max_length=120)
+    plataforma_codigo: str = Field(..., max_length=30)
+    texto_opcion: str = Field(..., max_length=40)
+    es_predeterminada: bool = False
+    orden: Optional[int] = Field(None, ge=1)
+    activo: bool = True
     mensaje_bienvenida: str = Field(..., max_length=600)
     pregunta_usuario: str = Field(..., max_length=180)
     pregunta_mayor_edad: str = Field(..., max_length=150)
     pregunta_disponibilidad: str = Field(..., max_length=200)
     mensaje_aprobado: str = Field(..., max_length=300)
     mensaje_no_aprobado: str = Field(..., max_length=300)
-    texto_boton_continuar: str = Field(..., max_length=20)
+    # DB permite 40; Meta reply buttons máx. 20
+    texto_boton_continuar: str = Field(..., max_length=40)
     accion_continuar: ACCIONES
     url_continuar: Optional[str] = Field(None, max_length=500)
-    texto_boton_preguntas: str = Field(..., max_length=20)
+    texto_boton_preguntas: str = Field(..., max_length=40)
     preguntas_frecuentes: List[PreguntaFrecuente] = Field(default_factory=list)
     recursos_bienvenida: List[RecursoBienvenida] = Field(default_factory=list)
     mensaje_error: str = Field(..., max_length=250)
+
+    @field_validator("codigo", "plataforma_codigo")
+    @classmethod
+    def lower_codigo(cls, v: str, info) -> str:
+        return _strip_required(v, info.field_name).lower()
+
+    @field_validator("nombre", "texto_opcion")
+    @classmethod
+    def strip_meta(cls, v: str, info) -> str:
+        return _strip_required(v, info.field_name)
+
+    @field_validator("texto_opcion")
+    @classmethod
+    def validar_texto_opcion(cls, v: str) -> str:
+        return _validar_titulo_boton(v, "texto_opcion", 20)
+
+    @field_validator(
+        "mensaje_bienvenida",
+        "pregunta_usuario",
+        "pregunta_mayor_edad",
+        "pregunta_disponibilidad",
+        "mensaje_aprobado",
+        "mensaje_no_aprobado",
+        "mensaje_error",
+    )
+    @classmethod
+    def strip_textos(cls, v: str, info) -> str:
+        return _strip_required(v, info.field_name)
+
+    @field_validator("texto_boton_continuar", "texto_boton_preguntas")
+    @classmethod
+    def validar_titulos_botones(cls, v: str, info) -> str:
+        return _validar_titulo_boton(v, info.field_name, 20)
+
+    @field_validator("url_continuar")
+    @classmethod
+    def strip_url(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        texto = str(v).strip()
+        return texto or None
+
+    @model_validator(mode="after")
+    def validar_accion_y_faqs(self):
+        return _validar_config_flujo(self)
+
+
+class ChatbotConfiguracionUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    activo: bool
+    codigo: Optional[str] = Field(None, max_length=80)
+    nombre: Optional[str] = Field(None, max_length=120)
+    plataforma_codigo: Optional[str] = Field(None, max_length=30)
+    texto_opcion: Optional[str] = Field(None, max_length=40)
+    es_predeterminada: Optional[bool] = None
+    orden: Optional[int] = Field(None, ge=1)
+    mensaje_bienvenida: str = Field(..., max_length=600)
+    pregunta_usuario: str = Field(..., max_length=180)
+    pregunta_mayor_edad: str = Field(..., max_length=150)
+    pregunta_disponibilidad: str = Field(..., max_length=200)
+    mensaje_aprobado: str = Field(..., max_length=300)
+    mensaje_no_aprobado: str = Field(..., max_length=300)
+    # DB permite 40; Meta reply buttons máx. 20
+    texto_boton_continuar: str = Field(..., max_length=40)
+    accion_continuar: ACCIONES
+    url_continuar: Optional[str] = Field(None, max_length=500)
+    texto_boton_preguntas: str = Field(..., max_length=40)
+    preguntas_frecuentes: List[PreguntaFrecuente] = Field(default_factory=list)
+    recursos_bienvenida: List[RecursoBienvenida] = Field(default_factory=list)
+    mensaje_error: str = Field(..., max_length=250)
+
+    @field_validator("codigo", "plataforma_codigo")
+    @classmethod
+    def lower_codigo_opt(cls, v: Optional[str], info) -> Optional[str]:
+        if v is None:
+            return None
+        return _strip_required(v, info.field_name).lower()
+
+    @field_validator("nombre")
+    @classmethod
+    def strip_nombre(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        return _strip_required(v, "nombre")
+
+    @field_validator("texto_opcion")
+    @classmethod
+    def validar_texto_opcion(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        return _validar_titulo_boton(v, "texto_opcion", 20)
 
     @field_validator(
         "mensaje_bienvenida",
@@ -309,70 +438,113 @@ class ChatbotConfiguracionUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validar_accion_y_faqs(self):
-        # Doble chequeo post-strip (defensa ante bypass de Field max_length)
-        for campo, valor in (
-            ("texto_boton_continuar", self.texto_boton_continuar),
-            ("texto_boton_preguntas", self.texto_boton_preguntas),
-        ):
-            if len(valor or "") > 20:
-                raise ValueError(f"{campo} no puede superar 20 caracteres (límite de WhatsApp)")
+        return _validar_config_flujo(self)
 
-        if self.accion_continuar in ("url", "agendamiento"):
-            if not self.url_continuar:
-                raise ValueError("url_continuar es obligatoria para accion url/agendamiento")
-            if not self.url_continuar.startswith("https://"):
-                raise ValueError("url_continuar debe comenzar por https://")
 
-        faqs = self.preguntas_frecuentes or []
-        if len(faqs) > 10:
-            raise ValueError("Máximo 10 preguntas frecuentes")
+class ChatbotConfiguracionDuplicarIn(BaseModel):
+    model_config = {"extra": "forbid"}
 
-        activas = [f for f in faqs if f.activo]
-        if len(activas) > 3:
-            raise ValueError("Máximo 3 preguntas frecuentes activas")
+    codigo: Optional[str] = Field(None, max_length=80)
+    nombre: Optional[str] = Field(None, max_length=120)
 
-        ids = [f.id.lower() for f in faqs]
-        if len(ids) != len(set(ids)):
-            raise ValueError("Los id de FAQ deben ser únicos")
 
-        titulos_activos = [f.titulo.strip().lower() for f in activas]
-        if len(titulos_activos) != len(set(titulos_activos)):
-            raise ValueError("No se permiten títulos activos duplicados")
+class ChatbotConfiguracionActivoIn(BaseModel):
+    model_config = {"extra": "forbid"}
 
-        for faq in activas:
-            if len(faq.titulo) > 20:
-                raise ValueError(
-                    f"FAQ '{faq.id}': titulo activo supera 20 caracteres (límite WhatsApp)"
-                )
+    activo: bool
 
-        recursos = self.recursos_bienvenida or []
-        if len(recursos) > 2:
-            raise ValueError("Máximo 2 recursos de bienvenida")
 
-        videos = [r for r in recursos if r.tipo == "video"]
-        docs = [r for r in recursos if r.tipo == "document"]
-        if len(videos) > 1:
-            raise ValueError("Máximo un video de bienvenida")
-        if len(docs) > 1:
-            raise ValueError("Máximo un documento de bienvenida")
+class ChatbotConfiguracionReordenarItem(BaseModel):
+    id: int
+    orden: int = Field(..., ge=1)
 
-        ids_rec = [r.id.lower() for r in recursos]
-        if len(ids_rec) != len(set(ids_rec)):
-            raise ValueError("Los id de recursos_bienvenida deben ser únicos")
 
-        ordenes = [r.orden for r in recursos]
-        if len(ordenes) != len(set(ordenes)):
-            raise ValueError("No se permiten órdenes duplicados en recursos_bienvenida")
+class ChatbotConfiguracionReordenarIn(BaseModel):
+    model_config = {"extra": "forbid"}
 
-        return self
+    ordenes: List[ChatbotConfiguracionReordenarItem] = Field(..., min_length=1)
+
+
+class AgenciaMensajeSeleccionUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    # chatbot.agencias.mensaje_seleccion_configuracion varchar(300)
+    mensaje_seleccion_configuracion: str = Field(..., max_length=300)
+    seleccion_por_palabras_activa: Optional[bool] = None
+
+    @field_validator("mensaje_seleccion_configuracion")
+    @classmethod
+    def strip_msg(cls, v: str) -> str:
+        return _strip_required(v, "mensaje_seleccion_configuracion")
+
+
+def _validar_config_flujo(self):
+    # Doble chequeo post-strip (defensa ante bypass de Field max_length)
+    for campo, valor in (
+        ("texto_boton_continuar", self.texto_boton_continuar),
+        ("texto_boton_preguntas", self.texto_boton_preguntas),
+    ):
+        if len(valor or "") > 20:
+            raise ValueError(f"{campo} no puede superar 20 caracteres (límite de WhatsApp)")
+
+    if self.accion_continuar in ("url", "agendamiento"):
+        if not self.url_continuar:
+            raise ValueError("url_continuar es obligatoria para accion url/agendamiento")
+        if not self.url_continuar.startswith("https://"):
+            raise ValueError("url_continuar debe comenzar por https://")
+
+    faqs = self.preguntas_frecuentes or []
+    if len(faqs) > 10:
+        raise ValueError("Máximo 10 preguntas frecuentes")
+
+    activas = [f for f in faqs if f.activo]
+    if len(activas) > 3:
+        raise ValueError("Máximo 3 preguntas frecuentes activas")
+
+    ids = [f.id.lower() for f in faqs]
+    if len(ids) != len(set(ids)):
+        raise ValueError("Los id de FAQ deben ser únicos")
+
+    titulos_activos = [f.titulo.strip().lower() for f in activas]
+    if len(titulos_activos) != len(set(titulos_activos)):
+        raise ValueError("No se permiten títulos activos duplicados")
+
+    for faq in activas:
+        if len(faq.titulo) > 20:
+            raise ValueError(
+                f"FAQ '{faq.id}': titulo activo supera 20 caracteres (límite WhatsApp)"
+            )
+
+    recursos = self.recursos_bienvenida or []
+    if len(recursos) > 2:
+        raise ValueError("Máximo 2 recursos de bienvenida")
+
+    videos = [r for r in recursos if r.tipo == "video"]
+    docs = [r for r in recursos if r.tipo == "document"]
+    if len(videos) > 1:
+        raise ValueError("Máximo un video de bienvenida")
+    if len(docs) > 1:
+        raise ValueError("Máximo un documento de bienvenida")
+
+    ids_rec = [r.id.lower() for r in recursos]
+    if len(ids_rec) != len(set(ids_rec)):
+        raise ValueError("Los id de recursos_bienvenida deben ser únicos")
+
+    ordenes = [r.orden for r in recursos]
+    if len(ordenes) != len(set(ordenes)):
+        raise ValueError("No se permiten órdenes duplicados en recursos_bienvenida")
+
+    return self
 
 
 class ChatbotAspiranteResponse(BaseModel):
     id: int
     telefono: str
     nombre: Optional[str] = None
-    plataforma: str
+    plataforma: Optional[str] = None
+    plataforma_codigo: Optional[str] = None
     usuario_plataforma: Optional[str] = None
+    chatbot_configuracion_id: Optional[int] = None
     mayor_edad: Optional[bool] = None
     disponibilidad_live: Optional[bool] = None
     estado: str

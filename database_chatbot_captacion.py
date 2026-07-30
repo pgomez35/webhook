@@ -427,141 +427,628 @@ def resolver_agencia_administrativa(tenant_name: str) -> Dict[str, Any]:
     return dict(agencia)
 
 
-def obtener_configuracion_activa(agencia_id: int) -> Optional[Dict[str, Any]]:
-    with get_connection_chatbot_context() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT *
-                FROM chatbot.chatbot_configuracion
-                WHERE agencia_id = %s
-                  AND activo = TRUE
-                LIMIT 1
-                """,
-                (agencia_id,),
-            )
-            row = cur.fetchone()
-            return dict(row) if row else None
-
-
-def obtener_configuracion_por_agencia(agencia_id: int) -> Optional[Dict[str, Any]]:
-    with get_connection_chatbot_context() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT *
-                FROM chatbot.chatbot_configuracion
-                WHERE agencia_id = %s
-                LIMIT 1
-                """,
-                (agencia_id,),
-            )
-            row = cur.fetchone()
-            return dict(row) if row else None
-
-
-def crear_configuracion_default(agencia_id: int) -> Dict[str, Any]:
-    with get_connection_chatbot_context() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                """
-                INSERT INTO chatbot.chatbot_configuracion (agencia_id)
-                VALUES (%s)
-                ON CONFLICT (agencia_id) DO UPDATE
-                SET updated_at = chatbot.chatbot_configuracion.updated_at
-                RETURNING *
-                """,
-                (agencia_id,),
-            )
-            return dict(cur.fetchone())
-
-
-def actualizar_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
+def _faqs_plain(data: Dict[str, Any]) -> List[Dict[str, Any]]:
     faqs = data.get("preguntas_frecuentes") or []
     if isinstance(faqs, list):
-        faqs_plain = [
+        return [
             f.model_dump(mode="json") if hasattr(f, "model_dump") else dict(f)
             for f in faqs
         ]
-    else:
-        faqs_plain = faqs if isinstance(faqs, list) else []
+    return []
 
+
+def _recursos_plain(data: Dict[str, Any]) -> List[Dict[str, Any]]:
     recursos = data.get("recursos_bienvenida") or []
     if isinstance(recursos, list):
-        recursos_plain = [
+        return [
             r.model_dump(mode="json") if hasattr(r, "model_dump") else dict(r)
             for r in recursos
         ]
-    else:
-        recursos_plain = []
+    return []
+
+
+def listar_plataformas_activas() -> List[Dict[str, Any]]:
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT codigo, nombre, activo, created_at, updated_at
+                FROM chatbot.plataformas
+                WHERE activo = TRUE
+                ORDER BY nombre ASC, codigo ASC
+                """
+            )
+            return [dict(r) for r in (cur.fetchall() or [])]
+
+
+def obtener_plataforma(codigo: str) -> Optional[Dict[str, Any]]:
+    codigo_norm = (codigo or "").strip().lower()
+    if not codigo_norm:
+        return None
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT codigo, nombre, activo, created_at, updated_at
+                FROM chatbot.plataformas
+                WHERE codigo = %s
+                LIMIT 1
+                """,
+                (codigo_norm,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+def obtener_agencia_por_id(agencia_id: int) -> Optional[Dict[str, Any]]:
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT id, nombre, codigo, estado,
+                       mensaje_seleccion_configuracion,
+                       seleccion_por_palabras_activa,
+                       created_at, updated_at
+                FROM chatbot.agencias
+                WHERE id = %s
+                LIMIT 1
+                """,
+                (agencia_id,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+def actualizar_mensaje_seleccion_configuracion(
+    agencia_id: int,
+    mensaje: str,
+    *,
+    seleccion_por_palabras_activa: Optional[bool] = None,
+) -> Dict[str, Any]:
+    mensaje_norm = (mensaje or "").strip()
+    if not mensaje_norm:
+        raise ValueError("mensaje_seleccion_configuracion no puede estar vacío")
+    if len(mensaje_norm) > 300:
+        raise ValueError(
+            "mensaje_seleccion_configuracion no puede superar 300 caracteres"
+        )
+
+    sets = [
+        "mensaje_seleccion_configuracion = %s",
+        "updated_at = CURRENT_TIMESTAMP",
+    ]
+    params: List[Any] = [mensaje_norm]
+    if seleccion_por_palabras_activa is not None:
+        sets.insert(1, "seleccion_por_palabras_activa = %s")
+        params.append(bool(seleccion_por_palabras_activa))
+    params.append(agencia_id)
+
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                f"""
+                UPDATE chatbot.agencias
+                SET {", ".join(sets)}
+                WHERE id = %s
+                RETURNING id, nombre, codigo, estado,
+                          mensaje_seleccion_configuracion,
+                          seleccion_por_palabras_activa,
+                          created_at, updated_at
+                """,
+                params,
+            )
+            row = cur.fetchone()
+            if not row:
+                raise ValueError("Agencia no encontrada")
+            return dict(row)
+
+
+def listar_configuraciones(
+    agencia_id: int,
+    *,
+    solo_activas: bool = False,
+) -> List[Dict[str, Any]]:
+    where = ["c.agencia_id = %s"]
+    params: List[Any] = [agencia_id]
+    if solo_activas:
+        where.append("c.activo = TRUE")
+    where_sql = " AND ".join(where)
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                f"""
+                SELECT
+                    c.*,
+                    p.nombre AS plataforma_nombre
+                FROM chatbot.chatbot_configuracion c
+                LEFT JOIN chatbot.plataformas p
+                    ON p.codigo = c.plataforma_codigo
+                WHERE {where_sql}
+                ORDER BY c.orden ASC NULLS LAST, c.id ASC
+                """,
+                params,
+            )
+            return [dict(r) for r in (cur.fetchall() or [])]
+
+
+def listar_configuraciones_activas(agencia_id: int) -> List[Dict[str, Any]]:
+    """Configuraciones activas ordenadas por orden, id (runtime WhatsApp)."""
+    return listar_configuraciones(agencia_id, solo_activas=True)
+
+
+def obtener_configuracion_por_id(
+    agencia_id: int,
+    configuracion_id: int,
+    *,
+    solo_activa: bool = False,
+) -> Optional[Dict[str, Any]]:
+    where = ["c.id = %s", "c.agencia_id = %s"]
+    params: List[Any] = [configuracion_id, agencia_id]
+    if solo_activa:
+        where.append("c.activo = TRUE")
+    where_sql = " AND ".join(where)
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                f"""
+                SELECT
+                    c.*,
+                    p.nombre AS plataforma_nombre
+                FROM chatbot.chatbot_configuracion c
+                LEFT JOIN chatbot.plataformas p
+                    ON p.codigo = c.plataforma_codigo
+                WHERE {where_sql}
+                LIMIT 1
+                """,
+                params,
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+def obtener_configuracion_activa(agencia_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Compatibilidad: primera configuración activa (orden, id).
+    Preferir listar_configuraciones_activas / obtener_configuracion_por_id.
+    """
+    configs = listar_configuraciones_activas(agencia_id)
+    return configs[0] if configs else None
+
+
+def obtener_configuracion_por_agencia(agencia_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Compatibilidad: primera configuración de la agencia (activa o no).
+    Preferir listar_configuraciones / obtener_configuracion_por_id.
+    """
+    configs = listar_configuraciones(agencia_id, solo_activas=False)
+    return configs[0] if configs else None
+
+
+def _siguiente_orden(cur, agencia_id: int) -> int:
+    cur.execute(
+        """
+        SELECT COALESCE(MAX(orden), 0)::int + 1 AS siguiente
+        FROM chatbot.chatbot_configuracion
+        WHERE agencia_id = %s
+        """,
+        (agencia_id,),
+    )
+    row = cur.fetchone() or {}
+    return int(row.get("siguiente") or 1)
+
+
+def _limpiar_otras_predeterminadas(cur, agencia_id: int, except_id: int) -> None:
+    cur.execute(
+        """
+        UPDATE chatbot.chatbot_configuracion
+        SET es_predeterminada = FALSE, updated_at = CURRENT_TIMESTAMP
+        WHERE agencia_id = %s
+          AND id <> %s
+          AND es_predeterminada = TRUE
+        """,
+        (agencia_id, except_id),
+    )
+
+
+def crear_configuracion_default(agencia_id: int) -> Dict[str, Any]:
+    """
+    Crea una configuración inicial si la agencia no tiene ninguna.
+    Si ya existen filas, retorna la primera (orden, id) sin crear otra.
+    """
+    existentes = listar_configuraciones(agencia_id)
+    if existentes:
+        return existentes[0]
+
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            orden = _siguiente_orden(cur, agencia_id)
+            cur.execute(
+                """
+                INSERT INTO chatbot.chatbot_configuracion (
+                    agencia_id,
+                    codigo,
+                    nombre,
+                    plataforma_codigo,
+                    texto_opcion,
+                    es_predeterminada,
+                    orden,
+                    activo
+                ) VALUES (
+                    %s, 'tiktok', 'TikTok', 'tiktok', 'TikTok',
+                    TRUE, %s, TRUE
+                )
+                RETURNING *
+                """,
+                (agencia_id, orden),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise RuntimeError("No se pudo crear configuración default")
+            out = dict(row)
+            logger.info(
+                "[CHATBOT-CONFIG] default creada agencia_id=%s configuracion_id=%s",
+                agencia_id,
+                out.get("id"),
+            )
+            return out
+
+
+def crear_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
+    faqs_plain = _faqs_plain(data)
+    recursos_plain = _recursos_plain(data)
+    codigo = str(data.get("codigo") or "").strip().lower()[:80]
+    plataforma_codigo = str(data.get("plataforma_codigo") or "").strip().lower()[:30]
+    es_predeterminada = bool(data.get("es_predeterminada"))
+    nombre = str(data.get("nombre") or "").strip()[:120]
+    texto_opcion = str(data.get("texto_opcion") or "").strip()[:40]
+    if not codigo:
+        raise ValueError("codigo es obligatorio")
+    if not nombre:
+        raise ValueError("nombre es obligatorio")
+    if not texto_opcion:
+        raise ValueError("texto_opcion es obligatorio")
+
+    plat = obtener_plataforma(plataforma_codigo)
+    if not plat or not plat.get("activo"):
+        raise ValueError("plataforma_codigo inválida o inactiva")
+
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            orden = data.get("orden")
+            if orden is None:
+                orden = _siguiente_orden(cur, agencia_id)
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO chatbot.chatbot_configuracion (
+                        agencia_id,
+                        codigo,
+                        nombre,
+                        plataforma_codigo,
+                        texto_opcion,
+                        es_predeterminada,
+                        orden,
+                        activo,
+                        mensaje_bienvenida,
+                        pregunta_usuario,
+                        pregunta_mayor_edad,
+                        pregunta_disponibilidad,
+                        mensaje_aprobado,
+                        mensaje_no_aprobado,
+                        texto_boton_continuar,
+                        accion_continuar,
+                        url_continuar,
+                        texto_boton_preguntas,
+                        preguntas_frecuentes,
+                        recursos_bienvenida,
+                        mensaje_error
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                    RETURNING *
+                    """,
+                    (
+                        agencia_id,
+                        codigo,
+                        nombre,
+                        plataforma_codigo,
+                        texto_opcion,
+                        es_predeterminada,
+                        int(orden),
+                        bool(data.get("activo", True)),
+                        data["mensaje_bienvenida"],
+                        data["pregunta_usuario"],
+                        data["pregunta_mayor_edad"],
+                        data["pregunta_disponibilidad"],
+                        data["mensaje_aprobado"],
+                        data["mensaje_no_aprobado"],
+                        data["texto_boton_continuar"],
+                        data["accion_continuar"],
+                        data.get("url_continuar"),
+                        data["texto_boton_preguntas"],
+                        Json(faqs_plain),
+                        Json(recursos_plain),
+                        data["mensaje_error"],
+                    ),
+                )
+            except Exception as e:
+                if "uq_chatbot_configuracion" in str(e).lower() or "unique" in str(e).lower():
+                    raise ValueError(
+                        f"Ya existe una configuración con código '{codigo}' en esta agencia"
+                    ) from e
+                raise
+            row = cur.fetchone()
+            if not row:
+                raise RuntimeError("No se pudo crear la configuración")
+            cfg_id = int(row["id"])
+            if es_predeterminada:
+                _limpiar_otras_predeterminadas(cur, agencia_id, cfg_id)
+            logger.info(
+                "[CHATBOT-CONFIG] creada agencia_id=%s configuracion_id=%s "
+                "plataforma_codigo=%s codigo=%s",
+                agencia_id,
+                cfg_id,
+                plataforma_codigo,
+                codigo,
+            )
+    return obtener_configuracion_por_id(agencia_id, cfg_id) or dict(row)
+
+
+def actualizar_configuracion(
+    agencia_id: int,
+    data: Dict[str, Any],
+    *,
+    configuracion_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    Actualiza una configuración por id (preferido) o, en compatibilidad,
+    la primera de la agencia si no se indica configuracion_id.
+    """
+    faqs_plain = _faqs_plain(data)
+    recursos_plain = _recursos_plain(data)
+
+    if configuracion_id is None:
+        existente = obtener_configuracion_por_agencia(agencia_id)
+        if not existente:
+            raise ValueError("Configuración no encontrada")
+        configuracion_id = int(existente["id"])
+
+    plataforma_codigo = data.get("plataforma_codigo")
+    if plataforma_codigo is not None:
+        plataforma_codigo = str(plataforma_codigo).strip().lower()
+        plat = obtener_plataforma(plataforma_codigo)
+        if not plat or not plat.get("activo"):
+            raise ValueError("plataforma_codigo inválida o inactiva")
 
     logger.info(
-        "[CHATBOT-CONFIG] actualizar_configuracion agencia_id=%s faqs=%s recursos=%s",
+        "[CHATBOT-CONFIG] actualizar agencia_id=%s configuracion_id=%s "
+        "faqs=%s recursos=%s",
         agencia_id,
+        configuracion_id,
         len(faqs_plain),
         len(recursos_plain),
     )
 
+    sets = [
+        "activo = %s",
+        "mensaje_bienvenida = %s",
+        "pregunta_usuario = %s",
+        "pregunta_mayor_edad = %s",
+        "pregunta_disponibilidad = %s",
+        "mensaje_aprobado = %s",
+        "mensaje_no_aprobado = %s",
+        "texto_boton_continuar = %s",
+        "accion_continuar = %s",
+        "url_continuar = %s",
+        "texto_boton_preguntas = %s",
+        "preguntas_frecuentes = %s",
+        "recursos_bienvenida = %s",
+        "mensaje_error = %s",
+        "updated_at = CURRENT_TIMESTAMP",
+    ]
+    params: List[Any] = [
+        data["activo"],
+        data["mensaje_bienvenida"],
+        data["pregunta_usuario"],
+        data["pregunta_mayor_edad"],
+        data["pregunta_disponibilidad"],
+        data["mensaje_aprobado"],
+        data["mensaje_no_aprobado"],
+        data["texto_boton_continuar"],
+        data["accion_continuar"],
+        data.get("url_continuar"),
+        data["texto_boton_preguntas"],
+        Json(faqs_plain),
+        Json(recursos_plain),
+        data["mensaje_error"],
+    ]
+
+    if data.get("nombre") is not None:
+        sets.insert(-1, "nombre = %s")
+        params.append(str(data["nombre"]).strip()[:120])
+    if data.get("codigo") is not None:
+        sets.insert(-1, "codigo = %s")
+        params.append(str(data["codigo"]).strip().lower()[:80])
+    if plataforma_codigo is not None:
+        sets.insert(-1, "plataforma_codigo = %s")
+        params.append(plataforma_codigo[:30])
+    if data.get("texto_opcion") is not None:
+        sets.insert(-1, "texto_opcion = %s")
+        params.append(str(data["texto_opcion"]).strip()[:40])
+    if data.get("orden") is not None:
+        sets.insert(-1, "orden = %s")
+        params.append(int(data["orden"]))
+    if "es_predeterminada" in data and data.get("es_predeterminada") is not None:
+        sets.insert(-1, "es_predeterminada = %s")
+        params.append(bool(data["es_predeterminada"]))
+
+    params.extend([configuracion_id, agencia_id])
+
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            try:
+                cur.execute(
+                    f"""
+                    UPDATE chatbot.chatbot_configuracion
+                    SET {", ".join(sets)}
+                    WHERE id = %s AND agencia_id = %s
+                    RETURNING *
+                    """,
+                    params,
+                )
+            except Exception as e:
+                if "unique" in str(e).lower() or "uq_chatbot_configuracion" in str(e).lower():
+                    raise ValueError(
+                        "Ya existe una configuración con ese código en esta agencia"
+                    ) from e
+                raise
+            row = cur.fetchone()
+            if not row:
+                raise ValueError("Configuración no encontrada")
+            if data.get("es_predeterminada") is True:
+                _limpiar_otras_predeterminadas(cur, agencia_id, int(row["id"]))
+            out = dict(row)
+            logger.info(
+                "[CHATBOT-CONFIG] actualizada agencia_id=%s configuracion_id=%s "
+                "plataforma_codigo=%s",
+                agencia_id,
+                out.get("id"),
+                out.get("plataforma_codigo"),
+            )
+            return obtener_configuracion_por_id(agencia_id, int(out["id"])) or out
+
+
+def duplicar_configuracion(
+    agencia_id: int,
+    configuracion_id: int,
+    *,
+    nuevo_codigo: Optional[str] = None,
+    nuevo_nombre: Optional[str] = None,
+) -> Dict[str, Any]:
+    origen = obtener_configuracion_por_id(agencia_id, configuracion_id)
+    if not origen:
+        raise ValueError("Configuración no encontrada")
+
+    base_codigo = (nuevo_codigo or f"{origen.get('codigo') or 'cfg'}_copia").strip().lower()[:80]
+    nombre = (nuevo_nombre or f"{origen.get('nombre') or 'Config'} (copia)").strip()[:120]
+
+    data = {
+        "codigo": base_codigo,
+        "nombre": nombre,
+        "plataforma_codigo": (origen.get("plataforma_codigo") or "tiktok")[:30],
+        "texto_opcion": (origen.get("texto_opcion") or origen.get("nombre") or "Opción")[:40],
+        "es_predeterminada": False,
+        "orden": None,
+        "activo": bool(origen.get("activo", True)),
+        "mensaje_bienvenida": (origen.get("mensaje_bienvenida") or "Bienvenido")[:600],
+        "pregunta_usuario": (origen.get("pregunta_usuario") or "¿Cuál es tu usuario?")[:180],
+        "pregunta_mayor_edad": (origen.get("pregunta_mayor_edad") or "¿Eres mayor de edad?")[:150],
+        "pregunta_disponibilidad": (
+            origen.get("pregunta_disponibilidad")
+            or "¿Tienes disponibilidad para LIVE?"
+        )[:200],
+        "mensaje_aprobado": (origen.get("mensaje_aprobado") or "¡Aprobado!")[:300],
+        "mensaje_no_aprobado": (
+            origen.get("mensaje_no_aprobado") or "No cumples los requisitos."
+        )[:300],
+        "texto_boton_continuar": (origen.get("texto_boton_continuar") or "Continuar")[:40],
+        "accion_continuar": origen.get("accion_continuar") or "asesor",
+        "url_continuar": origen.get("url_continuar"),
+        "texto_boton_preguntas": (origen.get("texto_boton_preguntas") or "Preguntas")[:40],
+        "preguntas_frecuentes": parse_faqs(origen.get("preguntas_frecuentes")),
+        "recursos_bienvenida": parse_recursos_bienvenida(origen.get("recursos_bienvenida")),
+        "mensaje_error": (origen.get("mensaje_error") or "Ocurrió un error.")[:250],
+    }
+    # Si el código choca, sufijar con timestamp corto
+    try:
+        return crear_configuracion(agencia_id, data)
+    except ValueError:
+        data["codigo"] = f"{base_codigo}_{int(datetime.utcnow().timestamp()) % 100000}"
+        return crear_configuracion(agencia_id, data)
+
+
+def set_configuracion_activo(
+    agencia_id: int,
+    configuracion_id: int,
+    activo: bool,
+) -> Dict[str, Any]:
     with get_connection_chatbot_context() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
                 UPDATE chatbot.chatbot_configuracion
-                SET
-                    activo = %s,
-                    mensaje_bienvenida = %s,
-                    pregunta_usuario = %s,
-                    pregunta_mayor_edad = %s,
-                    pregunta_disponibilidad = %s,
-                    mensaje_aprobado = %s,
-                    mensaje_no_aprobado = %s,
-                    texto_boton_continuar = %s,
-                    accion_continuar = %s,
-                    url_continuar = %s,
-                    texto_boton_preguntas = %s,
-                    preguntas_frecuentes = %s,
-                    recursos_bienvenida = %s,
-                    mensaje_error = %s,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE agencia_id = %s
-                RETURNING *
+                SET activo = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND agencia_id = %s
+                RETURNING id
                 """,
-                (
-                    data["activo"],
-                    data["mensaje_bienvenida"],
-                    data["pregunta_usuario"],
-                    data["pregunta_mayor_edad"],
-                    data["pregunta_disponibilidad"],
-                    data["mensaje_aprobado"],
-                    data["mensaje_no_aprobado"],
-                    data["texto_boton_continuar"],
-                    data["accion_continuar"],
-                    data.get("url_continuar"),
-                    data["texto_boton_preguntas"],
-                    Json(faqs_plain),
-                    Json(recursos_plain),
-                    data["mensaje_error"],
-                    agencia_id,
-                ),
+                (bool(activo), configuracion_id, agencia_id),
             )
             row = cur.fetchone()
             if not row:
                 raise ValueError("Configuración no encontrada")
-            out = dict(row)
-            n_db = len(parse_recursos_bienvenida(out.get("recursos_bienvenida")))
-            logger.info(
-                "[CHATBOT-CONFIG] actualizar_configuracion agencia_id=%s recursos_en_returning=%s",
-                agencia_id,
-                n_db,
-            )
-            return out
+    out = obtener_configuracion_por_id(agencia_id, configuracion_id)
+    if not out:
+        raise ValueError("Configuración no encontrada")
+    logger.info(
+        "[CHATBOT-CONFIG] activo=%s agencia_id=%s configuracion_id=%s",
+        activo,
+        agencia_id,
+        configuracion_id,
+    )
+    return out
+
+
+def reordenar_configuraciones(
+    agencia_id: int,
+    ordenes: List[Dict[str, int]],
+) -> List[Dict[str, Any]]:
+    """
+    ordenes: lista de {id, orden}. Transacción única.
+    Valida que todos los ids pertenezcan a la agencia.
+    """
+    if not ordenes:
+        return listar_configuraciones(agencia_id)
+
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            for item in ordenes:
+                cfg_id = int(item["id"])
+                orden = int(item["orden"])
+                cur.execute(
+                    """
+                    UPDATE chatbot.chatbot_configuracion
+                    SET orden = %s, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s AND agencia_id = %s
+                    RETURNING id
+                    """,
+                    (orden, cfg_id, agencia_id),
+                )
+                if not cur.fetchone():
+                    raise ValueError(
+                        f"Configuración id={cfg_id} no pertenece a esta agencia"
+                    )
+    logger.info(
+        "[CHATBOT-CONFIG] reordenadas agencia_id=%s n=%s",
+        agencia_id,
+        len(ordenes),
+    )
+    return listar_configuraciones(agencia_id)
 
 
 def actualizar_recursos_bienvenida(
     agencia_id: int,
     recursos: List[Dict[str, Any]],
+    *,
+    configuracion_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Actualiza solo recursos_bienvenida (p. ej. tras DELETE media)."""
+    if configuracion_id is None:
+        existente = obtener_configuracion_por_agencia(agencia_id)
+        if not existente:
+            raise ValueError("Configuración no encontrada")
+        configuracion_id = int(existente["id"])
+
     recursos_json = Json(list(recursos or []))
     with get_connection_chatbot_context() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -571,14 +1058,87 @@ def actualizar_recursos_bienvenida(
                 SET
                     recursos_bienvenida = %s,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE agencia_id = %s
+                WHERE id = %s AND agencia_id = %s
                 RETURNING *
                 """,
-                (recursos_json, agencia_id),
+                (recursos_json, configuracion_id, agencia_id),
             )
             row = cur.fetchone()
             if not row:
                 raise ValueError("Configuración no encontrada")
+            return dict(row)
+
+
+def asignar_configuracion_aspirante(
+    *,
+    aspirante_id: int,
+    agencia_id: int,
+    configuracion_id: int,
+    message_id_meta: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Valida configuración (existe, activa, misma agencia) y asigna en una TX:
+    chatbot_configuracion_id, plataforma_codigo, configuracion_seleccionada_at,
+    etapa_chatbot='usuario'.
+    """
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT id, agencia_id, plataforma_codigo, activo
+                FROM chatbot.chatbot_configuracion
+                WHERE id = %s
+                FOR UPDATE
+                """,
+                (configuracion_id,),
+            )
+            cfg = cur.fetchone()
+            if not cfg:
+                raise ValueError("Configuración no encontrada")
+            if int(cfg["agencia_id"]) != int(agencia_id):
+                raise PermissionError("Configuración de otra agencia")
+            if not cfg.get("activo"):
+                raise ValueError("Configuración desactivada")
+
+            cur.execute(
+                """
+                UPDATE chatbot.chatbot_aspirantes
+                SET
+                    chatbot_configuracion_id = %s,
+                    plataforma_codigo = %s,
+                    configuracion_seleccionada_at = CURRENT_TIMESTAMP,
+                    etapa_chatbot = %s,
+                    estado = CASE
+                        WHEN estado = 'nuevo' THEN 'en_proceso'
+                        ELSE estado
+                    END,
+                    ultimo_message_id_meta = COALESCE(%s, ultimo_message_id_meta),
+                    ultima_interaccion = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                  AND agencia_id = %s
+                RETURNING *
+                """,
+                (
+                    configuracion_id,
+                    cfg["plataforma_codigo"],
+                    "usuario",
+                    message_id_meta,
+                    aspirante_id,
+                    agencia_id,
+                ),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise ValueError("Aspirante no encontrado")
+            logger.info(
+                "[CHATBOT] config asignada agencia_id=%s aspirante_id=%s "
+                "chatbot_configuracion_id=%s plataforma_codigo=%s",
+                agencia_id,
+                aspirante_id,
+                configuracion_id,
+                cfg["plataforma_codigo"],
+            )
             return dict(row)
 
 
@@ -688,8 +1248,9 @@ def listar_aspirantes(
         where.append("a.estado = %s")
         params.append(estado)
     if plataforma:
-        where.append("a.plataforma = %s")
-        params.append(plataforma)
+        # Filtra por código de plataforma (no columna textual legacy)
+        where.append("a.plataforma_codigo = %s")
+        params.append(str(plataforma).strip().lower())
     if cumple_requisitos is not None:
         where.append("a.cumple_requisitos = %s")
         params.append(cumple_requisitos)
@@ -727,9 +1288,12 @@ def listar_aspirantes(
                 f"""
                 SELECT
                     a.*,
+                    p.nombre AS plataforma,
                     w.phone_number AS phone_number_origen,
                     w.business_name AS business_name_origen
                 FROM chatbot.chatbot_aspirantes a
+                LEFT JOIN chatbot.plataformas p
+                    ON p.codigo = a.plataforma_codigo
                 LEFT JOIN public.whatsapp_business_accounts w
                     ON w.id = a.whatsapp_account_id
                 WHERE {where_sql}
@@ -749,9 +1313,12 @@ def obtener_aspirante(agencia_id: int, aspirante_id: int) -> Optional[Dict[str, 
                 """
                 SELECT
                     a.*,
+                    p.nombre AS plataforma,
                     w.phone_number AS phone_number_origen,
                     w.business_name AS business_name_origen
                 FROM chatbot.chatbot_aspirantes a
+                LEFT JOIN chatbot.plataformas p
+                    ON p.codigo = a.plataforma_codigo
                 LEFT JOIN public.whatsapp_business_accounts w
                     ON w.id = a.whatsapp_account_id
                 WHERE a.id = %s
@@ -814,6 +1381,7 @@ def reiniciar_flujo_aspirante(
 ) -> Optional[Dict[str, Any]]:
     """
     Reinicia el flujo conversacional del chatbot para un aspirante de la agencia.
+    Siempre limpia la configuración seleccionada para reevaluar en el siguiente mensaje.
     No elimina el registro ni altera telefono, agencia_id, whatsapp_account_id o fecha_registro.
     """
     sets = [
@@ -821,18 +1389,17 @@ def reiniciar_flujo_aspirante(
         "etapa_chatbot = %s",
         "requiere_asesor = FALSE",
         "cumple_requisitos = NULL",
+        "chatbot_configuracion_id = NULL",
+        "plataforma_codigo = NULL",
+        "configuracion_seleccionada_at = NULL",
+        "usuario_plataforma = NULL",
+        "mayor_edad = NULL",
+        "disponibilidad_live = NULL",
         "updated_at = CURRENT_TIMESTAMP",
     ]
     params: List[Any] = ["nuevo", "inicio"]
-
-    if limpiar_respuestas:
-        sets.extend(
-            [
-                "usuario_plataforma = NULL",
-                "mayor_edad = NULL",
-                "disponibilidad_live = NULL",
-            ]
-        )
+    # limpiar_respuestas se conserva por compatibilidad de API (ya limpia siempre)
+    _ = limpiar_respuestas
 
     params.extend([aspirante_id, agencia_id])
 
@@ -850,6 +1417,11 @@ def reiniciar_flujo_aspirante(
             row = cur.fetchone()
             if not row:
                 return None
+    logger.info(
+        "[CHATBOT] flujo reiniciado agencia_id=%s aspirante_id=%s",
+        agencia_id,
+        aspirante_id,
+    )
     return obtener_aspirante(agencia_id, aspirante_id)
 
 
@@ -909,12 +1481,11 @@ def crear_aspirante(
             agencia_id,
             whatsapp_account_id,
             telefono,
-            plataforma,
             estado,
             etapa_chatbot,
             ultimo_message_id_meta
         ) VALUES (
-            %s, %s, %s, 'tiktok', 'nuevo', %s, %s
+            %s, %s, %s, 'nuevo', %s, %s
         )
         ON CONFLICT (agencia_id, telefono) DO UPDATE
         SET updated_at = chatbot.chatbot_aspirantes.updated_at

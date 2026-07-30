@@ -568,35 +568,38 @@ def listar_wabas_chatbot_disponibles(
 
 
 def obtener_configuracion_admin(agencia_id: int) -> Dict[str, Any]:
-    with get_connection_chatbot_context() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                """
-                INSERT INTO chatbot.chatbot_configuracion (agencia_id)
-                VALUES (%s)
-                ON CONFLICT (agencia_id) DO UPDATE
-                SET updated_at = chatbot.chatbot_configuracion.updated_at
-                RETURNING *
-                """,
-                (agencia_id,),
-            )
-            row = cur.fetchone()
-            if not row:
-                raise ValueError("No se pudo obtener configuración")
-            return dict(row)
+    """
+    Compatibilidad admin: retorna la primera configuración (crea default si no hay).
+    """
+    from database_chatbot_captacion import (
+        crear_configuracion_default,
+        listar_configuraciones,
+        obtener_configuracion_por_id,
+    )
+
+    rows = listar_configuraciones(agencia_id)
+    if rows:
+        return rows[0]
+    created = crear_configuracion_default(agencia_id)
+    return obtener_configuracion_por_id(agencia_id, int(created["id"])) or created
 
 
 def actualizar_configuracion_admin(
     agencia_id: int,
     data: Dict[str, Any],
 ) -> Dict[str, Any]:
-    # Reutiliza la lógica de actualización existente
     from database_chatbot_captacion import (
         actualizar_configuracion,
         crear_configuracion_default,
         obtener_configuracion_por_agencia,
     )
 
-    if not obtener_configuracion_por_agencia(agencia_id):
-        crear_configuracion_default(agencia_id)
-    return actualizar_configuracion(agencia_id, data)
+    existente = obtener_configuracion_por_agencia(agencia_id)
+    if not existente:
+        creado = crear_configuracion_default(agencia_id)
+        configuracion_id = int(creado["id"])
+    else:
+        configuracion_id = int(existente["id"])
+    return actualizar_configuracion(
+        agencia_id, data, configuracion_id=configuracion_id
+    )

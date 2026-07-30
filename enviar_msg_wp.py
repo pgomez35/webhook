@@ -482,6 +482,72 @@ def enviar_botones_Completa(token: str, numero_id: str, telefono_destino: str, t
 
 
 
+def enviar_lista_interactiva(
+    token: str,
+    numero_id: str,
+    telefono_destino: str,
+    texto: str,
+    filas: list,
+    *,
+    button_label: str = "Ver opciones",
+    section_title: str = "Opciones",
+):
+    """
+    Envía un mensaje interactivo tipo lista (Meta).
+    filas: [{"id": "...", "title": "...", "description": "..."?}, ...]
+    Máx. 10 filas por sección (API WhatsApp).
+    """
+    url = f"https://graph.facebook.com/v19.0/{numero_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+    rows = []
+    for fila in (filas or [])[:10]:
+        row = {
+            "id": str(fila.get("id") or "")[:200],
+            "title": str(fila.get("title") or "")[:24],
+        }
+        desc = fila.get("description")
+        if desc:
+            row["description"] = str(desc)[:72]
+        if row["id"] and row["title"]:
+            rows.append(row)
+
+    if not rows:
+        raise ValueError("enviar_lista_interactiva requiere al menos una fila")
+
+    mensaje = {
+        "messaging_product": "whatsapp",
+        "to": telefono_destino,
+        "type": "interactive",
+        "interactive": {
+            "type": "list",
+            "body": {"text": (texto or "")[:1024]},
+            "action": {
+                "button": (button_label or "Ver opciones")[:20],
+                "sections": [
+                    {
+                        "title": (section_title or "Opciones")[:24],
+                        "rows": rows,
+                    }
+                ],
+            },
+        },
+    }
+
+    print("📤 Enviando lista a:", telefono_destino)
+    response = requests.post(url, headers=headers, json=mensaje)
+    print("✅ Código de estado:", response.status_code)
+    try:
+        respuesta_json = response.json()
+    except json.JSONDecodeError:
+        respuesta_json = {"error": "Respuesta no válida en formato JSON", "contenido": response.text}
+    print("📡 Respuesta de la API:", respuesta_json)
+    return response.status_code, respuesta_json
+
+
 def enviar_boton_iniciar_Completa(token: str, numero_id: str, telefono_destino: str, texto: str):
     url = f"https://graph.facebook.com/v19.0/{numero_id}/messages"
     headers = {

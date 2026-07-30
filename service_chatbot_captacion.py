@@ -25,20 +25,25 @@ from chatbot_captacion_logic import (
     ETAPA_FINALIZADO,
     ETAPA_INICIO,
     ETAPA_MAYOR_EDAD,
+    ETAPA_PLATAFORMA,
     ETAPA_PREGUNTAS_FRECUENTES,
     ETAPA_RESULTADO,
     ETAPA_USUARIO,
     ETAPAS_SIN_AUTO_RESPUESTA,
     FAQ_PREFIX,
+    MAX_REPLY_BUTTONS,
     enmascarar_telefono,
+    extraer_id_config_desde_payload,
     interpretar_si_no,
+    normalizar_identificador_plataforma,
     normalizar_telefono_chatbot,
-    normalizar_usuario_plataforma,
+    payload_seleccion_config,
     truncar_titulo_boton,
 )
 from enviar_msg_wp import (
     enviar_botones_Completa,
     enviar_documento_pdf_via_media_id_desde_url,
+    enviar_lista_interactiva,
     enviar_mensaje_texto_simple,
     enviar_video_whatsapp,
 )
@@ -383,6 +388,109 @@ def _enviar_botones(
     )
 
 
+def _mensaje_seleccion_agencia(agencia_id: int) -> str:
+    agencia = db.obtener_agencia_por_id(agencia_id) or {}
+    msg = (agencia.get("mensaje_seleccion_configuracion") or "").strip()
+    if msg:
+        return msg[:300]
+    # Default alineado con chatbot.agencias.mensaje_seleccion_configuracion
+    return "¿En qué plataforma deseas iniciar tu proceso?"
+
+
+def _opciones_seleccion_config(
+    configs: List[Dict[str, Any]],
+) -> List[Dict[str, str]]:
+    opciones: List[Dict[str, str]] = []
+    for cfg in configs:
+        cfg_id = cfg.get("id")
+        if cfg_id is None:
+            continue
+        titulo_raw = (
+            cfg.get("texto_opcion")
+            or cfg.get("nombre")
+            or cfg.get("plataforma_nombre")
+            or "Opción"
+        )
+        try:
+            titulo = truncar_titulo_boton(str(titulo_raw), 20)
+        except ValueError:
+            titulo = str(titulo_raw).strip()[:20] or "Opción"
+        opciones.append(
+            {
+                "id": payload_seleccion_config(int(cfg_id)),
+                "title": titulo,
+            }
+        )
+    return opciones
+
+
+def _enviar_selector_configuraciones(
+    *,
+    token: str,
+    phone_number_id: str,
+    wa_id: str,
+    agencia_id: int,
+    configs: List[Dict[str, Any]],
+) -> None:
+    cuerpo = _mensaje_seleccion_agencia(agencia_id)
+    opciones = _opciones_seleccion_config(configs)
+    if not opciones:
+        logger.error(
+            "[CHATBOT] selector sin opciones agencia_id=%s",
+            agencia_id,
+        )
+        return
+    if len(opciones) <= MAX_REPLY_BUTTONS:
+        _enviar_botones(token, phone_number_id, wa_id, cuerpo, opciones)
+        return
+    filas = [{"id": o["id"], "title": o["title"][:24]} for o in opciones]
+    enviar_lista_interactiva(
+        token,
+        phone_number_id,
+        wa_id,
+        cuerpo,
+        filas,
+        button_label="Ver opciones",
+        section_title="Plataformas",
+    )
+
+
+def _enviar_inicio_config(
+    *,
+    config: Dict[str, Any],
+    aspirante: Dict[str, Any],
+    agencia_id: int,
+    token: str,
+    phone_number_id: str,
+    telefono: str,
+) -> None:
+    logger.info(
+        "[CHATBOT] enviando bienvenida agencia_id=%s aspirante_id=%s "
+        "chatbot_configuracion_id=%s plataforma_codigo=%s",
+        agencia_id,
+        aspirante.get("id"),
+        config.get("id"),
+        config.get("plataforma_codigo"),
+    )
+    _enviar_texto(token, phone_number_id, telefono, config["mensaje_bienvenida"])
+    try:
+        enviar_recursos_chatbot_whatsapp(
+            agencia_id=agencia_id,
+            aspirante_id=aspirante.get("id"),
+            telefono=telefono,
+            phone_number_id=phone_number_id,
+            access_token=token,
+            momento_envio=MOMENTO_DESPUES_BIENVENIDA,
+            config=config,
+        )
+    except Exception:
+        logger.exception(
+            "[CHATBOT] error enviando recursos despues_bienvenida; "
+            "se continúa con pregunta_usuario"
+        )
+    _enviar_texto(token, phone_number_id, telefono, config["pregunta_usuario"])
+
+
 def _botones_si_no(id_si: str, id_no: str) -> List[Dict[str, str]]:
     return [
         {"id": id_si, "title": truncar_titulo_boton("Sí")},
@@ -486,6 +594,9 @@ def _reenviar_pregunta_actual(
     if etapa == ETAPA_USUARIO:
         _enviar_texto(token, phone_number_id, wa_id, error)
         _enviar_texto(token, phone_number_id, wa_id, config["pregunta_usuario"])
+    elif etapa == ETAPA_PLATAFORMA:
+        # El reenvío del selector se hace desde el caller con configs activas
+        _enviar_texto(token, phone_number_id, wa_id, error)
     elif etapa == ETAPA_MAYOR_EDAD:
         _enviar_texto(token, phone_number_id, wa_id, error)
         _enviar_botones(
@@ -708,24 +819,25 @@ def procesar_chatbot_captacion(
     etapa_nueva = None
 
     try:
-        config = db.obtener_configuracion_activa(agencia_id)
-        if not config:
-            logger.warning(
-                "[CHATBOT] sin configuración activa agencia_id=%s — mensaje consumido",
+        configs_activas = db.listar_configuraciones_activas(agencia_id)
+        if not configs_activas:
+            logger.error(
+                "[CHATBOT] sin configuraciones activas agencia_id=%s — mensaje consumido",
                 agencia_id,
             )
             print(
-                f"[CHATBOT] abort: sin configuración activa agencia_id={agencia_id}"
+                f"[CHATBOT] abort: sin configuraciones activas agencia_id={agencia_id}"
             )
             return True
 
         logger.info(
             "[CHATBOT] entrada agencia_id=%s whatsapp_account_id=%s "
-            "telefono=%s tipo=%s",
+            "telefono=%s tipo=%s configs_activas=%s",
             agencia_id,
             whatsapp_account_id,
             enmascarar_telefono(telefono),
             tipo,
+            len(configs_activas),
         )
 
         # --- Persistencia previa (commit) ---
@@ -745,10 +857,13 @@ def procesar_chatbot_captacion(
             return True
 
         logger.info(
-            "[CHATBOT] aspirante id=%s etapa=%s estado=%s",
+            "[CHATBOT] aspirante id=%s etapa=%s estado=%s "
+            "chatbot_configuracion_id=%s plataforma_codigo=%s",
             aspirante.get("id"),
             aspirante.get("etapa_chatbot"),
             aspirante.get("estado"),
+            aspirante.get("chatbot_configuracion_id"),
+            aspirante.get("plataforma_codigo"),
         )
 
         etapa_anterior = aspirante.get("etapa_chatbot") or ETAPA_INICIO
@@ -791,7 +906,205 @@ def procesar_chatbot_captacion(
                 )
             return True
 
-        # --- Primer contacto: persistir avance ANTES de enviar ---
+        config: Optional[Dict[str, Any]] = None
+        cfg_id_asignada = aspirante.get("chatbot_configuracion_id")
+
+        # --- Selección de configuración (etapa plataforma, aún sin id asignado) ---
+        if not cfg_id_asignada and etapa == ETAPA_PLATAFORMA:
+            sel_id = extraer_id_config_desde_payload(payload_id)
+            if sel_id is None:
+                db.actualizar_aspirante_flujo_commit(
+                    aspirante["id"], {"ultimo_message_id_meta": message_id_meta}
+                )
+                _enviar_selector_configuraciones(
+                    token=token,
+                    phone_number_id=phone_number_id,
+                    wa_id=telefono,
+                    agencia_id=agencia_id,
+                    configs=configs_activas,
+                )
+                return True
+            try:
+                aspirante = db.asignar_configuracion_aspirante(
+                    aspirante_id=int(aspirante["id"]),
+                    agencia_id=agencia_id,
+                    configuracion_id=sel_id,
+                    message_id_meta=message_id_meta,
+                )
+                config = db.obtener_configuracion_por_id(
+                    agencia_id, sel_id, solo_activa=True
+                )
+            except PermissionError:
+                logger.warning(
+                    "[CHATBOT] selección rechazada (otra agencia) "
+                    "agencia_id=%s aspirante_id=%s configuracion_id=%s",
+                    agencia_id,
+                    aspirante.get("id"),
+                    sel_id,
+                )
+                db.actualizar_aspirante_flujo_commit(
+                    aspirante["id"], {"ultimo_message_id_meta": message_id_meta}
+                )
+                _enviar_selector_configuraciones(
+                    token=token,
+                    phone_number_id=phone_number_id,
+                    wa_id=telefono,
+                    agencia_id=agencia_id,
+                    configs=configs_activas,
+                )
+                return True
+            except ValueError as e:
+                logger.warning(
+                    "[CHATBOT] selección inválida agencia_id=%s aspirante_id=%s "
+                    "configuracion_id=%s detalle=%s",
+                    agencia_id,
+                    aspirante.get("id"),
+                    sel_id,
+                    e,
+                )
+                db.actualizar_aspirante_flujo_commit(
+                    aspirante["id"], {"ultimo_message_id_meta": message_id_meta}
+                )
+                _enviar_selector_configuraciones(
+                    token=token,
+                    phone_number_id=phone_number_id,
+                    wa_id=telefono,
+                    agencia_id=agencia_id,
+                    configs=configs_activas,
+                )
+                return True
+            except Exception:
+                logger.exception(
+                    "[CHATBOT] error al asignar selección aspirante_id=%s cfg=%s",
+                    aspirante.get("id"),
+                    sel_id,
+                )
+                traceback.print_exc()
+                return True
+            if not config:
+                return True
+            _enviar_inicio_config(
+                config=config,
+                aspirante=aspirante,
+                agencia_id=agencia_id,
+                token=token,
+                phone_number_id=phone_number_id,
+                telefono=telefono,
+            )
+            etapa_nueva = ETAPA_USUARIO
+            return True
+
+        # --- Sin configuración asignada: 1 / N activas ---
+        if not cfg_id_asignada:
+            if len(configs_activas) == 1:
+                unica = configs_activas[0]
+                try:
+                    aspirante = db.asignar_configuracion_aspirante(
+                        aspirante_id=int(aspirante["id"]),
+                        agencia_id=agencia_id,
+                        configuracion_id=int(unica["id"]),
+                        message_id_meta=message_id_meta,
+                    )
+                    config = db.obtener_configuracion_por_id(
+                        agencia_id, int(unica["id"]), solo_activa=True
+                    )
+                except Exception:
+                    logger.exception(
+                        "[CHATBOT] no se pudo auto-asignar config agencia_id=%s "
+                        "aspirante_id=%s configuracion_id=%s",
+                        agencia_id,
+                        aspirante.get("id"),
+                        unica.get("id"),
+                    )
+                    traceback.print_exc()
+                    return True
+                if not config:
+                    logger.error(
+                        "[CHATBOT] config auto-asignada no legible agencia_id=%s id=%s",
+                        agencia_id,
+                        unica.get("id"),
+                    )
+                    return True
+                # Tras auto-asignación siempre enviamos inicio de esa config
+                _enviar_inicio_config(
+                    config=config,
+                    aspirante=aspirante,
+                    agencia_id=agencia_id,
+                    token=token,
+                    phone_number_id=phone_number_id,
+                    telefono=telefono,
+                )
+                etapa_nueva = ETAPA_USUARIO
+                return True
+
+            # ≥2: selector (nunca interpretar texto como TikTok/BIGO)
+            try:
+                aspirante = db.actualizar_aspirante_flujo_commit(
+                    aspirante["id"],
+                    {
+                        "etapa_chatbot": ETAPA_PLATAFORMA,
+                        "estado": "en_proceso",
+                        "whatsapp_account_id": whatsapp_account_id,
+                        "ultimo_message_id_meta": message_id_meta,
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "[CHATBOT] no se pudo persistir etapa plataforma aspirante_id=%s",
+                    aspirante.get("id"),
+                )
+                traceback.print_exc()
+                return True
+            logger.info(
+                "[CHATBOT] enviando selector configs agencia_id=%s aspirante_id=%s n=%s",
+                agencia_id,
+                aspirante.get("id"),
+                len(configs_activas),
+            )
+            _enviar_selector_configuraciones(
+                token=token,
+                phone_number_id=phone_number_id,
+                wa_id=telefono,
+                agencia_id=agencia_id,
+                configs=configs_activas,
+            )
+            etapa_nueva = ETAPA_PLATAFORMA
+            return True
+
+        # --- Configuración ya asignada ---
+        config = db.obtener_configuracion_por_id(
+            agencia_id, int(cfg_id_asignada), solo_activa=False
+        )
+        if not config:
+            logger.error(
+                "[CHATBOT] chatbot_configuracion_id=%s inexistente o de otra agencia "
+                "agencia_id=%s aspirante_id=%s",
+                cfg_id_asignada,
+                agencia_id,
+                aspirante.get("id"),
+            )
+            return True
+        if not config.get("activo"):
+            logger.warning(
+                "[CHATBOT] configuración desactivada chatbot_configuracion_id=%s "
+                "agencia_id=%s aspirante_id=%s",
+                cfg_id_asignada,
+                agencia_id,
+                aspirante.get("id"),
+            )
+            db.actualizar_aspirante_flujo_commit(
+                aspirante["id"], {"ultimo_message_id_meta": message_id_meta}
+            )
+            _enviar_texto(
+                token,
+                phone_number_id,
+                telefono,
+                config.get("mensaje_error")
+                or "Esta opción ya no está disponible. Contacta a la agencia.",
+            )
+            return True
+
+        # --- Primer contacto con config ya asignada (p. ej. reinicio parcial) ---
         if etapa in (ETAPA_INICIO, None):
             try:
                 aspirante = _persistir_transicion(
@@ -811,34 +1124,13 @@ def procesar_chatbot_captacion(
                 traceback.print_exc()
                 return True
 
-            logger.info("[CHATBOT] enviando bienvenida")
-            _enviar_texto(
-                token, phone_number_id, telefono, config["mensaje_bienvenida"]
-            )
-            # Orden obligatorio inicio:
-            # bienvenida → recursos despues_bienvenida (+ mensaje_adicional) → pregunta_usuario
-            try:
-                logger.info(
-                    "[CHATBOT] enviando recursos despues_bienvenida "
-                    "(antes de pregunta_usuario)"
-                )
-                enviar_recursos_chatbot_whatsapp(
-                    agencia_id=agencia_id,
-                    aspirante_id=aspirante.get("id"),
-                    telefono=telefono,
-                    phone_number_id=phone_number_id,
-                    access_token=token,
-                    momento_envio=MOMENTO_DESPUES_BIENVENIDA,
-                    config=config,
-                )
-            except Exception:
-                logger.exception(
-                    "[CHATBOT] error enviando recursos despues_bienvenida; "
-                    "se continúa con pregunta_usuario"
-                )
-            logger.info("[CHATBOT] enviando pregunta usuario plataforma")
-            _enviar_texto(
-                token, phone_number_id, telefono, config["pregunta_usuario"]
+            _enviar_inicio_config(
+                config=config,
+                aspirante=aspirante,
+                agencia_id=agencia_id,
+                token=token,
+                phone_number_id=phone_number_id,
+                telefono=telefono,
             )
             etapa_nueva = ETAPA_USUARIO
             return True
@@ -854,7 +1146,12 @@ def procesar_chatbot_captacion(
                 )
                 return True
 
-            usuario = normalizar_usuario_plataforma(texto)
+            plataforma_codigo = (
+                aspirante.get("plataforma_codigo")
+                or config.get("plataforma_codigo")
+                or "tiktok"
+            )
+            usuario = normalizar_identificador_plataforma(plataforma_codigo, texto)
             if not usuario:
                 db.actualizar_aspirante_flujo_commit(
                     aspirante["id"], {"ultimo_message_id_meta": message_id_meta}
@@ -881,6 +1178,14 @@ def procesar_chatbot_captacion(
                 traceback.print_exc()
                 return True
 
+            logger.info(
+                "[CHATBOT] usuario guardado agencia_id=%s aspirante_id=%s "
+                "chatbot_configuracion_id=%s plataforma_codigo=%s",
+                agencia_id,
+                aspirante.get("id"),
+                config.get("id"),
+                plataforma_codigo,
+            )
             _enviar_botones(
                 token,
                 phone_number_id,

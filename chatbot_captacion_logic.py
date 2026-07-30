@@ -18,6 +18,7 @@ FAQ_PREFIX = "CHATBOT_FAQ_"
 # Etapas de chatbot.chatbot_aspirantes.etapa_chatbot
 # Deben coincidir exactamente con chk_chatbot_aspirante_etapa
 ETAPA_INICIO = "inicio"
+ETAPA_PLATAFORMA = "plataforma"
 ETAPA_USUARIO = "usuario"
 ETAPA_MAYOR_EDAD = "mayor_edad"
 ETAPA_DISPONIBILIDAD = "disponibilidad"
@@ -25,6 +26,12 @@ ETAPA_RESULTADO = "resultado"
 ETAPA_PREGUNTAS_FRECUENTES = "preguntas_frecuentes"
 ETAPA_ASESOR = "asesor"
 ETAPA_FINALIZADO = "finalizado"
+
+# Prefijo seguro para botones/lista de selección de configuración
+CONFIG_PAYLOAD_PREFIX = "chatbot_config:"
+
+# WhatsApp: máx. 3 reply buttons; si hay más opciones → lista interactiva
+MAX_REPLY_BUTTONS = 3
 
 # Etapas sin bot automático (solo trazabilidad / chat humano)
 ETAPAS_SIN_AUTO_RESPUESTA = frozenset(
@@ -68,16 +75,61 @@ def nombre_agencia_desde_cuenta(
 
 
 def normalizar_usuario_plataforma(texto: Optional[str]) -> Optional[str]:
-    if texto is None:
+    """
+    Compatibilidad: normalización genérica estilo TikTok (strip, quitar un @, lower).
+    Preferir normalizar_identificador_plataforma cuando se conoce plataforma_codigo.
+    """
+    return normalizar_identificador_plataforma("tiktok", texto)
+
+
+def normalizar_identificador_plataforma(
+    plataforma_codigo: Optional[str],
+    valor: Optional[str],
+) -> Optional[str]:
+    """
+    Normaliza el identificador del usuario según la plataforma.
+
+    - tiktok: strip, acepta uno o varios @ iniciales, los elimina, minúsculas
+    - bigo: strip, conserva el ID como texto (sin agregar @)
+    - otras: solo strip()
+    No consulta chatbot.plataformas: las reglas viven en código.
+    """
+    if valor is None:
         return None
-    valor = str(texto).strip()
-    valor = re.sub(r"\s+", " ", valor)
-    if valor.startswith("@"):
-        valor = valor[1:].strip()
-    valor = valor.lower()
-    if not valor or len(valor) > 100:
+    codigo = (plataforma_codigo or "").strip().lower()
+    texto = str(valor)
+
+    if codigo == "tiktok":
+        texto = texto.strip()
+        texto = re.sub(r"^@+", "", texto).strip()
+        texto = texto.lower()
+    elif codigo == "bigo":
+        texto = texto.strip()
+    else:
+        texto = texto.strip()
+
+    if not texto or len(texto) > 100:
         return None
-    return valor
+    return texto
+
+
+def payload_seleccion_config(configuracion_id: int) -> str:
+    """Identificador interno seguro para botones/lista de WhatsApp."""
+    return f"{CONFIG_PAYLOAD_PREFIX}{int(configuracion_id)}"
+
+
+def extraer_id_config_desde_payload(payload_id: Optional[str]) -> Optional[int]:
+    """Extrae chatbot_configuracion.id desde payload tipo chatbot_config:{id}."""
+    raw = (payload_id or "").strip()
+    if not raw.startswith(CONFIG_PAYLOAD_PREFIX):
+        return None
+    resto = raw[len(CONFIG_PAYLOAD_PREFIX) :].strip()
+    if not resto.isdigit():
+        return None
+    try:
+        return int(resto)
+    except (TypeError, ValueError):
+        return None
 
 
 def interpretar_si_no(
