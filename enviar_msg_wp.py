@@ -835,12 +835,13 @@ def _enviar_media_whatsapp(
     filename: Optional[str] = None,
 ):
     """
-    Envía video o document a WhatsApp Cloud API.
+    Envía video, document, image o audio a WhatsApp Cloud API.
     Exige exactamente uno de: media_url | media_id.
+    caption se incluye en el mismo mensaje (Meta lo ignora en audio).
     """
     tipo = (tipo_media or "").strip().lower()
-    if tipo not in ("video", "document"):
-        raise ValueError("tipo_media debe ser 'video' o 'document'")
+    if tipo not in ("video", "document", "image", "audio"):
+        raise ValueError("tipo_media debe ser 'video', 'document', 'image' o 'audio'")
 
     tiene_url = bool(media_url and str(media_url).strip())
     tiene_id = bool(media_id and str(media_id).strip())
@@ -933,6 +934,48 @@ def enviar_video_whatsapp(
         media_url=video_url,
         media_id=media_id,
         caption=caption,
+    )
+
+
+def enviar_imagen_whatsapp(
+    token: str,
+    numero_id: str,
+    telefono_destino: str,
+    imagen_url: Optional[str] = None,
+    media_id: Optional[str] = None,
+    caption: Optional[str] = None,
+):
+    """Envía una imagen (type=image) con caption opcional en el mismo mensaje."""
+    return _enviar_media_whatsapp(
+        token=token,
+        numero_id=numero_id,
+        telefono_destino=telefono_destino,
+        tipo_media="image",
+        media_url=imagen_url,
+        media_id=media_id,
+        caption=caption,
+    )
+
+
+def enviar_audio_whatsapp(
+    token: str,
+    numero_id: str,
+    telefono_destino: str,
+    audio_url: Optional[str] = None,
+    media_id: Optional[str] = None,
+):
+    """
+    Envía un audio (type=audio). Meta no admite caption en audio;
+    si hace falta texto, enviarlo aparte.
+    """
+    return _enviar_media_whatsapp(
+        token=token,
+        numero_id=numero_id,
+        telefono_destino=telefono_destino,
+        tipo_media="audio",
+        media_url=audio_url,
+        media_id=media_id,
+        caption=None,
     )
 
 
