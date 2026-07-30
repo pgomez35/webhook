@@ -650,10 +650,48 @@ def _limpiar_otras_predeterminadas(cur, agencia_id: int, except_id: int) -> None
     )
 
 
+def _agencia_tiene_plataforma(
+    cur,
+    agencia_id: int,
+    plataforma_codigo: str,
+    *,
+    exclude_configuracion_id: Optional[int] = None,
+) -> bool:
+    """True si la agencia ya tiene una configuración para esa plataforma."""
+    codigo = (plataforma_codigo or "").strip().lower()
+    if not codigo:
+        return False
+    if exclude_configuracion_id is not None:
+        cur.execute(
+            """
+            SELECT 1
+            FROM chatbot.chatbot_configuracion
+            WHERE agencia_id = %s
+              AND lower(plataforma_codigo) = %s
+              AND id <> %s
+            LIMIT 1
+            """,
+            (agencia_id, codigo, int(exclude_configuracion_id)),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT 1
+            FROM chatbot.chatbot_configuracion
+            WHERE agencia_id = %s
+              AND lower(plataforma_codigo) = %s
+            LIMIT 1
+            """,
+            (agencia_id, codigo),
+        )
+    return cur.fetchone() is not None
+
+
 def crear_configuracion_default(agencia_id: int) -> Dict[str, Any]:
     """
-    Crea una configuración inicial si la agencia no tiene ninguna.
-    Si ya existen filas, retorna la primera (orden, id) sin crear otra.
+    Compatibilidad (admin / rutas legacy): crea TikTok solo si la agencia
+    aún no tiene ninguna configuración. El portal multi-plataforma NO debe
+    invocar esto en listados vacíos.
     """
     existentes = listar_configuraciones(agencia_id)
     if existentes:
@@ -707,6 +745,8 @@ def crear_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str, Any]
         raise ValueError("nombre es obligatorio")
     if not texto_opcion:
         raise ValueError("texto_opcion es obligatorio")
+    if not plataforma_codigo:
+        raise ValueError("plataforma_codigo es obligatorio")
 
     plat = obtener_plataforma(plataforma_codigo)
     if not plat or not plat.get("activo"):
@@ -714,6 +754,11 @@ def crear_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str, Any]
 
     with get_connection_chatbot_context() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if _agencia_tiene_plataforma(cur, agencia_id, plataforma_codigo):
+                raise ValueError(
+                    f"Ya existe una configuración para la plataforma "
+                    f"'{plataforma_codigo}' en esta agencia"
+                )
             orden = data.get("orden")
             if orden is None:
                 orden = _siguiente_orden(cur, agencia_id)
@@ -756,7 +801,7 @@ def crear_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str, Any]
                         texto_opcion,
                         es_predeterminada,
                         int(orden),
-                        bool(data.get("activo", True)),
+                        bool(data.get("activo", False)),
                         data["mensaje_bienvenida"],
                         data["pregunta_usuario"],
                         data["pregunta_mayor_edad"],
@@ -786,11 +831,12 @@ def crear_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str, Any]
                 _limpiar_otras_predeterminadas(cur, agencia_id, cfg_id)
             logger.info(
                 "[CHATBOT-CONFIG] creada agencia_id=%s configuracion_id=%s "
-                "plataforma_codigo=%s codigo=%s",
+                "plataforma_codigo=%s codigo=%s activo=%s",
                 agencia_id,
                 cfg_id,
                 plataforma_codigo,
                 codigo,
+                bool(data.get("activo", False)),
             )
     return obtener_configuracion_por_id(agencia_id, cfg_id) or dict(row)
 
@@ -887,6 +933,17 @@ def actualizar_configuracion(
 
     with get_connection_chatbot_context() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if plataforma_codigo is not None:
+                if _agencia_tiene_plataforma(
+                    cur,
+                    agencia_id,
+                    plataforma_codigo,
+                    exclude_configuracion_id=configuracion_id,
+                ):
+                    raise ValueError(
+                        f"Ya existe una configuración para la plataforma "
+                        f"'{plataforma_codigo}' en esta agencia"
+                    )
             try:
                 # recursos_bienvenida va explícito en SET (JSONB) y se valida con
                 # RETURNING de esta misma conexión/transacción — no releer con otra sesión.

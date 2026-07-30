@@ -339,7 +339,7 @@ class ChatbotConfiguracionCreate(BaseModel):
     texto_opcion: str = Field(..., max_length=40)
     es_predeterminada: bool = False
     orden: Optional[int] = Field(None, ge=1)
-    activo: bool = True
+    activo: bool = False
     mensaje_bienvenida: str = Field(..., max_length=600)
     pregunta_usuario: str = Field(..., max_length=300)
     pregunta_mayor_edad: str = Field(..., max_length=150)

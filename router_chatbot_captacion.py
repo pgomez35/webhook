@@ -175,7 +175,7 @@ def _http_from_value_error(e: ValueError) -> HTTPException:
         return HTTPException(status_code=403, detail=msg)
     if "desactivada" in lower or "inactiva" in lower:
         return HTTPException(status_code=400, detail=msg)
-    if "código" in lower or "codigo" in lower or "ya existe" in lower:
+    if "ya existe" in lower or "código" in lower or "codigo" in lower:
         return HTTPException(status_code=409, detail=msg)
     return HTTPException(status_code=400, detail=msg)
 
@@ -222,13 +222,12 @@ def put_mensaje_seleccion(
 
 @router.get("/configuraciones", response_model=list[ChatbotConfiguracionResumen])
 def list_configuraciones(agencia: dict = Depends(obtener_agencia_chatbot_actual)):
+    """
+    Lista configuraciones de la agencia autenticada.
+    No crea registros automáticamente: una agencia nueva puede quedar sin configs
+    hasta que elija su primera plataforma en el portal.
+    """
     rows = db.listar_configuraciones(int(agencia["id"]))
-    if not rows:
-        # Primera visita: crear default para no dejar el portal vacío
-        created = db.crear_configuracion_default(int(agencia["id"]))
-        rows = [created] if created else []
-        # Releer con JOIN plataforma
-        rows = db.listar_configuraciones(int(agencia["id"]))
     return [_config_resumen(r) for r in rows]
 
 
