@@ -285,6 +285,11 @@ def enviar_recursos_chatbot_whatsapp(
     Envía recursos activos de la configuración seleccionada
     (JSONB recursos_bienvenida) para un momento concreto, ordenados por `orden`.
 
+    Ejecución estrictamente secuencial y bloqueante: cada llamada a Meta
+    (video / PDF / image / audio y su mensaje_adicional) espera la respuesta
+    HTTP antes de continuar con el siguiente. No usa create_task, hilos ni
+    envíos en paralelo (WhatsApp puede reordenar si se dispara en background).
+
     Errores por recurso no detienen el flujo del chatbot.
     Cada recurso se envía con su `caption` en el mismo mensaje Meta.
 
@@ -566,9 +571,20 @@ def enviar_recursos_chatbot_whatsapp(
             meta_mid,
         )
 
+        # Mensaje adicional del mismo recurso, solo tras confirmar el media
         extra = (recurso.get("mensaje_adicional") or "").strip()
         if extra:
             try:
+                logger.info(
+                    "[CHATBOT-MEDIA] enviando mensaje_adicional (secuencial) "
+                    "public_id=%s momento=%s agencia_id=%s aspirante_id=%s "
+                    "chatbot_configuracion_id=%s",
+                    public_id,
+                    momento,
+                    agencia_id,
+                    aspirante_id,
+                    cfg_log,
+                )
                 _enviar_texto(access_token, phone_number_id, telefono, extra)
                 logger.info(
                     "[CHATBOT-MEDIA] mensaje_adicional enviado public_id=%s momento=%s",
@@ -583,6 +599,14 @@ def enviar_recursos_chatbot_whatsapp(
                     aspirante_id,
                     public_id,
                 )
+
+        logger.info(
+            "[CHATBOT-MEDIA] recurso completado; siguiente si hay más "
+            "id=%s tipo=%s momento_envio=%s",
+            rid,
+            tipo_log,
+            momento,
+        )
 
 
 def _enviar_recursos_bienvenida(
@@ -1395,10 +1419,10 @@ def procesar_chatbot_captacion(
                 return True
 
             try:
-                aspirante = _persistir_transicion(
+                # 1) Guardar usuario SIN avanzar etapa (etapa sigue en usuario)
+                #    hasta completar el envío secuencial de recursos.
+                aspirante = db.actualizar_aspirante_flujo_commit(
                     aspirante["id"],
-                    ETAPA_USUARIO,
-                    ETAPA_MAYOR_EDAD,
                     {
                         "usuario_plataforma": usuario,
                         "ultimo_message_id_meta": message_id_meta,
@@ -1416,10 +1440,12 @@ def procesar_chatbot_captacion(
                 "chatbot_configuracion_id=%s plataforma_codigo=%s",
                 agencia_id,
                 aspirante.get("id"),
-                config.get("id"),
+                aspirante.get("chatbot_configuracion_id") or config.get("id"),
                 plataforma_codigo,
             )
-            # Orden: usuario guardado → recursos despues_bienvenida → pregunta edad
+
+            # 2) Recursos despues_bienvenida (secuencial / bloqueante; sin create_task)
+            #    Orden: cada recurso + caption → mensaje_adicional → siguiente recurso
             try:
                 cfg_sel = (
                     aspirante.get("chatbot_configuracion_id")
@@ -1427,7 +1453,7 @@ def procesar_chatbot_captacion(
                 )
                 logger.info(
                     "[CHATBOT] enviando recursos despues_bienvenida "
-                    "(tras guardar usuario, antes de mayor_edad) "
+                    "(tras guardar usuario, antes de etapa/pregunta mayor_edad) "
                     "agencia_id=%s aspirante_id=%s chatbot_configuracion_id=%s",
                     agencia_id,
                     aspirante.get("id"),
@@ -1448,8 +1474,33 @@ def procesar_chatbot_captacion(
             except Exception:
                 logger.exception(
                     "[CHATBOT] error enviando recursos despues_bienvenida; "
-                    "se continúa con pregunta_mayor_edad"
+                    "se continúa con etapa y pregunta_mayor_edad"
                 )
+
+            # 3) Avanzar etapa solo cuando los recursos ya se enviaron (o fallaron)
+            try:
+                aspirante = _persistir_transicion(
+                    aspirante["id"],
+                    ETAPA_USUARIO,
+                    ETAPA_MAYOR_EDAD,
+                    {"ultimo_message_id_meta": message_id_meta},
+                )
+            except Exception:
+                logger.exception(
+                    "[CHATBOT] no se pudo persistir etapa mayor_edad; "
+                    "no se envía pregunta_mayor_edad"
+                )
+                traceback.print_exc()
+                return True
+
+            # 4) Pregunta mayoría de edad (después de recursos y de actualizar etapa)
+            logger.info(
+                "[CHATBOT] enviando pregunta_mayor_edad "
+                "agencia_id=%s aspirante_id=%s chatbot_configuracion_id=%s",
+                agencia_id,
+                aspirante.get("id"),
+                aspirante.get("chatbot_configuracion_id") or config.get("id"),
+            )
             _enviar_botones(
                 token,
                 phone_number_id,

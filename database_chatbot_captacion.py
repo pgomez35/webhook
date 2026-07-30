@@ -942,7 +942,7 @@ def duplicar_configuracion(
         "orden": None,
         "activo": bool(origen.get("activo", True)),
         "mensaje_bienvenida": (origen.get("mensaje_bienvenida") or "Bienvenido")[:600],
-        "pregunta_usuario": (origen.get("pregunta_usuario") or "¿Cuál es tu usuario?")[:180],
+        "pregunta_usuario": (origen.get("pregunta_usuario") or "¿Cuál es tu usuario?")[:300],
         "pregunta_mayor_edad": (origen.get("pregunta_mayor_edad") or "¿Eres mayor de edad?")[:150],
         "pregunta_disponibilidad": (
             origen.get("pregunta_disponibilidad")

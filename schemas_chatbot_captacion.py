@@ -317,7 +317,7 @@ class ChatbotConfiguracionCreate(BaseModel):
     orden: Optional[int] = Field(None, ge=1)
     activo: bool = True
     mensaje_bienvenida: str = Field(..., max_length=600)
-    pregunta_usuario: str = Field(..., max_length=180)
+    pregunta_usuario: str = Field(..., max_length=300)
     pregunta_mayor_edad: str = Field(..., max_length=150)
     pregunta_disponibilidad: str = Field(..., max_length=200)
     mensaje_aprobado: str = Field(..., max_length=300)
@@ -388,7 +388,7 @@ class ChatbotConfiguracionUpdate(BaseModel):
     es_predeterminada: Optional[bool] = None
     orden: Optional[int] = Field(None, ge=1)
     mensaje_bienvenida: str = Field(..., max_length=600)
-    pregunta_usuario: str = Field(..., max_length=180)
+    pregunta_usuario: str = Field(..., max_length=300)
     pregunta_mayor_edad: str = Field(..., max_length=150)
     pregunta_disponibilidad: str = Field(..., max_length=200)
     mensaje_aprobado: str = Field(..., max_length=300)
