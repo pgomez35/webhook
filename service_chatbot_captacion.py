@@ -9,6 +9,7 @@ Así un fallo de Meta o de UPDATE no deja bienvenida enviada sin fila persistida
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import traceback
 from typing import Any, Dict, List, Optional
@@ -269,6 +270,99 @@ def _filtrar_recursos_por_momento(
     return filtrados
 
 
+def _enviar_recurso_meta(
+    *,
+    tipo: str,
+    recurso: Dict[str, Any],
+    url: str,
+    caption: Optional[str],
+    access_token: str,
+    phone_number_id: str,
+    telefono: str,
+    rid: Any,
+    momento: str,
+    agencia_id: int,
+    aspirante_id: Optional[int],
+    cfg_log: Any,
+) -> tuple:
+    """
+    Despacha un recurso al método Meta correspondiente (secuencial/bloqueante).
+    - document/pdf → media_id + document.id
+    - video / image → link + caption en el mismo mensaje
+    - audio → link; caption como texto inmediatamente después (Meta no admite caption)
+    """
+    if tipo == "video":
+        return enviar_video_whatsapp(
+            token=access_token,
+            numero_id=phone_number_id,
+            telefono_destino=telefono,
+            video_url=url,
+            caption=caption,
+        )
+    if tipo == "document":
+        logger.info(
+            "[CHATBOT-PDF] inicio descarga+media_id id=%s momento_envio=%s "
+            "secure_url=%s filename=%s agencia_id=%s aspirante_id=%s "
+            "chatbot_configuracion_id=%s",
+            rid,
+            momento,
+            _enmascarar_secure_url(url),
+            _nombre_archivo_pdf(recurso),
+            agencia_id,
+            aspirante_id,
+            cfg_log,
+        )
+        status, body = enviar_documento_pdf_via_media_id_desde_url(
+            token=access_token,
+            numero_id=phone_number_id,
+            telefono_destino=telefono,
+            documento_url=url,
+            caption=caption,
+            filename=_nombre_archivo_pdf(recurso),
+        )
+        logger.info(
+            "[CHATBOT-PDF] resultado envío id=%s http=%s meta=%s "
+            "agencia_id=%s aspirante_id=%s chatbot_configuracion_id=%s "
+            "momento_envio=%s tipo=PDF secure_url=%s",
+            rid,
+            status,
+            _meta_error_resumen(body) or "ok",
+            agencia_id,
+            aspirante_id,
+            cfg_log,
+            momento,
+            _enmascarar_secure_url(url),
+        )
+        return status, body
+    if tipo == "image":
+        return enviar_imagen_whatsapp(
+            token=access_token,
+            numero_id=phone_number_id,
+            telefono_destino=telefono,
+            imagen_url=url,
+            caption=caption,
+        )
+    if tipo == "audio":
+        status, body = enviar_audio_whatsapp(
+            token=access_token,
+            numero_id=phone_number_id,
+            telefono_destino=telefono,
+            audio_url=url,
+        )
+        if caption and status in (200, 201):
+            try:
+                _enviar_texto(access_token, phone_number_id, telefono, caption)
+            except Exception:
+                logger.warning(
+                    "[CHATBOT-MEDIA] caption de audio no enviado "
+                    "agencia_id=%s aspirante_id=%s",
+                    agencia_id,
+                    aspirante_id,
+                )
+        return status, body
+    raise ValueError(f"tipo_no_soportado:{tipo}")
+
+
 def enviar_recursos_chatbot_whatsapp(
     *,
     agencia_id: int,
@@ -297,8 +391,8 @@ def enviar_recursos_chatbot_whatsapp(
     - document / pdf: media_id Meta → document.id + filename + caption
     - image / audio: preparados
 
-    Nota: `despues_bienvenida` se dispara tras guardar el identificador
-    de plataforma del aspirante (no inmediatamente tras el mensaje de bienvenida).
+    Nota: `despues_bienvenida` se envía en el inicio de la config
+    (bienvenida → archivo → pregunta_usuario), un solo recurso por orden.
     """
     cfg_id = chatbot_configuracion_id or (config or {}).get("id")
     if cfg_id is not None:
@@ -439,76 +533,7 @@ def enviar_recursos_chatbot_whatsapp(
         status = None
         body: Any = None
         try:
-            if tipo == "video":
-                status, body = enviar_video_whatsapp(
-                    token=access_token,
-                    numero_id=phone_number_id,
-                    telefono_destino=telefono,
-                    video_url=url,
-                    caption=caption,
-                )
-            elif tipo == "document":
-                logger.info(
-                    "[CHATBOT-PDF] inicio descarga+media_id id=%s momento_envio=%s "
-                    "secure_url=%s filename=%s agencia_id=%s aspirante_id=%s "
-                    "chatbot_configuracion_id=%s",
-                    rid,
-                    momento,
-                    _enmascarar_secure_url(url),
-                    _nombre_archivo_pdf(recurso),
-                    agencia_id,
-                    aspirante_id,
-                    cfg_log,
-                )
-                # PDF (tipo document|pdf): Cloudinary → media_id → document.id
-                status, body = enviar_documento_pdf_via_media_id_desde_url(
-                    token=access_token,
-                    numero_id=phone_number_id,
-                    telefono_destino=telefono,
-                    documento_url=url,
-                    caption=caption,
-                    filename=_nombre_archivo_pdf(recurso),
-                )
-                logger.info(
-                    "[CHATBOT-PDF] resultado envío id=%s http=%s meta=%s "
-                    "agencia_id=%s aspirante_id=%s chatbot_configuracion_id=%s "
-                    "momento_envio=%s tipo=%s secure_url=%s",
-                    rid,
-                    status,
-                    _meta_error_resumen(body) or "ok",
-                    agencia_id,
-                    aspirante_id,
-                    cfg_log,
-                    momento,
-                    tipo_log,
-                    _enmascarar_secure_url(url),
-                )
-            elif tipo == "image":
-                status, body = enviar_imagen_whatsapp(
-                    token=access_token,
-                    numero_id=phone_number_id,
-                    telefono_destino=telefono,
-                    imagen_url=url,
-                    caption=caption,
-                )
-            elif tipo == "audio":
-                status, body = enviar_audio_whatsapp(
-                    token=access_token,
-                    numero_id=phone_number_id,
-                    telefono_destino=telefono,
-                    audio_url=url,
-                )
-                if caption and status in (200, 201):
-                    try:
-                        _enviar_texto(access_token, phone_number_id, telefono, caption)
-                    except Exception:
-                        logger.warning(
-                            "[CHATBOT-MEDIA] caption de audio no enviado "
-                            "agencia_id=%s public_id=%s",
-                            agencia_id,
-                            public_id,
-                        )
-            else:
+            if tipo not in ("video", "document", "image", "audio"):
                 logger.warning(
                     "[CHATBOT-MEDIA] recurso descartado razón=tipo_no_soportado "
                     "id=%s tipo_raw=%r tipo_norm=%r momento_envio=%s "
@@ -522,6 +547,20 @@ def enviar_recursos_chatbot_whatsapp(
                     cfg_log,
                 )
                 continue
+            status, body = _enviar_recurso_meta(
+                tipo=tipo,
+                recurso=recurso,
+                url=url,
+                caption=caption,
+                access_token=access_token,
+                phone_number_id=phone_number_id,
+                telefono=telefono,
+                rid=rid,
+                momento=momento,
+                agencia_id=agencia_id,
+                aspirante_id=aspirante_id,
+                cfg_log=cfg_log,
+            )
         except Exception as e:
             logger.warning(
                 "[CHATBOT-MEDIA] excepción agencia_id=%s aspirante_id=%s "
@@ -716,7 +755,66 @@ def _enviar_selector_configuraciones(
     )
 
 
-def _enviar_inicio_config(
+def _seleccionar_recurso_unico_despues_bienvenida(
+    *,
+    config: Dict[str, Any],
+    agencia_id: int,
+    aspirante_id: Optional[int],
+) -> Optional[Dict[str, Any]]:
+    """
+    Devuelve el primer recurso activo con momento despues_bienvenida
+    (ordenado por `orden`) de la chatbot_configuracion_id de la config.
+    Si hay varios (datos legacy), advierte y usa solo el primero.
+    """
+    cfg_id = (config or {}).get("id")
+    try:
+        cfg_id_int = int(cfg_id) if cfg_id is not None else None
+    except (TypeError, ValueError):
+        cfg_id_int = None
+
+    cfg = config or {}
+    if cfg_id_int and agencia_id:
+        fresh = db.obtener_configuracion_por_id(
+            int(agencia_id), int(cfg_id_int), solo_activa=False
+        )
+        if fresh:
+            cfg = fresh
+
+    recursos = db.parse_recursos_bienvenida(cfg.get("recursos_bienvenida"))
+    seleccion = _filtrar_recursos_por_momento(
+        list(recursos or []),
+        MOMENTO_DESPUES_BIENVENIDA,
+        agencia_id=agencia_id,
+        aspirante_id=aspirante_id,
+        chatbot_configuracion_id=cfg_id_int or cfg.get("id"),
+    )
+    if not seleccion:
+        logger.info(
+            "[CHATBOT-MEDIA] sin recurso activo despues_bienvenida "
+            "agencia_id=%s aspirante_id=%s chatbot_configuracion_id=%s",
+            agencia_id,
+            aspirante_id,
+            cfg_id_int or cfg.get("id"),
+        )
+        return None
+    if len(seleccion) > 1:
+        primero = seleccion[0]
+        logger.warning(
+            "[CHATBOT-MEDIA] múltiples recursos activos despues_bienvenida "
+            "n=%s; se envía solo el primero orden=%s id=%s tipo=%s "
+            "agencia_id=%s aspirante_id=%s chatbot_configuracion_id=%s",
+            len(seleccion),
+            primero.get("orden"),
+            primero.get("id"),
+            primero.get("tipo"),
+            agencia_id,
+            aspirante_id,
+            cfg_id_int or cfg.get("id"),
+        )
+    return seleccion[0]
+
+
+async def _enviar_inicio_config(
     *,
     config: Dict[str, Any],
     aspirante: Dict[str, Any],
@@ -726,24 +824,122 @@ def _enviar_inicio_config(
     telefono: str,
 ) -> None:
     """
-    Inicio de la config seleccionada:
-    bienvenida → pregunta_usuario.
-    Los recursos `despues_bienvenida` se envían después de guardar el
-    identificador de plataforma (ver etapa usuario).
+    Inicio de la config seleccionada (secuencial, sin create_task):
+    mensaje_bienvenida → [2s + archivo+caption + 2s] → pregunta_usuario.
+
+    Un solo recurso activo con momento_envio=despues_bienvenida.
+    Si no hay archivo, pasa directo a pregunta_usuario tras la bienvenida.
     """
+    cfg_id = config.get("id")
     logger.info(
         "[CHATBOT] enviando bienvenida agencia_id=%s aspirante_id=%s "
         "chatbot_configuracion_id=%s plataforma_codigo=%s",
         agencia_id,
         aspirante.get("id"),
-        config.get("id"),
+        cfg_id,
         config.get("plataforma_codigo"),
     )
     _enviar_texto(token, phone_number_id, telefono, config["mensaje_bienvenida"])
+
+    recurso = _seleccionar_recurso_unico_despues_bienvenida(
+        config=config,
+        agencia_id=agencia_id,
+        aspirante_id=aspirante.get("id"),
+    )
+    if recurso:
+        await asyncio.sleep(2)
+        tipo = _normalizar_tipo_recurso(recurso.get("tipo"))
+        url = (recurso.get("secure_url") or recurso.get("url") or "").strip()
+        caption_raw = (recurso.get("caption") or "").strip()
+        caption = caption_raw or None
+        rid = recurso.get("id")
+        tipo_log = "PDF" if tipo == "document" else (tipo or "desconocido")
+
+        logger.info(
+            "[CHATBOT] enviando recurso unico despues_bienvenida "
+            "id=%s tipo=%s orden=%s agencia_id=%s aspirante_id=%s "
+            "chatbot_configuracion_id=%s secure_url=%s",
+            rid,
+            tipo_log,
+            recurso.get("orden"),
+            agencia_id,
+            aspirante.get("id"),
+            cfg_id,
+            _enmascarar_secure_url(url),
+        )
+        if not url.startswith("https://"):
+            logger.warning(
+                "[CHATBOT-MEDIA] recurso unico descartado razón=url_invalida "
+                "id=%s tipo=%s agencia_id=%s chatbot_configuracion_id=%s",
+                rid,
+                tipo_log,
+                agencia_id,
+                cfg_id,
+            )
+        elif tipo not in ("video", "document", "image", "audio"):
+            logger.warning(
+                "[CHATBOT-MEDIA] recurso unico descartado razón=tipo_no_soportado "
+                "id=%s tipo_raw=%r agencia_id=%s chatbot_configuracion_id=%s",
+                rid,
+                recurso.get("tipo"),
+                agencia_id,
+                cfg_id,
+            )
+        else:
+            try:
+                status, body = _enviar_recurso_meta(
+                    tipo=tipo,
+                    recurso=recurso,
+                    url=url,
+                    caption=caption,
+                    access_token=token,
+                    phone_number_id=phone_number_id,
+                    telefono=telefono,
+                    rid=rid,
+                    momento=MOMENTO_DESPUES_BIENVENIDA,
+                    agencia_id=agencia_id,
+                    aspirante_id=aspirante.get("id"),
+                    cfg_log=cfg_id,
+                )
+                if status not in (200, 201):
+                    logger.warning(
+                        "[CHATBOT-MEDIA] fallo recurso unico inicio http=%s meta=%s "
+                        "id=%s tipo=%s chatbot_configuracion_id=%s",
+                        status,
+                        _meta_error_resumen(body),
+                        rid,
+                        tipo_log,
+                        cfg_id,
+                    )
+                else:
+                    logger.info(
+                        "[CHATBOT-MEDIA] ok recurso unico inicio id=%s tipo=%s "
+                        "http=%s chatbot_configuracion_id=%s",
+                        rid,
+                        tipo_log,
+                        status,
+                        cfg_id,
+                    )
+            except Exception:
+                logger.exception(
+                    "[CHATBOT] error enviando recurso unico despues_bienvenida; "
+                    "se continúa con pregunta_usuario "
+                    "agencia_id=%s chatbot_configuracion_id=%s",
+                    agencia_id,
+                    cfg_id,
+                )
+        await asyncio.sleep(2)
+    else:
+        logger.info(
+            "[CHATBOT] sin archivo despues_bienvenida; "
+            "continúa con pregunta_usuario chatbot_configuracion_id=%s",
+            cfg_id,
+        )
+
     logger.info(
         "[CHATBOT] enviando pregunta usuario plataforma "
         "chatbot_configuracion_id=%s",
-        config.get("id"),
+        cfg_id,
     )
     _enviar_texto(token, phone_number_id, telefono, config["pregunta_usuario"])
 
@@ -1029,7 +1225,7 @@ def _manejar_faq_seleccionada(
     return True
 
 
-def procesar_chatbot_captacion(
+async def procesar_chatbot_captacion(
     *,
     agencia_id: Optional[int],
     whatsapp_account_id: Optional[int],
@@ -1240,7 +1436,7 @@ def procesar_chatbot_captacion(
                 return True
             if not config:
                 return True
-            _enviar_inicio_config(
+            await _enviar_inicio_config(
                 config=config,
                 aspirante=aspirante,
                 agencia_id=agencia_id,
@@ -1283,7 +1479,7 @@ def procesar_chatbot_captacion(
                     )
                     return True
                 # Tras auto-asignación siempre enviamos inicio de esa config
-                _enviar_inicio_config(
+                await _enviar_inicio_config(
                     config=config,
                     aspirante=aspirante,
                     agencia_id=agencia_id,
@@ -1381,7 +1577,7 @@ def procesar_chatbot_captacion(
                 traceback.print_exc()
                 return True
 
-            _enviar_inicio_config(
+            await _enviar_inicio_config(
                 config=config,
                 aspirante=aspirante,
                 agencia_id=agencia_id,
@@ -1419,10 +1615,10 @@ def procesar_chatbot_captacion(
                 return True
 
             try:
-                # 1) Guardar usuario SIN avanzar etapa (etapa sigue en usuario)
-                #    hasta completar el envío secuencial de recursos.
-                aspirante = db.actualizar_aspirante_flujo_commit(
+                aspirante = _persistir_transicion(
                     aspirante["id"],
+                    ETAPA_USUARIO,
+                    ETAPA_MAYOR_EDAD,
                     {
                         "usuario_plataforma": usuario,
                         "ultimo_message_id_meta": message_id_meta,
@@ -1442,64 +1638,6 @@ def procesar_chatbot_captacion(
                 aspirante.get("id"),
                 aspirante.get("chatbot_configuracion_id") or config.get("id"),
                 plataforma_codigo,
-            )
-
-            # 2) Recursos despues_bienvenida (secuencial / bloqueante; sin create_task)
-            #    Orden: cada recurso + caption → mensaje_adicional → siguiente recurso
-            try:
-                cfg_sel = (
-                    aspirante.get("chatbot_configuracion_id")
-                    or config.get("id")
-                )
-                logger.info(
-                    "[CHATBOT] enviando recursos despues_bienvenida "
-                    "(tras guardar usuario, antes de etapa/pregunta mayor_edad) "
-                    "agencia_id=%s aspirante_id=%s chatbot_configuracion_id=%s",
-                    agencia_id,
-                    aspirante.get("id"),
-                    cfg_sel,
-                )
-                enviar_recursos_chatbot_whatsapp(
-                    agencia_id=agencia_id,
-                    aspirante_id=aspirante.get("id"),
-                    telefono=telefono,
-                    phone_number_id=phone_number_id,
-                    access_token=token,
-                    momento_envio=MOMENTO_DESPUES_BIENVENIDA,
-                    config=config,
-                    chatbot_configuracion_id=(
-                        int(cfg_sel) if cfg_sel is not None else None
-                    ),
-                )
-            except Exception:
-                logger.exception(
-                    "[CHATBOT] error enviando recursos despues_bienvenida; "
-                    "se continúa con etapa y pregunta_mayor_edad"
-                )
-
-            # 3) Avanzar etapa solo cuando los recursos ya se enviaron (o fallaron)
-            try:
-                aspirante = _persistir_transicion(
-                    aspirante["id"],
-                    ETAPA_USUARIO,
-                    ETAPA_MAYOR_EDAD,
-                    {"ultimo_message_id_meta": message_id_meta},
-                )
-            except Exception:
-                logger.exception(
-                    "[CHATBOT] no se pudo persistir etapa mayor_edad; "
-                    "no se envía pregunta_mayor_edad"
-                )
-                traceback.print_exc()
-                return True
-
-            # 4) Pregunta mayoría de edad (después de recursos y de actualizar etapa)
-            logger.info(
-                "[CHATBOT] enviando pregunta_mayor_edad "
-                "agencia_id=%s aspirante_id=%s chatbot_configuracion_id=%s",
-                agencia_id,
-                aspirante.get("id"),
-                aspirante.get("chatbot_configuracion_id") or config.get("id"),
             )
             _enviar_botones(
                 token,

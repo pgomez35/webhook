@@ -12,8 +12,9 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 FAQ_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 ACCIONES = Literal["asesor", "url", "agendamiento", "finalizar"]
-# "pdf" se acepta en entrada y se normaliza a "document" (Meta type=document).
-TIPOS_RECURSO = Literal["video", "document", "pdf"]
+# pdf se acepta en entrada (legado) y se normaliza a document.
+TIPOS_RECURSO = Literal["video", "document", "pdf", "image", "audio"]
+MAX_RECURSOS_BIENVENIDA = 10
 ESTADOS_ASPIRANTE = Literal[
     "nuevo",
     "en_proceso",
@@ -79,9 +80,10 @@ class PreguntaFrecuente(BaseModel):
 
 class RecursoBienvenida(BaseModel):
     """
-    Recurso de bienvenida almacenado en JSONB.
+    Recurso informativo / archivo adjunto en JSONB recursos_bienvenida.
     Tras Cloudinary: proveedor=cloudinary + metadatos (sin binarios ni secretos).
     `url` se mantiene como espejo de secure_url para compatibilidad de envío WhatsApp.
+    Tipos canónicos: video | document | image | audio (alias pdf → document).
     """
 
     id: str = Field(..., max_length=80)
@@ -91,15 +93,16 @@ class RecursoBienvenida(BaseModel):
     url: Optional[str] = Field(None, max_length=2000)
     public_id: Optional[str] = Field(None, max_length=500)
     asset_id: Optional[str] = Field(None, max_length=120)
-    resource_type: Optional[Literal["video", "raw"]] = None
+    resource_type: Optional[Literal["video", "raw", "image"]] = None
     format: Optional[str] = Field(None, max_length=20)
+    mime_type: Optional[str] = Field(None, max_length=100)
     bytes: Optional[int] = Field(None, ge=0)
     nombre_original: Optional[str] = Field(None, max_length=200)
     caption: Optional[str] = Field(None, max_length=300)
     nombre_archivo: Optional[str] = Field(None, max_length=150)
     momento_envio: Optional[str] = Field(None, max_length=40)
     mensaje_adicional: Optional[str] = Field(None, max_length=1000)
-    orden: int = Field(..., ge=1, le=2)
+    orden: int = Field(..., ge=1, le=50)
     activo: bool = True
 
     @field_validator("id")
@@ -136,7 +139,15 @@ class RecursoBienvenida(BaseModel):
             raise ValueError("caption máximo 300 caracteres")
         return texto
 
-    @field_validator("nombre_archivo", "nombre_original", "public_id", "asset_id", "format", "momento_envio")
+    @field_validator(
+        "nombre_archivo",
+        "nombre_original",
+        "public_id",
+        "asset_id",
+        "format",
+        "momento_envio",
+        "mime_type",
+    )
     @classmethod
     def strip_opcional(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
@@ -169,19 +180,29 @@ class RecursoBienvenida(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def normalizar_entrada(cls, data: Any) -> Any:
-        """Compatibilidad: completa resource_type / url desde campos parciales."""
+        """Compatibilidad: completa resource_type / url; alias pdf → document."""
         if not isinstance(data, dict):
             return data
         out = dict(data)
         tipo_raw = out.get("tipo")
         tipo_norm = str(tipo_raw or "").strip().lower()
-        # Alias de persistencia/legado: pdf → document
         if tipo_norm in ("pdf", "documento", "doc"):
             out["tipo"] = "document"
             tipo_norm = "document"
+        elif tipo_norm in ("imagen", "img", "photo", "foto"):
+            out["tipo"] = "image"
+            tipo_norm = "image"
+        elif tipo_norm in ("voice", "voz"):
+            out["tipo"] = "audio"
+            tipo_norm = "audio"
         tipo = out.get("tipo")
         if not out.get("resource_type"):
             if tipo == "video":
+                out["resource_type"] = "video"
+            elif tipo == "image":
+                out["resource_type"] = "image"
+            elif tipo == "audio":
+                # Cloudinary suele alojar audio en el endpoint video
                 out["resource_type"] = "video"
             elif tipo_norm == "document":
                 out["resource_type"] = "raw"
@@ -197,10 +218,8 @@ class RecursoBienvenida(BaseModel):
                 if n.lower().endswith(".pdf"):
                     out["nombre_archivo"] = n
                 elif "." not in base:
-                    # Sin extensión: completar a .pdf
                     out["nombre_archivo"] = f"{n}.pdf"
                 else:
-                    # Otra extensión (.docx, etc.): dejar para el validador after
                     out["nombre_archivo"] = n
         return out
 
@@ -221,7 +240,12 @@ class RecursoBienvenida(BaseModel):
         if self.tipo == "video":
             if self.resource_type != "video":
                 raise ValueError("video requiere resource_type=video")
-            object.__setattr__(self, "nombre_archivo", None)
+        elif self.tipo == "image":
+            if self.resource_type != "image":
+                raise ValueError("image requiere resource_type=image")
+        elif self.tipo == "audio":
+            if self.resource_type not in ("video", "raw"):
+                raise ValueError("audio requiere resource_type=video o raw")
         elif self.tipo == "document":
             if self.resource_type != "raw":
                 raise ValueError("document requiere resource_type=raw")
@@ -530,15 +554,8 @@ def _validar_config_flujo(self):
             )
 
     recursos = self.recursos_bienvenida or []
-    if len(recursos) > 2:
-        raise ValueError("Máximo 2 recursos de bienvenida")
-
-    videos = [r for r in recursos if r.tipo == "video"]
-    docs = [r for r in recursos if r.tipo == "document"]
-    if len(videos) > 1:
-        raise ValueError("Máximo un video de bienvenida")
-    if len(docs) > 1:
-        raise ValueError("Máximo un documento de bienvenida")
+    if len(recursos) > MAX_RECURSOS_BIENVENIDA:
+        raise ValueError(f"Máximo {MAX_RECURSOS_BIENVENIDA} recursos informativos")
 
     ids_rec = [r.id.lower() for r in recursos]
     if len(ids_rec) != len(set(ids_rec)):
@@ -621,7 +638,7 @@ class MediaFirmaResponse(BaseModel):
     api_key: str
     timestamp: int
     signature: str
-    resource_type: Literal["video", "raw"]
+    resource_type: Literal["video", "raw", "image"]
     asset_folder: str
     upload_url: str
     overwrite: bool = False
@@ -633,7 +650,7 @@ class MediaEliminarRequest(BaseModel):
     model_config = {"extra": "forbid"}
 
     public_id: str = Field(..., min_length=1, max_length=300)
-    resource_type: Literal["video", "raw"]
+    resource_type: Literal["video", "raw", "image"]
 
     @field_validator("public_id")
     @classmethod

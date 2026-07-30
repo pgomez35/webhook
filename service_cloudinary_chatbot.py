@@ -1,5 +1,5 @@
 """
-Cloudinary — carga firmada y eliminación de recursos de bienvenida del chatbot.
+Cloudinary — carga firmada y eliminación de recursos informativos del chatbot.
 No exponer CLOUDINARY_API_SECRET en respuestas, logs ni frontend.
 """
 from __future__ import annotations
@@ -17,12 +17,19 @@ from fastapi import HTTPException
 
 logger = logging.getLogger("uvicorn.error")
 
-TipoMedia = Literal["video", "document"]
-ResourceType = Literal["video", "raw"]
+TipoMedia = Literal["video", "document", "image", "audio"]
+ResourceType = Literal["video", "raw", "image"]
 
 VIDEO_MAX_BYTES = 16 * 1024 * 1024
 PDF_MAX_BYTES = 20 * 1024 * 1024
-TIPOS_PERMITIDOS = frozenset({"video", "document"})
+IMAGE_MAX_BYTES = 5 * 1024 * 1024
+AUDIO_MAX_BYTES = 16 * 1024 * 1024
+
+TIPOS_PERMITIDOS = frozenset({"video", "document", "image", "audio"})
+
+_FORMATOS_VIDEO = frozenset({"mp4", "mov"})
+_FORMATOS_IMAGE = frozenset({"jpg", "jpeg", "png", "webp"})
+_FORMATOS_AUDIO = frozenset({"mp3", "m4a", "aac", "ogg"})
 
 _cloudinary_configured = False
 
@@ -66,12 +73,32 @@ def public_id_pertenece_agencia(public_id: str, agencia_id: int) -> bool:
     return pid == prefix or pid.startswith(prefix + "/")
 
 
+def normalizar_tipo_media(tipo: str) -> str:
+    t = (tipo or "").strip().lower()
+    if t in ("pdf", "documento", "doc"):
+        return "document"
+    if t in ("imagen", "img", "photo", "foto"):
+        return "image"
+    if t in ("voice", "voz"):
+        return "audio"
+    return t
+
+
 def resource_type_para_tipo(tipo: str) -> ResourceType:
-    if tipo == "video":
+    t = normalizar_tipo_media(tipo)
+    if t == "video":
         return "video"
-    if tipo == "document":
+    if t == "image":
+        return "image"
+    if t == "document":
         return "raw"
-    raise HTTPException(status_code=400, detail="tipo debe ser video o document")
+    if t == "audio":
+        # Cloudinary aloja audio vía endpoint video
+        return "video"
+    raise HTTPException(
+        status_code=400,
+        detail="tipo debe ser video, document, image o audio",
+    )
 
 
 def generar_firma_carga(*, agencia_id: int, tipo: str) -> Dict[str, Any]:
@@ -79,22 +106,22 @@ def generar_firma_carga(*, agencia_id: int, tipo: str) -> Dict[str, Any]:
     Firma de corta duración para upload directo desde el navegador.
     No incluye api_secret.
     """
-    tipo_norm = (tipo or "").strip().lower()
+    tipo_norm = normalizar_tipo_media(tipo)
     if tipo_norm not in TIPOS_PERMITIDOS:
-        raise HTTPException(status_code=400, detail="tipo debe ser video o document")
+        raise HTTPException(
+            status_code=400,
+            detail="tipo debe ser video, document, image o audio",
+        )
 
     _ensure_cloudinary_config()
     cloud_name, api_key = _creds()
     resource_type = resource_type_para_tipo(tipo_norm)
     folder = asset_folder_agencia(agencia_id)
     timestamp = int(time.time())
-    # Solo se firman params que el cliente reenvía (folder = asset_folder).
-    # unique_filename + tags van firmados para forzar nombre único y marca temporal.
     tags = f"chatbot,agencia_{int(agencia_id)},recursos_bienvenida,temporal,{tipo_norm}"
     params_to_sign = {
         "timestamp": timestamp,
         "folder": folder,
-        # Strings: el FormData del navegador siempre envía texto y debe coincidir con la firma
         "overwrite": "false",
         "unique_filename": "true",
         "tags": tags,
@@ -104,8 +131,6 @@ def generar_firma_carga(*, agencia_id: int, tipo: str) -> Dict[str, Any]:
         cloudinary.config().api_secret,
     )
 
-    # Respuesta HTTP pública (sin api_secret). Los flags firmados se incluyen
-    # para que React los reenvíe en FormData; no son secretos.
     return {
         "cloud_name": cloud_name,
         "api_key": api_key,
@@ -168,6 +193,10 @@ def validar_respuesta_upload_cloudinary(
     if not isinstance(data, dict):
         raise HTTPException(status_code=400, detail="Respuesta de carga inválida")
 
+    tipo_norm = normalizar_tipo_media(tipo)
+    if tipo_norm not in TIPOS_PERMITIDOS:
+        raise HTTPException(status_code=400, detail="tipo de media no permitido")
+
     secure_url = (data.get("secure_url") or "").strip()
     public_id = (data.get("public_id") or "").strip()
     resource_type = (data.get("resource_type") or "").strip().lower()
@@ -183,35 +212,57 @@ def validar_respuesta_upload_cloudinary(
     original = (data.get("original_filename") or "").strip()
     bytes_val = data.get("bytes")
 
-    expected_rt = resource_type_para_tipo(tipo)
+    expected_rt = resource_type_para_tipo(tipo_norm)
     if resource_type != expected_rt:
         raise HTTPException(
             status_code=400,
             detail=f"resource_type esperado {expected_rt}, recibido {resource_type}",
         )
 
-    if tipo == "video":
-        if fmt and fmt != "mp4":
-            raise HTTPException(status_code=400, detail="El video debe ser formato mp4")
+    default_fmt = "bin"
+    if tipo_norm == "video":
+        if fmt and fmt not in _FORMATOS_VIDEO:
+            raise HTTPException(
+                status_code=400, detail="El video debe ser MP4 o MOV"
+            )
         if bytes_val is not None and int(bytes_val) > VIDEO_MAX_BYTES:
             raise HTTPException(status_code=400, detail="Video máximo 16 MB")
-    elif tipo == "document":
+        default_fmt = fmt or "mp4"
+    elif tipo_norm == "document":
         name_ok = original.lower().endswith(".pdf") if original else False
         fmt_ok = fmt == "pdf" or (not fmt and name_ok)
-        # raw uploads often put format vacío; public_id o original terminan en .pdf
         pid_ok = public_id.lower().endswith(".pdf")
         url_ok = ".pdf" in secure_url.lower()
         if not (fmt_ok or name_ok or pid_ok or url_ok):
             raise HTTPException(status_code=400, detail="El documento debe ser PDF")
         if bytes_val is not None and int(bytes_val) > PDF_MAX_BYTES:
             raise HTTPException(status_code=400, detail="PDF máximo 20 MB")
+        default_fmt = "pdf"
+    elif tipo_norm == "image":
+        if fmt and fmt not in _FORMATOS_IMAGE:
+            raise HTTPException(
+                status_code=400,
+                detail="La imagen debe ser JPG, JPEG, PNG o WEBP",
+            )
+        if bytes_val is not None and int(bytes_val) > IMAGE_MAX_BYTES:
+            raise HTTPException(status_code=400, detail="Imagen máximo 5 MB")
+        default_fmt = fmt or "jpg"
+    elif tipo_norm == "audio":
+        if fmt and fmt not in _FORMATOS_AUDIO:
+            raise HTTPException(
+                status_code=400,
+                detail="El audio debe ser MP3, M4A, AAC u OGG",
+            )
+        if bytes_val is not None and int(bytes_val) > AUDIO_MAX_BYTES:
+            raise HTTPException(status_code=400, detail="Audio máximo 16 MB")
+        default_fmt = fmt or "mp3"
 
     return {
         "secure_url": secure_url,
         "public_id": public_id,
         "asset_id": data.get("asset_id"),
         "resource_type": resource_type,
-        "format": fmt or ("mp4" if tipo == "video" else "pdf"),
+        "format": fmt or default_fmt,
         "bytes": int(bytes_val) if bytes_val is not None else None,
         "nombre_original": original or None,
     }
