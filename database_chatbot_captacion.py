@@ -888,12 +888,38 @@ def actualizar_configuracion(
     with get_connection_chatbot_context() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             try:
+                # recursos_bienvenida va explícito en SET (JSONB) y se valida con
+                # RETURNING de esta misma conexión/transacción — no releer con otra sesión.
                 cur.execute(
                     f"""
                     UPDATE chatbot.chatbot_configuracion
                     SET {", ".join(sets)}
                     WHERE id = %s AND agencia_id = %s
-                    RETURNING *
+                    RETURNING
+                        id,
+                        agencia_id,
+                        codigo,
+                        nombre,
+                        plataforma_codigo,
+                        texto_opcion,
+                        es_predeterminada,
+                        orden,
+                        activo,
+                        mensaje_bienvenida,
+                        pregunta_usuario,
+                        pregunta_mayor_edad,
+                        pregunta_disponibilidad,
+                        mensaje_aprobado,
+                        mensaje_no_aprobado,
+                        texto_boton_continuar,
+                        accion_continuar,
+                        url_continuar,
+                        texto_boton_preguntas,
+                        preguntas_frecuentes,
+                        recursos_bienvenida,
+                        mensaje_error,
+                        created_at,
+                        updated_at
                     """,
                     params,
                 )
@@ -908,15 +934,33 @@ def actualizar_configuracion(
                 raise ValueError("Configuración no encontrada")
             if data.get("es_predeterminada") is True:
                 _limpiar_otras_predeterminadas(cur, agencia_id, int(row["id"]))
+
             out = dict(row)
+            recursos_ret = parse_recursos_bienvenida(out.get("recursos_bienvenida"))
+            out["recursos_bienvenida"] = recursos_ret
+
+            cur.execute(
+                """
+                SELECT nombre
+                FROM chatbot.plataformas
+                WHERE codigo = %s
+                LIMIT 1
+                """,
+                (out.get("plataforma_codigo"),),
+            )
+            plat = cur.fetchone()
+            out["plataforma_nombre"] = plat["nombre"] if plat else None
+
             logger.info(
                 "[CHATBOT-CONFIG] actualizada agencia_id=%s configuracion_id=%s "
-                "plataforma_codigo=%s",
+                "plataforma_codigo=%s recursos_returning=%s",
                 agencia_id,
                 out.get("id"),
                 out.get("plataforma_codigo"),
+                len(recursos_ret),
             )
-            return obtener_configuracion_por_id(agencia_id, int(out["id"])) or out
+            # Commit al salir del context manager, antes de devolver al caller.
+            return out
 
 
 def duplicar_configuracion(

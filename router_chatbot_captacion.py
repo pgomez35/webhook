@@ -292,6 +292,8 @@ def put_configuracion_by_id(
         n_recibidos,
     )
     try:
+        # actualizar_configuracion hace UPDATE ... RETURNING recursos_bienvenida
+        # en una sola transacción y hace commit antes de devolver.
         cfg = db.actualizar_configuracion(
             int(agencia["id"]),
             data,
@@ -300,10 +302,11 @@ def put_configuracion_by_id(
     except ValueError as e:
         raise _http_from_value_error(e) from e
 
-    n_persistidos = len(db.parse_recursos_bienvenida(cfg.get("recursos_bienvenida")))
+    # Validar solo el valor de RETURNING (ya parseado), nunca una 2ª consulta/sesión.
+    n_persistidos = len(cfg.get("recursos_bienvenida") or [])
     if n_recibidos != n_persistidos:
         logger.error(
-            "[CHATBOT-CONFIG] mismatch persistencia agencia_id=%s cfg=%s recibidos=%s persistidos=%s",
+            "[CHATBOT-CONFIG] mismatch RETURNING agencia_id=%s cfg=%s recibidos=%s persistidos=%s",
             agencia["id"],
             configuracion_id,
             n_recibidos,
@@ -413,7 +416,9 @@ def delete_media(
 ):
     """
     Elimina un asset de Cloudinary si pertenece a la agencia del JWT.
-    Si está en recursos_bienvenida, también lo quita del JSONB.
+
+    No modifica recursos_bienvenida: el JSONB solo cambia con el PUT de
+    configuración (evita vaciar el recurso antes de persistir el reemplazo).
     """
     agencia_id = int(agencia["id"])
     public_id = payload.public_id
@@ -424,23 +429,21 @@ def delete_media(
             detail="El recurso no pertenece a esta agencia",
         )
 
+    # Validación opcional de resource_type si el asset sigue referenciado.
     if configuracion_id is not None:
         cfg = db.obtener_configuracion_por_id(agencia_id, configuracion_id)
     else:
         cfg = db.obtener_configuracion_por_agencia(agencia_id)
-    if not cfg:
-        raise HTTPException(status_code=404, detail="Configuración no encontrada")
-
-    recursos = db.parse_recursos_bienvenida(cfg.get("recursos_bienvenida"))
-    en_config = [r for r in recursos if (r.get("public_id") or "").strip() == public_id]
-
-    if en_config:
-        rt_cfg = (en_config[0].get("resource_type") or "").strip().lower()
-        if rt_cfg and rt_cfg != payload.resource_type:
-            raise HTTPException(
-                status_code=400,
-                detail="resource_type no coincide con el recurso guardado",
-            )
+    if cfg:
+        recursos = db.parse_recursos_bienvenida(cfg.get("recursos_bienvenida"))
+        en_config = [r for r in recursos if (r.get("public_id") or "").strip() == public_id]
+        if en_config:
+            rt_cfg = (en_config[0].get("resource_type") or "").strip().lower()
+            if rt_cfg and rt_cfg != payload.resource_type:
+                raise HTTPException(
+                    status_code=400,
+                    detail="resource_type no coincide con el recurso guardado",
+                )
 
     destruir_recurso_cloudinary(
         public_id=public_id,
@@ -448,21 +451,11 @@ def delete_media(
         invalidate=True,
     )
 
-    eliminado_config = False
-    if en_config:
-        nuevos = [r for r in recursos if (r.get("public_id") or "").strip() != public_id]
-        db.actualizar_recursos_bienvenida(
-            agencia_id,
-            nuevos,
-            configuracion_id=int(cfg["id"]),
-        )
-        eliminado_config = True
-
     return MediaEliminarResponse(
         ok=True,
         public_id=public_id,
         eliminado_cloudinary=True,
-        eliminado_config=eliminado_config,
+        eliminado_config=False,
     )
 
 

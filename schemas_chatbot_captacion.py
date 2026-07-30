@@ -14,7 +14,7 @@ FAQ_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 ACCIONES = Literal["asesor", "url", "agendamiento", "finalizar"]
 # pdf se acepta en entrada (legado) y se normaliza a document.
 TIPOS_RECURSO = Literal["video", "document", "pdf", "image", "audio"]
-MAX_RECURSOS_BIENVENIDA = 10
+MAX_RECURSOS_BIENVENIDA = 1
 ESTADOS_ASPIRANTE = Literal[
     "nuevo",
     "en_proceso",
@@ -555,7 +555,7 @@ def _validar_config_flujo(self):
 
     recursos = self.recursos_bienvenida or []
     if len(recursos) > MAX_RECURSOS_BIENVENIDA:
-        raise ValueError(f"Máximo {MAX_RECURSOS_BIENVENIDA} recursos informativos")
+        raise ValueError("Solo se permite un archivo adjunto por configuración")
 
     ids_rec = [r.id.lower() for r in recursos]
     if len(ids_rec) != len(set(ids_rec)):
