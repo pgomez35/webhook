@@ -128,6 +128,35 @@ def _recurso_esta_activo(recurso: Dict[str, Any]) -> bool:
     return True
 
 
+def _normalizar_tipo_recurso(tipo: Optional[str]) -> str:
+    """
+    Normaliza el tipo del JSONB.
+    Acepta 'pdf' como alias de 'document' (Meta type=document).
+    """
+    t = (tipo or "").strip().lower()
+    if t in ("pdf", "document", "documento", "doc"):
+        return "document"
+    if t in ("image", "imagen", "img", "photo", "foto"):
+        return "image"
+    if t in ("video", "mp4"):
+        return "video"
+    if t in ("audio", "voice", "voz"):
+        return "audio"
+    return t
+
+
+def _enmascarar_secure_url(url: Optional[str]) -> str:
+    """Para logs: conserva host + sufijo, sin query/token."""
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    # Quitar querystring (a veces firma temporal)
+    base = raw.split("?", 1)[0]
+    if len(base) <= 80:
+        return base
+    return f"{base[:50]}…{base[-20:]}"
+
+
 def _nombre_archivo_pdf(recurso: Dict[str, Any]) -> str:
     nombre = (
         recurso.get("nombre_archivo")
@@ -167,20 +196,74 @@ def _meta_error_resumen(body: Any) -> str:
 def _filtrar_recursos_por_momento(
     recursos: List[Dict[str, Any]],
     momento_envio: str,
+    *,
+    agencia_id: Optional[int] = None,
+    aspirante_id: Optional[int] = None,
+    chatbot_configuracion_id: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     momento = _normalizar_momento_envio(momento_envio)
     if momento == MOMENTO_SIN_ENVIO:
+        logger.info(
+            "[CHATBOT-MEDIA] filtro omitido: momento solicitado=ninguno "
+            "agencia_id=%s aspirante_id=%s chatbot_configuracion_id=%s",
+            agencia_id,
+            aspirante_id,
+            chatbot_configuracion_id,
+        )
         return []
 
     filtrados: List[Dict[str, Any]] = []
-    for recurso in recursos:
-        if not _recurso_esta_activo(recurso):
+    for idx, recurso in enumerate(recursos or []):
+        rid = (recurso or {}).get("id")
+        tipo_raw = (recurso or {}).get("tipo")
+        url = (recurso or {}).get("secure_url") or (recurso or {}).get("url") or ""
+        if not _recurso_esta_activo(recurso or {}):
+            logger.info(
+                "[CHATBOT-MEDIA] recurso descartado razón=activo_false "
+                "idx=%s id=%s tipo=%s momento_envio=%s secure_url=%s "
+                "agencia_id=%s aspirante_id=%s chatbot_configuracion_id=%s",
+                idx,
+                rid,
+                tipo_raw,
+                (recurso or {}).get("momento_envio"),
+                _enmascarar_secure_url(str(url)),
+                agencia_id,
+                aspirante_id,
+                chatbot_configuracion_id,
+            )
             continue
-        m = _normalizar_momento_envio(recurso.get("momento_envio"))
+        m_raw = (recurso or {}).get("momento_envio")
+        m = _normalizar_momento_envio(m_raw)
         if m == MOMENTO_SIN_ENVIO:
+            logger.info(
+                "[CHATBOT-MEDIA] recurso descartado razón=momento_ninguno "
+                "idx=%s id=%s tipo=%s momento_envio_raw=%r "
+                "agencia_id=%s aspirante_id=%s chatbot_configuracion_id=%s",
+                idx,
+                rid,
+                tipo_raw,
+                m_raw,
+                agencia_id,
+                aspirante_id,
+                chatbot_configuracion_id,
+            )
             continue
-        if m == momento:
-            filtrados.append(recurso)
+        if m != momento:
+            logger.info(
+                "[CHATBOT-MEDIA] recurso descartado razón=momento_no_coincide "
+                "idx=%s id=%s tipo=%s momento_recurso=%s momento_solicitado=%s "
+                "agencia_id=%s aspirante_id=%s chatbot_configuracion_id=%s",
+                idx,
+                rid,
+                tipo_raw,
+                m,
+                momento,
+                agencia_id,
+                aspirante_id,
+                chatbot_configuracion_id,
+            )
+            continue
+        filtrados.append(recurso)
 
     filtrados.sort(key=lambda x: int(x.get("orden") or 0))
     return filtrados
@@ -196,81 +279,155 @@ def enviar_recursos_chatbot_whatsapp(
     momento_envio: str,
     config: Optional[Dict[str, Any]] = None,
     recursos: Optional[List[Dict[str, Any]]] = None,
+    chatbot_configuracion_id: Optional[int] = None,
 ) -> None:
     """
-    Envía recursos activos de la configuración (JSONB recursos_bienvenida)
-    para un momento concreto, ordenados por `orden`.
+    Envía recursos activos de la configuración seleccionada
+    (JSONB recursos_bienvenida) para un momento concreto, ordenados por `orden`.
 
     Errores por recurso no detienen el flujo del chatbot.
     Cada recurso se envía con su `caption` en el mismo mensaje Meta.
 
     - video: secure_url vía video.link
-    - document/PDF: media_id Meta → document.id
-    - image: secure_url vía image.link (preparado)
-    - audio: secure_url vía audio.link (preparado; sin caption en Meta)
+    - document / pdf: media_id Meta → document.id + filename + caption
+    - image / audio: preparados
 
     Nota: `despues_bienvenida` se dispara tras guardar el identificador
     de plataforma del aspirante (no inmediatamente tras el mensaje de bienvenida).
     """
+    cfg_id = chatbot_configuracion_id or (config or {}).get("id")
+    if cfg_id is not None:
+        try:
+            cfg_id = int(cfg_id)
+        except (TypeError, ValueError):
+            cfg_id = None
+
+    # Siempre recargar desde la config seleccionada del aspirante (fuente de verdad)
+    if cfg_id and agencia_id:
+        fresh = db.obtener_configuracion_por_id(
+            int(agencia_id), int(cfg_id), solo_activa=False
+        )
+        if fresh:
+            config = fresh
+            if recursos is None:
+                recursos = db.parse_recursos_bienvenida(
+                    fresh.get("recursos_bienvenida")
+                )
+        else:
+            logger.warning(
+                "[CHATBOT-MEDIA] configuración no encontrada al cargar recursos "
+                "agencia_id=%s aspirante_id=%s chatbot_configuracion_id=%s",
+                agencia_id,
+                aspirante_id,
+                cfg_id,
+            )
+
     if recursos is None:
         raw = (config or {}).get("recursos_bienvenida")
         recursos = db.parse_recursos_bienvenida(raw)
 
+    recursos_list = list(recursos or [])
     momento = _normalizar_momento_envio(momento_envio)
-    cfg_id = (config or {}).get("id")
+
+    # Resumen previo al filtro (incluye PDF/document/video sin discriminar)
+    tipos_resumen = [
+        _normalizar_tipo_recurso((r or {}).get("tipo")) for r in recursos_list
+    ]
     logger.info(
-        "[CHATBOT-MEDIA] momento solicitado=%s agencia_id=%s aspirante_id=%s "
-        "chatbot_configuracion_id=%s",
+        "[CHATBOT-MEDIA] antes_filtro total=%s tipos=%s momento_solicitado=%s "
+        "agencia_id=%s aspirante_id=%s chatbot_configuracion_id=%s",
+        len(recursos_list),
+        tipos_resumen,
         momento,
         agencia_id,
         aspirante_id,
-        cfg_id,
+        cfg_id or (config or {}).get("id"),
     )
-    seleccion = _filtrar_recursos_por_momento(list(recursos or []), momento)
+    for idx, r in enumerate(recursos_list):
+        logger.info(
+            "[CHATBOT-MEDIA] recurso_en_config idx=%s id=%s tipo=%s tipo_norm=%s "
+            "activo=%s momento_envio=%s orden=%s secure_url=%s "
+            "agencia_id=%s aspirante_id=%s chatbot_configuracion_id=%s",
+            idx,
+            (r or {}).get("id"),
+            (r or {}).get("tipo"),
+            _normalizar_tipo_recurso((r or {}).get("tipo")),
+            (r or {}).get("activo"),
+            (r or {}).get("momento_envio"),
+            (r or {}).get("orden"),
+            _enmascarar_secure_url(
+                str((r or {}).get("secure_url") or (r or {}).get("url") or "")
+            ),
+            agencia_id,
+            aspirante_id,
+            cfg_id or (config or {}).get("id"),
+        )
+
+    seleccion = _filtrar_recursos_por_momento(
+        recursos_list,
+        momento,
+        agencia_id=agencia_id,
+        aspirante_id=aspirante_id,
+        chatbot_configuracion_id=cfg_id or (config or {}).get("id"),
+    )
     logger.info(
-        "[CHATBOT-MEDIA] recursos encontrados=%s momento=%s agencia_id=%s "
-        "chatbot_configuracion_id=%s",
+        "[CHATBOT-MEDIA] despues_filtro seleccionados=%s momento=%s "
+        "tipos=%s agencia_id=%s aspirante_id=%s chatbot_configuracion_id=%s",
         len(seleccion),
         momento,
+        [_normalizar_tipo_recurso((r or {}).get("tipo")) for r in seleccion],
         agencia_id,
-        cfg_id,
+        aspirante_id,
+        cfg_id or (config or {}).get("id"),
     )
     if not seleccion:
+        logger.info(
+            "[CHATBOT-MEDIA] sin recursos para enviar momento=%s "
+            "agencia_id=%s aspirante_id=%s chatbot_configuracion_id=%s",
+            momento,
+            agencia_id,
+            aspirante_id,
+            cfg_id or (config or {}).get("id"),
+        )
         return
 
     for recurso in seleccion:
-        tipo = (recurso.get("tipo") or "").strip().lower()
+        tipo = _normalizar_tipo_recurso(recurso.get("tipo"))
         url = (recurso.get("secure_url") or recurso.get("url") or "").strip()
         caption_raw = (recurso.get("caption") or "").strip()
         caption = caption_raw or None
         public_id = (recurso.get("public_id") or recurso.get("id") or "")[:80]
         rid = recurso.get("id")
-        if tipo == "document":
-            tipo_log = "PDF"
-        elif tipo in ("video", "image", "audio"):
-            tipo_log = tipo
-        else:
-            tipo_log = tipo or "desconocido"
+        cfg_log = cfg_id or (config or {}).get("id")
+        tipo_log = "PDF" if tipo == "document" else (tipo or "desconocido")
 
         logger.info(
-            "[CHATBOT-MEDIA] enviando recurso id=%s tipo=%s public_id=%s momento=%s "
-            "chatbot_configuracion_id=%s",
+            "[CHATBOT-MEDIA] preparando envío id=%s tipo=%s tipo_raw=%s "
+            "momento_envio=%s secure_url=%s public_id=%s "
+            "agencia_id=%s aspirante_id=%s chatbot_configuracion_id=%s",
             rid,
             tipo_log,
-            public_id,
+            recurso.get("tipo"),
             momento,
-            cfg_id,
+            _enmascarar_secure_url(url),
+            public_id,
+            agencia_id,
+            aspirante_id,
+            cfg_log,
         )
 
         if not url.startswith("https://"):
             logger.warning(
-                "[CHATBOT-MEDIA] URL inválida agencia_id=%s aspirante_id=%s "
-                "tipo=%s public_id=%s momento=%s",
+                "[CHATBOT-MEDIA] recurso descartado razón=url_invalida "
+                "id=%s tipo=%s secure_url=%r momento_envio=%s "
+                "agencia_id=%s aspirante_id=%s chatbot_configuracion_id=%s",
+                rid,
+                tipo_log,
+                url[:120],
+                momento,
                 agencia_id,
                 aspirante_id,
-                tipo_log,
-                public_id,
-                momento,
+                cfg_log,
             )
             continue
 
@@ -287,13 +444,18 @@ def enviar_recursos_chatbot_whatsapp(
                 )
             elif tipo == "document":
                 logger.info(
-                    "[CHATBOT-PDF] recurso encontrado id=%s public_id=%s momento=%s",
+                    "[CHATBOT-PDF] inicio descarga+media_id id=%s momento_envio=%s "
+                    "secure_url=%s filename=%s agencia_id=%s aspirante_id=%s "
+                    "chatbot_configuracion_id=%s",
                     rid,
-                    public_id,
                     momento,
+                    _enmascarar_secure_url(url),
+                    _nombre_archivo_pdf(recurso),
+                    agencia_id,
+                    aspirante_id,
+                    cfg_log,
                 )
-                # PDF: media_id vía subir_media_whatsapp + enviar_documento_id
-                # (no document.link) para evitar Meta 131053
+                # PDF (tipo document|pdf): Cloudinary → media_id → document.id
                 status, body = enviar_documento_pdf_via_media_id_desde_url(
                     token=access_token,
                     numero_id=phone_number_id,
@@ -302,7 +464,21 @@ def enviar_recursos_chatbot_whatsapp(
                     caption=caption,
                     filename=_nombre_archivo_pdf(recurso),
                 )
-            elif tipo in ("image", "imagen"):
+                logger.info(
+                    "[CHATBOT-PDF] resultado envío id=%s http=%s meta=%s "
+                    "agencia_id=%s aspirante_id=%s chatbot_configuracion_id=%s "
+                    "momento_envio=%s tipo=%s secure_url=%s",
+                    rid,
+                    status,
+                    _meta_error_resumen(body) or "ok",
+                    agencia_id,
+                    aspirante_id,
+                    cfg_log,
+                    momento,
+                    tipo_log,
+                    _enmascarar_secure_url(url),
+                )
+            elif tipo == "image":
                 status, body = enviar_imagen_whatsapp(
                     token=access_token,
                     numero_id=phone_number_id,
@@ -311,7 +487,6 @@ def enviar_recursos_chatbot_whatsapp(
                     caption=caption,
                 )
             elif tipo == "audio":
-                # Meta no admite caption en audio; si hay caption, se envía texto aparte
                 status, body = enviar_audio_whatsapp(
                     token=access_token,
                     numero_id=phone_number_id,
@@ -330,21 +505,30 @@ def enviar_recursos_chatbot_whatsapp(
                         )
             else:
                 logger.warning(
-                    "[CHATBOT-MEDIA] tipo no soportado agencia_id=%s tipo=%s id=%s",
-                    agencia_id,
-                    tipo,
+                    "[CHATBOT-MEDIA] recurso descartado razón=tipo_no_soportado "
+                    "id=%s tipo_raw=%r tipo_norm=%r momento_envio=%s "
+                    "agencia_id=%s aspirante_id=%s chatbot_configuracion_id=%s",
                     rid,
+                    recurso.get("tipo"),
+                    tipo,
+                    momento,
+                    agencia_id,
+                    aspirante_id,
+                    cfg_log,
                 )
                 continue
         except Exception as e:
             logger.warning(
                 "[CHATBOT-MEDIA] excepción agencia_id=%s aspirante_id=%s "
-                "tipo=%s public_id=%s momento=%s causa=%s",
+                "chatbot_configuracion_id=%s tipo=%s public_id=%s "
+                "momento_envio=%s secure_url=%s causa=%s",
                 agencia_id,
                 aspirante_id,
+                cfg_log,
                 tipo_log,
                 public_id,
                 momento,
+                _enmascarar_secure_url(url),
                 type(e).__name__,
             )
             continue
@@ -353,29 +537,33 @@ def enviar_recursos_chatbot_whatsapp(
         if status not in (200, 201):
             logger.warning(
                 "[CHATBOT-MEDIA] fallo Meta agencia_id=%s aspirante_id=%s "
-                "tipo=%s public_id=%s momento=%s http=%s meta=%s",
+                "chatbot_configuracion_id=%s tipo=%s public_id=%s "
+                "momento_envio=%s secure_url=%s http=%s meta=%s",
                 agencia_id,
                 aspirante_id,
+                cfg_log,
                 tipo_log,
                 public_id,
                 momento,
+                _enmascarar_secure_url(url),
                 status,
                 _meta_error_resumen(body),
             )
             continue
 
         logger.info(
-            "[CHATBOT-MEDIA] ok agencia_id=%s aspirante_id=%s tipo=%s "
-            "public_id=%s momento=%s http=%s wamid=%s "
-            "chatbot_configuracion_id=%s",
+            "[CHATBOT-MEDIA] ok agencia_id=%s aspirante_id=%s "
+            "chatbot_configuracion_id=%s tipo=%s public_id=%s "
+            "momento_envio=%s secure_url=%s http=%s wamid=%s",
             agencia_id,
             aspirante_id,
+            cfg_log,
             tipo_log,
             public_id,
             momento,
+            _enmascarar_secure_url(url),
             status,
             meta_mid,
-            cfg_id,
         )
 
         extra = (recurso.get("mensaje_adicional") or "").strip()
@@ -1233,11 +1421,17 @@ def procesar_chatbot_captacion(
             )
             # Orden: usuario guardado → recursos despues_bienvenida → pregunta edad
             try:
+                cfg_sel = (
+                    aspirante.get("chatbot_configuracion_id")
+                    or config.get("id")
+                )
                 logger.info(
                     "[CHATBOT] enviando recursos despues_bienvenida "
                     "(tras guardar usuario, antes de mayor_edad) "
-                    "chatbot_configuracion_id=%s",
-                    config.get("id"),
+                    "agencia_id=%s aspirante_id=%s chatbot_configuracion_id=%s",
+                    agencia_id,
+                    aspirante.get("id"),
+                    cfg_sel,
                 )
                 enviar_recursos_chatbot_whatsapp(
                     agencia_id=agencia_id,
@@ -1247,6 +1441,9 @@ def procesar_chatbot_captacion(
                     access_token=token,
                     momento_envio=MOMENTO_DESPUES_BIENVENIDA,
                     config=config,
+                    chatbot_configuracion_id=(
+                        int(cfg_sel) if cfg_sel is not None else None
+                    ),
                 )
             except Exception:
                 logger.exception(
@@ -1396,6 +1593,10 @@ def procesar_chatbot_captacion(
                     "[CHATBOT] enviando recursos despues_aprobacion "
                     "(antes de botones de resultado)"
                 )
+                cfg_sel = (
+                    aspirante.get("chatbot_configuracion_id")
+                    or config.get("id")
+                )
                 enviar_recursos_chatbot_whatsapp(
                     agencia_id=agencia_id,
                     aspirante_id=aspirante.get("id"),
@@ -1404,6 +1605,9 @@ def procesar_chatbot_captacion(
                     access_token=token,
                     momento_envio=MOMENTO_DESPUES_APROBACION,
                     config=config,
+                    chatbot_configuracion_id=(
+                        int(cfg_sel) if cfg_sel is not None else None
+                    ),
                 )
             except Exception:
                 logger.exception(

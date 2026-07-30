@@ -1115,11 +1115,15 @@ def enviar_documento_pdf_via_media_id_desde_url(
 
     Reutiliza la estrategia de mensajería (no document.link).
     El archivo temporal se elimina siempre en finally.
+    No registra el access token.
     """
     import tempfile
 
+    log = logging.getLogger("uvicorn.error")
+
     url = (documento_url or "").strip()
     if not url.startswith("https://"):
+        log.warning("[CHATBOT-PDF] url_invalida (debe ser https)")
         return 400, {"error": "url_invalida", "detail": "documento_url debe ser https"}
 
     nombre = (filename or "documento.pdf").strip() or "documento.pdf"
@@ -1127,17 +1131,26 @@ def enviar_documento_pdf_via_media_id_desde_url(
         nombre = f"{nombre}.pdf"
 
     caption_envio = (caption or "").strip() or None
+    url_log = _enmascarar_url_media(url)
     tmp_path = None
     try:
         try:
+            log.info(
+                "[CHATBOT-PDF] descargando Cloudinary secure_url=%s filename=%s",
+                url_log,
+                nombre,
+            )
             with requests.get(url, stream=True, timeout=(10, 60)) as resp:
                 http_dl = resp.status_code
                 ctype_raw = (resp.headers.get("Content-Type") or "").strip()
                 ctype = ctype_raw.split(";")[0].strip().lower()
                 if http_dl != 200:
-                    print(
-                        f"[CHATBOT-PDF] descarga Cloudinary fallida "
-                        f"HTTP={http_dl} content_type={ctype_raw!r}"
+                    log.warning(
+                        "[CHATBOT-PDF] descarga Cloudinary fallida "
+                        "HTTP=%s content_type=%r secure_url=%s",
+                        http_dl,
+                        ctype_raw,
+                        url_log,
                     )
                     return http_dl, {
                         "error": "cloudinary_download_failed",
@@ -1156,7 +1169,10 @@ def enviar_documento_pdf_via_media_id_desde_url(
                         size += len(chunk)
 
                 if size <= 0:
-                    print("[CHATBOT-PDF] descarga Cloudinary vacía")
+                    log.warning(
+                        "[CHATBOT-PDF] descarga Cloudinary vacía secure_url=%s",
+                        url_log,
+                    )
                     return 400, {
                         "error": "cloudinary_empty",
                         "detail": "Contenido vacío",
@@ -1175,9 +1191,12 @@ def enviar_documento_pdf_via_media_id_desde_url(
                         es_pdf = True
                         ctype_raw = "application/pdf"
                     else:
-                        print(
-                            f"[CHATBOT-PDF] content_type inválido={ctype_raw!r} "
-                            f"size={size}"
+                        log.warning(
+                            "[CHATBOT-PDF] content_type inválido=%r size=%s "
+                            "secure_url=%s",
+                            ctype_raw,
+                            size,
+                            url_log,
                         )
                         return 415, {
                             "error": "content_type_invalido",
@@ -1185,18 +1204,32 @@ def enviar_documento_pdf_via_media_id_desde_url(
                             "size": size,
                         }
 
-                print(
-                    f"[CHATBOT-PDF] descarga Cloudinary HTTP=200 "
-                    f"content_type={ctype_raw or 'application/pdf'} size={size}"
+                log.info(
+                    "[CHATBOT-PDF] descarga Cloudinary ok HTTP=200 "
+                    "content_type=%s size=%s secure_url=%s",
+                    ctype_raw or "application/pdf",
+                    size,
+                    url_log,
                 )
         except requests.Timeout:
-            print("[CHATBOT-PDF] timeout descarga Cloudinary")
+            log.warning(
+                "[CHATBOT-PDF] timeout descarga Cloudinary secure_url=%s", url_log
+            )
             return 504, {"error": "timeout", "detail": "Timeout descarga Cloudinary"}
         except requests.RequestException as e:
-            print(f"[CHATBOT-PDF] error descarga Cloudinary: {type(e).__name__}")
+            log.warning(
+                "[CHATBOT-PDF] error descarga Cloudinary causa=%s secure_url=%s",
+                type(e).__name__,
+                url_log,
+            )
             return 500, {"error": "download_error", "detail": type(e).__name__}
 
-        print("[CHATBOT-PDF] subida a Meta iniciada")
+        log.info(
+            "[CHATBOT-PDF] subiendo a Meta (multipart /media) filename=%s "
+            "secure_url=%s",
+            nombre,
+            url_log,
+        )
         status_up, body_up = subir_media_whatsapp(
             token=token,
             phone_number_id=numero_id,
@@ -1204,9 +1237,11 @@ def enviar_documento_pdf_via_media_id_desde_url(
             mime="application/pdf",
         )
         if status_up not in (200, 201):
-            print(
-                f"[CHATBOT-PDF] subida Meta falló HTTP={status_up} "
-                f"meta={_resumen_error_meta(body_up)}"
+            log.warning(
+                "[CHATBOT-PDF] subida Meta falló HTTP=%s meta=%s secure_url=%s",
+                status_up,
+                _resumen_error_meta(body_up),
+                url_log,
             )
             return status_up, body_up if isinstance(body_up, dict) else {
                 "error": "upload_failed",
@@ -1215,12 +1250,22 @@ def enviar_documento_pdf_via_media_id_desde_url(
 
         media_id = body_up.get("id") if isinstance(body_up, dict) else None
         if not media_id:
-            print(f"[CHATBOT-PDF] subida sin media_id HTTP={status_up}")
+            log.warning(
+                "[CHATBOT-PDF] subida sin media_id HTTP=%s secure_url=%s",
+                status_up,
+                url_log,
+            )
             return 502, {"error": "media_id_ausente", "detail": "sin id"}
 
         mid = str(media_id)
         mid_safe = mid[:6] + "..." + mid[-4:] if len(mid) > 12 else mid[:4] + "..."
-        print(f"[CHATBOT-PDF] media_id obtenido={mid_safe}")
+        log.info(
+            "[CHATBOT-PDF] media_id obtenido=%s; enviando document.id "
+            "filename=%s secure_url=%s",
+            mid_safe,
+            nombre,
+            url_log,
+        )
 
         status_send, body_send = enviar_documento_id(
             token=token,
@@ -1236,11 +1281,19 @@ def enviar_documento_pdf_via_media_id_desde_url(
             if isinstance(msgs, list) and msgs and isinstance(msgs[0], dict):
                 wamid = msgs[0].get("id")
         if status_send in (200, 201):
-            print(f"[CHATBOT-PDF] documento enviado wamid={wamid}")
+            log.info(
+                "[CHATBOT-PDF] envío document.id ok HTTP=%s filename=%s wamid=%s",
+                status_send,
+                nombre,
+                wamid,
+            )
         else:
-            print(
-                f"[CHATBOT-PDF] envío falló HTTP={status_send} "
-                f"meta={_resumen_error_meta(body_send)}"
+            log.warning(
+                "[CHATBOT-PDF] envío document.id falló HTTP=%s meta=%s "
+                "secure_url=%s",
+                status_send,
+                _resumen_error_meta(body_send),
+                url_log,
             )
         return status_send, body_send
     finally:
@@ -1249,5 +1302,7 @@ def enviar_documento_pdf_via_media_id_desde_url(
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
             except OSError as e:
-                print(f"[CHATBOT-PDF] no se pudo borrar temp: {type(e).__name__}")
+                log.warning(
+                    "[CHATBOT-PDF] no se pudo borrar temp: %s", type(e).__name__
+                )
 

@@ -12,7 +12,8 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 FAQ_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 ACCIONES = Literal["asesor", "url", "agendamiento", "finalizar"]
-TIPOS_RECURSO = Literal["video", "document"]
+# "pdf" se acepta en entrada y se normaliza a "document" (Meta type=document).
+TIPOS_RECURSO = Literal["video", "document", "pdf"]
 ESTADOS_ASPIRANTE = Literal[
     "nuevo",
     "en_proceso",
@@ -172,22 +173,35 @@ class RecursoBienvenida(BaseModel):
         if not isinstance(data, dict):
             return data
         out = dict(data)
+        tipo_raw = out.get("tipo")
+        tipo_norm = str(tipo_raw or "").strip().lower()
+        # Alias de persistencia/legado: pdf → document
+        if tipo_norm in ("pdf", "documento", "doc"):
+            out["tipo"] = "document"
+            tipo_norm = "document"
         tipo = out.get("tipo")
         if not out.get("resource_type"):
             if tipo == "video":
                 out["resource_type"] = "video"
-            elif tipo == "document":
+            elif tipo_norm == "document":
                 out["resource_type"] = "raw"
         secure = out.get("secure_url") or out.get("url")
         if secure:
             out["secure_url"] = secure
             out.setdefault("url", secure)
-        if tipo == "document":
+        if tipo_norm == "document":
             nombre = out.get("nombre_archivo") or out.get("nombre_original")
-            if nombre and not str(nombre).lower().endswith(".pdf"):
-                out["nombre_archivo"] = f"{nombre}.pdf"
-            elif nombre:
-                out["nombre_archivo"] = nombre
+            if nombre:
+                n = str(nombre).strip()
+                base = n.rsplit("/", 1)[-1]
+                if n.lower().endswith(".pdf"):
+                    out["nombre_archivo"] = n
+                elif "." not in base:
+                    # Sin extensión: completar a .pdf
+                    out["nombre_archivo"] = f"{n}.pdf"
+                else:
+                    # Otra extensión (.docx, etc.): dejar para el validador after
+                    out["nombre_archivo"] = n
         return out
 
     @model_validator(mode="after")
