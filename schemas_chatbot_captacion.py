@@ -265,6 +265,7 @@ class AgenciaChatbotResponse(BaseModel):
     estado: str
     mensaje_seleccion_configuracion: Optional[str] = None
     seleccion_por_palabras_activa: bool = False
+    diagnostico_habilitado: bool = False
 
 
 class CanalWhatsAppResponse(BaseModel):
@@ -285,6 +286,7 @@ class PlataformaResponse(BaseModel):
     codigo: str
     nombre: str
     activo: bool = True
+    perfil_url_template: Optional[str] = None
 
 
 class ChatbotConfiguracionResumen(BaseModel):

@@ -46,6 +46,7 @@ class AgenciaAdminOut(BaseModel):
     usuario_login: Optional[str] = None
     login_activo: Optional[bool] = None
     debe_cambiar_clave: Optional[bool] = None
+    diagnostico_habilitado: bool = False
     ultimo_login: Optional[datetime] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -90,6 +91,7 @@ class AgenciaUpdateIn(BaseModel):
     password_temporal: Optional[str] = Field(None, min_length=8, max_length=200)
     login_activo: Optional[bool] = None
     debe_cambiar_clave: Optional[bool] = None
+    diagnostico_habilitado: Optional[bool] = None
 
     @field_validator("usuario_login")
     @classmethod

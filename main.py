@@ -101,6 +101,7 @@ from creadores_importacion import router as creadores_importacion_router
 from router_chatbot_captacion import router as chatbot_captacion_router
 from router_chatbot_auth import router as chatbot_auth_router
 from router_admin_chatbot_clientes import router as admin_chatbot_clientes_router
+from router_chatbot_diagnostico import router as chatbot_diagnostico_router
 
 
 
@@ -136,6 +137,7 @@ app.include_router(creadores_capacitaciones_router, tags=["creadores capacitacio
 app.include_router(creadores_importacion_router, tags=["creadores importacion"])
 app.include_router(chatbot_auth_router, tags=["Chatbot Auth"])
 app.include_router(chatbot_captacion_router, tags=["Chatbot Captación"])
+app.include_router(chatbot_diagnostico_router, tags=["Chatbot Diagnóstico"])
 app.include_router(admin_chatbot_clientes_router, tags=["Admin Chatbot Clientes"])
 
 

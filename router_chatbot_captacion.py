@@ -82,6 +82,7 @@ def _agencia_response(agencia: dict) -> AgenciaChatbotResponse:
     if (
         "mensaje_seleccion_configuracion" not in agencia
         or "seleccion_por_palabras_activa" not in agencia
+        or "diagnostico_habilitado" not in agencia
     ):
         full = db.obtener_agencia_por_id(int(agencia["id"])) or {}
         agencia = {**agencia, **full}
@@ -94,6 +95,7 @@ def _agencia_response(agencia: dict) -> AgenciaChatbotResponse:
         seleccion_por_palabras_activa=bool(
             agencia.get("seleccion_por_palabras_activa", False)
         ),
+        diagnostico_habilitado=bool(agencia.get("diagnostico_habilitado", False)),
     )
 
 

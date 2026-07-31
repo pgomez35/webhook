@@ -39,6 +39,7 @@ def listar_agencias_admin() -> List[Dict[str, Any]]:
                     a.usuario_login,
                     a.login_activo,
                     a.debe_cambiar_clave,
+                    COALESCE(a.diagnostico_habilitado, FALSE) AS diagnostico_habilitado,
                     a.ultimo_login,
                     a.created_at,
                     a.updated_at,
@@ -82,6 +83,7 @@ def obtener_agencia_admin(agencia_id: int) -> Optional[Dict[str, Any]]:
                 SELECT
                     a.id, a.nombre, a.codigo, a.estado,
                     a.usuario_login, a.login_activo, a.debe_cambiar_clave,
+                    COALESCE(a.diagnostico_habilitado, FALSE) AS diagnostico_habilitado,
                     a.ultimo_login, a.created_at, a.updated_at,
                     aw.whatsapp_account_id,
                     aw.principal AS waba_principal,
@@ -403,6 +405,7 @@ def actualizar_agencia_admin(
     password_temporal: Optional[str] = None,
     login_activo: Optional[bool] = None,
     debe_cambiar_clave: Optional[bool] = None,
+    diagnostico_habilitado: Optional[bool] = None,
 ) -> Dict[str, Any]:
     with get_connection_chatbot_context() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -456,6 +459,10 @@ def actualizar_agencia_admin(
             if debe_cambiar_clave is not None:
                 sets.append("debe_cambiar_clave = %s")
                 params.append(bool(debe_cambiar_clave))
+
+            if diagnostico_habilitado is not None:
+                sets.append("diagnostico_habilitado = %s")
+                params.append(bool(diagnostico_habilitado))
 
             if not sets:
                 raise ValueError("No hay campos para actualizar")

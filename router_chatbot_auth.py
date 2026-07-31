@@ -109,6 +109,7 @@ class AgenciaAuthOut(BaseModel):
     nombre: str
     codigo: str
     estado: Optional[str] = None
+    diagnostico_habilitado: bool = False
 
 
 class ChatbotLoginOut(BaseModel):
@@ -162,7 +163,8 @@ def _buscar_agencia_login(usuario_norm: str) -> Optional[dict]:
                     usuario_login,
                     password_hash,
                     debe_cambiar_clave,
-                    login_activo
+                    login_activo,
+                    COALESCE(diagnostico_habilitado, FALSE) AS diagnostico_habilitado
                 FROM chatbot.agencias
                 WHERE LOWER(TRIM(usuario_login)) = LOWER(TRIM(%s))
                 LIMIT 1
@@ -179,7 +181,8 @@ def _obtener_agencia_por_id(agencia_id: int) -> Optional[dict]:
             cur.execute(
                 """
                 SELECT id, nombre, codigo, estado, usuario_login,
-                       password_hash, debe_cambiar_clave, login_activo
+                       password_hash, debe_cambiar_clave, login_activo,
+                       COALESCE(diagnostico_habilitado, FALSE) AS diagnostico_habilitado
                 FROM chatbot.agencias
                 WHERE id = %s
                 LIMIT 1
@@ -196,7 +199,8 @@ def _obtener_agencia_activa_por_id(agencia_id: int) -> Optional[dict]:
             cur.execute(
                 """
                 SELECT id, nombre, codigo, estado, usuario_login,
-                       debe_cambiar_clave, login_activo
+                       debe_cambiar_clave, login_activo,
+                       COALESCE(diagnostico_habilitado, FALSE) AS diagnostico_habilitado
                 FROM chatbot.agencias
                 WHERE id = %s
                   AND estado = 'activa'
@@ -336,6 +340,7 @@ def obtener_sesion_chatbot(token: str = Depends(oauth2_chatbot)) -> dict:
             "nombre": agencia["nombre"],
             "codigo": agencia["codigo"],
             "estado": agencia["estado"],
+            "diagnostico_habilitado": bool(agencia.get("diagnostico_habilitado")),
         },
         "token_debe_cambiar_clave": bool(payload.get("debe_cambiar_clave")),
     }
@@ -353,6 +358,9 @@ def obtener_agencia_chatbot_actual(sesion: dict = Depends(obtener_sesion_chatbot
         "nombre": sesion["agencia"]["nombre"],
         "codigo": sesion["agencia"]["codigo"],
         "estado": sesion["agencia"]["estado"],
+        "diagnostico_habilitado": bool(
+            sesion.get("agencia", {}).get("diagnostico_habilitado")
+        ),
     }
 
 
@@ -365,6 +373,7 @@ def _login_out_from_row(row: dict, *, debe_cambiar_clave: bool, token: str) -> C
             nombre=row["nombre"],
             codigo=row["codigo"],
             estado=row.get("estado"),
+            diagnostico_habilitado=bool(row.get("diagnostico_habilitado")),
         ),
     )
 

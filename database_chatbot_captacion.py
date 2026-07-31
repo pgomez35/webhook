@@ -452,7 +452,8 @@ def listar_plataformas_activas() -> List[Dict[str, Any]]:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
-                SELECT codigo, nombre, activo, created_at, updated_at
+                SELECT codigo, nombre, activo, perfil_url_template,
+                       created_at, updated_at
                 FROM chatbot.plataformas
                 WHERE activo = TRUE
                 ORDER BY nombre ASC, codigo ASC
@@ -469,7 +470,8 @@ def obtener_plataforma(codigo: str) -> Optional[Dict[str, Any]]:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
-                SELECT codigo, nombre, activo, created_at, updated_at
+                SELECT codigo, nombre, activo, perfil_url_template,
+                       created_at, updated_at
                 FROM chatbot.plataformas
                 WHERE codigo = %s
                 LIMIT 1
@@ -488,6 +490,7 @@ def obtener_agencia_por_id(agencia_id: int) -> Optional[Dict[str, Any]]:
                 SELECT id, nombre, codigo, estado,
                        mensaje_seleccion_configuracion,
                        seleccion_por_palabras_activa,
+                       COALESCE(diagnostico_habilitado, FALSE) AS diagnostico_habilitado,
                        created_at, updated_at
                 FROM chatbot.agencias
                 WHERE id = %s
@@ -533,6 +536,7 @@ def actualizar_mensaje_seleccion_configuracion(
                 RETURNING id, nombre, codigo, estado,
                           mensaje_seleccion_configuracion,
                           seleccion_por_palabras_activa,
+                          COALESCE(diagnostico_habilitado, FALSE) AS diagnostico_habilitado,
                           created_at, updated_at
                 """,
                 params,
