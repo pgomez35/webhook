@@ -102,8 +102,8 @@ def preparar_portal_creador_manual(
     usuario=Depends(obtener_usuario_actual),
 ):
     """
-    Prepara el mensaje con enlace al portal de creador para el editor de Mensajes.
-    No envía a Meta ni registra mensaje enviado.
+    Prepara el mensaje con enlace al portal de perfil de creador (encuesta_id=2)
+    para el editor de Mensajes. No envía a Meta.
     """
     tenant = None
     try:
@@ -128,11 +128,39 @@ def preparar_portal_creador_manual(
     return {
         "ok": True,
         "tipo_portal": resultado.get("tipo_portal"),
+        "tipo_acceso": resultado.get("tipo_acceso"),
+        "accion": resultado.get("accion"),
+        "encuesta_id": resultado.get("encuesta_id"),
         "creador_id": resultado.get("creador_id"),
         "aspirante_id": resultado.get("aspirante_id"),
         "nombre": resultado.get("nombre"),
+        "url": resultado.get("url"),
+        "token_reutilizado": resultado.get("token_reutilizado"),
         "mensaje": resultado.get("mensaje"),
     }
+
+
+@router.get("/api/mensajes-whatsapp/resolver-entidades")
+def resolver_entidades_mensajes(
+    telefono: str,
+    usuario=Depends(obtener_usuario_actual),
+):
+    """Indica si el teléfono es aspirante, creador, ambos o ninguno (tenant actual)."""
+    tenant = None
+    try:
+        tenant = current_tenant.get()
+    except LookupError:
+        tenant = None
+    if not tenant:
+        raise HTTPException(status_code=400, detail="Tenant no disponible en el contexto")
+
+    telefono = (telefono or "").strip()
+    if not telefono:
+        raise HTTPException(status_code=400, detail="Teléfono requerido")
+
+    from utils_aspirantes import resolver_entidades_portal_por_telefono
+
+    return resolver_entidades_portal_por_telefono(telefono)
 
 
 @router.get("/api/mensajes-whatsapp/modo-chatbot")

@@ -32,7 +32,10 @@ class ConsolidarEncuestaCreadorInput(BaseModel):
 
 
 @router.get("/api/creadores/encuestas/{encuesta_id}")
-def obtener_encuesta_creador(encuesta_id: int):
+def obtener_encuesta_creador(
+    encuesta_id: int,
+    creador_id: Optional[int] = Query(None, description="Si se envía, incluye respuesta_actual"),
+):
     try:
         with get_connection_context() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -66,12 +69,60 @@ def obtener_encuesta_creador(encuesta_id: int):
 
                 rows = cur.fetchall()
 
+                respuestas_por_variable = {}
+                if creador_id:
+                    cur.execute(
+                        """
+                        SELECT
+                            r.variable_id,
+                            r.valor_id,
+                            r.valor_integer,
+                            r.valor_numeric,
+                            r.valor_texto,
+                            r.valor_json
+                        FROM creadores_perfil_respuesta r
+                        INNER JOIN creadores_perfil_variable v ON v.id = r.variable_id
+                        WHERE r.creador_id = %s
+                          AND v.encuesta_id = %s
+                        """,
+                        (creador_id, encuesta_id),
+                    )
+                    for resp in cur.fetchall():
+                        respuestas_por_variable[resp["variable_id"]] = resp
+
                 preguntas = {}
 
                 for row in rows:
                     pid = row["pregunta_id"]
 
                     if pid not in preguntas:
+                        respuesta_actual = None
+                        if pid in respuestas_por_variable:
+                            r = respuestas_por_variable[pid]
+                            tipo_dato = str(row["tipo_dato"] or "").strip().lower()
+                            tipo_form = str(row["tipo"] or "").strip().lower()
+                            if tipo_form in ("multiple", "multi") or tipo_dato in ("jsonb", "json"):
+                                respuesta_actual = r.get("valor_json")
+                                if respuesta_actual is None and r.get("valor_texto"):
+                                    try:
+                                        respuesta_actual = json.loads(r["valor_texto"])
+                                    except Exception:
+                                        respuesta_actual = r.get("valor_texto")
+                            elif tipo_form in ("boton", "botón") or r.get("valor_id") is not None:
+                                respuesta_actual = r.get("valor_id")
+                            elif tipo_form == "number" or tipo_dato in ("numerica", "numérica", "numeric"):
+                                respuesta_actual = (
+                                    r.get("valor_numeric")
+                                    if r.get("valor_numeric") is not None
+                                    else r.get("valor_integer")
+                                )
+                            else:
+                                respuesta_actual = (
+                                    r.get("valor_texto")
+                                    if r.get("valor_texto") is not None
+                                    else r.get("valor_integer")
+                                )
+
                         preguntas[pid] = {
                             "id": pid,
                             "texto": row["texto"],
@@ -83,7 +134,8 @@ def obtener_encuesta_creador(encuesta_id: int):
                                 "nombre": row["categoria_nombre"],
                                 "nombre_natural": row["categoria_nombre_natural"]
                             },
-                            "opciones": []
+                            "opciones": [],
+                            "respuesta_actual": respuesta_actual,
                         }
 
                     if row["opcion_id"] is not None:
@@ -98,6 +150,7 @@ def obtener_encuesta_creador(encuesta_id: int):
                 return {
                     "success": True,
                     "encuesta_id": encuesta_id,
+                    "creador_id": creador_id,
                     "preguntas": list(preguntas.values())
                 }
 

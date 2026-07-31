@@ -2538,6 +2538,60 @@ def obtener_persona_portal_por_telefono(telefono: str) -> Optional[dict]:
         return None
 
 
+def resolver_entidades_portal_por_telefono(telefono: str) -> dict:
+    """
+    Identifica de forma independiente si el teléfono pertenece a aspirante y/o creador.
+
+    No aplica prioridad: puede devolver ambos a la vez (p. ej. creador con aspirante vinculado
+    o el mismo número en ambas tablas).
+    """
+    telefono = (telefono or "").strip()
+    out = {
+        "telefono": telefono,
+        "es_aspirante": False,
+        "es_creador": False,
+        "aspirante_id": None,
+        "creador_id": None,
+        "nombre_aspirante": None,
+        "nombre_creador": None,
+    }
+    if not telefono:
+        return out
+
+    try:
+        aspirante = obtener_aspirante_portal_por_telefono(telefono)
+        if aspirante and aspirante.get("aspirante_id"):
+            out["es_aspirante"] = True
+            out["aspirante_id"] = aspirante.get("aspirante_id")
+            out["nombre_aspirante"] = aspirante.get("nombre")
+
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                        c.id,
+                        COALESCE(c.nombre, c.usuario_tiktok, 'creador') AS nombre
+                    FROM creadores c
+                    INNER JOIN creadores_estados ce ON ce.id = c.estado_id
+                    WHERE c.telefono = %s
+                      AND ce.nombre = %s
+                      AND COALESCE(ce.activo, true) = true
+                    LIMIT 1
+                    """,
+                    (telefono, CREADOR_ESTADO_NOMBRE_ACTIVO),
+                )
+                row = cur.fetchone()
+                if row:
+                    out["es_creador"] = True
+                    out["creador_id"] = row[0]
+                    out["nombre_creador"] = row[1]
+    except Exception as e:
+        print(f"❌ Error resolviendo entidades portal por teléfono {telefono}: {e}")
+
+    return out
+
+
 def obtener_aspirante_portal_por_telefono(telefono: str) -> Optional[dict]:
     """
     Resuelve solo portal tipo aspirante: id y nombre del aspirante asociado al número.

@@ -192,8 +192,6 @@ def upsert_evaluacion(
     *,
     agencia_id: int,
     aspirante_id: int,
-    chatbot_configuracion_id: int,
-    plataforma_codigo: str,
     cabecera_perfil: str,
     identificador_detectado: Optional[str],
     nombre_perfil: Optional[str],
@@ -211,132 +209,134 @@ def upsert_evaluacion(
     motivo_bloqueo: Optional[str],
     evaluado_por: str,
 ) -> Dict[str, Any]:
+    """
+    Inserta o actualiza evaluación (una por aspirante_id + chatbot_configuracion_id).
+    plataforma_codigo se resuelve desde la configuración del aspirante (no del frontend).
+    Commit/rollback los gestiona get_connection_chatbot_context.
+    """
     evaluado_por_txt = (evaluado_por or "").strip()
     if not evaluado_por_txt:
         raise ValueError("evaluado_por es obligatorio")
+
     with get_connection_chatbot_context() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Aspirante + configuración de la agencia autenticada
             cur.execute(
                 """
-                SELECT id
-                FROM chatbot.evaluaciones_aspirantes
-                WHERE aspirante_id = %s
-                  AND chatbot_configuracion_id = %s
+                SELECT
+                    a.id AS aspirante_id,
+                    a.agencia_id,
+                    a.chatbot_configuracion_id,
+                    c.id AS config_id,
+                    c.plataforma_codigo
+                FROM chatbot.chatbot_aspirantes a
+                INNER JOIN chatbot.chatbot_configuracion c
+                    ON c.id = a.chatbot_configuracion_id
+                   AND c.agencia_id = a.agencia_id
+                WHERE a.id = %s
+                  AND a.agencia_id = %s
                 LIMIT 1
-                FOR UPDATE
+                FOR UPDATE OF a
                 """,
-                (aspirante_id, chatbot_configuracion_id),
+                (aspirante_id, agencia_id),
             )
-            existing = cur.fetchone()
-            metricas_json = Json(metricas or {})
+            ctx = cur.fetchone()
+            if not ctx:
+                raise ValueError(
+                    "Aspirante no encontrado o sin configuración válida para la agencia"
+                )
 
-            if existing:
-                cur.execute(
-                    """
-                    UPDATE chatbot.evaluaciones_aspirantes
-                    SET
-                        agencia_id = %s,
-                        plataforma_codigo = %s,
-                        cabecera_perfil = %s,
-                        identificador_detectado = %s,
-                        nombre_perfil = %s,
-                        metricas = %s,
-                        talento_calificacion = %s,
-                        talento_observacion = %s,
-                        puntaje_requisitos = %s,
-                        puntaje_mercado = %s,
-                        puntaje_talento = %s,
-                        puntaje_global = %s,
-                        resultado_requisitos = %s,
-                        resultado_mercado = %s,
-                        resultado_talento = %s,
-                        resultado_global = %s,
-                        motivo_bloqueo = %s,
-                        evaluado_por = %s,
-                        evaluado_at = CURRENT_TIMESTAMP,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = %s
-                    RETURNING *
-                    """,
-                    (
-                        agencia_id,
-                        plataforma_codigo,
-                        cabecera_perfil,
-                        identificador_detectado,
-                        nombre_perfil,
-                        metricas_json,
-                        talento_calificacion,
-                        talento_observacion,
-                        puntaje_requisitos,
-                        puntaje_mercado,
-                        puntaje_talento,
-                        puntaje_global,
-                        resultado_requisitos,
-                        resultado_mercado,
-                        resultado_talento,
-                        resultado_global,
-                        motivo_bloqueo,
-                        evaluado_por_txt,
-                        existing["id"],
-                    ),
+            cfg_id = ctx.get("chatbot_configuracion_id") or ctx.get("config_id")
+            plataforma_codigo = str(ctx.get("plataforma_codigo") or "").strip().lower()
+            if not cfg_id:
+                raise ValueError(
+                    "El aspirante no tiene configuración de chatbot asociada"
                 )
-            else:
-                cur.execute(
-                    """
-                    INSERT INTO chatbot.evaluaciones_aspirantes (
-                        agencia_id,
-                        aspirante_id,
-                        chatbot_configuracion_id,
-                        plataforma_codigo,
-                        cabecera_perfil,
-                        identificador_detectado,
-                        nombre_perfil,
-                        metricas,
-                        talento_calificacion,
-                        talento_observacion,
-                        puntaje_requisitos,
-                        puntaje_mercado,
-                        puntaje_talento,
-                        puntaje_global,
-                        resultado_requisitos,
-                        resultado_mercado,
-                        resultado_talento,
-                        resultado_global,
-                        motivo_bloqueo,
-                        evaluado_por,
-                        evaluado_at,
-                        created_at,
-                        updated_at
-                    ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-                    )
-                    RETURNING *
-                    """,
-                    (
-                        agencia_id,
-                        aspirante_id,
-                        chatbot_configuracion_id,
-                        plataforma_codigo,
-                        cabecera_perfil,
-                        identificador_detectado,
-                        nombre_perfil,
-                        metricas_json,
-                        talento_calificacion,
-                        talento_observacion,
-                        puntaje_requisitos,
-                        puntaje_mercado,
-                        puntaje_talento,
-                        puntaje_global,
-                        resultado_requisitos,
-                        resultado_mercado,
-                        resultado_talento,
-                        resultado_global,
-                        motivo_bloqueo,
-                        evaluado_por_txt,
-                    ),
+            if not plataforma_codigo:
+                raise ValueError(
+                    "No se pudo determinar plataforma_codigo desde la configuración"
                 )
+
+            metricas_json = Json(metricas or {})
+            cur.execute(
+                """
+                INSERT INTO chatbot.evaluaciones_aspirantes (
+                    agencia_id,
+                    aspirante_id,
+                    chatbot_configuracion_id,
+                    plataforma_codigo,
+                    cabecera_perfil,
+                    identificador_detectado,
+                    nombre_perfil,
+                    metricas,
+                    talento_calificacion,
+                    talento_observacion,
+                    puntaje_requisitos,
+                    puntaje_mercado,
+                    puntaje_talento,
+                    puntaje_global,
+                    resultado_requisitos,
+                    resultado_mercado,
+                    resultado_talento,
+                    resultado_global,
+                    motivo_bloqueo,
+                    evaluado_por,
+                    evaluado_at,
+                    created_at,
+                    updated_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    CURRENT_TIMESTAMP,
+                    CURRENT_TIMESTAMP,
+                    CURRENT_TIMESTAMP
+                )
+                ON CONFLICT (aspirante_id, chatbot_configuracion_id) DO UPDATE SET
+                    agencia_id = EXCLUDED.agencia_id,
+                    plataforma_codigo = EXCLUDED.plataforma_codigo,
+                    cabecera_perfil = EXCLUDED.cabecera_perfil,
+                    identificador_detectado = EXCLUDED.identificador_detectado,
+                    nombre_perfil = EXCLUDED.nombre_perfil,
+                    metricas = EXCLUDED.metricas,
+                    talento_calificacion = EXCLUDED.talento_calificacion,
+                    talento_observacion = EXCLUDED.talento_observacion,
+                    puntaje_requisitos = EXCLUDED.puntaje_requisitos,
+                    puntaje_mercado = EXCLUDED.puntaje_mercado,
+                    puntaje_talento = EXCLUDED.puntaje_talento,
+                    puntaje_global = EXCLUDED.puntaje_global,
+                    resultado_requisitos = EXCLUDED.resultado_requisitos,
+                    resultado_mercado = EXCLUDED.resultado_mercado,
+                    resultado_talento = EXCLUDED.resultado_talento,
+                    resultado_global = EXCLUDED.resultado_global,
+                    motivo_bloqueo = EXCLUDED.motivo_bloqueo,
+                    evaluado_por = EXCLUDED.evaluado_por,
+                    evaluado_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                RETURNING *
+                """,
+                (
+                    agencia_id,
+                    aspirante_id,
+                    int(cfg_id),
+                    plataforma_codigo,
+                    cabecera_perfil,
+                    identificador_detectado,
+                    nombre_perfil,
+                    metricas_json,
+                    talento_calificacion,
+                    talento_observacion,
+                    puntaje_requisitos,
+                    puntaje_mercado,
+                    puntaje_talento,
+                    puntaje_global,
+                    resultado_requisitos,
+                    resultado_mercado,
+                    resultado_talento,
+                    resultado_global,
+                    motivo_bloqueo,
+                    evaluado_por_txt,
+                ),
+            )
             row = dict(cur.fetchone())
             met = row.get("metricas")
             if isinstance(met, str):
@@ -348,9 +348,11 @@ def upsert_evaluacion(
                 row["metricas"] = {}
             row["evaluado_por_nombre"] = row.get("evaluado_por")
             logger.info(
-                "[DIAGNOSTICO] upsert evaluacion id=%s aspirante_id=%s agencia_id=%s",
+                "[DIAGNOSTICO] upsert evaluacion id=%s aspirante_id=%s "
+                "agencia_id=%s plataforma_codigo=%s",
                 row.get("id"),
                 aspirante_id,
                 agencia_id,
+                plataforma_codigo,
             )
             return row

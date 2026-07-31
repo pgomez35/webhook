@@ -249,8 +249,8 @@ def guardar_evaluacion(
 ) -> EvaluacionResultadoOut:
     _exigir_habilitado(agencia_id)
     asp = _contexto_aspirante(agencia_id, aspirante_id)
+    # Plataforma solo desde la configuración del aspirante (nunca del body)
     plataforma = str(asp["plataforma_codigo"]).strip().lower()
-    cfg_id = int(asp["chatbot_configuracion_id"])
 
     evaluado_por_txt = (evaluado_por or "").strip()
     if not evaluado_por_txt:
@@ -289,27 +289,29 @@ def guardar_evaluacion(
     if not ident:
         ident = normalizar_identificador_perfil(asp.get("usuario_plataforma"))
 
-    row = db.upsert_evaluacion(
-        agencia_id=agencia_id,
-        aspirante_id=aspirante_id,
-        chatbot_configuracion_id=cfg_id,
-        plataforma_codigo=plataforma,
-        cabecera_perfil=payload.cabecera_perfil,
-        identificador_detectado=ident,
-        nombre_perfil=payload.nombre_perfil,
-        metricas=metricas,
-        talento_calificacion=payload.talento_calificacion,
-        talento_observacion=payload.talento_observacion,
-        puntaje_requisitos=calc.get("puntaje_requisitos"),
-        puntaje_mercado=calc.get("puntaje_mercado"),
-        puntaje_talento=calc.get("puntaje_talento"),
-        puntaje_global=calc.get("puntaje_global"),
-        resultado_requisitos=calc.get("resultado_requisitos"),
-        resultado_mercado=calc.get("resultado_mercado"),
-        resultado_talento=calc.get("resultado_talento"),
-        resultado_global=calc.get("resultado_global"),
-        motivo_bloqueo=calc.get("motivo_bloqueo"),
-        evaluado_por=evaluado_por_txt,
-    )
+    try:
+        row = db.upsert_evaluacion(
+            agencia_id=agencia_id,
+            aspirante_id=aspirante_id,
+            cabecera_perfil=payload.cabecera_perfil,
+            identificador_detectado=ident,
+            nombre_perfil=payload.nombre_perfil,
+            metricas=metricas,
+            talento_calificacion=payload.talento_calificacion,
+            talento_observacion=payload.talento_observacion,
+            puntaje_requisitos=calc.get("puntaje_requisitos"),
+            puntaje_mercado=calc.get("puntaje_mercado"),
+            puntaje_talento=calc.get("puntaje_talento"),
+            puntaje_global=calc.get("puntaje_global"),
+            resultado_requisitos=calc.get("resultado_requisitos"),
+            resultado_mercado=calc.get("resultado_mercado"),
+            resultado_talento=calc.get("resultado_talento"),
+            resultado_global=calc.get("resultado_global"),
+            motivo_bloqueo=calc.get("motivo_bloqueo"),
+            evaluado_por=evaluado_por_txt,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
     perfil_url = _resolver_perfil_url(asp, identificador=ident)
     return _evaluacion_out(row, perfil_url=perfil_url, pesos=calc.get("pesos"))

@@ -74,7 +74,7 @@ from utils_aspirantes import obtener_status_24hrs, \
     registrar_cambio_estado, construir_url_actualizar_perfil, iniciar_trazabilidad_encuesta_inicial, \
     habilitar_trazabilidad_encuesta_inicial, obtener_persona_portal_por_telefono, \
     obtener_aspirante_portal_por_telefono, obtener_plantilla_mensaje_portal, \
-    construir_mensaje_portal, enviar_inicio_portal
+    construir_mensaje_portal, enviar_inicio_portal, resolver_entidades_portal_por_telefono
 
 # from utils_aspirantes import guardar_estado_eval, obtener_status_24hrs, Enviar_msg_estado, \
 #     enviar_plantilla_estado_evaluacion, obtener_aspirante_id_por_telefono, buscar_estado_creador, Enviar_menu_quickreply, \
@@ -2650,61 +2650,97 @@ def preparar_inicio_encuesta_formulario_manual(numero: str) -> dict:
     }
 
 
+ENCUESTA_PERFIL_CREADOR_ID = 2
+ACCION_COMPLETAR_PERFIL_CREADOR = "completar_perfil"
+MENSAJE_PORTAL_CREADOR_PERFIL_DEFAULT = (
+    "Hola, {nombre}.\n\n"
+    "Para completar o actualizar tu perfil como creador de la agencia, ingresa al siguiente enlace:\n\n"
+    "{url_portal}"
+)
+
+
 def preparar_inicio_portal_creador_manual(numero: str) -> dict:
     """
-    Prepara el mensaje con enlace al portal creador sin enviarlo.
-    Para insertar en el editor de Mensajes (espejo de preparar_inicio_encuesta_formulario_manual).
+    Prepara el mensaje con enlace al portal creador (encuesta de perfil id=2) sin enviarlo.
+    Solo válido con modo_inicio_chatbot=manual.
     """
     wa_id = (numero or "").strip()
     if not wa_id:
         return {"ok": False, "error": "numero_vacio", "http_status": 400}
 
-    persona = obtener_persona_portal_por_telefono(wa_id)
-    if not persona or (persona.get("tipo_portal") or "").strip().lower() != "creador":
+    modo = obtener_modo_inicio_chatbot()
+    if modo != "manual":
+        return {
+            "ok": False,
+            "error": "modo_no_manual",
+            "http_status": 409,
+            "detail": "Esta acción solo está disponible cuando el inicio del chatbot es manual.",
+            "modo": modo,
+        }
+
+    entidades = resolver_entidades_portal_por_telefono(wa_id)
+    if not entidades.get("es_creador") or not entidades.get("creador_id"):
         return {
             "ok": False,
             "error": "creador_no_encontrado",
             "http_status": 404,
             "detail": "No se encontró un creador activo asociado a este número.",
+            "modo": modo,
         }
 
-    creador_id = persona.get("creador_id")
-    aspirante_id = persona.get("aspirante_id")
-    nombre = (persona.get("nombre") or "").strip() or "creador"
-
-    if not creador_id:
-        return {
-            "ok": False,
-            "error": "creador_id_ausente",
-            "http_status": 404,
-            "detail": "No se encontró un creador activo asociado a este número.",
-        }
+    creador_id = entidades["creador_id"]
+    aspirante_id = entidades.get("aspirante_id")
+    nombre = (entidades.get("nombre_creador") or "").strip() or "creador"
 
     try:
-        construido = _construir_mensaje_portal(
+        portal_data = generar_url_portal(
             tipo_portal="creador",
-            aspirante_id=aspirante_id,
+            aspirante_id=None,
             creador_id=creador_id,
-            nombre=nombre,
-            origen="whatsapp_manual",
-            plantilla=None,
+            origen="whatsapp_manual_perfil",
         )
+        url_base = str(portal_data.get("url") or "").strip()
+        if not url_base:
+            raise ValueError("URL de portal vacía")
+
+        sep = "&" if "?" in url_base else "?"
+        url_portal = f"{url_base}{sep}accion={ACCION_COMPLETAR_PERFIL_CREADOR}"
+
+        plantilla = obtener_configuracion_agencia("mensaje_portal_creador_perfil")
+        if not (plantilla or "").strip():
+            plantilla = MENSAJE_PORTAL_CREADOR_PERFIL_DEFAULT
+
+        mensaje = construir_mensaje_portal(
+            plantilla=plantilla,
+            nombre=nombre,
+            url_portal=url_portal,
+            tipo_portal="creador",
+        )
+        if not (mensaje or "").strip():
+            raise ValueError("El mensaje del portal quedó vacío.")
     except Exception as e:
-        print(f"❌ [PORTAL-CREADOR-MANUAL] No fue posible construir el mensaje: {type(e).__name__}")
+        print(f"❌ [PORTAL-CREADOR-MANUAL] No fue posible construir el mensaje: {type(e).__name__}: {e}")
         return {
             "ok": False,
             "error": "construccion_fallida",
             "http_status": 500,
             "detail": "No fue posible construir el mensaje del portal de creador.",
+            "modo": modo,
         }
 
     return {
         "ok": True,
+        "modo": modo,
         "tipo_portal": "creador",
+        "tipo_acceso": "creador",
+        "accion": ACCION_COMPLETAR_PERFIL_CREADOR,
+        "encuesta_id": ENCUESTA_PERFIL_CREADOR_ID,
         "creador_id": creador_id,
         "aspirante_id": aspirante_id,
         "nombre": nombre,
-        "mensaje": construido["mensaje"],
+        "url": url_portal,
+        "token_reutilizado": bool(portal_data.get("reutilizado")),
+        "mensaje": mensaje,
     }
 
 
