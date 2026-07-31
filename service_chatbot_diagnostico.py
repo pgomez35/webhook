@@ -110,8 +110,10 @@ def _evaluacion_out(
         resultado_talento=row.get("resultado_talento"),
         resultado_global=row.get("resultado_global"),
         motivo_bloqueo=motivo,
-        evaluado_por=row.get("evaluado_por"),
-        evaluado_por_nombre=row.get("evaluado_por_nombre"),
+        evaluado_por=row.get("evaluado_por") or None,
+        evaluado_por_nombre=(
+            row.get("evaluado_por_nombre") or row.get("evaluado_por") or None
+        ),
         evaluado_at=row.get("evaluado_at"),
         created_at=row.get("created_at"),
         updated_at=row.get("updated_at"),
@@ -243,13 +245,19 @@ def guardar_evaluacion(
     aspirante_id: int,
     payload: EvaluacionGuardarIn,
     *,
-    evaluado_por: int,
-    evaluado_por_nombre: Optional[str] = None,
+    evaluado_por: str,
 ) -> EvaluacionResultadoOut:
     _exigir_habilitado(agencia_id)
     asp = _contexto_aspirante(agencia_id, aspirante_id)
     plataforma = str(asp["plataforma_codigo"]).strip().lower()
     cfg_id = int(asp["chatbot_configuracion_id"])
+
+    evaluado_por_txt = (evaluado_por or "").strip()
+    if not evaluado_por_txt:
+        raise HTTPException(
+            status_code=400,
+            detail="No se pudo determinar el usuario autenticado para la evaluación",
+        )
 
     metricas = _normalizar_metricas(payload.metricas, plataforma)
     if plataforma == "bigo" and metricas.get("dato_secundario") is not None:
@@ -301,8 +309,7 @@ def guardar_evaluacion(
         resultado_talento=calc.get("resultado_talento"),
         resultado_global=calc.get("resultado_global"),
         motivo_bloqueo=calc.get("motivo_bloqueo"),
-        evaluado_por=evaluado_por,
+        evaluado_por=evaluado_por_txt,
     )
-    row["evaluado_por_nombre"] = evaluado_por_nombre
     perfil_url = _resolver_perfil_url(asp, identificador=ident)
     return _evaluacion_out(row, perfil_url=perfil_url, pesos=calc.get("pesos"))

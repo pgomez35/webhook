@@ -52,6 +52,10 @@ class PrepararEncuestaFormularioManualInput(BaseModel):
     telefono: str
 
 
+class PrepararPortalCreadorManualInput(BaseModel):
+    telefono: str
+
+
 @router.post("/api/mensajes-whatsapp/preparar-encuesta-formulario")
 def preparar_encuesta_formulario_manual(
     data: PrepararEncuestaFormularioManualInput,
@@ -86,6 +90,45 @@ def preparar_encuesta_formulario_manual(
         "ok": True,
         "canal": resultado.get("canal"),
         "modo": resultado.get("modo"),
+        "aspirante_id": resultado.get("aspirante_id"),
+        "nombre": resultado.get("nombre"),
+        "mensaje": resultado.get("mensaje"),
+    }
+
+
+@router.post("/api/mensajes-whatsapp/preparar-portal-creador")
+def preparar_portal_creador_manual(
+    data: PrepararPortalCreadorManualInput,
+    usuario=Depends(obtener_usuario_actual),
+):
+    """
+    Prepara el mensaje con enlace al portal de creador para el editor de Mensajes.
+    No envía a Meta ni registra mensaje enviado.
+    """
+    tenant = None
+    try:
+        tenant = current_tenant.get()
+    except LookupError:
+        tenant = None
+    if not tenant:
+        raise HTTPException(status_code=400, detail="Tenant no disponible en el contexto")
+
+    telefono = (data.telefono or "").strip()
+    if not telefono:
+        raise HTTPException(status_code=400, detail="Teléfono requerido")
+
+    from main_webhook import preparar_inicio_portal_creador_manual as _preparar
+
+    resultado = _preparar(telefono)
+    if not resultado.get("ok"):
+        status = int(resultado.get("http_status") or 500)
+        detail = resultado.get("detail") or "No fue posible preparar el mensaje."
+        raise HTTPException(status_code=status, detail=detail)
+
+    return {
+        "ok": True,
+        "tipo_portal": resultado.get("tipo_portal"),
+        "creador_id": resultado.get("creador_id"),
         "aspirante_id": resultado.get("aspirante_id"),
         "nombre": resultado.get("nombre"),
         "mensaje": resultado.get("mensaje"),

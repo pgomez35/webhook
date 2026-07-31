@@ -87,11 +87,14 @@ def guardar_evaluacion_aspirante(
     agencia: dict = Depends(obtener_agencia_chatbot_actual),
     sesion: dict = Depends(obtener_sesion_chatbot),
 ) -> EvaluacionResultadoOut:
-    # evaluado_por = id de la agencia autenticada (usuario del portal chatbot)
+    # evaluado_por = usuario autenticado (login), nunca desde el body
+    evaluado_por = (sesion.get("usuario") or "").strip()
+    if not evaluado_por:
+        evaluado_por = str((sesion.get("agencia") or {}).get("nombre") or "").strip()
+
     return svc.guardar_evaluacion(
         int(agencia["id"]),
         aspirante_id,
         payload,
-        evaluado_por=int(agencia["id"]),
-        evaluado_por_nombre=sesion.get("usuario"),
+        evaluado_por=evaluado_por,
     )

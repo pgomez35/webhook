@@ -2650,6 +2650,64 @@ def preparar_inicio_encuesta_formulario_manual(numero: str) -> dict:
     }
 
 
+def preparar_inicio_portal_creador_manual(numero: str) -> dict:
+    """
+    Prepara el mensaje con enlace al portal creador sin enviarlo.
+    Para insertar en el editor de Mensajes (espejo de preparar_inicio_encuesta_formulario_manual).
+    """
+    wa_id = (numero or "").strip()
+    if not wa_id:
+        return {"ok": False, "error": "numero_vacio", "http_status": 400}
+
+    persona = obtener_persona_portal_por_telefono(wa_id)
+    if not persona or (persona.get("tipo_portal") or "").strip().lower() != "creador":
+        return {
+            "ok": False,
+            "error": "creador_no_encontrado",
+            "http_status": 404,
+            "detail": "No se encontró un creador activo asociado a este número.",
+        }
+
+    creador_id = persona.get("creador_id")
+    aspirante_id = persona.get("aspirante_id")
+    nombre = (persona.get("nombre") or "").strip() or "creador"
+
+    if not creador_id:
+        return {
+            "ok": False,
+            "error": "creador_id_ausente",
+            "http_status": 404,
+            "detail": "No se encontró un creador activo asociado a este número.",
+        }
+
+    try:
+        construido = _construir_mensaje_portal(
+            tipo_portal="creador",
+            aspirante_id=aspirante_id,
+            creador_id=creador_id,
+            nombre=nombre,
+            origen="whatsapp_manual",
+            plantilla=None,
+        )
+    except Exception as e:
+        print(f"❌ [PORTAL-CREADOR-MANUAL] No fue posible construir el mensaje: {type(e).__name__}")
+        return {
+            "ok": False,
+            "error": "construccion_fallida",
+            "http_status": 500,
+            "detail": "No fue posible construir el mensaje del portal de creador.",
+        }
+
+    return {
+        "ok": True,
+        "tipo_portal": "creador",
+        "creador_id": creador_id,
+        "aspirante_id": aspirante_id,
+        "nombre": nombre,
+        "mensaje": construido["mensaje"],
+    }
+
+
 # ⚠️ DEPRECADO: Ya no se usa. Las respuestas se envían todas juntas a /consolidar
 # class RespuestaInput(BaseModel):
 #     numero: str

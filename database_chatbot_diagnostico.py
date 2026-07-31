@@ -129,7 +129,7 @@ def listar_aspirantes_diagnostico(
                         AS estado_diagnostico,
                     e.resultado_global,
                     e.evaluado_at,
-                    ag.usuario_login AS evaluado_por_nombre
+                    e.evaluado_por AS evaluado_por
                 FROM chatbot.chatbot_aspirantes a
                 LEFT JOIN chatbot.chatbot_configuracion c
                     ON c.id = a.chatbot_configuracion_id
@@ -140,15 +140,18 @@ def listar_aspirantes_diagnostico(
                     ON e.aspirante_id = a.id
                    AND e.chatbot_configuracion_id = a.chatbot_configuracion_id
                    AND e.agencia_id = a.agencia_id
-                LEFT JOIN chatbot.agencias ag
-                    ON ag.id = e.evaluado_por
                 WHERE {where_sql}
                 ORDER BY a.ultima_interaccion DESC NULLS LAST, a.id DESC
                 LIMIT %s OFFSET %s
                 """,
                 params + [page_size, offset],
             )
-            return total, [dict(r) for r in (cur.fetchall() or [])]
+            rows = []
+            for r in cur.fetchall() or []:
+                item = dict(r)
+                item["evaluado_por_nombre"] = item.get("evaluado_por")
+                rows.append(item)
+            return total, rows
 
 
 def obtener_evaluacion(
@@ -160,12 +163,8 @@ def obtener_evaluacion(
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
-                SELECT
-                    e.*,
-                    ag.usuario_login AS evaluado_por_nombre
+                SELECT e.*
                 FROM chatbot.evaluaciones_aspirantes e
-                LEFT JOIN chatbot.agencias ag
-                    ON ag.id = e.evaluado_por
                 WHERE e.agencia_id = %s
                   AND e.aspirante_id = %s
                   AND e.chatbot_configuracion_id = %s
@@ -185,6 +184,7 @@ def obtener_evaluacion(
                     out["metricas"] = {}
             elif met is None:
                 out["metricas"] = {}
+            out["evaluado_por_nombre"] = out.get("evaluado_por")
             return out
 
 
@@ -209,8 +209,11 @@ def upsert_evaluacion(
     resultado_talento: Optional[str],
     resultado_global: Optional[str],
     motivo_bloqueo: Optional[str],
-    evaluado_por: int,
+    evaluado_por: str,
 ) -> Dict[str, Any]:
+    evaluado_por_txt = (evaluado_por or "").strip()
+    if not evaluado_por_txt:
+        raise ValueError("evaluado_por es obligatorio")
     with get_connection_chatbot_context() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
@@ -273,7 +276,7 @@ def upsert_evaluacion(
                         resultado_talento,
                         resultado_global,
                         motivo_bloqueo,
-                        evaluado_por,
+                        evaluado_por_txt,
                         existing["id"],
                     ),
                 )
@@ -331,7 +334,7 @@ def upsert_evaluacion(
                         resultado_talento,
                         resultado_global,
                         motivo_bloqueo,
-                        evaluado_por,
+                        evaluado_por_txt,
                     ),
                 )
             row = dict(cur.fetchone())
@@ -343,6 +346,7 @@ def upsert_evaluacion(
                     row["metricas"] = {}
             elif met is None:
                 row["metricas"] = {}
+            row["evaluado_por_nombre"] = row.get("evaluado_por")
             logger.info(
                 "[DIAGNOSTICO] upsert evaluacion id=%s aspirante_id=%s agencia_id=%s",
                 row.get("id"),

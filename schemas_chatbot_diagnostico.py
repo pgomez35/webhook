@@ -96,7 +96,7 @@ class EvaluacionResultadoOut(BaseModel):
     resultado_talento: Optional[str] = None
     resultado_global: Optional[str] = None
     motivo_bloqueo: Optional[str] = None
-    evaluado_por: Optional[int] = None
+    evaluado_por: Optional[str] = None
     evaluado_por_nombre: Optional[str] = None
     evaluado_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
