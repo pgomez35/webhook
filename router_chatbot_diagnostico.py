@@ -29,17 +29,19 @@ router = APIRouter(
 @router.get("/aspirantes")
 def listar_aspirantes_diagnostico(
     plataforma: Optional[str] = Query(None),
+    estado: Optional[str] = Query(None, description="Estado de gestión del aspirante"),
     estado_diagnostico: Optional[str] = Query(
         None, description="pendiente | evaluado"
     ),
     resultado_global: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=100),
     agencia: dict = Depends(obtener_agencia_chatbot_actual),
 ) -> Dict[str, Any]:
     return svc.listar_aspirantes(
         int(agencia["id"]),
         plataforma=plataforma,
+        estado=estado,
         estado_diagnostico=estado_diagnostico,
         resultado_global=resultado_global,
         page=page,

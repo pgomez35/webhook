@@ -118,6 +118,7 @@ class DiagnosticoAspiranteListItem(BaseModel):
     estado_diagnostico: str  # pendiente | evaluado
     resultado_global: Optional[str] = None
     evaluado_at: Optional[datetime] = None
+    evaluado_por: Optional[str] = None
     evaluado_por_nombre: Optional[str] = None
 
 
@@ -127,6 +128,7 @@ class DiagnosticoAspiranteDetalle(BaseModel):
     telefono: Optional[str] = None
     mayor_edad: Optional[bool] = None
     disponibilidad_live: Optional[bool] = None
+    cumple_requisitos: Optional[bool] = None
     usuario_plataforma: Optional[str] = None
     chatbot_configuracion_id: Optional[int] = None
     plataforma_codigo: Optional[str] = None

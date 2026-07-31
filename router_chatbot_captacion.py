@@ -145,6 +145,9 @@ def _config_resumen(cfg: dict) -> ChatbotConfiguracionResumen:
 
 
 def _aspirante_response(row: dict) -> ChatbotAspiranteResponse:
+    estado_diag = row.get("estado_diagnostico")
+    if not estado_diag:
+        estado_diag = "evaluado" if row.get("evaluado_at") else "pendiente"
     return ChatbotAspiranteResponse(
         id=row["id"],
         telefono=row["telefono"],
@@ -165,6 +168,10 @@ def _aspirante_response(row: dict) -> ChatbotAspiranteResponse:
         business_name_origen=row.get("business_name_origen"),
         fecha_registro=row.get("fecha_registro"),
         ultima_interaccion=row.get("ultima_interaccion"),
+        estado_diagnostico=estado_diag,
+        resultado_global=row.get("resultado_global"),
+        evaluado_at=row.get("evaluado_at"),
+        evaluado_por=row.get("evaluado_por"),
     )
 
 
@@ -486,6 +493,9 @@ def get_aspirantes(
     plataforma: Optional[str] = Query(None),
     cumple_requisitos: Optional[bool] = Query(None),
     requiere_asesor: Optional[bool] = Query(None),
+    estado_diagnostico: Optional[str] = Query(
+        None, description="pendiente | evaluado"
+    ),
     fecha_desde: Optional[date] = Query(None),
     fecha_hasta: Optional[date] = Query(None),
     whatsapp_account_id: Optional[int] = Query(None),
@@ -508,6 +518,7 @@ def get_aspirantes(
         plataforma=plataforma,
         cumple_requisitos=cumple_requisitos,
         requiere_asesor=requiere_asesor,
+        estado_diagnostico=estado_diagnostico,
         fecha_desde=fecha_desde,
         fecha_hasta=fecha_hasta,
         whatsapp_account_id=whatsapp_account_id,

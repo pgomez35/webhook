@@ -590,6 +590,11 @@ class ChatbotAspiranteResponse(BaseModel):
     business_name_origen: Optional[str] = None
     fecha_registro: Optional[datetime] = None
     ultima_interaccion: Optional[datetime] = None
+    # Diagnóstico (independiente del estado de gestión)
+    estado_diagnostico: Optional[str] = None  # pendiente | evaluado
+    resultado_global: Optional[str] = None
+    evaluado_at: Optional[datetime] = None
+    evaluado_por: Optional[str] = None
 
 
 class ChatbotAspiranteDetalle(ChatbotAspiranteResponse):

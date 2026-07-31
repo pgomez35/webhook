@@ -1333,6 +1333,7 @@ def listar_aspirantes(
     plataforma: Optional[str] = None,
     cumple_requisitos: Optional[bool] = None,
     requiere_asesor: Optional[bool] = None,
+    estado_diagnostico: Optional[str] = None,
     fecha_desde: Optional[date] = None,
     fecha_hasta: Optional[date] = None,
     whatsapp_account_id: Optional[int] = None,
@@ -1340,6 +1341,9 @@ def listar_aspirantes(
     page_size: int = 20,
     order: str = "fecha_registro_desc",
 ) -> Tuple[int, List[Dict[str, Any]]]:
+    import time
+
+    t0 = time.perf_counter()
     where = ["a.agencia_id = %s"]
     params: List[Any] = [agencia_id]
 
@@ -1354,7 +1358,6 @@ def listar_aspirantes(
         where.append("a.estado = %s")
         params.append(estado)
     if plataforma:
-        # Filtra por código de plataforma (no columna textual legacy)
         where.append("a.plataforma_codigo = %s")
         params.append(str(plataforma).strip().lower())
     if cumple_requisitos is not None:
@@ -1373,6 +1376,12 @@ def listar_aspirantes(
         where.append("a.whatsapp_account_id = %s")
         params.append(whatsapp_account_id)
 
+    estado_diag = (estado_diagnostico or "").strip().lower()
+    if estado_diag == "evaluado":
+        where.append("e.evaluado_at IS NOT NULL")
+    elif estado_diag == "pendiente":
+        where.append("e.evaluado_at IS NULL")
+
     order_sql = "a.fecha_registro DESC"
     if order == "fecha_registro_asc":
         order_sql = "a.fecha_registro ASC"
@@ -1381,35 +1390,80 @@ def listar_aspirantes(
 
     where_sql = " AND ".join(where)
     offset = max(page - 1, 0) * page_size
+    page_size = max(1, min(int(page_size), 100))
+
+    join_eval = """
+                LEFT JOIN chatbot.evaluaciones_aspirantes e
+                    ON e.aspirante_id = a.id
+                   AND e.agencia_id = a.agencia_id
+                   AND (
+                        (a.chatbot_configuracion_id IS NOT NULL
+                         AND e.chatbot_configuracion_id = a.chatbot_configuracion_id)
+                        OR (a.chatbot_configuracion_id IS NULL
+                            AND e.chatbot_configuracion_id IS NULL)
+                   )
+    """
 
     with get_connection_chatbot_context() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                f"SELECT COUNT(*)::int AS total FROM chatbot.chatbot_aspirantes a WHERE {where_sql}",
-                params,
-            )
-            total = (cur.fetchone() or {}).get("total") or 0
-
-            cur.execute(
                 f"""
                 SELECT
-                    a.*,
+                    a.id,
+                    a.telefono,
+                    a.nombre,
+                    a.plataforma_codigo,
+                    a.usuario_plataforma,
+                    a.chatbot_configuracion_id,
+                    a.mayor_edad,
+                    a.disponibilidad_live,
+                    a.estado,
+                    a.etapa_chatbot,
+                    a.cumple_requisitos,
+                    a.requiere_asesor,
+                    a.observaciones,
+                    a.whatsapp_account_id,
+                    a.fecha_registro,
+                    a.ultima_interaccion,
+                    a.agencia_id,
+                    a.updated_at,
                     p.nombre AS plataforma,
                     w.phone_number AS phone_number_origen,
-                    w.business_name AS business_name_origen
+                    w.business_name AS business_name_origen,
+                    CASE
+                        WHEN e.evaluado_at IS NOT NULL THEN 'evaluado'
+                        ELSE 'pendiente'
+                    END AS estado_diagnostico,
+                    e.resultado_global,
+                    e.evaluado_at,
+                    e.evaluado_por,
+                    COUNT(*) OVER()::int AS _total
                 FROM chatbot.chatbot_aspirantes a
                 LEFT JOIN chatbot.plataformas p
                     ON p.codigo = a.plataforma_codigo
                 LEFT JOIN public.whatsapp_business_accounts w
                     ON w.id = a.whatsapp_account_id
+                {join_eval}
                 WHERE {where_sql}
                 ORDER BY {order_sql}
                 LIMIT %s OFFSET %s
                 """,
                 params + [page_size, offset],
             )
-            rows = [dict(r) for r in (cur.fetchall() or [])]
-            return total, rows
+            fetched = [dict(r) for r in (cur.fetchall() or [])]
+            total = int(fetched[0]["_total"]) if fetched else 0
+            for r in fetched:
+                r.pop("_total", None)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            logger.info(
+                "[CHATBOT-LIST] aspirantes agencia_id=%s page=%s size=%s total=%s ms=%.1f",
+                agencia_id,
+                page,
+                page_size,
+                total,
+                elapsed_ms,
+            )
+            return total, fetched
 
 
 def obtener_aspirante(agencia_id: int, aspirante_id: int) -> Optional[Dict[str, Any]]:
@@ -1421,12 +1475,28 @@ def obtener_aspirante(agencia_id: int, aspirante_id: int) -> Optional[Dict[str, 
                     a.*,
                     p.nombre AS plataforma,
                     w.phone_number AS phone_number_origen,
-                    w.business_name AS business_name_origen
+                    w.business_name AS business_name_origen,
+                    CASE
+                        WHEN e.evaluado_at IS NOT NULL THEN 'evaluado'
+                        ELSE 'pendiente'
+                    END AS estado_diagnostico,
+                    e.resultado_global,
+                    e.evaluado_at,
+                    e.evaluado_por
                 FROM chatbot.chatbot_aspirantes a
                 LEFT JOIN chatbot.plataformas p
                     ON p.codigo = a.plataforma_codigo
                 LEFT JOIN public.whatsapp_business_accounts w
                     ON w.id = a.whatsapp_account_id
+                LEFT JOIN chatbot.evaluaciones_aspirantes e
+                    ON e.aspirante_id = a.id
+                   AND e.agencia_id = a.agencia_id
+                   AND (
+                        (a.chatbot_configuracion_id IS NOT NULL
+                         AND e.chatbot_configuracion_id = a.chatbot_configuracion_id)
+                        OR (a.chatbot_configuracion_id IS NULL
+                            AND e.chatbot_configuracion_id IS NULL)
+                   )
                 WHERE a.id = %s
                   AND a.agencia_id = %s
                 LIMIT 1

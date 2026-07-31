@@ -71,11 +71,19 @@ def listar_aspirantes_diagnostico(
     agencia_id: int,
     *,
     plataforma: Optional[str] = None,
+    estado: Optional[str] = None,
     estado_diagnostico: Optional[str] = None,
     resultado_global: Optional[str] = None,
     page: int = 1,
-    page_size: int = 50,
-) -> Tuple[int, List[Dict[str, Any]]]:
+    page_size: int = 20,
+) -> Tuple[int, List[Dict[str, Any]], List[Dict[str, str]]]:
+    """
+    Listado ligero paginado (una consulta con COUNT OVER).
+    No incluye cabecera_perfil, metricas ni observaciones.
+    """
+    import time
+
+    t0 = time.perf_counter()
     where = ["a.agencia_id = %s"]
     params: List[Any] = [agencia_id]
 
@@ -83,36 +91,44 @@ def listar_aspirantes_diagnostico(
         where.append("COALESCE(c.plataforma_codigo, a.plataforma_codigo) = %s")
         params.append(str(plataforma).strip().lower())
 
+    if estado:
+        where.append("a.estado = %s")
+        params.append(str(estado).strip().lower())
+
     if resultado_global:
         where.append("e.resultado_global = %s")
         params.append(str(resultado_global).strip().lower())
 
-    if estado_diagnostico == "evaluado":
-        where.append("e.id IS NOT NULL")
-    elif estado_diagnostico == "pendiente":
-        where.append("e.id IS NULL")
+    estado_diag = (estado_diagnostico or "").strip().lower()
+    if estado_diag == "evaluado":
+        where.append("e.evaluado_at IS NOT NULL")
+    elif estado_diag == "pendiente":
+        where.append("e.evaluado_at IS NULL")
 
     where_sql = " AND ".join(where)
+    page_size = max(1, min(int(page_size), 100))
     offset = max(page - 1, 0) * page_size
 
     with get_connection_chatbot_context() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                f"""
-                SELECT COUNT(*)::int AS total
-                FROM chatbot.chatbot_aspirantes a
-                LEFT JOIN chatbot.chatbot_configuracion c
-                    ON c.id = a.chatbot_configuracion_id
-                   AND c.agencia_id = a.agencia_id
-                LEFT JOIN chatbot.evaluaciones_aspirantes e
-                    ON e.aspirante_id = a.id
-                   AND e.chatbot_configuracion_id = a.chatbot_configuracion_id
-                   AND e.agencia_id = a.agencia_id
-                WHERE {where_sql}
+                """
+                SELECT DISTINCT
+                    c.plataforma_codigo AS codigo,
+                    COALESCE(p.nombre, c.plataforma_codigo) AS nombre
+                FROM chatbot.chatbot_configuracion c
+                LEFT JOIN chatbot.plataformas p ON p.codigo = c.plataforma_codigo
+                WHERE c.agencia_id = %s
+                  AND c.plataforma_codigo IS NOT NULL
+                ORDER BY 2 ASC
                 """,
-                params,
+                (agencia_id,),
             )
-            total = (cur.fetchone() or {}).get("total") or 0
+            plataformas = [
+                {"codigo": r["codigo"], "nombre": r["nombre"]}
+                for r in (cur.fetchall() or [])
+                if r.get("codigo")
+            ]
 
             cur.execute(
                 f"""
@@ -125,11 +141,14 @@ def listar_aspirantes_diagnostico(
                     a.chatbot_configuracion_id,
                     COALESCE(c.plataforma_codigo, a.plataforma_codigo) AS plataforma_codigo,
                     p.nombre AS plataforma_nombre,
-                    CASE WHEN e.id IS NULL THEN 'pendiente' ELSE 'evaluado' END
-                        AS estado_diagnostico,
+                    CASE
+                        WHEN e.evaluado_at IS NOT NULL THEN 'evaluado'
+                        ELSE 'pendiente'
+                    END AS estado_diagnostico,
                     e.resultado_global,
                     e.evaluado_at,
-                    e.evaluado_por AS evaluado_por
+                    e.evaluado_por AS evaluado_por,
+                    COUNT(*) OVER()::int AS _total
                 FROM chatbot.chatbot_aspirantes a
                 LEFT JOIN chatbot.chatbot_configuracion c
                     ON c.id = a.chatbot_configuracion_id
@@ -138,20 +157,121 @@ def listar_aspirantes_diagnostico(
                     ON p.codigo = COALESCE(c.plataforma_codigo, a.plataforma_codigo)
                 LEFT JOIN chatbot.evaluaciones_aspirantes e
                     ON e.aspirante_id = a.id
-                   AND e.chatbot_configuracion_id = a.chatbot_configuracion_id
                    AND e.agencia_id = a.agencia_id
+                   AND e.chatbot_configuracion_id = a.chatbot_configuracion_id
                 WHERE {where_sql}
                 ORDER BY a.ultima_interaccion DESC NULLS LAST, a.id DESC
                 LIMIT %s OFFSET %s
                 """,
                 params + [page_size, offset],
             )
+            fetched = [dict(r) for r in (cur.fetchall() or [])]
+            total = int(fetched[0]["_total"]) if fetched else 0
             rows = []
-            for r in cur.fetchall() or []:
-                item = dict(r)
-                item["evaluado_por_nombre"] = item.get("evaluado_por")
-                rows.append(item)
-            return total, rows
+            for r in fetched:
+                r.pop("_total", None)
+                r["evaluado_por_nombre"] = r.get("evaluado_por")
+                rows.append(r)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            logger.info(
+                "[DIAGNOSTICO-LIST] agencia_id=%s page=%s size=%s total=%s ms=%.1f",
+                agencia_id,
+                page,
+                page_size,
+                total,
+                elapsed_ms,
+            )
+            return total, rows, plataformas
+
+
+def obtener_detalle_diagnostico(
+    agencia_id: int, aspirante_id: int
+) -> Optional[Dict[str, Any]]:
+    """
+    Una sola consulta: aspirante + configuración + plataforma + evaluación ligera.
+    """
+    import time
+
+    t0 = time.perf_counter()
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT
+                    a.id,
+                    a.agencia_id,
+                    a.nombre,
+                    a.telefono,
+                    a.usuario_plataforma,
+                    a.mayor_edad,
+                    a.disponibilidad_live,
+                    a.estado,
+                    a.etapa_chatbot,
+                    a.cumple_requisitos,
+                    a.chatbot_configuracion_id,
+                    c.id AS config_id,
+                    c.plataforma_codigo,
+                    p.nombre AS plataforma_nombre,
+                    p.perfil_url_template,
+                    e.id AS evaluacion_id,
+                    e.plataforma_codigo AS evaluacion_plataforma_codigo,
+                    e.cabecera_perfil,
+                    e.identificador_detectado,
+                    e.nombre_perfil,
+                    e.metricas,
+                    e.talento_calificacion,
+                    e.talento_observacion,
+                    e.puntaje_requisitos,
+                    e.puntaje_mercado,
+                    e.puntaje_talento,
+                    e.puntaje_global,
+                    e.resultado_requisitos,
+                    e.resultado_mercado,
+                    e.resultado_talento,
+                    e.resultado_global,
+                    e.motivo_bloqueo,
+                    e.evaluado_por,
+                    e.evaluado_at,
+                    e.created_at AS evaluacion_created_at,
+                    e.updated_at AS evaluacion_updated_at,
+                    e.chatbot_configuracion_id AS evaluacion_config_id
+                FROM chatbot.chatbot_aspirantes a
+                LEFT JOIN chatbot.chatbot_configuracion c
+                    ON c.id = a.chatbot_configuracion_id
+                   AND c.agencia_id = a.agencia_id
+                LEFT JOIN chatbot.plataformas p
+                    ON p.codigo = c.plataforma_codigo
+                LEFT JOIN chatbot.evaluaciones_aspirantes e
+                    ON e.aspirante_id = a.id
+                   AND e.agencia_id = a.agencia_id
+                   AND e.chatbot_configuracion_id = a.chatbot_configuracion_id
+                WHERE a.id = %s
+                  AND a.agencia_id = %s
+                LIMIT 1
+                """,
+                (aspirante_id, agencia_id),
+            )
+            row = cur.fetchone()
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            logger.info(
+                "[DIAGNOSTICO-DETALLE] agencia_id=%s aspirante_id=%s found=%s ms=%.1f",
+                agencia_id,
+                aspirante_id,
+                bool(row),
+                elapsed_ms,
+            )
+            if not row:
+                return None
+            out = dict(row)
+            met = out.get("metricas")
+            if isinstance(met, str):
+                try:
+                    out["metricas"] = json.loads(met)
+                except Exception:
+                    out["metricas"] = {}
+            elif met is None and out.get("evaluacion_id"):
+                out["metricas"] = {}
+            return out
 
 
 def obtener_evaluacion(

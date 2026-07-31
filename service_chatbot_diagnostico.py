@@ -127,22 +127,30 @@ def listar_aspirantes(
     agencia_id: int,
     *,
     plataforma: Optional[str] = None,
+    estado: Optional[str] = None,
     estado_diagnostico: Optional[str] = None,
     resultado_global: Optional[str] = None,
     page: int = 1,
-    page_size: int = 50,
+    page_size: int = 20,
 ) -> Dict[str, Any]:
     _exigir_habilitado(agencia_id)
-    total, rows = db.listar_aspirantes_diagnostico(
+    total, rows, plataformas = db.listar_aspirantes_diagnostico(
         agencia_id,
         plataforma=plataforma,
+        estado=estado,
         estado_diagnostico=estado_diagnostico,
         resultado_global=resultado_global,
         page=page,
         page_size=page_size,
     )
     items = [DiagnosticoAspiranteListItem(**r) for r in rows]
-    return {"total": total, "page": page, "page_size": page_size, "items": items}
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": items,
+        "plataformas": plataformas,
+    }
 
 
 def _resolver_perfil_url(
@@ -165,10 +173,52 @@ def _resolver_perfil_url(
 
 def detalle_aspirante(agencia_id: int, aspirante_id: int) -> DiagnosticoAspiranteDetalle:
     _exigir_habilitado(agencia_id)
-    asp = _contexto_aspirante(agencia_id, aspirante_id)
-    cfg_id = int(asp["chatbot_configuracion_id"])
-    ev = db.obtener_evaluacion(agencia_id, aspirante_id, cfg_id)
-    perfil_url = _resolver_perfil_url(asp, evaluacion=ev)
+    row = db.obtener_detalle_diagnostico(agencia_id, aspirante_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Aspirante no encontrado")
+    if not row.get("chatbot_configuracion_id") or not row.get("config_id"):
+        raise HTTPException(
+            status_code=400,
+            detail="El aspirante no tiene configuración de chatbot asociada",
+        )
+    if not row.get("plataforma_codigo"):
+        raise HTTPException(
+            status_code=400,
+            detail="No se pudo determinar la plataforma desde la configuración",
+        )
+
+    cfg_id = int(row["chatbot_configuracion_id"])
+    ev = None
+    if row.get("evaluacion_id"):
+        ev = {
+            "id": row["evaluacion_id"],
+            "aspirante_id": row["id"],
+            "chatbot_configuracion_id": row.get("evaluacion_config_id") or cfg_id,
+            "plataforma_codigo": row.get("evaluacion_plataforma_codigo")
+            or row.get("plataforma_codigo"),
+            "cabecera_perfil": row.get("cabecera_perfil") or "",
+            "identificador_detectado": row.get("identificador_detectado"),
+            "nombre_perfil": row.get("nombre_perfil"),
+            "metricas": row.get("metricas") or {},
+            "talento_calificacion": row.get("talento_calificacion"),
+            "talento_observacion": row.get("talento_observacion"),
+            "puntaje_requisitos": row.get("puntaje_requisitos"),
+            "puntaje_mercado": row.get("puntaje_mercado"),
+            "puntaje_talento": row.get("puntaje_talento"),
+            "puntaje_global": row.get("puntaje_global"),
+            "resultado_requisitos": row.get("resultado_requisitos"),
+            "resultado_mercado": row.get("resultado_mercado"),
+            "resultado_talento": row.get("resultado_talento"),
+            "resultado_global": row.get("resultado_global"),
+            "motivo_bloqueo": row.get("motivo_bloqueo"),
+            "evaluado_por": row.get("evaluado_por"),
+            "evaluado_por_nombre": row.get("evaluado_por"),
+            "evaluado_at": row.get("evaluado_at"),
+            "created_at": row.get("evaluacion_created_at"),
+            "updated_at": row.get("evaluacion_updated_at"),
+        }
+
+    perfil_url = _resolver_perfil_url(row, evaluacion=ev)
     evaluacion = None
     if ev:
         from diagnostico_reglas import PESO_MERCADO, PESO_REQUISITOS, PESO_TALENTO
@@ -182,18 +232,20 @@ def detalle_aspirante(agencia_id: int, aspirante_id: int) -> DiagnosticoAspirant
                 "talento": float(PESO_TALENTO),
             },
         )
+
     return DiagnosticoAspiranteDetalle(
-        id=asp["id"],
-        nombre=asp.get("nombre"),
-        telefono=asp.get("telefono"),
-        mayor_edad=asp.get("mayor_edad"),
-        disponibilidad_live=asp.get("disponibilidad_live"),
-        usuario_plataforma=asp.get("usuario_plataforma"),
+        id=row["id"],
+        nombre=row.get("nombre"),
+        telefono=row.get("telefono"),
+        mayor_edad=row.get("mayor_edad"),
+        disponibilidad_live=row.get("disponibilidad_live"),
+        cumple_requisitos=row.get("cumple_requisitos"),
+        usuario_plataforma=row.get("usuario_plataforma"),
         chatbot_configuracion_id=cfg_id,
-        plataforma_codigo=asp.get("plataforma_codigo"),
-        plataforma_nombre=asp.get("plataforma_nombre"),
+        plataforma_codigo=row.get("plataforma_codigo"),
+        plataforma_nombre=row.get("plataforma_nombre"),
         perfil_url=perfil_url,
-        estado_diagnostico="evaluado" if ev else "pendiente",
+        estado_diagnostico="evaluado" if ev and ev.get("evaluado_at") else "pendiente",
         evaluacion=evaluacion,
     )
 
