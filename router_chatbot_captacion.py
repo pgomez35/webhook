@@ -285,14 +285,16 @@ def put_configuracion_by_id(
     data = payload.model_dump(mode="json", exclude_unset=False)
     n_recibidos = len(data.get("recursos_bienvenida") or [])
     logger.info(
-        "[CHATBOT-CONFIG] put agencia_id=%s configuracion_id=%s recursos_recibidos=%s",
+        "[CHATBOT-CONFIG] put agencia_id=%s configuracion_id=%s "
+        "recursos_recibidos=%s activo=%s",
         agencia["id"],
         configuracion_id,
         n_recibidos,
+        data.get("activo"),
     )
     try:
-        # actualizar_configuracion hace UPDATE ... RETURNING recursos_bienvenida
-        # en una sola transacción y hace commit antes de devolver.
+        # actualizar_configuracion hace UPDATE ... RETURNING (incluye activo)
+        # en una sola transacción; agencia_id solo desde JWT (WHERE id + agencia_id).
         cfg = db.actualizar_configuracion(
             int(agencia["id"]),
             data,
@@ -315,6 +317,12 @@ def put_configuracion_by_id(
             status_code=500,
             detail="No se pudieron persistir los recursos de bienvenida",
         )
+    logger.info(
+        "[CHATBOT-CONFIG] put ok agencia_id=%s configuracion_id=%s activo=%s",
+        agencia["id"],
+        configuracion_id,
+        cfg.get("activo"),
+    )
     return _config_response(agencia, cfg)
 
 

@@ -1010,11 +1010,12 @@ def actualizar_configuracion(
 
             logger.info(
                 "[CHATBOT-CONFIG] actualizada agencia_id=%s configuracion_id=%s "
-                "plataforma_codigo=%s recursos_returning=%s",
+                "plataforma_codigo=%s recursos_returning=%s activo=%s",
                 agencia_id,
                 out.get("id"),
                 out.get("plataforma_codigo"),
                 len(recursos_ret),
+                out.get("activo"),
             )
             # Commit al salir del context manager, antes de devolver al caller.
             return out
