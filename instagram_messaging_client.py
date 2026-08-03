@@ -10,7 +10,12 @@ from typing import Any, Optional
 
 import httpx
 
-from meta_social_config import MetaSocialSettings, get_settings
+from meta_social_config import (
+    INSTAGRAM_LOGIN_SUPPORTS_WEB_URL_BUTTON,
+    WHATSAPP_CTA_BUTTON_TITLE,
+    MetaSocialSettings,
+    get_settings,
+)
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -90,6 +95,15 @@ def raise_for_meta_response(response: httpx.Response) -> None:
     )
 
 
+def _mask_recipient(recipient_id: str, keep: int = 4) -> str:
+    text = str(recipient_id or "").strip()
+    if not text:
+        return "(vacío)"
+    if len(text) <= keep * 2:
+        return text[:2] + "***"
+    return f"{text[:keep]}…{text[-keep:]}"
+
+
 class InstagramMessagingClient:
     channel_name = "instagram"
 
@@ -128,11 +142,64 @@ class InstagramMessagingClient:
             "message": {"text": text},
         }
 
-    async def send_text(self, recipient_id: str, text: str) -> dict[str, Any]:
+    def build_image_payload(self, recipient_id: str, image_url: str) -> dict[str, Any]:
+        """Payload oficial Instagram Login: attachment type=image + url HTTPS."""
+        return {
+            "recipient": {"id": recipient_id},
+            "message": {
+                "attachment": {
+                    "type": "image",
+                    "payload": {"url": image_url},
+                }
+            },
+        }
+
+    def build_whatsapp_cta_text_payload(
+        self,
+        recipient_id: str,
+        whatsapp_url: str,
+    ) -> dict[str, Any]:
+        text = f"👉 Probar demo por WhatsApp:\n{whatsapp_url}"
+        return self.build_text_payload(recipient_id, text)
+
+    def build_whatsapp_cta_button_payload(
+        self,
+        recipient_id: str,
+        whatsapp_url: str,
+        *,
+        title: str = WHATSAPP_CTA_BUTTON_TITLE,
+    ) -> dict[str, Any]:
+        """Payload tipo button/web_url (solo si la modalidad lo admite oficialmente)."""
+        return {
+            "recipient": {"id": recipient_id},
+            "message": {
+                "attachment": {
+                    "type": "template",
+                    "payload": {
+                        "template_type": "button",
+                        "text": "Continúa la demo en WhatsApp:",
+                        "buttons": [
+                            {
+                                "type": "web_url",
+                                "url": whatsapp_url,
+                                "title": title[:20],
+                            }
+                        ],
+                    },
+                }
+            },
+        }
+
+    async def _post_message(
+        self,
+        *,
+        message_type: str,
+        recipient_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
         self._assert_enabled()
         _, token = self._assert_credentials()
         url = self.messages_url()
-        payload = self.build_text_payload(recipient_id, text)
         timeout = httpx.Timeout(self.settings.http_timeout_seconds)
         headers = {
             "Authorization": f"Bearer {token}",
@@ -142,14 +209,22 @@ class InstagramMessagingClient:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(url, json=payload, headers=headers)
         except httpx.TimeoutException as exc:
-            logger.error("[meta_social] Timeout enviando a Instagram Messaging")
+            logger.error(
+                "[meta_social] envío tipo=%s recipient=%s success=false "
+                "error=TimeoutException",
+                message_type,
+                _mask_recipient(recipient_id),
+            )
             raise MetaSocialApiError(
                 "Timeout al contactar Instagram Messaging API",
                 status_code=504,
             ) from exc
         except httpx.HTTPError as exc:
             logger.error(
-                "[meta_social] Error HTTP de red en Instagram: %s",
+                "[meta_social] envío tipo=%s recipient=%s success=false "
+                "error=%s",
+                message_type,
+                _mask_recipient(recipient_id),
                 type(exc).__name__,
             )
             raise MetaSocialApiError(
@@ -157,9 +232,84 @@ class InstagramMessagingClient:
                 status_code=502,
             ) from exc
 
-        raise_for_meta_response(response)
+        try:
+            raise_for_meta_response(response)
+        except MetaSocialApiError as exc:
+            logger.error(
+                "[meta_social] envío tipo=%s recipient=%s http_status=%s "
+                "success=false meta_code=%s error=%s",
+                message_type,
+                _mask_recipient(recipient_id),
+                exc.status_code,
+                exc.error_code,
+                str(exc)[:180],
+            )
+            raise
+
+        logger.info(
+            "[meta_social] envío tipo=%s recipient=%s http_status=%s success=true",
+            message_type,
+            _mask_recipient(recipient_id),
+            response.status_code,
+        )
         try:
             data = response.json()
             return data if isinstance(data, dict) else {"raw": data}
         except Exception:
             return {"ok": True}
+
+    async def send_text(self, recipient_id: str, text: str) -> dict[str, Any]:
+        payload = self.build_text_payload(recipient_id, text)
+        return await self._post_message(
+            message_type="text",
+            recipient_id=recipient_id,
+            payload=payload,
+        )
+
+    async def send_image(self, recipient_id: str, image_url: str) -> dict[str, Any]:
+        payload = self.build_image_payload(recipient_id, image_url)
+        return await self._post_message(
+            message_type="image",
+            recipient_id=recipient_id,
+            payload=payload,
+        )
+
+    async def send_whatsapp_cta(
+        self,
+        recipient_id: str,
+        whatsapp_url: str,
+    ) -> dict[str, Any]:
+        """
+        CTA hacia WhatsApp.
+
+        Si Instagram Login no documenta web_url con User Access Token,
+        envía enlace en texto (documentado oficialmente como text/link).
+        Si se intenta botón y falla, hace fallback a texto.
+        """
+        url = (whatsapp_url or "").strip()
+        if not url:
+            raise MetaSocialApiError(
+                "META_SOCIAL_WHATSAPP_URL no configurado",
+                status_code=503,
+            )
+
+        if INSTAGRAM_LOGIN_SUPPORTS_WEB_URL_BUTTON:
+            try:
+                payload = self.build_whatsapp_cta_button_payload(recipient_id, url)
+                return await self._post_message(
+                    message_type="whatsapp_cta_button",
+                    recipient_id=recipient_id,
+                    payload=payload,
+                )
+            except MetaSocialApiError:
+                logger.warning(
+                    "[meta_social] CTA botón falló; fallback texto recipient=%s",
+                    _mask_recipient(recipient_id),
+                )
+
+        payload = self.build_whatsapp_cta_text_payload(recipient_id, url)
+        return await self._post_message(
+            message_type="whatsapp_cta_text",
+            recipient_id=recipient_id,
+            payload=payload,
+        )

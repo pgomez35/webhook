@@ -28,23 +28,44 @@ def _try_get_redis():
         return _redis_client
     _redis_checked = True
 
+    # Independiente de WhatsApp: WhatsApp ya no usa Redis (ver redis_client.py).
     redis_url = (os.getenv("REDIS_URL") or os.getenv("META_SOCIAL_REDIS_URL") or "").strip()
     if not redis_url:
+        logger.info(
+            "[meta_social] Dedup memoria: REDIS_URL/META_SOCIAL_REDIS_URL no configurada"
+        )
         _redis_client = None
         return None
 
+    # No loguear la URL (puede contener credenciales). Solo esquema/host enmascarado.
+    scheme = "rediss" if redis_url.startswith("rediss://") else (
+        "redis" if redis_url.startswith("redis://") else "otro"
+    )
     try:
         import redis  # type: ignore
 
-        client = redis.from_url(redis_url, decode_responses=True, socket_connect_timeout=1)
+        # timeout corto: no bloquear el webhook si Redis está caído
+        client = redis.from_url(
+            redis_url,
+            decode_responses=True,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
         client.ping()
         _redis_client = client
-        logger.info("[meta_social] Deduplicación Instagram con Redis activa")
+        logger.info(
+            "[meta_social] Deduplicación Instagram con Redis activa scheme=%s",
+            scheme,
+        )
         return _redis_client
     except Exception as exc:
+        # Causa típica en este proyecto: REDIS_URL apunta a un servicio
+        # inaccesible / sin Redis real; WhatsApp ya migró a PostgreSQL.
         logger.warning(
-            "[meta_social] Redis no disponible para dedup; se usará memoria: %s",
+            "[meta_social] Redis no disponible para dedup; se usará memoria: "
+            "%s scheme=%s (fallback OK; no bloquea webhook)",
             type(exc).__name__,
+            scheme,
         )
         _redis_client = None
         return None

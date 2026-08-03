@@ -50,39 +50,38 @@ async def receive_meta_social_webhook(
     """
     settings = get_settings()
     # Bytes exactos del request — no usar request.json() ni reserializar.
-    # HMAC: hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
     raw_body = await request.body()
     signature = request.headers.get("X-Hub-Signature-256")
-
-    ig_secret = (settings.instagram_app_secret or "").strip()
-    principal_secret = (settings.app_secret or "").strip()
-    header = (signature or "").strip()
-    header_sha256_format = header.startswith("sha256=")
-    received_hash = header[len("sha256=") :].strip() if header_sha256_format else ""
     candidates = settings.webhook_signature_candidates()
-    candidate_names = [label for label, _secret in candidates]
 
-    logger.info(
-        "[meta_social] diag_firma "
-        "META_SOCIAL_INSTAGRAM_APP_SECRET_present=%s "
-        "instagram_secret_length=%s "
-        "META_SOCIAL_APP_SECRET_present=%s "
-        "principal_secret_length=%s "
-        "header_sha256_format=%s "
-        "received_hash_length=%s "
-        "raw_body_length=%s "
-        "candidates_tried=%s "
-        "hmac_uses_raw_body_bytes=true "
-        "hmac_formula=hmac.new(secret.encode('utf-8'),raw_body,hashlib.sha256).hexdigest()",
-        "true" if bool(ig_secret) else "false",
-        len(ig_secret),
-        "true" if bool(principal_secret) else "false",
-        len(principal_secret),
-        "true" if header_sha256_format else "false",
-        len(received_hash),
-        len(raw_body),
-        ",".join(candidate_names) if candidate_names else "(ninguno)",
-    )
+    if settings.debug:
+        ig_secret = (settings.instagram_app_secret or "").strip()
+        principal_secret = (settings.app_secret or "").strip()
+        header = (signature or "").strip()
+        header_sha256_format = header.startswith("sha256=")
+        received_hash = header[len("sha256=") :].strip() if header_sha256_format else ""
+        candidate_names = [label for label, _secret in candidates]
+        logger.info(
+            "[meta_social] diag_firma "
+            "META_SOCIAL_INSTAGRAM_APP_SECRET_present=%s "
+            "instagram_secret_length=%s "
+            "META_SOCIAL_APP_SECRET_present=%s "
+            "principal_secret_length=%s "
+            "header_sha256_format=%s "
+            "received_hash_length=%s "
+            "raw_body_length=%s "
+            "candidates_tried=%s "
+            "hmac_uses_raw_body_bytes=true "
+            "hmac_formula=hmac.new(secret.encode('utf-8'),raw_body,hashlib.sha256).hexdigest()",
+            "true" if bool(ig_secret) else "false",
+            len(ig_secret),
+            "true" if bool(principal_secret) else "false",
+            len(principal_secret),
+            "true" if header_sha256_format else "false",
+            len(received_hash),
+            len(raw_body),
+            ",".join(candidate_names) if candidate_names else "(ninguno)",
+        )
 
     check = verify_signature(
         raw_body,
@@ -91,10 +90,7 @@ async def receive_meta_social_webhook(
         skip_verify=settings.skip_signature_verify,
     )
     logger.info(
-        "[meta_social] firma signature_header_present=%s raw_body_length=%s "
-        "signature_valid=%s matched_secret=%s",
-        "true" if check.signature_header_present else "false",
-        check.raw_body_length,
+        "[meta_social] firma signature_valid=%s matched_secret=%s",
         "true" if check.valid else "false",
         check.matched_secret or "none",
     )
@@ -121,4 +117,3 @@ async def receive_meta_social_webhook(
 
     background_tasks.add_task(process_webhook_payload, payload)
     return PlainTextResponse(content="EVENT_RECEIVED", status_code=200)
-
