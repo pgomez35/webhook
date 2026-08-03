@@ -22,5 +22,6 @@ openpyxl
 pydantic[email]
 email-validator
 redis
+httpx
 pytz
 phonenumbers
