@@ -44,20 +44,30 @@ async def receive_meta_social_webhook(
     background_tasks: BackgroundTasks,
 ):
     """
-    Recibe eventos Instagram.
-    Lee body en bytes, valida firma, responde 200 EVENT_RECEIVED de inmediato
-    y procesa el envío en background.
+    Recibe eventos Instagram (y a futuro Messenger en el mismo path).
+    Lee el body en bytes una sola vez, valida firma HMAC y responde
+    EVENT_RECEIVED 200 solo si la firma es válida.
     """
     settings = get_settings()
+    # Bytes exactos del request — no usar request.json() ni reserializar.
     raw_body = await request.body()
     signature = request.headers.get("X-Hub-Signature-256")
 
-    if not verify_signature(
+    check = verify_signature(
         raw_body,
         signature,
-        settings.app_secret,
+        candidates=settings.webhook_signature_candidates(),
         skip_verify=settings.skip_signature_verify,
-    ):
+    )
+    logger.info(
+        "[meta_social] firma signature_header_present=%s raw_body_length=%s "
+        "signature_valid=%s matched_secret=%s",
+        "true" if check.signature_header_present else "false",
+        check.raw_body_length,
+        "true" if check.valid else "false",
+        check.matched_secret or "none",
+    )
+    if not check.valid:
         logger.warning("[meta_social] Firma X-Hub-Signature-256 inválida")
         raise HTTPException(status_code=403, detail="Firma inválida")
 

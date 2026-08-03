@@ -4,7 +4,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
-from typing import Any, Optional
+from dataclasses import dataclass
+from typing import Any, Optional, Sequence
 
 from instagram_messaging_client import InstagramMessagingClient, MetaSocialApiError
 from meta_social_config import (
@@ -18,6 +19,14 @@ from meta_social_event_parser import parse_events
 from meta_social_schemas import ParsedSocialEvent, SocialChannel
 
 logger = logging.getLogger("uvicorn.error")
+
+
+@dataclass(frozen=True)
+class SignatureCheckResult:
+    valid: bool
+    signature_header_present: bool
+    raw_body_length: int
+    matched_secret: Optional[str] = None  # "instagram" | "principal"
 
 
 def mask_id(value: Optional[str], keep: int = 4) -> str:
@@ -36,28 +45,90 @@ def truncate_text(value: Optional[str], limit: int = 100) -> str:
     return text[:limit] + "…"
 
 
-def verify_signature(
-    raw_body: bytes,
-    signature_header: Optional[str],
-    app_secret: str,
-    *,
-    skip_verify: bool = False,
-) -> bool:
-    """Valida X-Hub-Signature-256 = sha256=<hmac>."""
-    if skip_verify:
-        return True
-    if not app_secret or not signature_header:
-        return False
-    header = signature_header.strip()
-    if not header.startswith("sha256="):
-        return False
-    received = header[len("sha256=") :].strip().lower()
-    expected = hmac.new(
-        app_secret.encode("utf-8"),
+def _hmac_sha256_hex(secret: str, raw_body: bytes) -> str:
+    return hmac.new(
+        secret.encode("utf-8"),
         raw_body,
         hashlib.sha256,
     ).hexdigest()
-    return hmac.compare_digest(expected, received)
+
+
+def verify_signature(
+    raw_body: bytes,
+    signature_header: Optional[str],
+    *,
+    candidates: Sequence[tuple[str, str]] = (),
+    app_secret: str = "",
+    skip_verify: bool = False,
+) -> SignatureCheckResult:
+    """Valida X-Hub-Signature-256 sobre los bytes exactos del body.
+
+    Acepta si algún secreto candidato produce el mismo HMAC (compare_digest).
+    candidates: secuencia de (label, secret), p.ej. ("instagram", …), ("principal", …).
+    app_secret: compatibilidad; se usa como candidato "principal" si no hay candidates.
+    """
+    header_present = bool(signature_header and str(signature_header).strip())
+    body_len = len(raw_body) if isinstance(raw_body, (bytes, bytearray)) else 0
+
+    if skip_verify:
+        return SignatureCheckResult(
+            valid=True,
+            signature_header_present=header_present,
+            raw_body_length=body_len,
+            matched_secret="skipped",
+        )
+
+    secret_list: list[tuple[str, str]] = list(candidates)
+    if not secret_list and (app_secret or "").strip():
+        secret_list = [("principal", app_secret.strip())]
+
+    if not header_present or not secret_list:
+        return SignatureCheckResult(
+            valid=False,
+            signature_header_present=header_present,
+            raw_body_length=body_len,
+            matched_secret=None,
+        )
+
+    header = str(signature_header).strip()
+    if not header.startswith("sha256="):
+        return SignatureCheckResult(
+            valid=False,
+            signature_header_present=True,
+            raw_body_length=body_len,
+            matched_secret=None,
+        )
+
+    received = header[len("sha256=") :].strip().lower()
+    if not received:
+        return SignatureCheckResult(
+            valid=False,
+            signature_header_present=True,
+            raw_body_length=body_len,
+            matched_secret=None,
+        )
+
+    for label, secret in secret_list:
+        secret = (secret or "").strip()
+        if not secret:
+            continue
+        expected = _hmac_sha256_hex(secret, raw_body)
+        if len(expected) != len(received):
+            continue
+        if hmac.compare_digest(expected, received):
+            return SignatureCheckResult(
+                valid=True,
+                signature_header_present=True,
+                raw_body_length=body_len,
+                matched_secret=label,
+            )
+
+    return SignatureCheckResult(
+        valid=False,
+        signature_header_present=True,
+        raw_body_length=body_len,
+        matched_secret=None,
+    )
 
 
 def normalize_trigger_text(text: Optional[str]) -> str:

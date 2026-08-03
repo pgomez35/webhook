@@ -32,6 +32,7 @@ class MetaSocialSettings:
     enabled: bool
     verify_token: str
     app_secret: str
+    instagram_app_secret: str
     instagram_account_id: str
     instagram_access_token: str
     graph_api_version: str
@@ -46,6 +47,21 @@ class MetaSocialSettings:
             version = f"v{version}"
         return f"https://graph.instagram.com/{version}"
 
+    def webhook_signature_candidates(self) -> list[tuple[str, str]]:
+        """Secretos candidatos para X-Hub-Signature-256 (label, secret).
+
+        Instagram App Secret primero (caso messaging Instagram), luego el
+        secreto principal (app Meta / futuro Messenger).
+        """
+        candidates: list[tuple[str, str]] = []
+        ig_secret = (self.instagram_app_secret or "").strip()
+        principal = (self.app_secret or "").strip()
+        if ig_secret:
+            candidates.append(("instagram", ig_secret))
+        if principal and principal not in {c[1] for c in candidates}:
+            candidates.append(("principal", principal))
+        return candidates
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> MetaSocialSettings:
@@ -53,6 +69,7 @@ def get_settings() -> MetaSocialSettings:
         enabled=_as_bool(os.getenv("META_SOCIAL_ENABLED"), default=False),
         verify_token=os.getenv("META_SOCIAL_VERIFY_TOKEN", "") or "",
         app_secret=os.getenv("META_SOCIAL_APP_SECRET", "") or "",
+        instagram_app_secret=os.getenv("META_SOCIAL_INSTAGRAM_APP_SECRET", "") or "",
         instagram_account_id=os.getenv("META_SOCIAL_INSTAGRAM_ACCOUNT_ID", "") or "",
         instagram_access_token=os.getenv("META_SOCIAL_INSTAGRAM_ACCESS_TOKEN", "") or "",
         graph_api_version=(
