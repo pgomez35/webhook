@@ -14,7 +14,14 @@ from typing import Optional
 logger = logging.getLogger("uvicorn.error")
 
 DEDUP_PREFIX = "meta_social:instagram:event:"
+DEDUP_PREFIX_MESSENGER = "meta_social:messenger:event:"
 DEFAULT_TTL_SECONDS = 24 * 3600
+
+
+def dedup_prefix_for_channel(channel: str | None = None) -> str:
+    if (channel or "").strip().lower() == "messenger":
+        return DEDUP_PREFIX_MESSENGER
+    return DEDUP_PREFIX
 
 _memory_lock = threading.Lock()
 _memory_seen: dict[str, float] = {}
@@ -80,11 +87,13 @@ def _purge_memory(now: float) -> None:
 def already_processed(
     message_id: Optional[str],
     ttl_seconds: int = DEFAULT_TTL_SECONDS,
+    *,
+    channel: Optional[str] = None,
 ) -> bool:
     if not message_id:
         return False
 
-    key = f"{DEDUP_PREFIX}{message_id}"
+    key = f"{dedup_prefix_for_channel(channel)}{message_id}"
     client = _try_get_redis()
     if client is not None:
         try:

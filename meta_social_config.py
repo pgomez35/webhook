@@ -1,6 +1,7 @@
 """Configuración exclusiva de Meta Social (Instagram Messaging + Instagram Login).
 
 No reutiliza variables WHATSAPP_* ni META_APP_* de WhatsApp Cloud API.
+No usa PAGE_ID / PAGE_ACCESS_TOKEN / graph.facebook.com.
 """
 from __future__ import annotations
 
@@ -24,20 +25,29 @@ PRODUCTION_TEST_REPLY = (
     "👋 ¡Hola! Esta es una prueba de la integración de Talentum Manager con Instagram."
 )
 
+INSTAGRAM_CARD_TITLE = "Talentum Manager para agencias LIVE"
+INSTAGRAM_CARD_SUBTITLE = (
+    "Capta aspirantes desde Instagram, valida información inicial y organiza "
+    "los perfiles que debe revisar tu equipo."
+)
+INSTAGRAM_BUTTON_TITLE = "Probar en WhatsApp"
+
+DEFAULT_INSTAGRAM_WHATSAPP_URL = (
+    "https://wa.me/573180538911?text=Hola%2C%20vengo%20desde%20Instagram"
+    "%20y%20quiero%20probar%20la%20demo%20de%20Talentum"
+)
+
+INSTAGRAM_FALLBACK_TEXT = (
+    "Puedes probar la demostración aquí:\nhttps://wa.me/573180538911"
+)
+
+# Texto legacy (ya no se envía si la tarjeta tiene éxito).
 RICH_DEMO_TEXT = (
     "🚀 Talentum Manager para agencias de creadores LIVE\n\n"
     "Capta aspirantes desde Instagram, valida información inicial y organiza "
     "los perfiles que debe revisar tu equipo.\n\n"
     "Puedes probar una demostración real del chatbot por WhatsApp."
 )
-
-WHATSAPP_CTA_BUTTON_TITLE = "Probar demo en WhatsApp"
-
-# Instagram API with Instagram Login documenta texto+enlace e imagen en
-# graph.instagram.com. El botón web_url genérico está documentado para
-# Messenger Platform / Page Access Token (graph.facebook.com), no como
-# payload oficial con Instagram User Access Token en esta modalidad.
-INSTAGRAM_LOGIN_SUPPORTS_WEB_URL_BUTTON = False
 
 _IMAGE_EXT_RE = re.compile(r"\.(png|jpe?g|gif|webp)(?:\?|#|$)", re.IGNORECASE)
 _PRIVATE_HOST_RE = re.compile(
@@ -66,15 +76,12 @@ def validate_demo_image_url(url: str) -> tuple[bool, str]:
     if _PRIVATE_HOST_RE.match(host) or host.endswith(".local"):
         return False, "META_SOCIAL_DEMO_IMAGE_URL no puede ser local/privada"
     path = parsed.path or ""
-    if path in {"", "/"}:
-        # Permitir URLs CDN sin extensión visible si el path tiene segmento.
-        pass
-    elif not _IMAGE_EXT_RE.search(path) and "format=" not in (parsed.query or "").lower():
-        # Aceptar CDN sin extensión solo si hay path no vacío; avisar suave.
-        if "." not in path.rsplit("/", 1)[-1] and not path.endswith("/"):
-            return True, "ok"
-        if not _IMAGE_EXT_RE.search(text):
-            return False, "META_SOCIAL_DEMO_IMAGE_URL debe apuntar a imagen (png/jpeg/gif/webp)"
+    if path not in {"", "/"}:
+        if not _IMAGE_EXT_RE.search(path) and "format=" not in (parsed.query or "").lower():
+            if "." not in path.rsplit("/", 1)[-1] and not path.endswith("/"):
+                return True, "ok"
+            if not _IMAGE_EXT_RE.search(text):
+                return False, "META_SOCIAL_DEMO_IMAGE_URL debe apuntar a imagen (png/jpeg/gif/webp)"
     return True, "ok"
 
 
@@ -104,7 +111,6 @@ class MetaSocialSettings:
         return f"https://graph.instagram.com/{version}"
 
     def webhook_signature_candidates(self) -> list[tuple[str, str]]:
-        """Secretos candidatos para X-Hub-Signature-256 (label, secret)."""
         candidates: list[tuple[str, str]] = []
         ig_secret = (self.instagram_app_secret or "").strip()
         principal = (self.app_secret or "").strip()
@@ -120,6 +126,10 @@ class MetaSocialSettings:
     def rich_demo_ready(self) -> tuple[bool, Optional[str]]:
         if not self.rich_demo_enabled:
             return False, "META_SOCIAL_RICH_DEMO_ENABLED=false"
+        if not (self.instagram_account_id or "").strip():
+            return False, "META_SOCIAL_INSTAGRAM_ACCOUNT_ID vacío"
+        if not (self.instagram_access_token or "").strip():
+            return False, "META_SOCIAL_INSTAGRAM_ACCESS_TOKEN vacío"
         ok, reason = validate_demo_image_url(self.demo_image_url)
         if not ok:
             return False, reason
@@ -158,7 +168,10 @@ def get_settings() -> MetaSocialSettings:
             or DEFAULT_DEMO_TRIGGER
         ),
         demo_image_url=os.getenv("META_SOCIAL_DEMO_IMAGE_URL", "") or "",
-        whatsapp_url=os.getenv("META_SOCIAL_WHATSAPP_URL", "") or "",
+        whatsapp_url=(
+            os.getenv("META_SOCIAL_WHATSAPP_URL")
+            or DEFAULT_INSTAGRAM_WHATSAPP_URL
+        ),
     )
 
 

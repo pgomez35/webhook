@@ -1,4 +1,7 @@
-"""Parser de eventos webhook Instagram (Meta Social)."""
+"""Parser de eventos webhook Instagram (Meta Social).
+
+Solo object=instagram. Messenger/page queda fuera de esta fase.
+"""
 from __future__ import annotations
 
 import logging

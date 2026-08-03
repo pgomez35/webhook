@@ -1,4 +1,4 @@
-"""Servicio de webhook Instagram Meta Social (respuesta demo / rich demo)."""
+"""Servicio de webhook Instagram Meta Social (respuesta demo con Generic Template)."""
 from __future__ import annotations
 
 import hashlib
@@ -10,7 +10,6 @@ from typing import Any, Optional, Sequence
 from instagram_messaging_client import InstagramMessagingClient, MetaSocialApiError
 from meta_social_config import (
     PRODUCTION_TEST_REPLY,
-    RICH_DEMO_TEXT,
     MetaSocialSettings,
     get_settings,
 )
@@ -26,7 +25,7 @@ class SignatureCheckResult:
     valid: bool
     signature_header_present: bool
     raw_body_length: int
-    matched_secret: Optional[str] = None  # "instagram" | "principal"
+    matched_secret: Optional[str] = None
 
 
 def mask_id(value: Optional[str], keep: int = 4) -> str:
@@ -61,7 +60,6 @@ def verify_signature(
     app_secret: str = "",
     skip_verify: bool = False,
 ) -> SignatureCheckResult:
-    """Valida X-Hub-Signature-256 sobre los bytes exactos del body."""
     header_present = bool(signature_header and str(signature_header).strip())
     body_len = len(raw_body) if isinstance(raw_body, (bytes, bytearray)) else 0
 
@@ -160,7 +158,7 @@ def select_client(
 ):
     if channel == SocialChannel.INSTAGRAM:
         return select_instagram_client(settings)
-    raise MetaSocialApiError(f"Canal no soportado en esta fase: {channel}", status_code=400)
+    raise MetaSocialApiError(f"Canal no soportado: {channel}", status_code=400)
 
 
 def log_event_safe(event: ParsedSocialEvent, *, debug: bool = False) -> None:
@@ -168,7 +166,8 @@ def log_event_safe(event: ParsedSocialEvent, *, debug: bool = False) -> None:
         logger.info(
             "[meta_social] evento canal=%s "
             "message.mid=%s sender.id=%s recipient.id=%s "
-            "message.text=%r timestamp=%s is_echo=%s is_self=%s",
+            "message.text=%r timestamp=%s is_echo=%s is_self=%s "
+            "entry.id=%s",
             event.channel.value,
             event.message_id or "(sin_mid)",
             mask_id(event.sender_id),
@@ -177,12 +176,11 @@ def log_event_safe(event: ParsedSocialEvent, *, debug: bool = False) -> None:
             event.timestamp,
             event.is_echo,
             event.is_self,
+            event.entry_id or "(sin_entry)",
         )
         return
 
-    event_type = event.event_type
-    if event.is_echo:
-        event_type = "echo"
+    event_type = "echo" if event.is_echo else event.event_type
     logger.info(
         "[meta_social] evento canal=%s mid=%s sender=%s tipo=%s",
         event.channel.value,
@@ -192,69 +190,27 @@ def log_event_safe(event: ParsedSocialEvent, *, debug: bool = False) -> None:
     )
 
 
-async def send_rich_demo_sequence(
-    client: InstagramMessagingClient,
-    recipient_id: str,
+async def send_instagram_demo_card(
+    recipient_igsid: str,
     settings: MetaSocialSettings,
+    *,
+    entry_ig_user_id: Optional[str] = None,
 ) -> None:
-    """Imagen → texto comercial → CTA WhatsApp. Errores no abortan el webhook."""
-    image_url = (settings.demo_image_url or "").strip()
-    whatsapp_url = (settings.whatsapp_url or "").strip()
-
-    try:
-        await client.send_image(recipient_id, image_url)
-    except MetaSocialApiError as exc:
-        logger.error(
-            "[meta_social] imagen falló; se continúa con texto "
-            "recipient=%s status=%s error=%s",
-            mask_id(recipient_id),
-            exc.status_code,
-            str(exc)[:180],
-        )
-    except Exception:
-        logger.exception(
-            "[meta_social] imagen error inesperado; se continúa recipient=%s",
-            mask_id(recipient_id),
+    """
+    Una sola Generic Template promocional.
+    Reemplaza imagen + texto + enlace largo.
+    """
+    configured_ig = (settings.instagram_account_id or "").strip()
+    if entry_ig_user_id and configured_ig and entry_ig_user_id != configured_ig:
+        logger.warning(
+            "[meta_social] canal=instagram entry.id=%s distinto de "
+            "META_SOCIAL_INSTAGRAM_ACCOUNT_ID=%s; se usa la config del canal",
+            mask_id(entry_ig_user_id),
+            mask_id(configured_ig),
         )
 
-    try:
-        await client.send_text(recipient_id, RICH_DEMO_TEXT)
-    except MetaSocialApiError as exc:
-        logger.error(
-            "[meta_social] texto comercial falló recipient=%s status=%s error=%s",
-            mask_id(recipient_id),
-            exc.status_code,
-            str(exc)[:180],
-        )
-    except Exception:
-        logger.exception(
-            "[meta_social] texto comercial error inesperado recipient=%s",
-            mask_id(recipient_id),
-        )
-
-    try:
-        await client.send_whatsapp_cta(recipient_id, whatsapp_url)
-    except MetaSocialApiError as exc:
-        logger.error(
-            "[meta_social] CTA WhatsApp falló; intento texto URL "
-            "recipient=%s status=%s error=%s",
-            mask_id(recipient_id),
-            exc.status_code,
-            str(exc)[:180],
-        )
-        try:
-            fallback = f"👉 Probar demo por WhatsApp:\n{whatsapp_url}"
-            await client.send_text(recipient_id, fallback)
-        except Exception:
-            logger.exception(
-                "[meta_social] fallback CTA texto también falló recipient=%s",
-                mask_id(recipient_id),
-            )
-    except Exception:
-        logger.exception(
-            "[meta_social] CTA error inesperado recipient=%s",
-            mask_id(recipient_id),
-        )
+    client = select_instagram_client(settings)
+    await client.send_demo_card(recipient_igsid)
 
 
 async def process_event(
@@ -274,7 +230,7 @@ async def process_event(
         return
 
     dedup_id = (event.message_id or "").strip() or event.dedup_key()
-    if already_processed(dedup_id, cfg.dedup_ttl_seconds):
+    if already_processed(dedup_id, cfg.dedup_ttl_seconds, channel="instagram"):
         logger.info(
             "[meta_social] Duplicado ignorado mid=%s canal=%s",
             dedup_id,
@@ -294,6 +250,13 @@ async def process_event(
         logger.info("[meta_social] META_SOCIAL_ENABLED=false; no se envía respuesta")
         return
 
+    if event.channel != SocialChannel.INSTAGRAM:
+        logger.info(
+            "[meta_social] Canal no Instagram ignorado en esta fase: %s",
+            event.channel.value,
+        )
+        return
+
     if not is_demo_trigger(event.text, cfg):
         logger.info(
             "[meta_social] Sin respuesta automática (texto no es trigger) recibido=%r",
@@ -302,20 +265,33 @@ async def process_event(
         return
 
     logger.info(
-        "[meta_social] Trigger confirmado mid=%s sender=%s trigger=%s",
+        "[meta_social] Trigger confirmado mid=%s sender=%s (IGSID) entry.id=%s trigger=%s",
         event.message_id or "(sin_mid)",
         mask_id(event.sender_id),
+        mask_id(event.entry_id),
         cfg.normalized_demo_trigger(),
     )
 
-    client = select_instagram_client(cfg)
     rich_ok, rich_reason = cfg.rich_demo_ready()
     if rich_ok:
-        await send_rich_demo_sequence(client, event.sender_id, cfg)
-        logger.info(
-            "[meta_social] Secuencia rich demo enviada recipient=%s",
-            mask_id(event.sender_id),
-        )
+        try:
+            # recipient = sender.id (IGSID); ig_user_id desde config del canal
+            await send_instagram_demo_card(
+                event.sender_id,
+                cfg,
+                entry_ig_user_id=event.entry_id,
+            )
+            logger.info(
+                "[meta_social] Tarjeta demo Instagram enviada recipient_igsid=%s",
+                mask_id(event.sender_id),
+            )
+        except MetaSocialApiError as exc:
+            logger.error(
+                "[meta_social] Fallo tarjeta/fallback recipient=%s status=%s error=%s",
+                mask_id(event.sender_id),
+                exc.status_code,
+                str(exc)[:180],
+            )
         return
 
     if cfg.rich_demo_enabled:
@@ -325,6 +301,7 @@ async def process_event(
             rich_reason,
         )
 
+    client = select_instagram_client(cfg)
     try:
         await client.send_text(event.sender_id, PRODUCTION_TEST_REPLY)
         logger.info(
