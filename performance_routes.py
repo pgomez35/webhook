@@ -193,6 +193,7 @@ def metricas_performance_creador(creador_id: int):
         SELECT *
         FROM creadores_reporte_integral
         WHERE creador_id = %s
+          AND COALESCE(tipo_periodo, 'mensual') = 'mensual'
         ORDER BY periodo_fin DESC, fecha_carga DESC, id_reporte DESC
         """,
         (creador_id,),

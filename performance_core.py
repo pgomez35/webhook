@@ -1069,6 +1069,7 @@ def obtener_ultimo_reporte(
         SELECT *
         FROM creadores_reporte_integral
         WHERE creador_id = %s
+          AND COALESCE(tipo_periodo, 'mensual') = 'mensual'
         ORDER BY periodo_fin DESC, fecha_carga DESC, id_reporte DESC
         LIMIT 1
         """,

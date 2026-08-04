@@ -289,13 +289,108 @@ def _leer_columna_opcional(row: pd.Series, columnas_posibles: List[str]) -> Opti
     return None
 
 
+TIPOS_PERIODO_VALIDOS = ("semanal", "mensual", "otro")
+_WHERE_REPORTE_MENSUAL = "COALESCE(tipo_periodo, 'mensual') = 'mensual'"
+
+
 def _inferir_tipo_periodo(periodo_inicio: date, periodo_fin: date) -> str:
+    """Solo para referencia/UX; la fuente de verdad al importar es el query param."""
     dias = (periodo_fin - periodo_inicio).days
     if dias <= 10:
         return "semanal"
     if dias <= 31:
         return "mensual"
     return "otro"
+
+
+def _normalizar_tipo_periodo(valor: Optional[str]) -> str:
+    tipo = (valor or "semanal").strip().lower()
+    if tipo not in TIPOS_PERIODO_VALIDOS:
+        raise HTTPException(
+            status_code=400,
+            detail="tipo_periodo inválido. Use: semanal, mensual u otro.",
+        )
+    return tipo
+
+
+def _etiqueta_tipo_periodo(tipo: str) -> str:
+    if tipo == "otro":
+        return "de tipo otro"
+    return tipo
+
+
+def _mensaje_ok_validacion(tipo: str) -> str:
+    if tipo == "mensual":
+        return (
+            "El archivo tiene la estructura esperada y no presenta "
+            "solapamientos para reportes mensuales."
+        )
+    if tipo == "otro":
+        return (
+            "El archivo tiene la estructura esperada y no presenta "
+            "solapamientos para reportes de tipo otro."
+        )
+    return (
+        "El archivo tiene la estructura esperada y no presenta "
+        "solapamientos para reportes semanales."
+    )
+
+
+def _mensaje_ok_importacion(tipo: str) -> str:
+    if tipo == "mensual":
+        return (
+            "Reporte mensual importado correctamente. "
+            "Ya puedes revisarlo en Gestión de Crecimiento."
+        )
+    if tipo == "otro":
+        return "Reporte histórico importado correctamente."
+    return "Reporte semanal importado correctamente."
+
+
+def _resolver_flags_importacion(
+    tipo: str,
+    actualizar_creadores_activos: Optional[bool],
+    generar_metas: Optional[bool],
+    generar_insights: Optional[bool],
+) -> Tuple[bool, bool, bool]:
+    activos = True if actualizar_creadores_activos is None else bool(actualizar_creadores_activos)
+    if tipo == "mensual":
+        metas = True if generar_metas is None else bool(generar_metas)
+        insights = True if generar_insights is None else bool(generar_insights)
+    else:
+        # semanal / otro: metas e insights off por defecto
+        metas = False if generar_metas is None else bool(generar_metas)
+        insights = False if generar_insights is None else bool(generar_insights)
+    return activos, metas, insights
+
+
+def _buscar_solape_mismo_tipo(
+    cur,
+    tipo_periodo: str,
+    periodo_inicio: date,
+    periodo_fin: date,
+) -> Optional[Dict[str, Any]]:
+    cur.execute(
+        """
+        SELECT periodo_inicio, periodo_fin, tipo_periodo
+        FROM creadores_reporte_integral
+        WHERE tipo_periodo = %s
+          AND %s <= periodo_fin
+          AND %s >= periodo_inicio
+        LIMIT 1
+        """,
+        (tipo_periodo, periodo_inicio, periodo_fin),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    if isinstance(row, dict):
+        return dict(row)
+    return {
+        "periodo_inicio": row[0],
+        "periodo_fin": row[1],
+        "tipo_periodo": row[2],
+    }
 
 
 def _validar_columnas_excel(df: pd.DataFrame) -> None:
@@ -463,6 +558,7 @@ def _registrar_importaciones_desde_df(
     df: pd.DataFrame,
     archivo_nombre: Optional[str],
     archivo_origen: str,
+    tipo_periodo: str,
 ) -> Dict[Tuple[date, date], int]:
     periodos_stats: Dict[Tuple[date, date], Dict[str, Any]] = {}
 
@@ -482,8 +578,6 @@ def _registrar_importaciones_desde_df(
     importaciones: Dict[Tuple[date, date], int] = {}
 
     for (periodo_inicio, periodo_fin), stats in periodos_stats.items():
-        tipo_periodo = _inferir_tipo_periodo(periodo_inicio, periodo_fin)
-
         cur.execute(
             """
             INSERT INTO creadores_reporte_importaciones (
@@ -609,7 +703,7 @@ def _upsert_reporte_integral(cur, data: Dict[str, Any], creador_id: Optional[int
             %(tipo_periodo)s,
             %(archivo_origen)s
         )
-        ON CONFLICT (creador_tiktok_id, periodo_inicio, periodo_fin)
+        ON CONFLICT (creador_tiktok_id, periodo_inicio, periodo_fin, tipo_periodo)
         DO UPDATE SET
             creador_id = EXCLUDED.creador_id,
             usuario_tiktok = EXCLUDED.usuario_tiktok,
@@ -741,6 +835,7 @@ def _calcular_metas_para_reporte(cur, reporte: Dict[str, Any], config: GenerarMe
             nuevos_seguidores_mes
         FROM creadores_reporte_integral
         WHERE creador_id = %s
+          AND COALESCE(tipo_periodo, 'mensual') = 'mensual'
           AND periodo_fin < %s
         ORDER BY periodo_fin DESC
         LIMIT 3
@@ -954,9 +1049,12 @@ def _upsert_insight(cur, reporte: Dict[str, Any], textos: Dict[str, str]) -> Non
 # =========================================================
 
 @router.post("/api/creadores/performance/validar-reporte")
-def validar_reporte_creadores_excel(file: UploadFile = File(...)):
+def validar_reporte_creadores_excel(
+    file: UploadFile = File(...),
+    tipo_periodo: str = Query("semanal"),
+):
     try:
-
+        tipo = _normalizar_tipo_periodo(tipo_periodo)
         content = file.file.read()
 
         df = pd.read_excel(io.BytesIO(content))
@@ -972,45 +1070,37 @@ def validar_reporte_creadores_excel(file: UploadFile = File(...)):
 
                 periodos.append({
                     "periodo_inicio": inicio,
-                    "periodo_fin": fin
+                    "periodo_fin": fin,
+                    "dias": (fin - inicio).days,
+                    "tipo_inferido": _inferir_tipo_periodo(inicio, fin),
                 })
 
             except Exception:
                 pass
 
-        # Validar solapamientos en DB
+        # Validar solapamientos solo contra el mismo tipo_periodo
         with get_connection_context() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
 
                 for periodo in periodos:
 
-                    cur.execute("""
-                        SELECT
-                            periodo_inicio,
-                            periodo_fin
-                        FROM creadores_reporte_integral
-                        WHERE
-                            %s <= periodo_fin
-                            AND
-                            %s >= periodo_inicio
-                        LIMIT 1
-                    """, (
+                    conflicto = _buscar_solape_mismo_tipo(
+                        cur,
+                        tipo,
                         periodo["periodo_inicio"],
-                        periodo["periodo_fin"]
-                    ))
-
-                    conflicto = cur.fetchone()
+                        periodo["periodo_fin"],
+                    )
 
                     if conflicto:
 
                         raise HTTPException(
                             status_code=400,
                             detail=(
-                                f"Ya existe un reporte cargado que se "
-                                f"solapa con el periodo "
+                                f"Ya existe un reporte {_etiqueta_tipo_periodo(tipo)} "
+                                f"cargado que se solapa con el periodo "
                                 f"{periodo['periodo_inicio']} "
                                 f"a {periodo['periodo_fin']}."
-                            )
+                            ),
                         )
 
         return {
@@ -1018,8 +1108,9 @@ def validar_reporte_creadores_excel(file: UploadFile = File(...)):
             "filename": file.filename,
             "filas": len(df),
             "columnas": list(df.columns),
+            "tipo_periodo": tipo,
             "periodos_detectados": periodos,
-            "mensaje": "El archivo tiene la estructura esperada y no presenta solapamientos."
+            "mensaje": _mensaje_ok_validacion(tipo),
         }
 
     except HTTPException:
@@ -1043,11 +1134,20 @@ def validar_reporte_creadores_excel(file: UploadFile = File(...)):
 @router.post("/api/creadores/performance/upload-reporte")
 def cargar_reporte_creadores_excel(
     file: UploadFile = File(...),
-    actualizar_creadores_activos: bool = Query(True),
-    generar_metas: bool = Query(True),
-    generar_insights: bool = Query(True),
+    tipo_periodo: str = Query("semanal"),
+    actualizar_creadores_activos: Optional[bool] = Query(None),
+    generar_metas: Optional[bool] = Query(None),
+    generar_insights: Optional[bool] = Query(None),
 ):
     try:
+        tipo = _normalizar_tipo_periodo(tipo_periodo)
+        actualizar_creadores_activos, generar_metas, generar_insights = _resolver_flags_importacion(
+            tipo,
+            actualizar_creadores_activos,
+            generar_metas,
+            generar_insights,
+        )
+
         content = file.file.read()
         df = pd.read_excel(io.BytesIO(content))
         _validar_columnas_excel(df)
@@ -1070,6 +1170,7 @@ def cargar_reporte_creadores_excel(
                     df,
                     archivo_nombre=file.filename,
                     archivo_origen=archivo_origen,
+                    tipo_periodo=tipo,
                 )
 
                 for idx, row in df.iterrows():
@@ -1097,10 +1198,7 @@ def cargar_reporte_creadores_excel(
                             data["estado_agencia"] = data.get("estado_agencia") or "activo"
 
                         periodo_key = (data["periodo_inicio"], data["periodo_fin"])
-                        data["tipo_periodo"] = _inferir_tipo_periodo(
-                            data["periodo_inicio"],
-                            data["periodo_fin"],
-                        )
+                        data["tipo_periodo"] = tipo
                         data["archivo_origen"] = archivo_origen
                         data["importacion_id"] = importaciones_por_periodo.get(periodo_key)
 
@@ -1226,7 +1324,7 @@ def cargar_reporte_creadores_excel(
                 "id_importacion": id_importacion,
                 "periodo_inicio": periodo_inicio,
                 "periodo_fin": periodo_fin,
-                "tipo_periodo": _inferir_tipo_periodo(periodo_inicio, periodo_fin),
+                "tipo_periodo": tipo,
             }
             for (periodo_inicio, periodo_fin), id_importacion in importaciones_por_periodo.items()
         ]
@@ -1235,6 +1333,8 @@ def cargar_reporte_creadores_excel(
             "ok": True,
             "filename": file.filename,
             "filas_excel": len(df),
+            "tipo_periodo": tipo,
+            "mensaje": _mensaje_ok_importacion(tipo),
             "importaciones": importaciones_respuesta,
             "reportes_insertados_o_actualizados": insertados_o_actualizados,
             "creadores_encontrados_en_saas": con_creador_en_saas,
@@ -1275,6 +1375,7 @@ def generar_metas_periodo(payload: GenerarMetasPeriodoIn):
                     WHERE periodo_inicio = %s
                       AND periodo_fin = %s
                       AND creador_id IS NOT NULL
+                      AND COALESCE(tipo_periodo, 'mensual') = 'mensual'
                     """,
                     (payload.periodo_inicio, payload.periodo_fin),
                 )
@@ -1358,6 +1459,7 @@ def generar_insights_periodo(payload: GenerarInsightsPeriodoIn):
                     WHERE periodo_inicio = %s
                       AND periodo_fin = %s
                       AND creador_id IS NOT NULL
+                      AND COALESCE(tipo_periodo, 'mensual') = 'mensual'
                     """,
                     (payload.periodo_inicio, payload.periodo_fin),
                 )
@@ -1483,6 +1585,7 @@ def obtener_resumen_performance_creador(
                         WHERE creador_id = %s
                           AND periodo_inicio = %s
                           AND periodo_fin = %s
+                          AND COALESCE(tipo_periodo, 'mensual') = 'mensual'
                         LIMIT 1
                         """,
                         (creador_id, periodo_inicio, periodo_fin),
@@ -1493,6 +1596,7 @@ def obtener_resumen_performance_creador(
                         SELECT *
                         FROM creadores_reporte_integral
                         WHERE creador_id = %s
+                          AND COALESCE(tipo_periodo, 'mensual') = 'mensual'
                         ORDER BY periodo_fin DESC
                         LIMIT 1
                         """,
@@ -1570,6 +1674,7 @@ def obtener_historico_performance_creador(
                     LEFT JOIN creadores_insights_mensuales i
                         ON i.id_reporte = r.id_reporte
                     WHERE r.creador_id = %s
+                      AND COALESCE(r.tipo_periodo, 'mensual') = 'mensual'
                     ORDER BY r.periodo_fin DESC
                     LIMIT %s
                     """,
@@ -1616,6 +1721,7 @@ def obtener_dashboard_performance_agencia(
                     FROM creadores_reporte_integral
                     WHERE periodo_inicio = %s
                       AND periodo_fin = %s
+                      AND COALESCE(tipo_periodo, 'mensual') = 'mensual'
                     """,
                     (periodo_inicio, periodo_fin),
                 )
@@ -1638,6 +1744,7 @@ def obtener_dashboard_performance_agencia(
                     LEFT JOIN creadores_insights_mensuales i ON i.id_reporte = r.id_reporte
                     WHERE r.periodo_inicio = %s
                       AND r.periodo_fin = %s
+                      AND COALESCE(r.tipo_periodo, 'mensual') = 'mensual'
                     ORDER BY r.diamantes_mes DESC NULLS LAST
                     LIMIT 10
                     """,
@@ -1661,6 +1768,7 @@ def obtener_dashboard_performance_agencia(
                     LEFT JOIN creadores_insights_mensuales i ON i.id_reporte = r.id_reporte
                     WHERE r.periodo_inicio = %s
                       AND r.periodo_fin = %s
+                      AND COALESCE(r.tipo_periodo, 'mensual') = 'mensual'
                       AND (
                             i.alerta_principal IN ('baja_constancia', 'baja_duracion_live', 'baja_monetizacion', 'caida_diamantes')
                             OR i.nivel_rendimiento = 'bajo'
