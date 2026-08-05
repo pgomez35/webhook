@@ -1225,6 +1225,162 @@ def _manejar_faq_seleccionada(
     return True
 
 
+_TIPOS_MENSAJE_CONVERSACIONAL = {
+    "text": "texto",
+    "texto": "texto",
+    "image": "imagen",
+    "audio": "audio",
+    "video": "video",
+    "document": "documento",
+    "location": "ubicacion",
+    "interactive": "boton",
+    "button": "boton",
+}
+
+# El asistente ya atendió el mensaje (o decidió callar a propósito): reenviarlo
+# al flujo rígido duplicaría respuestas.
+_MOTIVOS_CONVERSACIONAL_CONSUMEN = frozenset(
+    {"mensaje_duplicado", "atencion_humana", "ia_deshabilitada"}
+)
+
+# Canales de campaña que Meta puede reportar en `referral.source_type`.
+_CANALES_REFERRAL = ("instagram_ads", "facebook_ads", "messenger_ads")
+
+
+def _campania_desde_referral(
+    agencia_id: int, referral_meta: Optional[Dict[str, Any]]
+) -> Optional[int]:
+    """Click-to-WhatsApp: relaciona el anuncio de origen con su campaña."""
+    if not referral_meta:
+        return None
+
+    identificador = (
+        referral_meta.get("source_id")
+        or referral_meta.get("ctwa_clid")
+        or referral_meta.get("source_url")
+    )
+    if not identificador:
+        return None
+
+    try:
+        import database_chatbot_conversacional as db_conv
+
+        for canal in _CANALES_REFERRAL:
+            campania = db_conv.buscar_campania_por_identificador(
+                agencia_id, str(identificador), canal
+            )
+            if campania:
+                return int(campania["id"])
+    except Exception:
+        logger.exception(
+            "[CHATBOT-CONV] no se pudo resolver la campaña del referral agencia_id=%s",
+            agencia_id,
+        )
+    return None
+
+
+async def _procesar_conversacional_si_aplica(
+    *,
+    agencia_id: int,
+    wa_id: str,
+    tipo: Optional[str],
+    texto: Optional[str],
+    payload_id: Optional[str],
+    phone_number_id: str,
+    token: str,
+    message_id_meta: Optional[str],
+    aspirante: Dict[str, Any],
+    chatbot_configuracion_id: Optional[int],
+    referral_meta: Optional[Dict[str, Any]] = None,
+) -> Optional[bool]:
+    """
+    Desvía el mensaje al asistente conversacional cuando corresponde.
+
+    Devuelve None si el mensaje debe seguir por la máquina de estados rígida:
+    feature apagada, sin configuración asignada, asistente inexistente o
+    desactivado, o módulo conversacional no instalado. En esos casos el flujo
+    rígido se comporta exactamente igual que antes.
+    """
+    if not chatbot_configuracion_id:
+        return None
+
+    try:
+        from services.chatbot_conversacional.service import (
+            debe_usar_conversacional,
+            feature_enabled,
+            procesar_mensaje_conversacional,
+        )
+    except Exception:
+        return None
+
+    try:
+        if not feature_enabled():
+            return None
+        if not await debe_usar_conversacional(
+            agencia_id, int(chatbot_configuracion_id)
+        ):
+            return None
+    except Exception:
+        logger.exception(
+            "[CHATBOT-CONV] no se pudo resolver el asistente agencia_id=%s "
+            "chatbot_configuracion_id=%s; continúa flujo rígido",
+            agencia_id,
+            chatbot_configuracion_id,
+        )
+        return None
+
+    logger.info(
+        "[CHATBOT-CONV] desviando a asistente agencia_id=%s aspirante_id=%s "
+        "chatbot_configuracion_id=%s tipo=%s",
+        agencia_id,
+        aspirante.get("id"),
+        chatbot_configuracion_id,
+        tipo,
+    )
+    try:
+        resultado = await procesar_mensaje_conversacional(
+            agencia_id=agencia_id,
+            texto=texto or payload_id or "",
+            usuario_externo_id=str(wa_id),
+            chatbot_configuracion_id=int(chatbot_configuracion_id),
+            canal="whatsapp",
+            cuenta_externa_id=phone_number_id,
+            telefono=str(wa_id),
+            nombre_contacto=aspirante.get("nombre"),
+            mensaje_externo_id=message_id_meta,
+            tipo_mensaje=_TIPOS_MENSAJE_CONVERSACIONAL.get(
+                str(tipo or "").lower(), "texto"
+            ),
+            aspirante_id=aspirante.get("id"),
+            campania_id=_campania_desde_referral(agencia_id, referral_meta),
+            token=token,
+            phone_number_id=phone_number_id,
+            wa_id=str(wa_id),
+        )
+    except Exception:
+        # El asistente está activo: reintentar con el flujo rígido reenviaría
+        # la bienvenida y duplicaría la conversación. Se consume el mensaje.
+        logger.exception(
+            "[CHATBOT-CONV] fallo procesando mensaje agencia_id=%s aspirante_id=%s "
+            "chatbot_configuracion_id=%s",
+            agencia_id,
+            aspirante.get("id"),
+            chatbot_configuracion_id,
+        )
+        return True
+
+    if isinstance(resultado, dict) and not resultado.get("usado"):
+        motivo = resultado.get("motivo")
+        if motivo in _MOTIVOS_CONVERSACIONAL_CONSUMEN:
+            return True
+        logger.info(
+            "[CHATBOT-CONV] asistente no atendió (motivo=%s); continúa flujo rígido",
+            motivo,
+        )
+        return None
+    return True
+
+
 async def procesar_chatbot_captacion(
     *,
     agencia_id: Optional[int],
@@ -1236,6 +1392,7 @@ async def procesar_chatbot_captacion(
     phone_number_id: str,
     token: str,
     message_id_meta: Optional[str],
+    referral_meta: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """
     Procesa un mensaje del chatbot de captación.
@@ -1436,6 +1593,21 @@ async def procesar_chatbot_captacion(
                 return True
             if not config:
                 return True
+            atendido = await _procesar_conversacional_si_aplica(
+                agencia_id=agencia_id,
+                wa_id=telefono,
+                tipo=tipo,
+                texto=texto,
+                payload_id=payload_id,
+                phone_number_id=phone_number_id,
+                token=token,
+                message_id_meta=message_id_meta,
+                aspirante=aspirante,
+                chatbot_configuracion_id=sel_id,
+                referral_meta=referral_meta,
+            )
+            if atendido is not None:
+                return atendido
             await _enviar_inicio_config(
                 config=config,
                 aspirante=aspirante,
@@ -1478,6 +1650,21 @@ async def procesar_chatbot_captacion(
                         unica.get("id"),
                     )
                     return True
+                atendido = await _procesar_conversacional_si_aplica(
+                    agencia_id=agencia_id,
+                    wa_id=telefono,
+                    tipo=tipo,
+                    texto=texto,
+                    payload_id=payload_id,
+                    phone_number_id=phone_number_id,
+                    token=token,
+                    message_id_meta=message_id_meta,
+                    aspirante=aspirante,
+                    chatbot_configuracion_id=int(unica["id"]),
+                    referral_meta=referral_meta,
+                )
+                if atendido is not None:
+                    return atendido
                 # Tras auto-asignación siempre enviamos inicio de esa config
                 await _enviar_inicio_config(
                     config=config,
@@ -1556,6 +1743,22 @@ async def procesar_chatbot_captacion(
                 or "Esta opción ya no está disponible. Contacta a la agencia.",
             )
             return True
+
+        atendido = await _procesar_conversacional_si_aplica(
+            agencia_id=agencia_id,
+            wa_id=telefono,
+            tipo=tipo,
+            texto=texto,
+            payload_id=payload_id,
+            phone_number_id=phone_number_id,
+            token=token,
+            message_id_meta=message_id_meta,
+            aspirante=aspirante,
+            chatbot_configuracion_id=int(cfg_id_asignada),
+            referral_meta=referral_meta,
+        )
+        if atendido is not None:
+            return atendido
 
         # --- Primer contacto con config ya asignada (p. ej. reinicio parcial) ---
         if etapa in (ETAPA_INICIO, None):

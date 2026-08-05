@@ -1,6 +1,7 @@
-"""Parser de eventos webhook Instagram (Meta Social).
+"""Parser de eventos webhook Meta Social (Instagram + Messenger).
 
-Solo object=instagram. Messenger/page queda fuera de esta fase.
+object=instagram → canal instagram
+object=page → canal messenger
 """
 from __future__ import annotations
 
@@ -25,6 +26,15 @@ def _as_int(value: Any) -> Optional[int]:
         return None
 
 
+def _channel_from_object(object_name: str) -> Optional[SocialChannel]:
+    name = (object_name or "").strip().lower()
+    if name == "instagram":
+        return SocialChannel.INSTAGRAM
+    if name == "page":
+        return SocialChannel.MESSENGER
+    return None
+
+
 def _parse_attachments(message: dict[str, Any]) -> list[SocialAttachmentMeta]:
     raw = message.get("attachments") or []
     result: list[SocialAttachmentMeta] = []
@@ -47,6 +57,8 @@ def _parse_attachments(message: dict[str, Any]) -> list[SocialAttachmentMeta]:
 
 def _parse_messaging_event(
     *,
+    channel: SocialChannel,
+    object_name: str,
     entry_id: Optional[str],
     event: dict[str, Any],
 ) -> Optional[ParsedSocialEvent]:
@@ -61,32 +73,32 @@ def _parse_messaging_event(
 
     if "read" in event:
         return ParsedSocialEvent(
-            channel=SocialChannel.INSTAGRAM,
+            channel=channel,
             entry_id=entry_id,
             sender_id=sender_id,
             recipient_id=recipient_id or "",
             timestamp=timestamp,
             is_read=True,
-            raw_object="instagram",
+            raw_object=object_name,
             event_type="read",
         )
 
     if "delivery" in event:
         return ParsedSocialEvent(
-            channel=SocialChannel.INSTAGRAM,
+            channel=channel,
             entry_id=entry_id,
             sender_id=sender_id,
             recipient_id=recipient_id or "",
             timestamp=timestamp,
             is_delivery=True,
-            raw_object="instagram",
+            raw_object=object_name,
             event_type="delivery",
         )
 
     postback = event.get("postback")
     if isinstance(postback, dict):
         return ParsedSocialEvent(
-            channel=SocialChannel.INSTAGRAM,
+            channel=channel,
             entry_id=entry_id,
             sender_id=sender_id,
             recipient_id=recipient_id or "",
@@ -94,14 +106,14 @@ def _parse_messaging_event(
             message_id=str(postback.get("mid") or "").strip() or None,
             postback_payload=str(postback.get("payload") or "").strip() or None,
             postback_title=str(postback.get("title") or "").strip() or None,
-            raw_object="instagram",
+            raw_object=object_name,
             event_type="postback",
         )
 
     message = event.get("message")
     if isinstance(message, dict):
         return ParsedSocialEvent(
-            channel=SocialChannel.INSTAGRAM,
+            channel=channel,
             entry_id=entry_id,
             sender_id=sender_id,
             recipient_id=recipient_id or "",
@@ -111,7 +123,7 @@ def _parse_messaging_event(
             is_echo=bool(message.get("is_echo")),
             is_self=bool(message.get("is_self")),
             attachments=_parse_attachments(message),
-            raw_object="instagram",
+            raw_object=object_name,
             event_type="message",
         )
 
@@ -120,9 +132,10 @@ def _parse_messaging_event(
 
 def iter_parsed_events(payload: dict[str, Any]) -> Iterator[ParsedSocialEvent]:
     object_name = str(payload.get("object") or "").strip().lower()
-    if object_name != "instagram":
+    channel = _channel_from_object(object_name)
+    if channel is None:
         logger.info(
-            "[meta_social] Objeto webhook ignorado (solo instagram): %s",
+            "[meta_social] Objeto webhook ignorado: %s",
             object_name or "(vacío)",
         )
         return
@@ -141,7 +154,12 @@ def iter_parsed_events(payload: dict[str, Any]) -> Iterator[ParsedSocialEvent]:
         for event in messaging:
             if not isinstance(event, dict):
                 continue
-            parsed = _parse_messaging_event(entry_id=entry_id, event=event)
+            parsed = _parse_messaging_event(
+                channel=channel,
+                object_name=object_name,
+                entry_id=entry_id,
+                event=event,
+            )
             if parsed is not None:
                 yield parsed
 

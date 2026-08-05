@@ -1,4 +1,4 @@
-"""Servicio de webhook Instagram Meta Social (respuesta demo con Generic Template)."""
+"""Servicio de webhook Meta Social (Instagram + Messenger)."""
 from __future__ import annotations
 
 import hashlib
@@ -8,7 +8,9 @@ from dataclasses import dataclass
 from typing import Any, Optional, Sequence
 
 from instagram_messaging_client import InstagramMessagingClient, MetaSocialApiError
+from messenger_messaging_client import MessengerMessagingClient, send_messenger_text
 from meta_social_config import (
+    MESSENGER_TEST_REPLY,
     PRODUCTION_TEST_REPLY,
     MetaSocialSettings,
     get_settings,
@@ -145,11 +147,26 @@ def is_production_test_trigger(
     return is_demo_trigger(text, settings)
 
 
+def is_messenger_trigger(
+    text: Optional[str],
+    settings: Optional[MetaSocialSettings] = None,
+) -> bool:
+    cfg = settings or get_settings()
+    return normalize_trigger_text(text) == cfg.normalized_messenger_trigger()
+
+
 def select_instagram_client(
     settings: Optional[MetaSocialSettings] = None,
 ) -> InstagramMessagingClient:
     cfg = settings or get_settings()
     return InstagramMessagingClient(settings=cfg)
+
+
+def select_messenger_client(
+    settings: Optional[MetaSocialSettings] = None,
+) -> MessengerMessagingClient:
+    cfg = settings or get_settings()
+    return MessengerMessagingClient(settings=cfg)
 
 
 def select_client(
@@ -158,16 +175,19 @@ def select_client(
 ):
     if channel == SocialChannel.INSTAGRAM:
         return select_instagram_client(settings)
+    if channel == SocialChannel.MESSENGER:
+        return select_messenger_client(settings)
     raise MetaSocialApiError(f"Canal no soportado: {channel}", status_code=400)
 
 
 def log_event_safe(event: ParsedSocialEvent, *, debug: bool = False) -> None:
     if debug:
         logger.info(
-            "[meta_social] evento canal=%s "
+            "[meta_social] evento object=%s canal=%s "
             "message.mid=%s sender.id=%s recipient.id=%s "
             "message.text=%r timestamp=%s is_echo=%s is_self=%s "
-            "entry.id=%s",
+            "entry.id=%s tipo=%s",
+            event.raw_object or "(sin_object)",
             event.channel.value,
             event.message_id or "(sin_mid)",
             mask_id(event.sender_id),
@@ -177,16 +197,22 @@ def log_event_safe(event: ParsedSocialEvent, *, debug: bool = False) -> None:
             event.is_echo,
             event.is_self,
             event.entry_id or "(sin_entry)",
+            event.event_type,
         )
         return
 
     event_type = "echo" if event.is_echo else event.event_type
     logger.info(
-        "[meta_social] evento canal=%s mid=%s sender=%s tipo=%s",
+        "[meta_social] evento object=%s canal=%s mid=%s sender=%s "
+        "page_or_ig=%s tipo=%s texto=%r is_echo=%s",
+        event.raw_object or "(sin_object)",
         event.channel.value,
         event.message_id or "(sin_mid)",
         mask_id(event.sender_id),
+        mask_id(event.entry_id),
         event_type,
+        truncate_text(event.text, 80),
+        event.is_echo,
     )
 
 
@@ -213,13 +239,102 @@ async def send_instagram_demo_card(
     await client.send_demo_card(recipient_igsid)
 
 
-async def process_event(
+async def _process_messenger_event(
     event: ParsedSocialEvent,
-    settings: Optional[MetaSocialSettings] = None,
+    cfg: MetaSocialSettings,
 ) -> None:
-    cfg = settings or get_settings()
-    log_event_safe(event, debug=cfg.debug)
+    configured_page = (cfg.facebook_page_id or "").strip()
+    entry_page = (event.entry_id or "").strip()
+    if configured_page and entry_page and entry_page != configured_page:
+        logger.info(
+            "[meta_social] canal=messenger page_id=%s ignorado "
+            "(no coincide META_SOCIAL_FACEBOOK_PAGE_ID=%s)",
+            mask_id(entry_page),
+            mask_id(configured_page),
+        )
+        return
 
+    if event.is_echo or event.is_read or event.is_delivery:
+        logger.info(
+            "[meta_social] canal=messenger evento ignorado tipo=%s echo=%s",
+            event.event_type,
+            event.is_echo,
+        )
+        return
+
+    if event.postback_payload:
+        logger.info(
+            "[meta_social] canal=messenger postback page_id=%s sender_psid=%s "
+            "payload=%r",
+            mask_id(event.entry_id),
+            mask_id(event.sender_id),
+            truncate_text(event.postback_payload, 100),
+        )
+        return
+
+    if not (event.text or "").strip():
+        logger.info(
+            "[meta_social] canal=messenger ignorado sin texto ni postback mid=%s",
+            event.message_id or "(sin_mid)",
+        )
+        return
+
+    dedup_id = (event.message_id or "").strip()
+    if dedup_id and already_processed(
+        dedup_id, cfg.dedup_ttl_seconds, channel="messenger"
+    ):
+        logger.info(
+            "[meta_social] canal=messenger duplicado ignorado mid=%s",
+            dedup_id,
+        )
+        return
+
+    if not is_messenger_trigger(event.text, cfg):
+        logger.info(
+            "[meta_social] canal=messenger sin respuesta (texto no es trigger) "
+            "recibido=%r",
+            truncate_text(event.text, 80),
+        )
+        return
+
+    ready, reason = cfg.messenger_ready()
+    if not ready:
+        logger.info(
+            "[meta_social] canal=messenger no envía: %s",
+            reason,
+        )
+        return
+
+    logger.info(
+        "[meta_social] canal=messenger trigger confirmado mid=%s "
+        "sender_psid=%s page_id=%s trigger=%s",
+        event.message_id or "(sin_mid)",
+        mask_id(event.sender_id),
+        mask_id(event.entry_id or cfg.facebook_page_id),
+        cfg.normalized_messenger_trigger(),
+    )
+
+    try:
+        # recipient = sender.id (PSID); nunca Page ID
+        await send_messenger_text(
+            event.sender_id,
+            MESSENGER_TEST_REPLY,
+            settings=cfg,
+        )
+    except MetaSocialApiError as exc:
+        logger.error(
+            "[meta_social] canal=messenger fallo envío recipient_psid=%s "
+            "status_http=%s success=false error=%s",
+            mask_id(event.sender_id),
+            exc.status_code,
+            str(exc)[:180],
+        )
+
+
+async def _process_instagram_event(
+    event: ParsedSocialEvent,
+    cfg: MetaSocialSettings,
+) -> None:
     if event.is_echo or event.should_ignore:
         logger.info(
             "[meta_social] Evento ignorado canal=%s tipo=%s echo=%s",
@@ -248,13 +363,6 @@ async def process_event(
 
     if not cfg.enabled:
         logger.info("[meta_social] META_SOCIAL_ENABLED=false; no se envía respuesta")
-        return
-
-    if event.channel != SocialChannel.INSTAGRAM:
-        logger.info(
-            "[meta_social] Canal no Instagram ignorado en esta fase: %s",
-            event.channel.value,
-        )
         return
 
     if not is_demo_trigger(event.text, cfg):
@@ -315,6 +423,27 @@ async def process_event(
             exc.status_code,
             str(exc)[:180],
         )
+
+
+async def process_event(
+    event: ParsedSocialEvent,
+    settings: Optional[MetaSocialSettings] = None,
+) -> None:
+    cfg = settings or get_settings()
+    log_event_safe(event, debug=cfg.debug)
+
+    if event.channel == SocialChannel.MESSENGER:
+        await _process_messenger_event(event, cfg)
+        return
+
+    if event.channel == SocialChannel.INSTAGRAM:
+        await _process_instagram_event(event, cfg)
+        return
+
+    logger.info(
+        "[meta_social] Canal no soportado ignorado: %s",
+        event.channel.value,
+    )
 
 
 async def process_webhook_payload(

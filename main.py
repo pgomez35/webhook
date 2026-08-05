@@ -104,6 +104,15 @@ from router_admin_chatbot_clientes import router as admin_chatbot_clientes_route
 from router_chatbot_diagnostico import router as chatbot_diagnostico_router
 from router_meta_social import router as meta_social_router
 
+# El asistente conversacional es opcional: si sus módulos aún no están
+# desplegados, el resto de la API (incluido el chatbot rígido) debe arrancar.
+try:
+    from router_chatbot_conversacional import router as chatbot_conversacional_router
+except Exception:
+    chatbot_conversacional_router = None
+    print("[STARTUP] router_chatbot_conversacional no disponible; se omite")
+    traceback.print_exc()
+
 
 
 # ⚙️ Inicializar FastAPI
@@ -141,6 +150,8 @@ app.include_router(chatbot_captacion_router, tags=["Chatbot Captación"])
 app.include_router(chatbot_diagnostico_router, tags=["Chatbot Diagnóstico"])
 app.include_router(admin_chatbot_clientes_router, tags=["Admin Chatbot Clientes"])
 app.include_router(meta_social_router, tags=["Meta Social"])
+if chatbot_conversacional_router is not None:
+    app.include_router(chatbot_conversacional_router, tags=["Chatbot Conversacional"])
 
 
 

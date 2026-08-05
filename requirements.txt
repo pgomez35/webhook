@@ -1,7 +1,9 @@
 fastapi
 uvicorn
 python-dotenv
-openai
+# openai-agents 0.2.x es la última serie compatible con openai 1.x
+openai>=1.104.1,<2
+openai-agents>=0.2.0,<0.3
 chromadb
 requests
 psycopg2-binary

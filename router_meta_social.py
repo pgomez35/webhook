@@ -1,4 +1,4 @@
-"""Router independiente Meta Social — Instagram Messaging (Instagram Login)."""
+"""Router independiente Meta Social — Instagram + Messenger (mismo callback)."""
 from __future__ import annotations
 
 import json
@@ -25,7 +25,7 @@ async def verify_meta_social_webhook(
     hub_verify_token: str | None = Query(None, alias="hub.verify_token"),
     hub_challenge: str | None = Query(None, alias="hub.challenge"),
 ):
-    """Verificación de suscripción webhook Meta (Instagram)."""
+    """Verificación genérica de suscripción webhook Meta (Instagram / Messenger)."""
     settings = get_settings()
     expected = (settings.verify_token or "").strip()
     if (
@@ -44,7 +44,7 @@ async def receive_meta_social_webhook(
     background_tasks: BackgroundTasks,
 ):
     """
-    Recibe eventos Instagram (y a futuro Messenger en el mismo path).
+    Recibe eventos Instagram (object=instagram) y Messenger (object=page).
     Lee el body en bytes una sola vez, valida firma HMAC y responde
     EVENT_RECEIVED 200 solo si la firma es válida.
     """

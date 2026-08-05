@@ -1,7 +1,7 @@
-"""Configuración exclusiva de Meta Social (Instagram Messaging + Instagram Login).
+"""Configuración exclusiva de Meta Social (Instagram + Messenger).
 
 No reutiliza variables WHATSAPP_* ni META_APP_* de WhatsApp Cloud API.
-No usa PAGE_ID / PAGE_ACCESS_TOKEN / graph.facebook.com.
+Instagram usa graph.instagram.com; Messenger usa graph.facebook.com + Page token.
 """
 from __future__ import annotations
 
@@ -19,10 +19,15 @@ load_dotenv()
 DEFAULT_GRAPH_API_VERSION = "v21.0"
 DEFAULT_DEDUP_TTL_SECONDS = 24 * 3600
 DEFAULT_DEMO_TRIGGER = "TALENTUM_DEMO_2026"
+DEFAULT_MESSENGER_TRIGGER = "MESSENGER_DEMO_2026"
 
 PRODUCTION_TEST_TRIGGER = DEFAULT_DEMO_TRIGGER
 PRODUCTION_TEST_REPLY = (
     "👋 ¡Hola! Esta es una prueba de la integración de Talentum Manager con Instagram."
+)
+
+MESSENGER_TEST_REPLY = (
+    "👋 ¡Hola! Esta es una prueba de Talentum Manager con Facebook Messenger."
 )
 
 INSTAGRAM_CARD_TITLE = "Talentum Manager para agencias LIVE"
@@ -102,13 +107,24 @@ class MetaSocialSettings:
     demo_trigger: str = DEFAULT_DEMO_TRIGGER
     demo_image_url: str = ""
     whatsapp_url: str = ""
+    messenger_enabled: bool = False
+    facebook_page_id: str = ""
+    facebook_page_access_token: str = ""
+    messenger_trigger: str = DEFAULT_MESSENGER_TRIGGER
 
-    @property
-    def instagram_graph_base_url(self) -> str:
+    def _graph_version(self) -> str:
         version = (self.graph_api_version or DEFAULT_GRAPH_API_VERSION).strip()
         if not version.startswith("v"):
             version = f"v{version}"
-        return f"https://graph.instagram.com/{version}"
+        return version
+
+    @property
+    def instagram_graph_base_url(self) -> str:
+        return f"https://graph.instagram.com/{self._graph_version()}"
+
+    @property
+    def facebook_graph_base_url(self) -> str:
+        return f"https://graph.facebook.com/{self._graph_version()}"
 
     def webhook_signature_candidates(self) -> list[tuple[str, str]]:
         candidates: list[tuple[str, str]] = []
@@ -122,6 +138,18 @@ class MetaSocialSettings:
 
     def normalized_demo_trigger(self) -> str:
         return (self.demo_trigger or DEFAULT_DEMO_TRIGGER).strip().upper()
+
+    def normalized_messenger_trigger(self) -> str:
+        return (self.messenger_trigger or DEFAULT_MESSENGER_TRIGGER).strip().upper()
+
+    def messenger_ready(self) -> tuple[bool, Optional[str]]:
+        if not self.messenger_enabled:
+            return False, "META_SOCIAL_MESSENGER_ENABLED=false"
+        if not (self.facebook_page_id or "").strip():
+            return False, "META_SOCIAL_FACEBOOK_PAGE_ID vacío"
+        if not (self.facebook_page_access_token or "").strip():
+            return False, "META_SOCIAL_FACEBOOK_PAGE_ACCESS_TOKEN vacío"
+        return True, None
 
     def rich_demo_ready(self) -> tuple[bool, Optional[str]]:
         if not self.rich_demo_enabled:
@@ -171,6 +199,18 @@ def get_settings() -> MetaSocialSettings:
         whatsapp_url=(
             os.getenv("META_SOCIAL_WHATSAPP_URL")
             or DEFAULT_INSTAGRAM_WHATSAPP_URL
+        ),
+        messenger_enabled=_as_bool(
+            os.getenv("META_SOCIAL_MESSENGER_ENABLED"),
+            default=False,
+        ),
+        facebook_page_id=os.getenv("META_SOCIAL_FACEBOOK_PAGE_ID", "") or "",
+        facebook_page_access_token=(
+            os.getenv("META_SOCIAL_FACEBOOK_PAGE_ACCESS_TOKEN", "") or ""
+        ),
+        messenger_trigger=(
+            os.getenv("META_SOCIAL_MESSENGER_TRIGGER", DEFAULT_MESSENGER_TRIGGER)
+            or DEFAULT_MESSENGER_TRIGGER
         ),
     )
 

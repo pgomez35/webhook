@@ -4393,6 +4393,11 @@ async def _procesar_mensaje_unico(
                 f"es_async={inspect.iscoroutinefunction(procesar_chatbot_captacion)}"
             )
 
+            # Click-to-WhatsApp de Ads: Meta adjunta `referral` al primer mensaje.
+            referral_meta = mensaje.get("referral")
+            if not isinstance(referral_meta, dict):
+                referral_meta = None
+
             procesado_chatbot = procesar_chatbot_captacion(
                 agencia_id=chatbot_agencia_id,
                 whatsapp_account_id=whatsapp_account_id,
@@ -4403,6 +4408,7 @@ async def _procesar_mensaje_unico(
                 phone_number_id=phone_number_id,
                 token=token,
                 message_id_meta=mensaje.get("id"),
+                referral_meta=referral_meta,
             )
             # Defensa: si en algún deploy quedó async, ejecutar la coroutine.
             if inspect.iscoroutine(procesado_chatbot):
