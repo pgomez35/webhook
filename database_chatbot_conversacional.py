@@ -3587,7 +3587,7 @@ def obtener_contexto_agente(
 
 
 # ---------------------------------------------------------------------------
-# Alias de compatibilidad con services.chatbot_conversacional.db_gateway
+# Alias de compatibilidad con chatbot_conversacional_db_gateway (raíz)
 # ---------------------------------------------------------------------------
 
 

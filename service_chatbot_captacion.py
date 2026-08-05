@@ -1328,13 +1328,13 @@ async def _procesar_conversacional_si_aplica(
         return None
 
     try:
-        from services.chatbot_conversacional.service import (
+        from service_chatbot_conversacional import (
             procesar_mensaje_conversacional,
         )
     except Exception:
         logger.warning(
-            "[chatbot_router] motor conversacional seleccionado pero el módulo "
-            "services.chatbot_conversacional no está desplegado; flujo clásico "
+            "[chatbot_router] motor conversacional seleccionado pero "
+            "service_chatbot_conversacional no está desplegado; flujo clásico "
             "agencia_id=%s chatbot_configuracion_id=%s",
             agencia_id,
             chatbot_configuracion_id,

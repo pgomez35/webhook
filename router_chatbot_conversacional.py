@@ -79,7 +79,7 @@ def _agencia_id(agencia: dict) -> int:
 def _servicio():
     """Servicio conversacional (import perezoso: puede no estar desplegado)."""
     try:
-        from services.chatbot_conversacional import service
+        import service_chatbot_conversacional as service
     except Exception as e:  # pragma: no cover - depende del despliegue
         logger.error("[CHATBOT-CONV] servicio conversacional no disponible: %s", e)
         raise HTTPException(
