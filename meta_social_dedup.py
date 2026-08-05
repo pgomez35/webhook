@@ -15,12 +15,16 @@ logger = logging.getLogger("uvicorn.error")
 
 DEDUP_PREFIX = "meta_social:instagram:event:"
 DEDUP_PREFIX_MESSENGER = "meta_social:messenger:event:"
+DEDUP_PREFIX_MESSENGER_POSTBACK = "meta_social:messenger:postback:"
 DEFAULT_TTL_SECONDS = 24 * 3600
 
 
 def dedup_prefix_for_channel(channel: str | None = None) -> str:
-    if (channel or "").strip().lower() == "messenger":
+    ch = (channel or "").strip().lower()
+    if ch == "messenger":
         return DEDUP_PREFIX_MESSENGER
+    if ch in {"messenger_postback", "messenger:postback"}:
+        return DEDUP_PREFIX_MESSENGER_POSTBACK
     return DEDUP_PREFIX
 
 _memory_lock = threading.Lock()

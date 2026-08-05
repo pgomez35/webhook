@@ -20,6 +20,8 @@ DEFAULT_GRAPH_API_VERSION = "v21.0"
 DEFAULT_DEDUP_TTL_SECONDS = 24 * 3600
 DEFAULT_DEMO_TRIGGER = "TALENTUM_DEMO_2026"
 DEFAULT_MESSENGER_TRIGGER = "MESSENGER_DEMO_2026"
+DEFAULT_MESSENGER_CARD_TRIGGER = "MESSENGER_CARD_2026"
+DEFAULT_MESSENGER_CARD_POSTBACK = "INICIAR_DEMO_MESSENGER"
 
 PRODUCTION_TEST_TRIGGER = DEFAULT_DEMO_TRIGGER
 PRODUCTION_TEST_REPLY = (
@@ -28,6 +30,16 @@ PRODUCTION_TEST_REPLY = (
 
 MESSENGER_TEST_REPLY = (
     "👋 ¡Hola! Esta es una prueba de Talentum Manager con Facebook Messenger."
+)
+
+MESSENGER_CARD_TITLE = "Talentum Manager"
+MESSENGER_CARD_SUBTITLE = (
+    "Automatización y gestión para agencias de creadores LIVE."
+)
+MESSENGER_CARD_WEB_BUTTON_TITLE = "Probar en WhatsApp"
+MESSENGER_CARD_POSTBACK_BUTTON_TITLE = "Iniciar aquí"
+MESSENGER_POSTBACK_CONFIRM_REPLY = (
+    "Perfecto. La opción de iniciar el proceso fue recibida correctamente. ✅"
 )
 
 INSTAGRAM_CARD_TITLE = "Talentum Manager para agencias LIVE"
@@ -67,6 +79,22 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on", "si", "sí"}
 
 
+def validate_https_public_url(url: str, *, label: str) -> tuple[bool, str]:
+    """Valida URL pública HTTPS (imagen o web_url de tarjeta Messenger)."""
+    text = (url or "").strip()
+    if not text:
+        return False, f"{label} vacío"
+    parsed = urlparse(text)
+    if parsed.scheme.lower() != "https":
+        return False, f"{label} debe usar HTTPS"
+    if not parsed.netloc:
+        return False, f"{label} sin host público"
+    host = parsed.hostname or ""
+    if _PRIVATE_HOST_RE.match(host) or host.endswith(".local"):
+        return False, f"{label} no puede ser local/privada"
+    return True, "ok"
+
+
 def validate_demo_image_url(url: str) -> tuple[bool, str]:
     """Valida URL pública HTTPS compatible con envío de imagen Instagram."""
     text = (url or "").strip()
@@ -90,6 +118,13 @@ def validate_demo_image_url(url: str) -> tuple[bool, str]:
     return True, "ok"
 
 
+def messenger_card_fallback_text(web_url: str) -> str:
+    return (
+        "🚀 Talentum Manager para agencias de creadores LIVE\n\n"
+        f"Probar en WhatsApp:\n{(web_url or '').strip()}"
+    )
+
+
 @dataclass(frozen=True)
 class MetaSocialSettings:
     enabled: bool
@@ -111,6 +146,11 @@ class MetaSocialSettings:
     facebook_page_id: str = ""
     facebook_page_access_token: str = ""
     messenger_trigger: str = DEFAULT_MESSENGER_TRIGGER
+    messenger_card_enabled: bool = False
+    messenger_card_trigger: str = DEFAULT_MESSENGER_CARD_TRIGGER
+    messenger_card_image_url: str = ""
+    messenger_card_web_url: str = ""
+    messenger_card_postback: str = DEFAULT_MESSENGER_CARD_POSTBACK
 
     def _graph_version(self) -> str:
         version = (self.graph_api_version or DEFAULT_GRAPH_API_VERSION).strip()
@@ -142,6 +182,16 @@ class MetaSocialSettings:
     def normalized_messenger_trigger(self) -> str:
         return (self.messenger_trigger or DEFAULT_MESSENGER_TRIGGER).strip().upper()
 
+    def normalized_messenger_card_trigger(self) -> str:
+        return (
+            self.messenger_card_trigger or DEFAULT_MESSENGER_CARD_TRIGGER
+        ).strip().upper()
+
+    def normalized_messenger_card_postback(self) -> str:
+        return (
+            self.messenger_card_postback or DEFAULT_MESSENGER_CARD_POSTBACK
+        ).strip()
+
     def messenger_ready(self) -> tuple[bool, Optional[str]]:
         if not self.messenger_enabled:
             return False, "META_SOCIAL_MESSENGER_ENABLED=false"
@@ -149,6 +199,28 @@ class MetaSocialSettings:
             return False, "META_SOCIAL_FACEBOOK_PAGE_ID vacío"
         if not (self.facebook_page_access_token or "").strip():
             return False, "META_SOCIAL_FACEBOOK_PAGE_ACCESS_TOKEN vacío"
+        return True, None
+
+    def messenger_card_ready(self) -> tuple[bool, Optional[str]]:
+        ready, reason = self.messenger_ready()
+        if not ready:
+            return False, reason
+        if not self.messenger_card_enabled:
+            return False, "META_SOCIAL_MESSENGER_CARD_ENABLED=false"
+        ok_img, reason_img = validate_https_public_url(
+            self.messenger_card_image_url,
+            label="META_SOCIAL_MESSENGER_CARD_IMAGE_URL",
+        )
+        if not ok_img:
+            return False, reason_img
+        ok_web, reason_web = validate_https_public_url(
+            self.messenger_card_web_url,
+            label="META_SOCIAL_MESSENGER_CARD_WEB_URL",
+        )
+        if not ok_web:
+            return False, reason_web
+        if not (self.messenger_card_postback or "").strip():
+            return False, "META_SOCIAL_MESSENGER_CARD_POSTBACK vacío"
         return True, None
 
     def rich_demo_ready(self) -> tuple[bool, Optional[str]]:
@@ -211,6 +283,30 @@ def get_settings() -> MetaSocialSettings:
         messenger_trigger=(
             os.getenv("META_SOCIAL_MESSENGER_TRIGGER", DEFAULT_MESSENGER_TRIGGER)
             or DEFAULT_MESSENGER_TRIGGER
+        ),
+        messenger_card_enabled=_as_bool(
+            os.getenv("META_SOCIAL_MESSENGER_CARD_ENABLED"),
+            default=False,
+        ),
+        messenger_card_trigger=(
+            os.getenv(
+                "META_SOCIAL_MESSENGER_CARD_TRIGGER",
+                DEFAULT_MESSENGER_CARD_TRIGGER,
+            )
+            or DEFAULT_MESSENGER_CARD_TRIGGER
+        ),
+        messenger_card_image_url=(
+            os.getenv("META_SOCIAL_MESSENGER_CARD_IMAGE_URL", "") or ""
+        ),
+        messenger_card_web_url=(
+            os.getenv("META_SOCIAL_MESSENGER_CARD_WEB_URL", "") or ""
+        ),
+        messenger_card_postback=(
+            os.getenv(
+                "META_SOCIAL_MESSENGER_CARD_POSTBACK",
+                DEFAULT_MESSENGER_CARD_POSTBACK,
+            )
+            or DEFAULT_MESSENGER_CARD_POSTBACK
         ),
     )
 

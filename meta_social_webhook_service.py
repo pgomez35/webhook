@@ -8,12 +8,18 @@ from dataclasses import dataclass
 from typing import Any, Optional, Sequence
 
 from instagram_messaging_client import InstagramMessagingClient, MetaSocialApiError
-from messenger_messaging_client import MessengerMessagingClient, send_messenger_text
+from messenger_messaging_client import (
+    MessengerMessagingClient,
+    send_messenger_generic_template,
+    send_messenger_text,
+)
 from meta_social_config import (
+    MESSENGER_POSTBACK_CONFIRM_REPLY,
     MESSENGER_TEST_REPLY,
     PRODUCTION_TEST_REPLY,
     MetaSocialSettings,
     get_settings,
+    messenger_card_fallback_text,
 )
 from meta_social_dedup import already_processed
 from meta_social_event_parser import parse_events
@@ -155,6 +161,23 @@ def is_messenger_trigger(
     return normalize_trigger_text(text) == cfg.normalized_messenger_trigger()
 
 
+def is_messenger_card_trigger(
+    text: Optional[str],
+    settings: Optional[MetaSocialSettings] = None,
+) -> bool:
+    cfg = settings or get_settings()
+    return normalize_trigger_text(text) == cfg.normalized_messenger_card_trigger()
+
+
+def messenger_postback_dedup_key(
+    sender_id: str,
+    timestamp: Optional[int],
+    payload: str,
+) -> str:
+    digest = hashlib.sha256((payload or "").encode("utf-8")).hexdigest()[:16]
+    return f"{sender_id}:{timestamp or 0}:{digest}"
+
+
 def select_instagram_client(
     settings: Optional[MetaSocialSettings] = None,
 ) -> InstagramMessagingClient:
@@ -239,6 +262,114 @@ async def send_instagram_demo_card(
     await client.send_demo_card(recipient_igsid)
 
 
+async def _handle_messenger_postback(
+    event: ParsedSocialEvent,
+    cfg: MetaSocialSettings,
+) -> None:
+    payload = (event.postback_payload or "").strip()
+    expected = cfg.normalized_messenger_card_postback()
+    logger.info(
+        "[meta_social] canal=messenger tipo=postback page_id=%s "
+        "sender_psid=%s payload=%r",
+        mask_id(event.entry_id),
+        mask_id(event.sender_id),
+        truncate_text(payload, 100),
+    )
+    if payload != expected:
+        logger.info(
+            "[meta_social] canal=messenger postback ignorado (payload distinto)",
+        )
+        return
+
+    dedup_id = messenger_postback_dedup_key(
+        event.sender_id,
+        event.timestamp,
+        payload,
+    )
+    if already_processed(
+        dedup_id, cfg.dedup_ttl_seconds, channel="messenger_postback"
+    ):
+        logger.info(
+            "[meta_social] canal=messenger postback duplicado ignorado",
+        )
+        return
+
+    ready, reason = cfg.messenger_ready()
+    if not ready:
+        logger.info(
+            "[meta_social] canal=messenger postback no responde: %s",
+            reason,
+        )
+        return
+
+    try:
+        await send_messenger_text(
+            event.sender_id,
+            MESSENGER_POSTBACK_CONFIRM_REPLY,
+            settings=cfg,
+        )
+        logger.info(
+            "[meta_social] canal=messenger tipo=postback success=true "
+            "sender_psid=%s",
+            mask_id(event.sender_id),
+        )
+    except MetaSocialApiError as exc:
+        logger.error(
+            "[meta_social] canal=messenger tipo=postback success=false "
+            "status_http=%s error=%s",
+            exc.status_code,
+            str(exc)[:180],
+        )
+
+
+async def _send_messenger_card(
+    event: ParsedSocialEvent,
+    cfg: MetaSocialSettings,
+) -> None:
+    card_ready, card_reason = cfg.messenger_card_ready()
+    if not card_ready:
+        logger.info(
+            "[meta_social] canal=messenger tipo=generic_template no envía: %s",
+            card_reason,
+        )
+        return
+
+    logger.info(
+        "[meta_social] canal=messenger tipo=generic_template "
+        "trigger confirmado mid=%s sender_psid=%s page_id=%s trigger=%s",
+        event.message_id or "(sin_mid)",
+        mask_id(event.sender_id),
+        mask_id(event.entry_id or cfg.facebook_page_id),
+        cfg.normalized_messenger_card_trigger(),
+    )
+
+    ok = await send_messenger_generic_template(
+        event.sender_id,
+        cfg.messenger_card_image_url,
+        cfg.messenger_card_web_url,
+        cfg.normalized_messenger_card_postback(),
+        settings=cfg,
+    )
+    if ok:
+        return
+
+    fallback = messenger_card_fallback_text(cfg.messenger_card_web_url)
+    try:
+        await send_messenger_text(event.sender_id, fallback, settings=cfg)
+        logger.info(
+            "[meta_social] canal=messenger tipo=generic_template "
+            "fallback_text success=true sender_psid=%s",
+            mask_id(event.sender_id),
+        )
+    except MetaSocialApiError as exc:
+        logger.error(
+            "[meta_social] canal=messenger tipo=generic_template "
+            "fallback_text success=false status_http=%s error=%s",
+            exc.status_code,
+            str(exc)[:180],
+        )
+
+
 async def _process_messenger_event(
     event: ParsedSocialEvent,
     cfg: MetaSocialSettings,
@@ -263,13 +394,7 @@ async def _process_messenger_event(
         return
 
     if event.postback_payload:
-        logger.info(
-            "[meta_social] canal=messenger postback page_id=%s sender_psid=%s "
-            "payload=%r",
-            mask_id(event.entry_id),
-            mask_id(event.sender_id),
-            truncate_text(event.postback_payload, 100),
-        )
+        await _handle_messenger_postback(event, cfg)
         return
 
     if not (event.text or "").strip():
@@ -289,6 +414,12 @@ async def _process_messenger_event(
         )
         return
 
+    # Tarjeta Generic Template (disparador independiente)
+    if is_messenger_card_trigger(event.text, cfg):
+        await _send_messenger_card(event, cfg)
+        return
+
+    # Respuesta sencilla existente (MESSENGER_DEMO_2026)
     if not is_messenger_trigger(event.text, cfg):
         logger.info(
             "[meta_social] canal=messenger sin respuesta (texto no es trigger) "
