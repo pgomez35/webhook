@@ -55,19 +55,16 @@ def _log_router_motor(
     motor_seleccionado: str,
     motivo: str,
 ) -> None:
-    """Log sanitizado (sin tokens ni secretos)."""
-    logger.info(
-        "[chatbot_router] agencia_id=%s chatbot_configuracion_id=%s "
-        "usar_asistente_conversacional=%s asistente_id=%s asistente_activo=%s "
-        "motor_seleccionado=%s motivo=%s",
-        agencia_id,
-        chatbot_configuracion_id,
-        usar_asistente_conversacional,
-        asistente_id,
-        asistente_activo,
-        motor_seleccionado,
-        motivo,
+    """Log sanitizado (sin tokens ni secretos). También print para Render."""
+    msg = (
+        f"[chatbot_router] agencia_id={agencia_id} "
+        f"chatbot_configuracion_id={chatbot_configuracion_id} "
+        f"usar_asistente_conversacional={usar_asistente_conversacional} "
+        f"asistente_id={asistente_id} asistente_activo={asistente_activo} "
+        f"motor_seleccionado={motor_seleccionado} motivo={motivo}"
     )
+    logger.info(msg)
+    print(msg)
 
 
 def resolver_motor_conversacional(

@@ -4315,6 +4315,10 @@ async def whatsapp_webhook(request: Request):
         # 3. Statuses
         statuses = value.get("statuses", [])
         if statuses:
+            print(
+                f"📬 webhook statuses={len(statuses)} "
+                f"phone_number_id={phone_number_id} product_type={product_type}"
+            )
             await _handle_statuses(
                 statuses=statuses,
                 tenant_name=tenant_name,
@@ -4325,7 +4329,21 @@ async def whatsapp_webhook(request: Request):
             )
 
         # 4. Mensajes
-        for mensaje in value.get("messages", []):
+        mensajes = value.get("messages") or []
+        if not mensajes:
+            if not statuses:
+                print(
+                    f"📭 webhook sin messages ni statuses "
+                    f"field={field} phone_number_id={phone_number_id}"
+                )
+            return {"status": "ok"}
+
+        print(
+            f"💬 webhook messages={len(mensajes)} "
+            f"phone_number_id={phone_number_id} product_type={product_type} "
+            f"chatbot_agencia_id={chatbot_agencia_id}"
+        )
+        for mensaje in mensajes:
             await _procesar_mensaje_unico(
                 mensaje,
                 tenant_name,
@@ -4398,7 +4416,8 @@ async def _procesar_mensaje_unico(
             if not isinstance(referral_meta, dict):
                 referral_meta = None
 
-            procesado_chatbot = procesar_chatbot_captacion(
+            # Siempre await: procesar_chatbot_captacion es async.
+            procesado_chatbot = await procesar_chatbot_captacion(
                 agencia_id=chatbot_agencia_id,
                 whatsapp_account_id=whatsapp_account_id,
                 wa_id=wa_id,
@@ -4410,13 +4429,6 @@ async def _procesar_mensaje_unico(
                 message_id_meta=mensaje.get("id"),
                 referral_meta=referral_meta,
             )
-            # Defensa: si en algún deploy quedó async, ejecutar la coroutine.
-            if inspect.iscoroutine(procesado_chatbot):
-                print(
-                    "⚠️ [CHATBOT] se obtuvo coroutine sin await; "
-                    "ejecutando con await ahora"
-                )
-                procesado_chatbot = await procesado_chatbot
 
             print(
                 f"🤖 [CHATBOT RESULT] "
