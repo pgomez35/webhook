@@ -423,13 +423,17 @@ def obtener_matriz_capacitaciones(
                 capacitacion_ids = [c["id_capacitacion"] for c in capacitaciones]
 
                 if not capacitacion_ids:
+                    # Siempre devolver creadores con lista capacitaciones (aunque vacía)
+                    # para que el frontend no rompa al hacer .map.
                     return {
                         "ok": True,
                         "total": total,
                         "limit": limit,
                         "offset": offset,
                         "capacitaciones": [],
-                        "creadores": creadores,
+                        "creadores": [
+                            {**dict(c), "capacitaciones": []} for c in creadores
+                        ],
                     }
 
                 cur.execute(
