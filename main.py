@@ -27,6 +27,11 @@ from DataBase import actualizar_contacto_info_db, actualizar_nombre_contacto, el
     guardar_o_actualizar_token_db, guardar_o_actualizar_whatsapp_business_account, \
     hash_password
 from schemas import *
+from security_logging import (
+    authorization_status,
+    sanitize_headers,
+    sanitize_validation_errors,
+)
 
 # Tu propio código/librerías
 from enviar_msg_wp import *
@@ -205,7 +210,18 @@ logger = logging.getLogger("calendar_sync")
 # Middleware para manejo de errores
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
-    logger.error(f"❌ Error no manejado: {str(exc)}")
+    logger.error("❌ Error no manejado: %s", str(exc))
+    logger.error(
+        "➡️ URL: %s %s | Authorization: %s",
+        getattr(request, "method", "?"),
+        getattr(request, "url", "?"),
+        authorization_status(
+            request.headers.get("authorization")
+            if hasattr(request, "headers")
+            else None
+        ),
+    )
+    logger.error("➡️ HEADERS: %s", sanitize_headers(getattr(request, "headers", None)))
     logger.error(traceback.format_exc())
     try:
         return JSONResponse(
@@ -899,10 +915,16 @@ def log_routes():
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    auth = request.headers.get("authorization")
     logger.error("❌ 422 VALIDATION ERROR")
-    logger.error(f"➡️ URL: {request.method} {request.url}")
-    logger.error(f"➡️ HEADERS: {dict(request.headers)}")
-    logger.error(f"➡️ ERRORS: {exc.errors()}")
+    logger.error("➡️ URL: %s %s", request.method, request.url)
+    logger.error(
+        "➡️ Authorization header: %s",
+        authorization_status(auth),
+    )
+    logger.error("➡️ HEADERS: %s", sanitize_headers(request.headers))
+    # exc.errors() puede incluir el body (`input`) con passwords/tokens
+    logger.error("➡️ ERRORS: %s", sanitize_validation_errors(exc.errors()))
     return JSONResponse(
         status_code=422,
         content={"detail": exc.errors()}

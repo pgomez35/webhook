@@ -2609,11 +2609,11 @@ def enviar_mensaje(numero: str, texto: str):
             token = current_token.get()
             phone_id = current_phone_id.get()
 
-            # Seguros: solo últimos 6 chars visibles
-            token_safe = f"...{token[-6:]}" if token else "None"
+            # No registrar access token de Meta (ni parcial): solo presencia.
+            token_safe = "presente" if token else "ausente"
             phone_id_safe = f"...{phone_id[-6:]}" if phone_id else "None"
 
-            print(f"🔐 Token usado: {token_safe}")
+            print(f"🔐 Token Meta: {token_safe}")
             print(f"📱 Phone ID usado: {phone_id_safe}")
 
 

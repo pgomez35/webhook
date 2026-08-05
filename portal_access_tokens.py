@@ -247,7 +247,7 @@ def migrar_token_portal_aspirante_a_creador(
 
     print(
         f"✅ [PORTAL] Token migrado aspirante→creador | "
-        f"aspirante_id={aspirante_id} | creador_id={creador_id} | token={row[1]}"
+        f"aspirante_id={aspirante_id} | creador_id={creador_id} | token=presente"
     )
     return _token_row_to_dict(row, reutilizado=True)
 

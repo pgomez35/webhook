@@ -307,9 +307,28 @@ class AsistenteConfiguracionUpdate(_Entrada):
 
 
 class InicializarAsistenteIn(_Entrada):
-    chatbot_configuracion_id: int = Field(..., gt=0)
-    importar_faqs: bool = True
-    crear_flujo_base: bool = True
+    """
+    Opciones del POST .../asistente/inicializar.
+
+    El ``chatbot_configuracion_id`` NO va en el body: se toma de la ruta.
+    El body puede ser ``{}`` o ausente; todos los flags tienen default True.
+    """
+
+    copiar_faq: bool = True
+    crear_requisitos_base: bool = True
+    crear_flujo_informativo: bool = True
+
+    # Alias legados (por si algún cliente aún envía nombres anteriores).
+    importar_faqs: Optional[bool] = Field(default=None, exclude=True)
+    crear_flujo_base: Optional[bool] = Field(default=None, exclude=True)
+
+    @model_validator(mode="after")
+    def _aplicar_alias_legados(self):
+        if self.importar_faqs is not None:
+            self.copiar_faq = bool(self.importar_faqs)
+        if self.crear_flujo_base is not None:
+            self.crear_flujo_informativo = bool(self.crear_flujo_base)
+        return self
 
 
 class InicializarAsistenteOut(_Salida):

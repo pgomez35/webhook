@@ -35,8 +35,8 @@ if __name__ == "__main__":
     # Crear hash de contraseña
     password = "mi_contraseña_segura"
     hashed = hash_password(password)
-    print(f"Contraseña original: {password}")
-    print(f"Hash: {hashed}")
+    print("Contraseña original: [REDACTED]")
+    print(f"Hash generado: {hashed[:12]}...")
     
     # Verificar contraseña
     is_valid = verify_password(password, hashed)
@@ -44,4 +44,4 @@ if __name__ == "__main__":
     
     # Generar contraseña aleatoria
     random_pass = generate_random_password()
-    print(f"Contraseña aleatoria: {random_pass}")
+    print(f"Contraseña aleatoria generada (longitud={len(random_pass)})")

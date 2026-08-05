@@ -6,6 +6,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from tenant import *
 from DataBase import obtener_cuenta_por_subdominio
+from security_logging import authorization_status
 
 TENANT_HEADER = "x-tenant-name"
 INVALID_TENANT_MESSAGE = (
@@ -46,7 +47,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
         auth_header = request.headers.get("authorization")
         print(
             "🧾 [MIDDLEWARE] Authorization header:",
-            "presente" if auth_header else "ausente",
+            authorization_status(auth_header),
         )
         print("🧾 [MIDDLEWARE] X-Tenant-Name header:", request.headers.get("x-tenant-name"))
 

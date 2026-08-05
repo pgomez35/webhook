@@ -1629,7 +1629,7 @@ def resolver_creador_por_token(token: str) -> Optional[Dict]:
                 row = cur.fetchone()
 
         if not row:
-            print(f"⚠️ Token inválido o no encontrado: {token}")
+            print("⚠️ Token de portal inválido o no encontrado")
             return None
 
         (
@@ -1648,12 +1648,12 @@ def resolver_creador_por_token(token: str) -> Optional[Dict]:
                 expiracion = expiracion.replace(tzinfo=timezone.utc)
 
             if now_utc > expiracion:
-                print(f"⚠️ Token expirado: {token}")
+                print("⚠️ Token de portal expirado")
                 return None
 
         # 2) Verificar si ya fue usado (si quieres bloquearlo)
         if usado:
-            print(f"⚠️ Token ya usado: {token}")
+            print("⚠️ Token de portal ya usado")
             return None
 
         # 3) Devuelve creador y responsable asociado

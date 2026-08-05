@@ -3414,6 +3414,9 @@ def inicializar_asistente_desde_config(
     config_rigida: Optional[Dict[str, Any]] = None,
     agencia: Optional[Dict[str, Any]] = None,
     *,
+    copiar_faq: bool = True,
+    crear_requisitos_base: bool = True,
+    crear_flujo_informativo: bool = True,
     cur=None,
 ) -> Dict[str, Any]:
     """
@@ -3456,33 +3459,36 @@ def inicializar_asistente_desde_config(
             )
             asistente_creado = True
 
-        faqs_importadas = importar_faqs_desde_json(
-            agencia_id,
-            chatbot_configuracion_id,
-            cfg_rigida.get("preguntas_frecuentes"),
-            cur=c,
-        )
-
-        requisitos_creados = 0
-        for requisito in _requisitos_base(cfg_rigida):
-            existente = obtener_requisito_por_codigo(
+        faqs_importadas = 0
+        if copiar_faq:
+            faqs_importadas = importar_faqs_desde_json(
                 agencia_id,
-                requisito["codigo"],
-                chatbot_configuracion_id=chatbot_configuracion_id,
+                chatbot_configuracion_id,
+                cfg_rigida.get("preguntas_frecuentes"),
                 cur=c,
             )
-            if existente:
-                continue
-            requisito["chatbot_configuracion_id"] = chatbot_configuracion_id
-            _crear_registro("requisitos", agencia_id, requisito, COLUMNAS_REQUISITO, cur=c)
-            requisitos_creados += 1
+
+        requisitos_creados = 0
+        if crear_requisitos_base:
+            for requisito in _requisitos_base(cfg_rigida):
+                existente = obtener_requisito_por_codigo(
+                    agencia_id,
+                    requisito["codigo"],
+                    chatbot_configuracion_id=chatbot_configuracion_id,
+                    cur=c,
+                )
+                if existente:
+                    continue
+                requisito["chatbot_configuracion_id"] = chatbot_configuracion_id
+                _crear_registro("requisitos", agencia_id, requisito, COLUMNAS_REQUISITO, cur=c)
+                requisitos_creados += 1
 
         flujo = obtener_flujo_por_codigo(
             agencia_id, chatbot_configuracion_id, "informativo_base", cur=c
         )
         flujo_creado = False
         pasos_creados = 0
-        if not flujo:
+        if crear_flujo_informativo and not flujo:
             flujo = _crear_registro(
                 "flujos",
                 agencia_id,

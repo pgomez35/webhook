@@ -21,7 +21,7 @@ import logging
 from datetime import date
 from typing import Any, Callable, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 import database_chatbot_captacion as db_captacion
 import database_chatbot_conversacional as db
@@ -265,22 +265,30 @@ def put_asistente(
 @router.post("/configuraciones/{chatbot_configuracion_id}/asistente/inicializar")
 def inicializar_asistente(
     chatbot_configuracion_id: int,
-    payload: Optional[AsistenteInicializarIn] = None,
+    payload: Optional[AsistenteInicializarIn] = Body(default=None),
     agencia: dict = Depends(obtener_agencia_chatbot_actual),
 ):
     """
     Prepara el modo conversacional desde la configuración rígida: asistente
     (inactivo), FAQ importadas, requisitos base y flujo informativo.
     Es idempotente.
+
+    El ``chatbot_configuracion_id`` viene SOLO de la ruta. El body es opcional
+    (`{}` o ausente) y sólo aporta flags (copiar FAQ, requisitos, flujo).
+    La agencia se toma exclusivamente del JWT.
     """
-    cfg = _configuracion_rigida(agencia, chatbot_configuracion_id)
-    _ = _campos(payload)
+    cfg_id = int(chatbot_configuracion_id)
+    cfg = _configuracion_rigida(agencia, cfg_id)
+    opciones = payload if payload is not None else AsistenteInicializarIn()
     try:
         return db.inicializar_asistente_desde_config(
             _agencia_id(agencia),
-            int(chatbot_configuracion_id),
+            cfg_id,
             cfg,
             db_captacion.obtener_agencia_por_id(_agencia_id(agencia)),
+            copiar_faq=bool(opciones.copiar_faq),
+            crear_requisitos_base=bool(opciones.crear_requisitos_base),
+            crear_flujo_informativo=bool(opciones.crear_flujo_informativo),
         )
     except _ERRORES_DATOS as e:
         raise _http_error(e) from e

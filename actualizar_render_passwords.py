@@ -120,7 +120,9 @@ def actualizar_contraseñas_render():
                 print(f"      ✅ Usando hash bcrypt predefinido")
             else:
                 nuevo_hash = hash_password_simple(password_plain)
-                print(f"      ⚠️  Generando nuevo hash para contraseña: {password_plain}")
+                print(
+                    "      ⚠️  Generando nuevo hash para contraseña: [REDACTED]"
+                )
             
             # Actualizar en la base de datos
             cur.execute(

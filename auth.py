@@ -56,10 +56,17 @@ logger = logging.getLogger("uvicorn.error")
 
 def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
     try:
-        logger.info(f"DEBUG: Token recibido: {token}")
+        logger.info(
+            "Authorization token: %s",
+            "presente" if token else "ausente",
+        )
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        logger.info(f"DEBUG: Payload decodificado: {payload}")
         user_id = payload.get("sub")
+        logger.info(
+            "JWT validado: sub=%s exp=%s",
+            user_id,
+            payload.get("exp"),
+        )
         if not user_id:
             raise HTTPException(status_code=401, detail="Token inválido")
 
@@ -71,17 +78,22 @@ def obtener_usuario_actual(token: str = Depends(oauth2_scheme)) -> dict:
             )
             row = cursor.fetchone()
 
-        logger.info(f"DEBUG: Usuario DB: {row}")
+        logger.info(
+            "Usuario DB: id=%s rol=%s activo=%s",
+            row[0] if row else None,
+            row[2] if row else None,
+            row[3] if row else None,
+        )
         if not row or not row[3]:
             raise HTTPException(status_code=401, detail="Usuario no encontrado o inactivo")
 
         return {"id": row[0], "nombre": row[1], "rol": row[2]}
 
     except ExpiredSignatureError:
-        logger.warning("DEBUG: Token expirado")
+        logger.warning("Token expirado")
         raise HTTPException(status_code=401, detail="Token expirado")
     except JWTError:
-        logger.warning("DEBUG: Token inválido")
+        logger.warning("Token inválido")
         raise HTTPException(status_code=401, detail="Token inválido")
 
 # # === DEPENDENCIA: USUARIO ACTUAL ===

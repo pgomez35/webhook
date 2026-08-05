@@ -124,11 +124,11 @@ def enviar_mensaje(numero: str, texto: str):
             token = current_token.get()
             phone_id = current_phone_id.get()
 
-            # Seguros: solo últimos 6 chars visibles
-            token_safe = f"...{token[-6:]}" if token else "None"
+            # No registrar access token de Meta (ni parcial): solo presencia.
+            token_safe = "presente" if token else "ausente"
             phone_id_safe = f"...{phone_id[-6:]}" if phone_id else "None"
 
-            print(f"🔐 Token usado: {token_safe}")
+            print(f"🔐 Token Meta: {token_safe}")
             print(f"📱 Phone ID usado: {phone_id_safe}")
 
 
@@ -1779,8 +1779,8 @@ def _setup_tenant_context(phone_number_id: str) -> Optional[dict]:
             f"whatsapp_account_id={account_id} tenant_name={tenant_name} "
             f"chatbot_agencia_id={chatbot_agencia_id}"
         )
-        token_seguro = f"...{token_cliente[-6:]}" if token_cliente else "None"
-        print(f"🔑 Token actual: {token_seguro}")
+        token_seguro = "presente" if token_cliente else "ausente"
+        print(f"🔑 Token Meta: {token_seguro}")
         print(f"📞 phone_id actual: {current_phone_id.get()}")
         print(f"📞 business_name: {current_business_name.get()}")
 
@@ -1821,8 +1821,8 @@ def _setup_tenant_context(phone_number_id: str) -> Optional[dict]:
         f"🌐 product_type=talentum_manager phone_number_id={phone_number_id} "
         f"whatsapp_account_id={account_id} tenant_name={tenant_name}"
     )
-    token_seguro = f"...{token_cliente[-6:]}" if token_cliente else "None"
-    print(f"🔑 Token actual: {token_seguro}")
+    token_seguro = "presente" if token_cliente else "ausente"
+    print(f"🔑 Token Meta: {token_seguro}")
     print(f"📞 phone_id actual: {current_phone_id.get()}")
     print(f"📞 business_name: {current_business_name.get()}")
 
@@ -3446,7 +3446,7 @@ def crear_token_portal_citas(
 
                 print(
                     f"✅ Token portal citas creado para aspirante_id={aspirante_id}, "
-                    f"responsable_id={responsable_id}, token={token}"
+                    f"responsable_id={responsable_id}, token=presente"
                 )
                 return token
 
