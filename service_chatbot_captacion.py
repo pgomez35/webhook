@@ -1294,43 +1294,55 @@ async def _procesar_conversacional_si_aplica(
     referral_meta: Optional[Dict[str, Any]] = None,
 ) -> Optional[bool]:
     """
-    Desvía el mensaje al asistente conversacional cuando corresponde.
+    Selecciona el motor antes de ``etapa_chatbot`` (archivo plano
+    ``service_chatbot_motor`` — sin depender de subcarpetas).
 
-    Devuelve None si el mensaje debe seguir por la máquina de estados rígida:
-    feature apagada, sin configuración asignada, asistente inexistente o
-    desactivado, o módulo conversacional no instalado. En esos casos el flujo
-    rígido se comporta exactamente igual que antes.
+    Devuelve None si debe continuar el flujo clásico; True/False si el
+    conversacional atendió (o consumió) el mensaje.
     """
     if not chatbot_configuracion_id:
         return None
 
     try:
-        from services.chatbot_conversacional.service import (
-            debe_usar_conversacional,
-            feature_enabled,
-            procesar_mensaje_conversacional,
-        )
+        from service_chatbot_motor import resolver_motor_conversacional
     except Exception:
+        logger.exception(
+            "[chatbot_router] service_chatbot_motor no disponible; flujo clásico"
+        )
         return None
 
     try:
-        if not feature_enabled():
-            return None
-        if not await debe_usar_conversacional(
+        decision = resolver_motor_conversacional(
             agencia_id, int(chatbot_configuracion_id)
-        ):
-            return None
+        )
     except Exception:
         logger.exception(
-            "[CHATBOT-CONV] no se pudo resolver el asistente agencia_id=%s "
-            "chatbot_configuracion_id=%s; continúa flujo rígido",
+            "[chatbot_router] no se pudo resolver el motor agencia_id=%s "
+            "chatbot_configuracion_id=%s; continúa flujo clásico",
+            agencia_id,
+            chatbot_configuracion_id,
+        )
+        return None
+
+    if not decision.get("usar_conversacional"):
+        return None
+
+    try:
+        from services.chatbot_conversacional.service import (
+            procesar_mensaje_conversacional,
+        )
+    except Exception:
+        logger.warning(
+            "[chatbot_router] motor conversacional seleccionado pero el módulo "
+            "services.chatbot_conversacional no está desplegado; flujo clásico "
+            "agencia_id=%s chatbot_configuracion_id=%s",
             agencia_id,
             chatbot_configuracion_id,
         )
         return None
 
     logger.info(
-        "[CHATBOT-CONV] desviando a asistente agencia_id=%s aspirante_id=%s "
+        "[chatbot_router] desviando a conversacional agencia_id=%s aspirante_id=%s "
         "chatbot_configuracion_id=%s tipo=%s",
         agencia_id,
         aspirante.get("id"),
@@ -1374,7 +1386,7 @@ async def _procesar_conversacional_si_aplica(
         if motivo in _MOTIVOS_CONVERSACIONAL_CONSUMEN:
             return True
         logger.info(
-            "[CHATBOT-CONV] asistente no atendió (motivo=%s); continúa flujo rígido",
+            "[CHATBOT-CONV] asistente no atendió (motivo=%s); continúa flujo clásico",
             motivo,
         )
         return None

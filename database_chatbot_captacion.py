@@ -778,6 +778,7 @@ def crear_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str, Any]
                         es_predeterminada,
                         orden,
                         activo,
+                        usar_asistente_conversacional,
                         mensaje_bienvenida,
                         pregunta_usuario,
                         pregunta_mayor_edad,
@@ -792,7 +793,7 @@ def crear_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str, Any]
                         recursos_bienvenida,
                         mensaje_error
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     RETURNING *
@@ -806,6 +807,7 @@ def crear_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str, Any]
                         es_predeterminada,
                         int(orden),
                         bool(data.get("activo", False)),
+                        bool(data.get("usar_asistente_conversacional", False)),
                         data["mensaje_bienvenida"],
                         data["pregunta_usuario"],
                         data["pregunta_mayor_edad"],
@@ -882,6 +884,7 @@ def actualizar_configuracion(
 
     sets = [
         "activo = %s",
+        "usar_asistente_conversacional = %s",
         "mensaje_bienvenida = %s",
         "pregunta_usuario = %s",
         "pregunta_mayor_edad = %s",
@@ -899,6 +902,7 @@ def actualizar_configuracion(
     ]
     params: List[Any] = [
         data["activo"],
+        bool(data.get("usar_asistente_conversacional", False)),
         data["mensaje_bienvenida"],
         data["pregunta_usuario"],
         data["pregunta_mayor_edad"],
@@ -1047,6 +1051,9 @@ def duplicar_configuracion(
         "es_predeterminada": False,
         "orden": None,
         "activo": bool(origen.get("activo", True)),
+        "usar_asistente_conversacional": bool(
+            origen.get("usar_asistente_conversacional", False)
+        ),
         "mensaje_bienvenida": (origen.get("mensaje_bienvenida") or "Bienvenido")[:600],
         "pregunta_usuario": (origen.get("pregunta_usuario") or "¿Cuál es tu usuario?")[:300],
         "pregunta_mayor_edad": (origen.get("pregunta_mayor_edad") or "¿Eres mayor de edad?")[:150],
@@ -1099,6 +1106,44 @@ def set_configuracion_activo(
     logger.info(
         "[CHATBOT-CONFIG] activo=%s agencia_id=%s configuracion_id=%s",
         activo,
+        agencia_id,
+        configuracion_id,
+    )
+    return out
+
+
+def set_usar_asistente_conversacional(
+    agencia_id: int,
+    configuracion_id: int,
+    usar_asistente_conversacional: bool,
+) -> Dict[str, Any]:
+    """
+    Selector de motor por plataforma.
+
+    No modifica ``asistente_configuracion.activo``: son campos independientes.
+    """
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                UPDATE chatbot.chatbot_configuracion
+                SET usar_asistente_conversacional = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND agencia_id = %s
+                RETURNING id
+                """,
+                (bool(usar_asistente_conversacional), configuracion_id, agencia_id),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise ValueError("Configuración no encontrada")
+    out = obtener_configuracion_por_id(agencia_id, configuracion_id)
+    if not out:
+        raise ValueError("Configuración no encontrada")
+    logger.info(
+        "[CHATBOT-CONFIG] usar_asistente_conversacional=%s "
+        "agencia_id=%s configuracion_id=%s",
+        bool(usar_asistente_conversacional),
         agencia_id,
         configuracion_id,
     )

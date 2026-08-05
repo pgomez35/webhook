@@ -301,6 +301,7 @@ class ChatbotConfiguracionResumen(BaseModel):
     es_predeterminada: bool = False
     orden: int = 1
     activo: bool = True
+    usar_asistente_conversacional: bool = False
     updated_at: Optional[datetime] = None
 
 
@@ -328,6 +329,7 @@ class ChatbotConfiguracionResponse(BaseModel):
     recursos_bienvenida: List[RecursoBienvenida] = Field(default_factory=list)
     mensaje_error: str
     activo: bool
+    usar_asistente_conversacional: bool = False
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -342,6 +344,7 @@ class ChatbotConfiguracionCreate(BaseModel):
     es_predeterminada: bool = False
     orden: Optional[int] = Field(None, ge=1)
     activo: bool = False
+    usar_asistente_conversacional: bool = False
     mensaje_bienvenida: str = Field(..., max_length=600)
     pregunta_usuario: str = Field(..., max_length=300)
     pregunta_mayor_edad: str = Field(..., max_length=150)
@@ -407,6 +410,7 @@ class ChatbotConfiguracionUpdate(BaseModel):
     model_config = {"extra": "forbid"}
 
     activo: bool
+    usar_asistente_conversacional: bool = False
     codigo: Optional[str] = Field(None, max_length=80)
     nombre: Optional[str] = Field(None, max_length=120)
     plataforma_codigo: Optional[str] = Field(None, max_length=30)
@@ -492,6 +496,14 @@ class ChatbotConfiguracionActivoIn(BaseModel):
     model_config = {"extra": "forbid"}
 
     activo: bool
+
+
+class ChatbotConfiguracionUsarAsistenteIn(BaseModel):
+    """Selector de motor: clásico vs conversacional para esta plataforma."""
+
+    model_config = {"extra": "forbid"}
+
+    usar_asistente_conversacional: bool
 
 
 class ChatbotConfiguracionReordenarItem(BaseModel):
