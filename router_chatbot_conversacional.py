@@ -256,8 +256,20 @@ def put_asistente(
     agencia: dict = Depends(obtener_agencia_chatbot_actual),
 ):
     cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
+    campos = _campos(payload)
+    if campos.get("estrategia_nivel_aspirante") == "nivel_fijo":
+        campos["permitir_reclasificacion_automatica"] = False
+        if not campos.get("nivel_fijo"):
+            raise HTTPException(
+                status_code=422,
+                detail="nivel_fijo es obligatorio cuando estrategia_nivel_aspirante=nivel_fijo",
+            )
+    elif "estrategia_nivel_aspirante" in campos and campos.get("estrategia_nivel_aspirante") != "nivel_fijo":
+        # Evitar dejar nivel_fijo residual si el cliente no lo limpia.
+        if "nivel_fijo" not in campos:
+            campos["nivel_fijo"] = None
     try:
-        asistente = db.upsert_asistente(_agencia_id(agencia), cfg_id, _campos(payload))
+        asistente = db.upsert_asistente(_agencia_id(agencia), cfg_id, campos)
     except _ERRORES_DATOS as e:
         raise _http_error(e) from e
     logger.info(

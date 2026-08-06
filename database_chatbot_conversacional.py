@@ -142,6 +142,17 @@ COLUMNAS_ASISTENTE = {
     "activo",
     "creado_por",
     "actualizado_por",
+    # Clasificación adaptativa (columnas ya existentes en BD)
+    "estrategia_nivel_aspirante",
+    "nivel_predeterminado",
+    "nivel_fijo",
+    "permitir_reclasificacion_automatica",
+    "preguntar_nivel_si_ambiguo",
+    "umbral_confianza_nivel",
+    "max_preguntas_clasificacion",
+    "pregunta_clasificacion_nivel",
+    "texto_inicio_principiante",
+    "texto_inicio_experimentado",
 }
 
 COLUMNAS_REQUISITO = {
@@ -386,6 +397,19 @@ COLUMNAS_CONVERSACION = {
     "ultimo_mensaje_at",
     "escalada_at",
     "cerrada_at",
+    # Estado dinámico adaptativo (columnas ya existentes en BD)
+    "nivel_experiencia",
+    "nivel_experiencia_fuente",
+    "nivel_experiencia_confianza",
+    "nivel_experiencia_confirmado",
+    "nivel_experiencia_bloqueado_manual",
+    "nivel_experiencia_actualizado_at",
+    "estrategia_nivel_aplicada",
+    "preguntas_clasificacion_realizadas",
+    "intencion_actual",
+    "intencion_confianza",
+    "intencion_actualizada_at",
+    "ultima_clasificacion_at",
 }
 
 COLUMNAS_TAREA = {
@@ -430,6 +454,12 @@ COLUMNAS_ASPIRANTE_CONVERSACIONAL = {
     "campania_id",
     "modo_conversacional",
     "preseleccionado_ads",
+    # Clasificación estable (columnas ya existentes en BD)
+    "nivel_experiencia",
+    "nivel_experiencia_fuente",
+    "nivel_experiencia_confianza",
+    "nivel_experiencia_confirmado_at",
+    "nivel_experiencia_bloqueado_manual",
 }
 
 ESTADOS_CONVERSACION = (
@@ -3248,10 +3278,15 @@ def actualizar_aspirante_campos_conversacionales(
     campania_id: Any = SIN_VALOR,
     modo_conversacional: Any = SIN_VALOR,
     preseleccionado_ads: Any = SIN_VALOR,
+    nivel_experiencia: Any = SIN_VALOR,
+    nivel_experiencia_fuente: Any = SIN_VALOR,
+    nivel_experiencia_confianza: Any = SIN_VALOR,
+    nivel_experiencia_confirmado_at: Any = SIN_VALOR,
+    nivel_experiencia_bloqueado_manual: Any = SIN_VALOR,
     cur=None,
 ) -> Optional[Dict[str, Any]]:
     """
-    Actualiza el origen conversacional del aspirante.
+    Actualiza el origen conversacional / nivel estable del aspirante.
 
     Usa el centinela ``SIN_VALOR`` para distinguir "no enviado" de "enviar
     NULL"; así se puede limpiar la campaña pasando ``campania_id=None``.
@@ -3262,6 +3297,11 @@ def actualizar_aspirante_campos_conversacionales(
         "campania_id": campania_id,
         "modo_conversacional": modo_conversacional,
         "preseleccionado_ads": preseleccionado_ads,
+        "nivel_experiencia": nivel_experiencia,
+        "nivel_experiencia_fuente": nivel_experiencia_fuente,
+        "nivel_experiencia_confianza": nivel_experiencia_confianza,
+        "nivel_experiencia_confirmado_at": nivel_experiencia_confirmado_at,
+        "nivel_experiencia_bloqueado_manual": nivel_experiencia_bloqueado_manual,
     }
     for columna, valor in entradas.items():
         if not isinstance(valor, _SinValor):
@@ -3302,6 +3342,32 @@ def actualizar_aspirante_campos_conversacionales(
         )
         return _fila(c.fetchone())
 
+
+def actualizar_nivel_aspirante_estable(
+    aspirante_id: int,
+    agencia_id: int,
+    *,
+    nivel_experiencia: str,
+    nivel_experiencia_fuente: str,
+    nivel_experiencia_confianza: Optional[float] = None,
+    nivel_experiencia_confirmado_at: Any = None,
+    nivel_experiencia_bloqueado_manual: Optional[bool] = None,
+    cur=None,
+) -> Optional[Dict[str, Any]]:
+    """Actualiza solo la clasificación estable del aspirante (valida agencia)."""
+    kwargs: Dict[str, Any] = {
+        "nivel_experiencia": nivel_experiencia,
+        "nivel_experiencia_fuente": nivel_experiencia_fuente,
+    }
+    if nivel_experiencia_confianza is not None:
+        kwargs["nivel_experiencia_confianza"] = nivel_experiencia_confianza
+    if nivel_experiencia_confirmado_at is not None:
+        kwargs["nivel_experiencia_confirmado_at"] = nivel_experiencia_confirmado_at
+    if nivel_experiencia_bloqueado_manual is not None:
+        kwargs["nivel_experiencia_bloqueado_manual"] = nivel_experiencia_bloqueado_manual
+    return actualizar_aspirante_campos_conversacionales(
+        aspirante_id, agencia_id, cur=cur, **kwargs
+    )
 
 # ---------------------------------------------------------------------------
 # Inicialización desde la configuración rígida existente

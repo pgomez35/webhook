@@ -5,8 +5,12 @@ Archivo plano en la raíz del backend (desplegable sin subcarpetas).
 
 Semántica:
 - usar_asistente_conversacional=false → clásico
-- true + asistente_configuracion.activo=true → conversacional
+- true + usar_rutas_adaptativas=false → conversacional actual
+- true + usar_rutas_adaptativas=true → conversacional adaptativo
 - true sin asistente activo → clásico con warning explícito
+
+No usa asistente_configuracion.activo para seleccionar el motor; solo para
+confirmar que el asistente puede atender.
 """
 from __future__ import annotations
 
@@ -50,6 +54,7 @@ def _log_router_motor(
     agencia_id: int,
     chatbot_configuracion_id: Optional[int],
     usar_asistente_conversacional: Optional[bool],
+    usar_rutas_adaptativas: Optional[bool],
     asistente_id: Optional[int],
     asistente_activo: Optional[bool],
     motor_seleccionado: str,
@@ -60,6 +65,7 @@ def _log_router_motor(
         f"[chatbot_router] agencia_id={agencia_id} "
         f"chatbot_configuracion_id={chatbot_configuracion_id} "
         f"usar_asistente_conversacional={usar_asistente_conversacional} "
+        f"usar_rutas_adaptativas={usar_rutas_adaptativas} "
         f"asistente_id={asistente_id} asistente_activo={asistente_activo} "
         f"motor_seleccionado={motor_seleccionado} motivo={motivo}"
     )
@@ -82,6 +88,7 @@ def resolver_motor_conversacional(
         "motor_seleccionado": "clasico",
         "motivo": "sin_configuracion",
         "usar_asistente_conversacional": False,
+        "usar_rutas_adaptativas": False,
         "asistente_id": None,
         "asistente_activo": None,
         "chatbot_configuracion_id": chatbot_configuracion_id,
@@ -94,6 +101,7 @@ def resolver_motor_conversacional(
             agencia_id=agencia_id,
             chatbot_configuracion_id=None,
             usar_asistente_conversacional=None,
+            usar_rutas_adaptativas=None,
             asistente_id=None,
             asistente_activo=None,
             motor_seleccionado="clasico",
@@ -118,6 +126,7 @@ def resolver_motor_conversacional(
             agencia_id=agencia_id,
             chatbot_configuracion_id=int(chatbot_configuracion_id),
             usar_asistente_conversacional=None,
+            usar_rutas_adaptativas=None,
             asistente_id=None,
             asistente_activo=None,
             motor_seleccionado="clasico",
@@ -126,7 +135,9 @@ def resolver_motor_conversacional(
         return decision
 
     flag_motor = bool(configuracion.get("usar_asistente_conversacional"))
+    flag_adaptativo = bool(configuracion.get("usar_rutas_adaptativas"))
     decision["usar_asistente_conversacional"] = flag_motor
+    decision["usar_rutas_adaptativas"] = flag_adaptativo
 
     if not flag_motor:
         decision["motivo"] = "selector_plataforma_desactivado"
@@ -134,6 +145,7 @@ def resolver_motor_conversacional(
             agencia_id=agencia_id,
             chatbot_configuracion_id=int(chatbot_configuracion_id),
             usar_asistente_conversacional=False,
+            usar_rutas_adaptativas=flag_adaptativo,
             asistente_id=None,
             asistente_activo=None,
             motor_seleccionado="clasico",
@@ -155,6 +167,7 @@ def resolver_motor_conversacional(
             agencia_id=agencia_id,
             chatbot_configuracion_id=int(chatbot_configuracion_id),
             usar_asistente_conversacional=True,
+            usar_rutas_adaptativas=flag_adaptativo,
             asistente_id=None,
             asistente_activo=None,
             motor_seleccionado="clasico",
@@ -181,6 +194,7 @@ def resolver_motor_conversacional(
             agencia_id=agencia_id,
             chatbot_configuracion_id=int(chatbot_configuracion_id),
             usar_asistente_conversacional=True,
+            usar_rutas_adaptativas=flag_adaptativo,
             asistente_id=asistente_id,
             asistente_activo=False,
             motor_seleccionado="clasico",
@@ -201,6 +215,7 @@ def resolver_motor_conversacional(
             agencia_id=agencia_id,
             chatbot_configuracion_id=int(chatbot_configuracion_id),
             usar_asistente_conversacional=True,
+            usar_rutas_adaptativas=flag_adaptativo,
             asistente_id=asistente_id,
             asistente_activo=True,
             motor_seleccionado="clasico",
@@ -209,15 +224,22 @@ def resolver_motor_conversacional(
         return decision
 
     decision["usar_conversacional"] = True
-    decision["motor_seleccionado"] = "conversacional"
-    decision["motivo"] = "selector_y_asistente_activos"
+    decision["motor_seleccionado"] = (
+        "conversacional_adaptativo" if flag_adaptativo else "conversacional"
+    )
+    decision["motivo"] = (
+        "selector_asistente_y_rutas_adaptativas"
+        if flag_adaptativo
+        else "selector_y_asistente_activos"
+    )
     _log_router_motor(
         agencia_id=agencia_id,
         chatbot_configuracion_id=int(chatbot_configuracion_id),
         usar_asistente_conversacional=True,
+        usar_rutas_adaptativas=flag_adaptativo,
         asistente_id=asistente_id,
         asistente_activo=True,
-        motor_seleccionado="conversacional",
+        motor_seleccionado=decision["motor_seleccionado"],
         motivo=decision["motivo"],
     )
     return decision

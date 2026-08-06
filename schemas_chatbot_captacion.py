@@ -302,6 +302,7 @@ class ChatbotConfiguracionResumen(BaseModel):
     orden: int = 1
     activo: bool = True
     usar_asistente_conversacional: bool = False
+    usar_rutas_adaptativas: bool = False
     updated_at: Optional[datetime] = None
 
 
@@ -330,6 +331,7 @@ class ChatbotConfiguracionResponse(BaseModel):
     mensaje_error: str
     activo: bool
     usar_asistente_conversacional: bool = False
+    usar_rutas_adaptativas: bool = False
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -345,6 +347,7 @@ class ChatbotConfiguracionCreate(BaseModel):
     orden: Optional[int] = Field(None, ge=1)
     activo: bool = False
     usar_asistente_conversacional: bool = False
+    usar_rutas_adaptativas: bool = False
     mensaje_bienvenida: str = Field(..., max_length=600)
     pregunta_usuario: str = Field(..., max_length=300)
     pregunta_mayor_edad: str = Field(..., max_length=150)
@@ -411,6 +414,7 @@ class ChatbotConfiguracionUpdate(BaseModel):
 
     activo: bool
     usar_asistente_conversacional: bool = False
+    usar_rutas_adaptativas: bool = False
     codigo: Optional[str] = Field(None, max_length=80)
     nombre: Optional[str] = Field(None, max_length=120)
     plataforma_codigo: Optional[str] = Field(None, max_length=30)
@@ -504,6 +508,14 @@ class ChatbotConfiguracionUsarAsistenteIn(BaseModel):
     model_config = {"extra": "forbid"}
 
     usar_asistente_conversacional: bool
+
+
+class ChatbotConfiguracionUsarRutasAdaptativasIn(BaseModel):
+    """Activa clasificación adaptativa (solo con asistente conversacional)."""
+
+    model_config = {"extra": "forbid"}
+
+    usar_rutas_adaptativas: bool
 
 
 class ChatbotConfiguracionReordenarItem(BaseModel):
@@ -607,6 +619,12 @@ class ChatbotAspiranteResponse(BaseModel):
     resultado_global: Optional[str] = None
     evaluado_at: Optional[datetime] = None
     evaluado_por: Optional[str] = None
+    # Clasificación estable (columnas existentes en BD)
+    nivel_experiencia: Optional[str] = "desconocido"
+    nivel_experiencia_fuente: Optional[str] = None
+    nivel_experiencia_confianza: Optional[float] = None
+    nivel_experiencia_confirmado_at: Optional[datetime] = None
+    nivel_experiencia_bloqueado_manual: bool = False
 
 
 class ChatbotAspiranteDetalle(ChatbotAspiranteResponse):
@@ -620,6 +638,8 @@ class ChatbotAspiranteUpdate(BaseModel):
     estado: Optional[ESTADOS_ASPIRANTE] = None
     requiere_asesor: Optional[bool] = None
     observaciones: Optional[str] = Field(None, max_length=500)
+    nivel_experiencia: Optional[Literal["desconocido", "principiante", "experimentado"]] = None
+    nivel_experiencia_bloqueado_manual: Optional[bool] = None
 
     @field_validator("observaciones")
     @classmethod

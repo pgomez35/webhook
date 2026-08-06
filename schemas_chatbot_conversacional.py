@@ -22,6 +22,50 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 Tono = Literal["cercano", "profesional", "juvenil", "energico", "formal", "personalizado"]
 Modo = Literal["informativo", "conversion"]
+EstrategiaNivelAspirante = Literal[
+    "adaptativa",
+    "orientada_principiantes",
+    "orientada_experimentados",
+    "nivel_fijo",
+]
+NivelExperiencia = Literal["desconocido", "principiante", "experimentado"]
+FuenteNivelExperiencia = Literal[
+    "inferida",
+    "declarada",
+    "formulario_ads",
+    "campana",
+    "manual",
+    "respuesta_opcion",
+    "configuracion_fija",
+]
+IntencionConversacional = Literal[
+    "desconocida",
+    "informacion",
+    "requisitos",
+    "beneficios",
+    "bonos",
+    "categorias",
+    "incorporacion",
+    "solicitud",
+    "evidencias",
+    "revision",
+    "asesor",
+]
+AccionPropuestaClasificacion = Literal[
+    "preguntar_nivel",
+    "responder_informacion",
+    "mostrar_requisitos",
+    "mostrar_beneficios",
+    "mostrar_bonos",
+    "mostrar_categorias",
+    "enviar_solicitud",
+    "solicitar_evidencias",
+    "confirmar_recepcion",
+    "continuar_flujo",
+    "transferir_humano",
+    "responder_texto",
+    "ninguna",
+]
 CategoriaRequisito = Literal["obligatorio", "deseable", "informativo"]
 TipoDatoRequisito = Literal["booleano", "entero", "decimal", "texto", "lista", "json"]
 OperadorRequisito = Literal[
@@ -236,6 +280,18 @@ class AsistenteConfiguracionOut(_Salida):
     reglas_adicionales: Dict[str, Any] = Field(default_factory=dict)
     texto_privacidad: Optional[str] = None
     activo: bool = True
+    estrategia_nivel_aspirante: EstrategiaNivelAspirante = "adaptativa"
+    nivel_predeterminado: NivelExperiencia = "desconocido"
+    nivel_fijo: Optional[Literal["principiante", "experimentado"]] = None
+    permitir_reclasificacion_automatica: bool = True
+    preguntar_nivel_si_ambiguo: bool = True
+    umbral_confianza_nivel: float = 0.75
+    max_preguntas_clasificacion: int = 1
+    pregunta_clasificacion_nivel: str = (
+        "¿Ya realizas transmisiones LIVE o quieres conocer cómo comenzar?"
+    )
+    texto_inicio_principiante: Optional[str] = None
+    texto_inicio_experimentado: Optional[str] = None
     creado_por: Optional[int] = None
     actualizado_por: Optional[int] = None
     created_at: Optional[datetime] = None
@@ -269,6 +325,16 @@ class AsistenteConfiguracionUpdate(_Entrada):
     reglas_adicionales: Optional[Dict[str, Any]] = None
     texto_privacidad: Optional[str] = Field(None, max_length=8000)
     activo: Optional[bool] = None
+    estrategia_nivel_aspirante: Optional[EstrategiaNivelAspirante] = None
+    nivel_predeterminado: Optional[NivelExperiencia] = None
+    nivel_fijo: Optional[Literal["principiante", "experimentado"]] = None
+    permitir_reclasificacion_automatica: Optional[bool] = None
+    preguntar_nivel_si_ambiguo: Optional[bool] = None
+    umbral_confianza_nivel: Optional[float] = Field(None, ge=0, le=1)
+    max_preguntas_clasificacion: Optional[int] = Field(None, ge=0, le=3)
+    pregunta_clasificacion_nivel: Optional[str] = Field(None, max_length=2000)
+    texto_inicio_principiante: Optional[str] = Field(None, max_length=4000)
+    texto_inicio_experimentado: Optional[str] = Field(None, max_length=4000)
 
     @field_validator("nombre_asistente")
     @classmethod
@@ -282,13 +348,22 @@ class AsistenteConfiguracionUpdate(_Entrada):
         "mensaje_fuera_horario",
         "texto_privacidad",
         "modelo_ia",
+        "texto_inicio_principiante",
+        "texto_inicio_experimentado",
     )
     @classmethod
     def _val_textos(cls, v: Optional[str]) -> Optional[str]:
         return _texto_opcional(v)
 
+    @field_validator("pregunta_clasificacion_nivel")
+    @classmethod
+    def _val_pregunta_nivel(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        return _texto_obligatorio(v, "pregunta_clasificacion_nivel")
+
     @model_validator(mode="after")
-    def _val_modos(self) -> "AsistenteConfiguracionUpdate":
+    def _val_modos_y_nivel(self) -> "AsistenteConfiguracionUpdate":
         if (
             self.modo_predeterminado == "conversion"
             and self.modo_conversion_activo is False
@@ -303,7 +378,36 @@ class AsistenteConfiguracionUpdate(_Entrada):
             raise ValueError(
                 "No se puede fijar el modo informativo como predeterminado si está desactivado"
             )
+
+        estrategia = self.estrategia_nivel_aspirante
+        if estrategia == "nivel_fijo":
+            if self.nivel_fijo is None:
+                raise ValueError(
+                    "nivel_fijo es obligatorio cuando estrategia_nivel_aspirante=nivel_fijo"
+                )
+            if self.permitir_reclasificacion_automatica is True:
+                raise ValueError(
+                    "permitir_reclasificacion_automatica debe ser false con nivel_fijo"
+                )
+        elif estrategia is not None and self.nivel_fijo is not None:
+            raise ValueError(
+                "nivel_fijo debe ser null cuando la estrategia no es nivel_fijo"
+            )
         return self
+
+
+class ClasificacionConversacional(_Entrada):
+    """Propuesta estructurada de clasificación; el backend valida y ejecuta."""
+
+    nivel_experiencia: NivelExperiencia
+    confianza_nivel: float = Field(..., ge=0, le=1)
+    fuente_nivel: FuenteNivelExperiencia
+    nivel_declarado_explicitamente: bool = False
+    evidencia_nivel_breve: Optional[str] = Field(None, max_length=500)
+    intencion: IntencionConversacional = "desconocida"
+    confianza_intencion: float = Field(0.0, ge=0, le=1)
+    accion_propuesta: AccionPropuestaClasificacion = "ninguna"
+    respuesta_breve: Optional[str] = Field(None, max_length=2000)
 
 
 class InicializarAsistenteIn(_Entrada):

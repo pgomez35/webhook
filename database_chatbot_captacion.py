@@ -779,6 +779,7 @@ def crear_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str, Any]
                         orden,
                         activo,
                         usar_asistente_conversacional,
+                        usar_rutas_adaptativas,
                         mensaje_bienvenida,
                         pregunta_usuario,
                         pregunta_mayor_edad,
@@ -793,7 +794,7 @@ def crear_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str, Any]
                         recursos_bienvenida,
                         mensaje_error
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     RETURNING *
@@ -808,6 +809,7 @@ def crear_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str, Any]
                         int(orden),
                         bool(data.get("activo", False)),
                         bool(data.get("usar_asistente_conversacional", False)),
+                        bool(data.get("usar_rutas_adaptativas", False)),
                         data["mensaje_bienvenida"],
                         data["pregunta_usuario"],
                         data["pregunta_mayor_edad"],
@@ -885,6 +887,7 @@ def actualizar_configuracion(
     sets = [
         "activo = %s",
         "usar_asistente_conversacional = %s",
+        "usar_rutas_adaptativas = %s",
         "mensaje_bienvenida = %s",
         "pregunta_usuario = %s",
         "pregunta_mayor_edad = %s",
@@ -903,6 +906,7 @@ def actualizar_configuracion(
     params: List[Any] = [
         data["activo"],
         bool(data.get("usar_asistente_conversacional", False)),
+        bool(data.get("usar_rutas_adaptativas", False)),
         data["mensaje_bienvenida"],
         data["pregunta_usuario"],
         data["pregunta_mayor_edad"],
@@ -1054,6 +1058,7 @@ def duplicar_configuracion(
         "usar_asistente_conversacional": bool(
             origen.get("usar_asistente_conversacional", False)
         ),
+        "usar_rutas_adaptativas": bool(origen.get("usar_rutas_adaptativas", False)),
         "mensaje_bienvenida": (origen.get("mensaje_bienvenida") or "Bienvenido")[:600],
         "pregunta_usuario": (origen.get("pregunta_usuario") or "¿Cuál es tu usuario?")[:300],
         "pregunta_mayor_edad": (origen.get("pregunta_mayor_edad") or "¿Eres mayor de edad?")[:150],
@@ -1144,6 +1149,44 @@ def set_usar_asistente_conversacional(
         "[CHATBOT-CONFIG] usar_asistente_conversacional=%s "
         "agencia_id=%s configuracion_id=%s",
         bool(usar_asistente_conversacional),
+        agencia_id,
+        configuracion_id,
+    )
+    return out
+
+
+def set_usar_rutas_adaptativas(
+    agencia_id: int,
+    configuracion_id: int,
+    usar_rutas_adaptativas: bool,
+) -> Dict[str, Any]:
+    """
+    Activa clasificación adaptativa. Solo aplica con asistente conversacional.
+
+    No modifica ``asistente_configuracion.activo``.
+    """
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                UPDATE chatbot.chatbot_configuracion
+                SET usar_rutas_adaptativas = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND agencia_id = %s
+                RETURNING id
+                """,
+                (bool(usar_rutas_adaptativas), configuracion_id, agencia_id),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise ValueError("Configuración no encontrada")
+    out = obtener_configuracion_por_id(agencia_id, configuracion_id)
+    if not out:
+        raise ValueError("Configuración no encontrada")
+    logger.info(
+        "[CHATBOT-CONFIG] usar_rutas_adaptativas=%s "
+        "agencia_id=%s configuracion_id=%s",
+        bool(usar_rutas_adaptativas),
         agencia_id,
         configuracion_id,
     )
@@ -1559,6 +1602,8 @@ def actualizar_aspirante_admin(
     estado: Optional[str] = None,
     requiere_asesor: Optional[bool] = None,
     observaciones: Optional[str] = None,
+    nivel_experiencia: Optional[str] = None,
+    nivel_experiencia_bloqueado_manual: Optional[bool] = None,
 ) -> Optional[Dict[str, Any]]:
     sets = []
     params: List[Any] = []
@@ -1571,6 +1616,15 @@ def actualizar_aspirante_admin(
     if observaciones is not None:
         sets.append("observaciones = %s")
         params.append(observaciones)
+    if nivel_experiencia is not None:
+        sets.append("nivel_experiencia = %s")
+        params.append(nivel_experiencia)
+        sets.append("nivel_experiencia_fuente = %s")
+        params.append("manual")
+        sets.append("nivel_experiencia_confirmado_at = CURRENT_TIMESTAMP")
+    if nivel_experiencia_bloqueado_manual is not None:
+        sets.append("nivel_experiencia_bloqueado_manual = %s")
+        params.append(bool(nivel_experiencia_bloqueado_manual))
     if not sets:
         return obtener_aspirante(agencia_id, aspirante_id)
 

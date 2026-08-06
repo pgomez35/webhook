@@ -44,6 +44,10 @@ from chatbot_conversacional_exceptions import AsistenteInactivo, OpenAIFallido
 from chatbot_conversacional_mode_resolver import MODOS_VALIDOS, resolver_modo
 from chatbot_conversacional_prompt_builder import construir_resumen_contexto
 from chatbot_conversacional_tools import ContextoHerramientas, RunContextWrapper, invocar_herramienta
+from chatbot_conversacional_clasificacion import (
+    clasificar_mensaje,
+    usar_rutas_adaptativas,
+)
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -438,26 +442,46 @@ async def procesar_mensaje_conversacional(
 
     await _persistir_modo(contexto, dry_run=dry_run)
 
-    presentacion = resolver_presentacion_literal(
-        asistente=contexto.asistente,
-        mensajes=contexto.mensajes,
-        texto_usuario=texto,
-        mensaje_actual_id=mensaje_entrante_id,
-    )
-    if presentacion:
-        return await _responder_presentacion_literal(
-            contexto=contexto,
-            presentacion=presentacion,
-            conversacion_id=conversacion_id,
-            mensaje_entrante_id=mensaje_entrante_id,
-            texto_usuario=texto,
-            canal=canal,
-            token=token,
-            phone_number_id=phone_number_id,
-            destino=wa_id or usuario_externo_id,
-            enviar_callback=enviar_callback,
-            dry_run=dry_run,
+    if usar_rutas_adaptativas(contexto.configuracion):
+        resultado_cls = await _aplicar_clasificacion_adaptativa(
+            contexto, texto_usuario=texto, dry_run=dry_run
         )
+        respuesta_directa = (resultado_cls or {}).get("respuesta_directa")
+        if respuesta_directa:
+            return await _responder_presentacion_literal(
+                contexto=contexto,
+                presentacion=respuesta_directa,
+                conversacion_id=conversacion_id,
+                mensaje_entrante_id=mensaje_entrante_id,
+                texto_usuario=texto,
+                canal=canal,
+                token=token,
+                phone_number_id=phone_number_id,
+                destino=wa_id or usuario_externo_id,
+                enviar_callback=enviar_callback,
+                dry_run=dry_run,
+            )
+    else:
+        presentacion = resolver_presentacion_literal(
+            asistente=contexto.asistente,
+            mensajes=contexto.mensajes,
+            texto_usuario=texto,
+            mensaje_actual_id=mensaje_entrante_id,
+        )
+        if presentacion:
+            return await _responder_presentacion_literal(
+                contexto=contexto,
+                presentacion=presentacion,
+                conversacion_id=conversacion_id,
+                mensaje_entrante_id=mensaje_entrante_id,
+                texto_usuario=texto,
+                canal=canal,
+                token=token,
+                phone_number_id=phone_number_id,
+                destino=wa_id or usuario_externo_id,
+                enviar_callback=enviar_callback,
+                dry_run=dry_run,
+            )
 
     preparado = crear_agente(contexto, dry_run=dry_run, mensaje_id=mensaje_entrante_id)
     entrada = _construir_entrada(contexto, texto, mensaje_entrante_id)
@@ -885,6 +909,77 @@ def _evidencia_requerida_para(
             return evidencia
 
     return None
+
+
+async def _aplicar_clasificacion_adaptativa(
+    contexto: ConversationalContext,
+    *,
+    texto_usuario: str,
+    dry_run: bool,
+) -> Dict[str, Any]:
+    """Clasifica, persiste estado y opcionalmente responde sin modelo."""
+    resultado = clasificar_mensaje(
+        texto=texto_usuario,
+        asistente=contexto.asistente or {},
+        conversacion=contexto.conversacion or {},
+        aspirante=contexto.aspirante,
+    )
+
+    # Reflejar en memoria para el resto del turno.
+    contexto.conversacion.update(resultado.campos_conversacion)
+    if contexto.aspirante is not None and resultado.campos_aspirante:
+        contexto.aspirante.update(
+            {k: v for k, v in resultado.campos_aspirante.items() if v is not None}
+        )
+
+    if dry_run or not contexto.conversacion_id:
+        return {
+            "clasificacion": resultado.clasificacion.model_dump(),
+            "respuesta_directa": resultado.texto_respuesta_directa,
+        }
+
+    if resultado.campos_conversacion:
+        await _db(
+            "actualizar_conversacion",
+            contexto.agencia_id,
+            contexto.conversacion_id,
+            resultado.campos_conversacion,
+        )
+
+    aspirante_id = contexto.aspirante_id
+    if resultado.persistir_nivel_estable and aspirante_id and resultado.campos_aspirante:
+        await _db(
+            "actualizar_nivel_aspirante_estable",
+            int(aspirante_id),
+            contexto.agencia_id,
+            nivel_experiencia=resultado.campos_aspirante.get("nivel_experiencia"),
+            nivel_experiencia_fuente=resultado.campos_aspirante.get(
+                "nivel_experiencia_fuente"
+            ),
+            nivel_experiencia_confianza=resultado.campos_aspirante.get(
+                "nivel_experiencia_confianza"
+            ),
+            nivel_experiencia_confirmado_at=resultado.campos_aspirante.get(
+                "nivel_experiencia_confirmado_at"
+            ),
+        )
+
+    if resultado.registrar_evento:
+        await _db(
+            "registrar_evento",
+            contexto.agencia_id,
+            contexto.conversacion_id,
+            tipo_evento="clasificacion",
+            nombre_evento="clasificacion_adaptativa",
+            origen="backend",
+            exitoso=True,
+            detalle=resultado.detalle_evento,
+        )
+
+    return {
+        "clasificacion": resultado.clasificacion.model_dump(),
+        "respuesta_directa": resultado.texto_respuesta_directa,
+    }
 
 
 async def _responder_presentacion_literal(

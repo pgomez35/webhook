@@ -30,6 +30,7 @@ from schemas_chatbot_captacion import (
     ChatbotConfiguracionResumen,
     ChatbotConfiguracionUpdate,
     ChatbotConfiguracionUsarAsistenteIn,
+    ChatbotConfiguracionUsarRutasAdaptativasIn,
     ChatbotResumenResponse,
     MediaEliminarRequest,
     MediaEliminarResponse,
@@ -126,6 +127,7 @@ def _config_response(agencia: dict, cfg: dict) -> ChatbotConfiguracionResponse:
         mensaje_error=cfg["mensaje_error"],
         activo=bool(cfg.get("activo")),
         usar_asistente_conversacional=bool(cfg.get("usar_asistente_conversacional")),
+        usar_rutas_adaptativas=bool(cfg.get("usar_rutas_adaptativas")),
         created_at=cfg.get("created_at"),
         updated_at=cfg.get("updated_at"),
     )
@@ -143,6 +145,7 @@ def _config_resumen(cfg: dict) -> ChatbotConfiguracionResumen:
         orden=int(cfg.get("orden") or 1),
         activo=bool(cfg.get("activo")),
         usar_asistente_conversacional=bool(cfg.get("usar_asistente_conversacional")),
+        usar_rutas_adaptativas=bool(cfg.get("usar_rutas_adaptativas")),
         updated_at=cfg.get("updated_at"),
     )
 
@@ -175,6 +178,17 @@ def _aspirante_response(row: dict) -> ChatbotAspiranteResponse:
         resultado_global=row.get("resultado_global"),
         evaluado_at=row.get("evaluado_at"),
         evaluado_por=row.get("evaluado_por"),
+        nivel_experiencia=row.get("nivel_experiencia") or "desconocido",
+        nivel_experiencia_fuente=row.get("nivel_experiencia_fuente"),
+        nivel_experiencia_confianza=(
+            float(row["nivel_experiencia_confianza"])
+            if row.get("nivel_experiencia_confianza") is not None
+            else None
+        ),
+        nivel_experiencia_confirmado_at=row.get("nivel_experiencia_confirmado_at"),
+        nivel_experiencia_bloqueado_manual=bool(
+            row.get("nivel_experiencia_bloqueado_manual")
+        ),
     )
 
 
@@ -404,6 +418,31 @@ def patch_usar_asistente_conversacional(
     return _config_response(agencia, cfg)
 
 
+@router.patch(
+    "/configuraciones/{configuracion_id}/usar-rutas-adaptativas",
+    response_model=ChatbotConfiguracionResponse,
+)
+def patch_usar_rutas_adaptativas(
+    configuracion_id: int,
+    payload: ChatbotConfiguracionUsarRutasAdaptativasIn,
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    """
+    Activa clasificación adaptativa de nivel/intención.
+
+    No modifica ``asistente_configuracion.activo``.
+    """
+    try:
+        cfg = db.set_usar_rutas_adaptativas(
+            int(agencia["id"]),
+            configuracion_id,
+            payload.usar_rutas_adaptativas,
+        )
+    except ValueError as e:
+        raise _http_from_value_error(e) from e
+    return _config_response(agencia, cfg)
+
+
 # ---------- Compatibilidad: una config (primera / por defecto) ----------
 
 @router.get("/configuracion", response_model=ChatbotConfiguracionResponse)
@@ -591,6 +630,10 @@ def patch_aspirante(
         estado=data.get("estado"),
         requiere_asesor=data.get("requiere_asesor"),
         observaciones=data.get("observaciones"),
+        nivel_experiencia=data.get("nivel_experiencia"),
+        nivel_experiencia_bloqueado_manual=data.get(
+            "nivel_experiencia_bloqueado_manual"
+        ),
     )
     if not row:
         raise HTTPException(status_code=404, detail="Aspirante no encontrado.")
