@@ -318,7 +318,7 @@ def clasificar_mensaje(
         accion = "mostrar_beneficios"
     elif intencion == "categorias":
         accion = "mostrar_categorias"
-    elif intencion in {"incorporacion", "solicitud"} and nivel == "experimentado":
+    elif intencion in {"incorporacion", "solicitud"}:
         accion = "enviar_solicitud"
     elif intencion == "evidencias":
         accion = "solicitar_evidencias"

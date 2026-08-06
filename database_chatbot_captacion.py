@@ -1656,8 +1656,16 @@ def reiniciar_flujo_aspirante(
 ) -> Optional[Dict[str, Any]]:
     """
     Reinicia el flujo conversacional del chatbot para un aspirante de la agencia.
-    Siempre limpia la configuración seleccionada para reevaluar en el siguiente mensaje.
-    No elimina el registro ni altera telefono, agencia_id, whatsapp_account_id o fecha_registro.
+
+    En una sola transacción:
+    - restablece chatbot_aspirantes (incluye requiere_asesor=false);
+    - limpia la conversación activa más reciente (modo_humano, manager, estado,
+      intención y preguntas de clasificación);
+    - conserva nivel_experiencia estable/bloqueado manual en aspirante y, si
+      aplica, en la conversación.
+
+    No elimina el registro ni altera telefono, agencia_id, whatsapp_account_id
+    o fecha_registro.
     """
     sets = [
         "estado = %s",
@@ -1681,6 +1689,22 @@ def reiniciar_flujo_aspirante(
     with get_connection_chatbot_context() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
+                """
+                SELECT id, requiere_asesor, nivel_experiencia,
+                       nivel_experiencia_bloqueado_manual
+                FROM chatbot.chatbot_aspirantes
+                WHERE id = %s AND agencia_id = %s
+                LIMIT 1
+                """,
+                (aspirante_id, agencia_id),
+            )
+            aspirante_prev = cur.fetchone()
+            if not aspirante_prev:
+                return None
+
+            requiere_asesor_anterior = bool(aspirante_prev.get("requiere_asesor"))
+
+            cur.execute(
                 f"""
                 UPDATE chatbot.chatbot_aspirantes
                 SET {", ".join(sets)}
@@ -1692,11 +1716,121 @@ def reiniciar_flujo_aspirante(
             row = cur.fetchone()
             if not row:
                 return None
-    logger.info(
-        "[CHATBOT] flujo reiniciado agencia_id=%s aspirante_id=%s",
-        agencia_id,
-        aspirante_id,
-    )
+
+            cur.execute(
+                """
+                SELECT id, modo_humano, estado, estado_actual,
+                       nivel_experiencia_bloqueado_manual, manager_id
+                FROM chatbot.conversaciones
+                WHERE aspirante_id = %s AND agencia_id = %s
+                ORDER BY COALESCE(ultimo_mensaje_at, iniciada_at, created_at) DESC NULLS LAST,
+                         id DESC
+                LIMIT 1
+                """,
+                (aspirante_id, agencia_id),
+            )
+            conv = cur.fetchone()
+            conversaciones_actualizadas = 0
+            conversacion_id = None
+            modo_humano_anterior = False
+
+            if conv:
+                conversacion_id = int(conv["id"])
+                modo_humano_anterior = bool(conv.get("modo_humano"))
+                nivel_bloqueado_conv = bool(
+                    conv.get("nivel_experiencia_bloqueado_manual")
+                )
+                # Conservar nivel en aspirante siempre en este reinicio; en
+                # conversación solo limpiar clasificación dinámica salvo bloqueo.
+                campos_conv = [
+                    "modo_humano = FALSE",
+                    "manager_id = NULL",
+                    "ia_habilitada = TRUE",
+                    "estado = 'abierta'",
+                    "estado_actual = 'inicio'",
+                    "preguntas_clasificacion_realizadas = 0",
+                    "intencion_actual = 'desconocida'",
+                    "intencion_confianza = NULL",
+                    "motivo_escalamiento = NULL",
+                    "updated_at = CURRENT_TIMESTAMP",
+                ]
+                if not nivel_bloqueado_conv:
+                    campos_conv.extend(
+                        [
+                            "nivel_experiencia = 'desconocido'",
+                            "nivel_experiencia_fuente = NULL",
+                            "nivel_experiencia_confianza = NULL",
+                            "nivel_experiencia_confirmado = FALSE",
+                            "estrategia_nivel_aplicada = NULL",
+                        ]
+                    )
+
+                cur.execute(
+                    f"""
+                    UPDATE chatbot.conversaciones
+                    SET {", ".join(campos_conv)}
+                    WHERE id = %s AND agencia_id = %s
+                    """,
+                    (conversacion_id, agencia_id),
+                )
+                conversaciones_actualizadas = cur.rowcount or 0
+
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO chatbot.eventos_conversacion (
+                            agencia_id, conversacion_id, tipo_evento, nombre_evento,
+                            origen, estado_anterior, estado_nuevo, exitoso, detalle
+                        ) VALUES (
+                            %s, %s, 'cambio_estado', 'reinicio_flujo_aspirante',
+                            'backend', %s, 'abierta', TRUE, %s
+                        )
+                        """,
+                        (
+                            agencia_id,
+                            conversacion_id,
+                            conv.get("estado"),
+                            Json(
+                                {
+                                    "aspirante_id": aspirante_id,
+                                    "modo_humano_anterior": modo_humano_anterior,
+                                    "modo_humano_nuevo": False,
+                                    "requiere_asesor_anterior": requiere_asesor_anterior,
+                                    "requiere_asesor_nuevo": False,
+                                    "nivel_bloqueado_conservado": nivel_bloqueado_conv
+                                    or bool(
+                                        aspirante_prev.get(
+                                            "nivel_experiencia_bloqueado_manual"
+                                        )
+                                    ),
+                                }
+                            ),
+                        ),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "[CHATBOT-REINICIO] no se pudo registrar evento aspirante_id=%s: %s",
+                        aspirante_id,
+                        exc,
+                    )
+
+            logger.info(
+                "[CHATBOT-REINICIO] aspirante_id=%s conversacion_id=%s "
+                "modo_humano_anterior=%s modo_humano_nuevo=false "
+                "requiere_asesor_anterior=%s requiere_asesor_nuevo=false "
+                "conversaciones_actualizadas=%s",
+                aspirante_id,
+                conversacion_id,
+                str(modo_humano_anterior).lower(),
+                str(requiere_asesor_anterior).lower(),
+                conversaciones_actualizadas,
+            )
+            logger.info(
+                "[CHATBOT] flujo reiniciado agencia_id=%s aspirante_id=%s",
+                agencia_id,
+                aspirante_id,
+            )
+
     return obtener_aspirante(agencia_id, aspirante_id)
 
 

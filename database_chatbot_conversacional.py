@@ -1813,7 +1813,30 @@ def obtener_recurso_por_codigo(
         limit=1,
         cur=cur,
     )
-    return filas[0] if filas else None
+    if filas:
+        return filas[0]
+
+    # Fallback: mismo código en la agencia (config/campaña pueden no coincidir exactamente).
+    if chatbot_configuracion_id or campania_id:
+        filas = _listar_registros(
+            "recursos",
+            agencia_id,
+            where_extra=["codigo = %s", "activo = TRUE"],
+            params_extra=[codigo],
+            order_by="id DESC",
+            limit=5,
+            cur=cur,
+        )
+        if not filas:
+            return None
+        if chatbot_configuracion_id:
+            for fila in filas:
+                if int(fila.get("chatbot_configuracion_id") or 0) == int(
+                    chatbot_configuracion_id
+                ):
+                    return fila
+        return filas[0]
+    return None
 
 
 def crear_recurso(agencia_id: int, campos: Dict[str, Any], *, cur=None) -> Dict[str, Any]:

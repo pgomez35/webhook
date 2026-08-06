@@ -43,7 +43,12 @@ from chatbot_conversacional_context_builder import (
 from chatbot_conversacional_exceptions import AsistenteInactivo, OpenAIFallido
 from chatbot_conversacional_mode_resolver import MODOS_VALIDOS, resolver_modo
 from chatbot_conversacional_prompt_builder import construir_resumen_contexto
-from chatbot_conversacional_tools import ContextoHerramientas, RunContextWrapper, invocar_herramienta
+from chatbot_conversacional_tools import (
+    ContextoHerramientas,
+    RunContextWrapper,
+    invocar_herramienta,
+    preparar_envio_enlace_autorizado,
+)
 from chatbot_conversacional_clasificacion import (
     clasificar_mensaje,
     usar_rutas_adaptativas,
@@ -451,6 +456,35 @@ async def procesar_mensaje_conversacional(
             return await _responder_presentacion_literal(
                 contexto=contexto,
                 presentacion=respuesta_directa,
+                conversacion_id=conversacion_id,
+                mensaje_entrante_id=mensaje_entrante_id,
+                texto_usuario=texto,
+                canal=canal,
+                token=token,
+                phone_number_id=phone_number_id,
+                destino=wa_id or usuario_externo_id,
+                enviar_callback=enviar_callback,
+                dry_run=dry_run,
+            )
+        accion = ((resultado_cls or {}).get("clasificacion") or {}).get(
+            "accion_propuesta"
+        )
+        if accion == "enviar_solicitud":
+            return await _responder_envio_solicitud_adaptativo(
+                contexto=contexto,
+                conversacion_id=conversacion_id,
+                mensaje_entrante_id=mensaje_entrante_id,
+                texto_usuario=texto,
+                canal=canal,
+                token=token,
+                phone_number_id=phone_number_id,
+                destino=wa_id or usuario_externo_id,
+                enviar_callback=enviar_callback,
+                dry_run=dry_run,
+            )
+        if accion == "transferir_humano":
+            return await _responder_transferencia_adaptativa(
+                contexto=contexto,
                 conversacion_id=conversacion_id,
                 mensaje_entrante_id=mensaje_entrante_id,
                 texto_usuario=texto,
@@ -1068,6 +1102,268 @@ async def _responder_presentacion_literal(
         "cerrada": False,
         "enviado": envio.get("enviado"),
         "error": envio.get("error"),
+        "sdk": None,
+    }
+
+
+def _codigo_recurso_solicitud(contexto: ConversationalContext) -> str:
+    paso = contexto.paso or {}
+    cfg = paso.get("configuracion") if isinstance(paso.get("configuracion"), dict) else {}
+    codigo = str(cfg.get("codigo_recurso") or "").strip()
+    if codigo:
+        return codigo
+    for recurso in contexto.recursos or []:
+        tipo = str(recurso.get("tipo") or "").lower()
+        cod = str(recurso.get("codigo") or "").strip()
+        if tipo == "solicitud" and cod:
+            return cod
+        if cod.lower() in {"solicitud_principal", "solicitud", "enlace_solicitud"}:
+            return cod
+    return "solicitud_principal"
+
+
+async def _responder_envio_solicitud_adaptativo(
+    *,
+    contexto: ConversationalContext,
+    conversacion_id: Optional[int],
+    mensaje_entrante_id: Optional[int],
+    texto_usuario: str,
+    canal: str,
+    token: Optional[str],
+    phone_number_id: Optional[str],
+    destino: Optional[str],
+    enviar_callback: Optional[EnviarCallback],
+    dry_run: bool,
+) -> Dict[str, Any]:
+    """Envía el enlace de solicitud con el servicio real; nunca activa modo_humano."""
+    ctxh = ContextoHerramientas(
+        agencia_id=contexto.agencia_id,
+        conversacion_id=conversacion_id,
+        contexto=contexto,
+        dry_run=dry_run,
+        mensaje_id=mensaje_entrante_id,
+    )
+    codigo = _codigo_recurso_solicitud(contexto)
+    resultado = await asyncio.to_thread(
+        preparar_envio_enlace_autorizado,
+        ctxh,
+        codigo,
+        "solicitud_adaptativa",
+    )
+    enlaces = list(ctxh.enlaces)
+    if resultado.get("ok") and enlaces:
+        texto = (
+            "Te envío el enlace para continuar tu solicitud. "
+            "Cuando lo completes, avísame si tienes alguna duda."
+        )
+    else:
+        texto = str(
+            resultado.get("mensaje_usuario")
+            or (
+                "No pude generar el enlace en este momento. Dejé la solicitud "
+                "pendiente para que el equipo la revise. Mientras tanto, puedo "
+                "seguir respondiendo tus preguntas sobre el proceso."
+            )
+        )
+
+    envio = await _enviar_respuesta(
+        canal=canal,
+        texto=texto,
+        enlaces=enlaces,
+        token=token,
+        phone_number_id=phone_number_id,
+        destino=destino,
+        enviar_callback=enviar_callback,
+        dry_run=dry_run,
+    )
+
+    mensaje_saliente = None
+    if texto and not dry_run and conversacion_id:
+        mensaje_saliente = await _db(
+            "insertar_mensaje",
+            contexto.agencia_id,
+            conversacion_id,
+            canal=canal,
+            direccion="saliente",
+            remitente_tipo="chatbot",
+            tipo_mensaje="texto",
+            texto=texto,
+            estado_envio="enviado" if envio.get("enviado") else "error",
+            error_detalle=envio.get("error"),
+            procesado_por_ia=False,
+            metadata={
+                "accion_adaptativa": "enviar_solicitud",
+                "resultado_enlace": "enviado" if resultado.get("ok") else "error",
+                "modo_humano": False,
+                "requiere_asesor": bool(resultado.get("requiere_asesor")),
+            },
+            default=None,
+        )
+        mensaje_saliente = _normalizar_fila_mensaje(mensaje_saliente)
+
+    await _actualizar_cierre_de_turno(
+        contexto,
+        respuesta=texto,
+        mensaje_usuario=texto_usuario,
+        acciones=ctxh.acciones,
+        escalado=False,
+        cerrada=False,
+        dry_run=dry_run,
+    )
+
+    return {
+        "usado": True,
+        "motivo": None,
+        "conversacion_id": conversacion_id,
+        "mensaje_entrante_id": mensaje_entrante_id,
+        "mensaje_saliente_id": (_normalizar_fila_mensaje(mensaje_saliente) or {}).get("id"),
+        "respuesta": texto,
+        "modo": contexto.modo,
+        "modelo": None,
+        "acciones": ctxh.acciones,
+        "enlaces": enlaces,
+        "escalado": False,
+        "cerrada": False,
+        "enviado": envio.get("enviado"),
+        "error": envio.get("error"),
+        "requiere_asesor": bool(resultado.get("requiere_asesor")),
+        "modo_humano": False,
+        "sdk": None,
+    }
+
+
+async def _responder_transferencia_adaptativa(
+    *,
+    contexto: ConversationalContext,
+    conversacion_id: Optional[int],
+    mensaje_entrante_id: Optional[int],
+    texto_usuario: str,
+    canal: str,
+    token: Optional[str],
+    phone_number_id: Optional[str],
+    destino: Optional[str],
+    enviar_callback: Optional[EnviarCallback],
+    dry_run: bool,
+) -> Dict[str, Any]:
+    """Transferencia explícita (intención asesor): sí activa modo_humano."""
+    motivo = "solicitud_explicita_asesor"
+    texto = (
+        "Claro, te derivo con una persona del equipo para que te acompañe. "
+        "En breve continuarán contigo por este mismo chat."
+    )
+    if not dry_run and conversacion_id:
+        await _db(
+            "actualizar_conversacion",
+            contexto.agencia_id,
+            conversacion_id,
+            {
+                "estado": "esperando_humano",
+                "modo_humano": True,
+                "motivo_escalamiento": motivo,
+            },
+        )
+        aspirante_id = contexto.aspirante_id
+        if aspirante_id:
+            try:
+                import database_chatbot_captacion as db_cap
+
+                await asyncio.to_thread(
+                    db_cap.actualizar_aspirante_admin,
+                    contexto.agencia_id,
+                    int(aspirante_id),
+                    requiere_asesor=True,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[CHATBOT-TRANSFERENCIA] no se pudo marcar requiere_asesor: %s",
+                    exc,
+                )
+        await _db(
+            "registrar_evento",
+            contexto.agencia_id,
+            conversacion_id,
+            tipo_evento="escalamiento",
+            nombre_evento="transferencia_adaptativa",
+            origen="backend",
+            estado_anterior=contexto.conversacion.get("estado"),
+            estado_nuevo="esperando_humano",
+            detalle={
+                "requiere_asesor": True,
+                "transferencia_solicitada": True,
+                "modo_humano": True,
+                "motivo_transferencia": motivo,
+                "origen_activacion": "clasificacion_adaptativa",
+            },
+        )
+        logger.info(
+            "[CHATBOT-TRANSFERENCIA] aspirante_id=%s conversacion_id=%s "
+            "modo_humano=true requiere_asesor=true transferencia_solicitada=true "
+            "origen=clasificacion_adaptativa",
+            contexto.aspirante_id,
+            conversacion_id,
+        )
+
+    envio = await _enviar_respuesta(
+        canal=canal,
+        texto=texto,
+        enlaces=[],
+        token=token,
+        phone_number_id=phone_number_id,
+        destino=destino,
+        enviar_callback=enviar_callback,
+        dry_run=dry_run,
+    )
+
+    mensaje_saliente = None
+    if texto and not dry_run and conversacion_id:
+        mensaje_saliente = await _db(
+            "insertar_mensaje",
+            contexto.agencia_id,
+            conversacion_id,
+            canal=canal,
+            direccion="saliente",
+            remitente_tipo="chatbot",
+            tipo_mensaje="texto",
+            texto=texto,
+            estado_envio="enviado" if envio.get("enviado") else "error",
+            error_detalle=envio.get("error"),
+            procesado_por_ia=False,
+            metadata={
+                "accion_adaptativa": "transferir_humano",
+                "modo_humano": True,
+                "transferencia_solicitada": True,
+            },
+            default=None,
+        )
+        mensaje_saliente = _normalizar_fila_mensaje(mensaje_saliente)
+
+    await _actualizar_cierre_de_turno(
+        contexto,
+        respuesta=texto,
+        mensaje_usuario=texto_usuario,
+        acciones=[],
+        escalado=True,
+        cerrada=False,
+        dry_run=dry_run,
+    )
+
+    return {
+        "usado": True,
+        "motivo": None,
+        "conversacion_id": conversacion_id,
+        "mensaje_entrante_id": mensaje_entrante_id,
+        "mensaje_saliente_id": (_normalizar_fila_mensaje(mensaje_saliente) or {}).get("id"),
+        "respuesta": texto,
+        "modo": contexto.modo,
+        "modelo": None,
+        "acciones": [],
+        "enlaces": [],
+        "escalado": True,
+        "cerrada": False,
+        "enviado": envio.get("enviado"),
+        "error": envio.get("error"),
+        "requiere_asesor": True,
+        "modo_humano": True,
         "sdk": None,
     }
 

@@ -278,6 +278,80 @@ def _resolver_url(template: str, ctxh: ContextoHerramientas) -> str:
     return url
 
 
+def _marcar_requiere_asesor(
+    ctxh: ContextoHerramientas,
+    *,
+    motivo: str,
+    origen: str,
+    transferencia_solicitada: bool = False,
+) -> None:
+    """
+    Marca seguimiento humano pendiente SIN silenciar el chatbot.
+
+    No toca conversaciones.modo_humano ni estado esperando_humano.
+    """
+    aspirante_id = ctxh.contexto.aspirante_id
+    if ctxh.dry_run or not aspirante_id:
+        return
+    try:
+        import database_chatbot_captacion as db_cap
+
+        db_cap.actualizar_aspirante_admin(
+            ctxh.agencia_id,
+            int(aspirante_id),
+            requiere_asesor=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[CHATBOT-SOLICITUD] no se pudo marcar requiere_asesor aspirante_id=%s: %s",
+            aspirante_id,
+            exc,
+        )
+    _registrar(
+        ctxh,
+        herramienta="marcar_requiere_asesor",
+        tipo_evento="escalamiento",
+        detalle={
+            "requiere_asesor": True,
+            "modo_humano": False,
+            "motivo": motivo[:300],
+            "origen": origen,
+            "transferencia_solicitada": bool(transferencia_solicitada),
+            "chatbot_continua": not bool(transferencia_solicitada),
+        },
+        exitoso=True,
+    )
+
+
+def _generar_url_con_token(
+    recurso: Dict[str, Any],
+    ctxh: ContextoHerramientas,
+) -> Optional[str]:
+    """Intenta generar URL personalizada con el servicio real de portal."""
+    aspirante_id = ctxh.contexto.aspirante_id
+    if not aspirante_id:
+        return None
+    tipo = str(recurso.get("tipo_token") or "aspirante").strip().lower() or "aspirante"
+    try:
+        from portal_access_tokens import generar_url_portal
+
+        data = generar_url_portal(
+            tipo_portal=tipo if tipo in {"aspirante", "creador"} else "aspirante",
+            aspirante_id=int(aspirante_id),
+            origen="chatbot_conversacional",
+            forzar_nuevo=False,
+        )
+        url = (data or {}).get("url")
+        return str(url).strip() if url else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[CHATBOT-SOLICITUD] fallo generando token aspirante_id=%s: %s",
+            aspirante_id,
+            exc,
+        )
+        return None
+
+
 def _actualizar_conversacion(ctxh: ContextoHerramientas, campos: Dict[str, Any]) -> None:
     if ctxh.dry_run or not ctxh.conversacion_id or not campos:
         return
@@ -736,24 +810,19 @@ async def crear_tarea_candidato(
     return _ok(tarea_id=(creada or {}).get("id"), tipo_tarea=datos["tipo_tarea"])
 
 
-@function_tool(strict_mode=False)
-async def enviar_enlace_autorizado(
-    ctx: RunContextWrapper[ContextoHerramientas],
+def preparar_envio_enlace_autorizado(
+    ctxh: ContextoHerramientas,
     codigo_recurso: str,
     motivo: Optional[str] = None,
-) -> str:
+) -> Dict[str, Any]:
     """
-    Prepara el envío de un enlace autorizado a partir de su código de recurso.
+    Resuelve y prepara un enlace autorizado sin construir la URL en el modelo.
 
-    Solo funciona con recursos configurados por la agencia. El sistema envía el
-    enlace; no lo escribas tú en el mensaje.
-
-    Args:
-        codigo_recurso: Código exacto del recurso autorizado.
-        motivo: Razón breve por la que se comparte.
+    Nunca activa modo_humano. Ante fallo puede marcar requiere_asesor y deja
+    chatbot_continua=True.
     """
-    ctxh = _ctx(ctx)
     codigo = str(codigo_recurso or "").strip()
+    aspirante_id = ctxh.contexto.aspirante_id
 
     recurso = next(
         (
@@ -765,47 +834,87 @@ async def enviar_enlace_autorizado(
     )
 
     if recurso is None:
-        recurso = gw.call_opcional("obtener_recurso_por_codigo", ctxh.agencia_id, codigo)
+        recurso = gw.call_opcional(
+            "obtener_recurso_por_codigo",
+            ctxh.agencia_id,
+            codigo,
+            chatbot_configuracion_id=ctxh.contexto.chatbot_configuracion_id,
+            campania_id=ctxh.contexto.campania_id,
+        )
 
-    if not recurso or int(recurso.get("agencia_id") or ctxh.agencia_id) != int(ctxh.agencia_id):
+    def _fallo(mensaje: str, *, motivo_log: str) -> Dict[str, Any]:
         _registrar(
             ctxh,
             herramienta="enviar_enlace_autorizado",
             tipo_evento="envio_enlace",
             detalle={"codigo": codigo},
             exitoso=False,
-            error_detalle="Recurso inexistente o de otra agencia.",
+            error_detalle=motivo_log,
         )
-        return _error("No existe un recurso autorizado con ese código.", codigo=codigo)
+        logger.info(
+            "[CHATBOT-SOLICITUD] aspirante_id=%s resultado=error "
+            "requiere_asesor=true modo_humano=false chatbot_continua=true "
+            "motivo=%s",
+            aspirante_id,
+            motivo_log,
+        )
+        _marcar_requiere_asesor(
+            ctxh,
+            motivo=f"{motivo_log}:{codigo}",
+            origen="enviar_enlace_autorizado",
+        )
+        return {
+            "ok": False,
+            "error": mensaje,
+            "codigo": codigo,
+            "requiere_asesor": True,
+            "modo_humano": False,
+            "chatbot_continua": True,
+            "mensaje_usuario": (
+                "No pude generar el enlace en este momento. Dejé la solicitud "
+                "pendiente para que el equipo la revise. Mientras tanto, puedo "
+                "seguir respondiendo tus preguntas sobre el proceso."
+            ),
+        }
+
+    if not recurso or int(recurso.get("agencia_id") or ctxh.agencia_id) != int(
+        ctxh.agencia_id
+    ):
+        return _fallo(
+            "No pude generar el enlace ahora. Dejé la solicitud pendiente para el "
+            "equipo. NO transfieras ni marques atención humana: el chatbot sigue "
+            "activo y puede responder otras preguntas.",
+            motivo_log="recurso_inexistente",
+        )
 
     if not _vigente(recurso):
-        _registrar(
-            ctxh,
-            herramienta="enviar_enlace_autorizado",
-            tipo_evento="envio_enlace",
-            detalle={"codigo": codigo},
-            exitoso=False,
-            error_detalle="Recurso fuera de vigencia.",
+        return _fallo(
+            "Ese enlace no está vigente. Dejé el seguimiento pendiente. "
+            "NO transfieras la conversación: sigue respondiendo preguntas.",
+            motivo_log="recurso_fuera_vigencia",
         )
-        return _error("Ese recurso no está vigente; ofrece apoyo humano.", codigo=codigo)
 
+    url = ""
     if recurso.get("requiere_token"):
-        _registrar(
-            ctxh,
-            herramienta="enviar_enlace_autorizado",
-            tipo_evento="envio_enlace",
-            detalle={"codigo": codigo, "requiere_token": True},
-            exitoso=False,
-            error_detalle="El recurso requiere token generado por el backend.",
-        )
-        return _error(
-            "Ese enlace es personalizado y debe generarlo el equipo; transfiere la conversación.",
-            codigo=codigo,
-        )
+        url = _generar_url_con_token(recurso, ctxh) or ""
+        if not url:
+            return _fallo(
+                "No pude generar el enlace en este momento. Dejé la solicitud "
+                "pendiente para que el equipo la revise. Mientras tanto puedes "
+                "seguir respondiendo dudas del proceso. NO actives transferencia "
+                "humana ni digas que la conversación queda pendiente de asesor "
+                "para silenciar el chat.",
+                motivo_log="token_no_generado",
+            )
+    else:
+        url = _resolver_url(str(recurso.get("url_template") or ""), ctxh)
 
-    url = _resolver_url(str(recurso.get("url_template") or ""), ctxh)
     if not url:
-        return _error("El recurso no tiene URL configurada.", codigo=codigo)
+        return _fallo(
+            "No pude preparar el enlace. Dejé la solicitud pendiente. "
+            "NO transfieras: el chatbot continúa activo.",
+            motivo_log="url_vacia",
+        )
 
     enlace = {
         "codigo": recurso.get("codigo"),
@@ -823,9 +932,64 @@ async def enviar_enlace_autorizado(
         tipo_evento="envio_enlace",
         detalle={"codigo": recurso.get("codigo"), "tipo": recurso.get("tipo")},
     )
-    return _ok(
-        enlace=enlace,
-        nota="El sistema enviará el enlace; anuncia su envío en tu mensaje.",
+    logger.info(
+        "[CHATBOT-SOLICITUD] aspirante_id=%s resultado=enviado "
+        "requiere_asesor=false modo_humano=false chatbot_continua=true "
+        "codigo=%s",
+        aspirante_id,
+        recurso.get("codigo"),
+    )
+    return {
+        "ok": True,
+        "enlace": enlace,
+        "modo_humano": False,
+        "requiere_asesor": False,
+        "chatbot_continua": True,
+        "nota": (
+            "El sistema enviará el enlace; anuncia su envío en tu mensaje. "
+            "No marques la solicitud como completada."
+        ),
+        "mensaje_usuario": (
+            f"Aquí tienes el enlace para continuar tu solicitud: {url}"
+            if url
+            else "Te envié el enlace para continuar tu solicitud."
+        ),
+    }
+
+
+@function_tool(strict_mode=False)
+async def enviar_enlace_autorizado(
+    ctx: RunContextWrapper[ContextoHerramientas],
+    codigo_recurso: str,
+    motivo: Optional[str] = None,
+) -> str:
+    """
+    Prepara el envío de un enlace autorizado a partir de su código de recurso.
+
+    Solo funciona con recursos configurados por la agencia. El sistema envía el
+    enlace; no lo escribas tú en el mensaje.
+
+    Si el enlace no puede generarse, NO transfieras a humano ni cierres la
+    conversación: informa el fallo y sigue respondiendo preguntas.
+
+    Args:
+        codigo_recurso: Código exacto del recurso autorizado.
+        motivo: Razón breve por la que se comparte.
+    """
+    ctxh = _ctx(ctx)
+    resultado = preparar_envio_enlace_autorizado(ctxh, codigo_recurso, motivo)
+    if resultado.get("ok"):
+        return _ok(
+            enlace=resultado.get("enlace"),
+            nota=resultado.get("nota"),
+            modo_humano=False,
+        )
+    return _error(
+        str(resultado.get("error") or "No se pudo preparar el enlace."),
+        codigo=resultado.get("codigo"),
+        requiere_asesor=True,
+        modo_humano=False,
+        chatbot_continua=True,
     )
 
 
@@ -981,6 +1145,14 @@ async def transferir_a_humano(
     """
     Transfiere la conversación a una persona del equipo y detiene las respuestas automáticas.
 
+    Usa esta herramienta SOLO cuando:
+    - la persona pide explícitamente hablar con un asesor/humano;
+    - pulsó una opción explícita de hablar con asesor;
+    - una regla de escalamiento exige transferencia inmediata.
+
+    NO la uses porque falló un enlace, porque requiere_asesor=true o porque
+    creaste una tarea de seguimiento. Eso no silencia el chatbot.
+
     Args:
         motivo: Razón concreta del escalamiento.
         prioridad: baja, normal, alta o urgente.
@@ -999,7 +1171,8 @@ async def transferir_a_humano(
         None,
     )
 
-    # El estado 'esperando_humano' bloquea la IA hasta que un humano libere la conversación.
+    # modo_humano=true: operador/transferencia activa. Silencia la IA.
+    # requiere_asesor: seguimiento pendiente (también se marca aquí).
     _actualizar_conversacion(
         ctxh,
         {
@@ -1008,12 +1181,23 @@ async def transferir_a_humano(
             "motivo_escalamiento": motivo_limpio,
         },
     )
+    _marcar_requiere_asesor(
+        ctxh,
+        motivo=motivo_limpio,
+        origen="transferir_a_humano",
+        transferencia_solicitada=True,
+    )
 
     ctxh.escalamiento = {
         "motivo": motivo_limpio,
         "prioridad": prioridad_normalizada,
         "regla": (regla or {}).get("evento"),
         "mensaje_usuario": (regla or {}).get("mensaje_usuario"),
+        "requiere_asesor": True,
+        "transferencia_solicitada": True,
+        "modo_humano": True,
+        "origen_activacion": "transferir_a_humano",
+        "motivo_transferencia": motivo_limpio,
     }
 
     _registrar(
@@ -1024,10 +1208,19 @@ async def transferir_a_humano(
         estado_anterior=ctxh.contexto.conversacion.get("estado"),
         estado_nuevo="esperando_humano",
     )
+    logger.info(
+        "[CHATBOT-TRANSFERENCIA] aspirante_id=%s conversacion_id=%s "
+        "modo_humano=true requiere_asesor=true transferencia_solicitada=true "
+        "origen=transferir_a_humano motivo=%s",
+        ctxh.contexto.aspirante_id,
+        ctxh.conversacion_id,
+        motivo_limpio[:120],
+    )
     return _ok(
         transferido=True,
         mensaje_sugerido=(regla or {}).get("mensaje_usuario"),
-        nota="Despídete con calidez, sin prometer tiempos exactos de respuesta.",
+        nota="Despídete con calidez, sin prometer tiempos exactos de respuesta. "
+        "El chatbot quedará en silencio hasta que un operador libere la conversación.",
     )
 
 

@@ -656,7 +656,11 @@ def reiniciar_flujo_aspirante(
 ):
     """
     Reinicia el flujo conversacional (etapa_chatbot=inicio).
-    Limpia chatbot_configuracion_id y campos de respuesta.
+
+    Limpia chatbot_configuracion_id, requiere_asesor y campos de respuesta del
+    aspirante. También restablece la conversación activa más reciente
+    (modo_humano=false, manager_id=null, estado abierta, intención desconocida).
+    Conserva nivel_experiencia estable/bloqueado manual.
     """
     row = db.reiniciar_flujo_aspirante(
         agencia["id"],
