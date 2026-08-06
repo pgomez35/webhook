@@ -21,12 +21,14 @@ import logging
 from datetime import date
 from typing import Any, Callable, Dict, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 
 import database_chatbot_captacion as db_captacion
 import database_chatbot_conversacional as db
 from router_chatbot_auth import obtener_agencia_chatbot_actual
 from schemas_chatbot_conversacional import (
+    AnalizarInformacionIn,
     AplicarPlantillaIn,
     AsistenteConfiguracionUpsert,
     AsistenteInicializarIn,
@@ -46,6 +48,7 @@ from schemas_chatbot_conversacional import (
     FlujoIn,
     FlujoPasoIn,
     FlujoPasoMoverIn,
+    GuardarInformacionOrganizadaIn,
     PruebaLiveIn,
     PublicarAsistenteIn,
     RecursoEnlaceIn,
@@ -480,6 +483,121 @@ def post_despublicar_asistente(
 
     try:
         return svc_rapida.despublicar_asistente(_agencia_id(agencia), cfg_id)
+    except Exception as e:
+        from chatbot_conversacional_exceptions import ConversacionalError
+
+        if isinstance(e, ConversacionalError):
+            raise HTTPException(status_code=400, detail=e.mensaje) from e
+        if isinstance(e, _ERRORES_DATOS):
+            raise _http_error(e) from e
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Carga de información (textos / Excel) — dry-run + guardar
+# ---------------------------------------------------------------------------
+
+
+@router.get("/configuraciones/{chatbot_configuracion_id}/carga-informacion")
+def get_carga_informacion(
+    chatbot_configuracion_id: int,
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    """Devuelve los datos actuales como textos legibles para las cajas."""
+    cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
+    import service_chatbot_carga_informacion as svc_carga
+
+    try:
+        return svc_carga.obtener_textos_carga(_agencia_id(agencia), cfg_id)
+    except _ERRORES_DATOS as e:
+        raise _http_error(e) from e
+
+
+@router.post("/configuraciones/{chatbot_configuracion_id}/analizar-informacion")
+def post_analizar_informacion(
+    chatbot_configuracion_id: int,
+    payload: AnalizarInformacionIn,
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    """Organiza textos en una propuesta. No escribe en base de datos."""
+    cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
+    import service_chatbot_carga_informacion as svc_carga
+
+    try:
+        return svc_carga.analizar_informacion(
+            _agencia_id(agencia), cfg_id, _campos(payload)
+        )
+    except Exception as e:
+        from chatbot_conversacional_exceptions import ConversacionalError
+
+        if isinstance(e, ConversacionalError):
+            raise HTTPException(status_code=400, detail=e.mensaje) from e
+        if isinstance(e, _ERRORES_DATOS):
+            raise _http_error(e) from e
+        raise
+
+
+@router.post("/configuraciones/{chatbot_configuracion_id}/guardar-informacion-organizada")
+def post_guardar_informacion_organizada(
+    chatbot_configuracion_id: int,
+    payload: GuardarInformacionOrganizadaIn,
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    """Persiste la propuesta revisada. No desactiva registros omitidos."""
+    cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
+    import service_chatbot_carga_informacion as svc_carga
+
+    try:
+        return svc_carga.guardar_informacion_organizada(
+            _agencia_id(agencia), cfg_id, _campos(payload)
+        )
+    except Exception as e:
+        from chatbot_conversacional_exceptions import ConversacionalError
+
+        if isinstance(e, ConversacionalError):
+            raise HTTPException(status_code=400, detail=e.mensaje) from e
+        if isinstance(e, _ERRORES_DATOS):
+            raise _http_error(e) from e
+        raise
+
+
+@router.get("/configuraciones/{chatbot_configuracion_id}/plantilla-excel")
+def get_plantilla_excel(
+    chatbot_configuracion_id: int,
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    _validar_configuracion(agencia, chatbot_configuracion_id)
+    import service_chatbot_carga_informacion as svc_carga
+
+    contenido = svc_carga.generar_plantilla_excel_bytes()
+    return Response(
+        content=contenido,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={
+            "Content-Disposition": 'attachment; filename="plantilla_asistente.xlsx"'
+        },
+    )
+
+
+@router.post("/configuraciones/{chatbot_configuracion_id}/importar-excel")
+async def post_importar_excel(
+    chatbot_configuracion_id: int,
+    archivo: UploadFile = File(...),
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    """Excel → propuesta (sin guardar). Requiere confirmación posterior."""
+    cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
+    import service_chatbot_carga_informacion as svc_carga
+
+    raw = await archivo.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="El archivo está vacío")
+    try:
+        return svc_carga.importar_excel_a_propuesta(
+            _agencia_id(agencia), cfg_id, raw
+        )
     except Exception as e:
         from chatbot_conversacional_exceptions import ConversacionalError
 

@@ -433,6 +433,84 @@ class PublicarAsistenteIn(_Entrada):
 
 
 # ---------------------------------------------------------------------------
+# Carga de información (textos / Excel)
+# ---------------------------------------------------------------------------
+
+
+class AnalizarInformacionIn(_Entrada):
+    nombre_asistente: Optional[str] = Field(None, max_length=120)
+    presentacion_inicial: Optional[str] = Field(None, max_length=4000)
+    tono: Optional[Literal["profesional", "cercano", "juvenil"]] = "cercano"
+    requisitos_texto: Optional[str] = Field(None, max_length=20000)
+    beneficios_texto: Optional[str] = Field(None, max_length=20000)
+    bonos_texto: Optional[str] = Field(None, max_length=20000)
+    faq_texto: Optional[str] = Field(None, max_length=40000)
+    proceso_ingreso_texto: Optional[str] = Field(None, max_length=20000)
+    enlaces_contacto_texto: Optional[str] = Field(None, max_length=20000)
+
+
+class PropuestaItemRequisito(_Entrada):
+    id: Optional[int] = Field(None, gt=0)
+    codigo: Optional[str] = None
+    nombre: str = Field(..., max_length=160)
+    descripcion: Optional[str] = Field(None, max_length=4000)
+    categoria: Optional[str] = "obligatorio"
+    bloquea_proceso: bool = True
+    mensaje_si_no_cumple: Optional[str] = None
+    orden: Optional[int] = None
+
+
+class PropuestaItemBeneficio(_Entrada):
+    id: Optional[int] = Field(None, gt=0)
+    codigo: Optional[str] = None
+    nombre: str = Field(..., max_length=160)
+    descripcion: Optional[str] = Field(None, max_length=4000)
+    tipo: Optional[str] = "beneficio"
+    valor: Optional[Any] = None
+    moneda: Optional[str] = None
+    requiere_validacion_humana: bool = False
+    requiere_confirmacion_humana: Optional[bool] = None
+
+
+class PropuestaItemFaq(_Entrada):
+    id: Optional[int] = Field(None, gt=0)
+    codigo: Optional[str] = None
+    pregunta: str = Field(..., max_length=2000)
+    respuesta: str = Field(..., max_length=8000)
+    categoria: Optional[str] = "general"
+
+
+class PropuestaItemPaso(_Entrada):
+    orden: Optional[int] = None
+    nombre: str = Field(..., max_length=160)
+    descripcion: Optional[str] = None
+    accion: Optional[str] = "informar"
+    mensaje: Optional[str] = None
+    requiere_humano: bool = False
+
+
+class PropuestaItemRecurso(_Entrada):
+    id: Optional[int] = Field(None, gt=0)
+    codigo: Optional[str] = None
+    tipo: Optional[str] = "solicitud"
+    nombre: str = Field(..., max_length=160)
+    url: str = Field(..., max_length=2000)
+    texto_boton: Optional[str] = Field(None, max_length=120)
+
+
+class GuardarInformacionOrganizadaIn(_Entrada):
+    general: Optional[Dict[str, Any]] = None
+    requisitos: Optional[List[PropuestaItemRequisito]] = None
+    beneficios: Optional[List[PropuestaItemBeneficio]] = None
+    bonos: Optional[List[PropuestaItemBeneficio]] = None
+    faq: Optional[List[PropuestaItemFaq]] = None
+    proceso_ingreso: Optional[List[PropuestaItemPaso]] = None
+    recursos: Optional[List[PropuestaItemRecurso]] = None
+    contacto_humano: Optional[Dict[str, Any]] = None
+    advertencias: Optional[List[str]] = None
+
+
+# ---------------------------------------------------------------------------
 # Requisitos conversacionales
 # ---------------------------------------------------------------------------
 
