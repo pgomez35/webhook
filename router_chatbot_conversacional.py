@@ -1686,21 +1686,90 @@ async def simular_conversacion(
     payload: SimulacionIn,
     agencia: dict = Depends(obtener_agencia_chatbot_actual),
 ):
+    """
+    Prueba el asistente en dry-run.
+
+    El ``chatbot_configuracion_id`` oficial viene SOLO de la ruta.
+    No envía WhatsApp/Instagram ni crea aspirantes/conversaciones reales.
+    """
     cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
     datos = _campos(payload)
-    if not datos.get("texto"):
-        raise HTTPException(status_code=400, detail="texto es obligatorio")
+
+    body_cfg = datos.get("chatbot_configuracion_id")
+    if body_cfg is not None and int(body_cfg) != int(cfg_id):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "chatbot_configuracion_id del body no coincide con el de la ruta; "
+                "se usa exclusivamente el valor del path."
+            ),
+        )
+
+    mensaje = str(datos.get("mensaje") or "").strip()
+    if not mensaje:
+        raise HTTPException(status_code=422, detail="mensaje no puede estar vacío")
+
+    campania_id = datos.get("campania_id")
+    if campania_id is not None:
+        campania = db.obtener_campania(_agencia_id(agencia), int(campania_id))
+        if not campania:
+            raise HTTPException(status_code=404, detail="Campaña no encontrada")
+        campania_cfg = campania.get("chatbot_configuracion_id")
+        if campania_cfg is not None and int(campania_cfg) != int(cfg_id):
+            raise HTTPException(
+                status_code=404,
+                detail="Campaña no encontrada",
+            )
+
+    historial_raw = datos.get("historial") or []
+    historial: list = []
+    for item in historial_raw:
+        if not isinstance(item, dict):
+            continue
+        historial.append(
+            {
+                "direccion": item.get("direccion"),
+                "texto": item.get("texto") or item.get("contenido"),
+            }
+        )
+
+    logger.info(
+        "[SIMULADOR_CONVERSACIONAL] agencia_id=%s chatbot_configuracion_id=%s "
+        "modo=%s campania_id=%s historial_mensajes=%s",
+        agencia["id"],
+        cfg_id,
+        datos.get("modo") or "informativo",
+        campania_id,
+        len(historial),
+    )
+
     try:
-        return await _servicio().simular_mensaje(
+        resultado = await _servicio().simular_mensaje(
             agencia_id=_agencia_id(agencia),
             chatbot_configuracion_id=cfg_id,
-            texto=datos["texto"],
-            conversacion_id=datos.get("conversacion_id"),
-            aspirante_id=datos.get("aspirante_id"),
-            campania_id=datos.get("campania_id"),
-            canal=datos.get("canal") or "whatsapp",
-            modo=datos.get("modo"),
-            historial=datos.get("historial"),
+            texto=mensaje,
+            campania_id=int(campania_id) if campania_id is not None else None,
+            canal="whatsapp",
+            modo=datos.get("modo") or "informativo",
+            historial=historial,
         )
     except _ERRORES_DATOS as e:
+        logger.info(
+            "[SIMULADOR_CONVERSACIONAL] agencia_id=%s chatbot_configuracion_id=%s "
+            "resultado=error codigo=datos",
+            agencia["id"],
+            cfg_id,
+        )
         raise _http_error(e) from e
+
+    logger.info(
+        "[SIMULADOR_CONVERSACIONAL] agencia_id=%s chatbot_configuracion_id=%s "
+        "modo=%s campania_id=%s historial_mensajes=%s resultado=%s",
+        agencia["id"],
+        cfg_id,
+        resultado.get("modo") or datos.get("modo"),
+        campania_id,
+        len(historial),
+        "ok" if resultado.get("usado", True) else resultado.get("motivo") or "error",
+    )
+    return resultado

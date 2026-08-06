@@ -1845,14 +1845,51 @@ class AsignarCampaniaIn(_Entrada):
     aplicar_flujo: bool = True
 
 
-class SimularMensajeIn(_Entrada):
-    """Prueba el asistente sin tocar canales reales ni crear conversaciones."""
+class MensajeHistorialSimulacion(_Entrada):
+    """Ítem de historial del simulador (acepta alias legibles)."""
 
-    chatbot_configuracion_id: int = Field(..., gt=0)
+    direccion: Optional[Literal["entrante", "saliente"]] = None
+    texto: Optional[str] = Field(None, max_length=4000)
+    rol: Optional[Literal["usuario", "asistente", "user", "assistant"]] = None
+    contenido: Optional[str] = Field(None, max_length=4000)
+
+    @model_validator(mode="after")
+    def _normalizar(self):
+        texto = (self.texto or self.contenido or "").strip()
+        if not texto:
+            raise ValueError("Cada mensaje del historial necesita texto o contenido")
+        direccion = self.direccion
+        if not direccion:
+            rol = (self.rol or "").lower()
+            if rol in {"usuario", "user"}:
+                direccion = "entrante"
+            elif rol in {"asistente", "assistant"}:
+                direccion = "saliente"
+        if direccion not in {"entrante", "saliente"}:
+            raise ValueError(
+                "Cada mensaje del historial necesita direccion entrante/saliente "
+                "o rol usuario/asistente"
+            )
+        self.direccion = direccion
+        self.texto = texto
+        return self
+
+
+class SimularMensajeIn(_Entrada):
+    """
+    Prueba el asistente sin tocar canales reales ni crear conversaciones.
+
+    ``chatbot_configuracion_id`` NO es obligatorio: se toma de la ruta.
+    Si un cliente antiguo lo envía en el body, el router exige que coincida
+    con el ID del path.
+    """
+
     mensaje: str = Field(..., max_length=4000)
+    modo: Modo = "informativo"
     campania_id: Optional[int] = Field(None, gt=0)
-    modo: Optional[Modo] = None
-    historial: List[Dict[str, Any]] = Field(default_factory=list)
+    historial: List[MensajeHistorialSimulacion] = Field(default_factory=list)
+    # Compatibilidad temporal con clientes antiguos (opcional).
+    chatbot_configuracion_id: Optional[int] = Field(None, gt=0)
 
     @field_validator("mensaje")
     @classmethod
@@ -1861,23 +1898,30 @@ class SimularMensajeIn(_Entrada):
 
     @field_validator("historial")
     @classmethod
-    def _val_historial(cls, v: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        if len(v or []) > 40:
-            raise ValueError("El historial de simulación admite máximo 40 mensajes")
+    def _val_historial(
+        cls, v: List[MensajeHistorialSimulacion]
+    ) -> List[MensajeHistorialSimulacion]:
+        if len(v or []) > 12:
+            raise ValueError("El historial de simulación admite máximo 12 mensajes")
         return v or []
 
 
 class SimularMensajeOut(_Salida):
     respuesta: str
     modo: Modo = "informativo"
+    simulacion: bool = True
     estado_actual: Optional[str] = None
     requiere_humano: bool = False
     herramientas_usadas: List[str] = Field(default_factory=list)
+    acciones: List[Any] = Field(default_factory=list)
     fuentes: List[Dict[str, Any]] = Field(default_factory=list)
     advertencias: List[str] = Field(default_factory=list)
     modelo_ia: Optional[str] = None
     tokens_entrada: Optional[int] = None
     tokens_salida: Optional[int] = None
+    usado: bool = True
+    motivo: Optional[str] = None
+    uso: Optional[Dict[str, Any]] = None
 
 
 class AspiranteCamposConversacionalesIn(_Entrada):

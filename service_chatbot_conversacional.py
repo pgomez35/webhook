@@ -409,27 +409,70 @@ async def simular_mensaje(
     No envía nada por Meta, no inserta mensajes ni eventos y no modifica
     aspirantes reales: sirve para probar prompts y configuración desde el panel.
     """
+    mensaje = str(texto or "").strip()
+    if not mensaje:
+        logger.info(
+            "[SIMULADOR_CONVERSACIONAL] agencia_id=%s chatbot_configuracion_id=%s "
+            "resultado=error codigo=mensaje_vacio",
+            agencia_id,
+            chatbot_configuracion_id,
+        )
+        return _resultado_no_usado("mensaje_vacio")
+
     if not openai_configurado():
+        logger.info(
+            "[SIMULADOR_CONVERSACIONAL] agencia_id=%s chatbot_configuracion_id=%s "
+            "resultado=error codigo=openai_no_configurado",
+            agencia_id,
+            chatbot_configuracion_id,
+        )
         return _resultado_no_usado("openai_no_configurado")
+
+    historial_norm = _normalizar_historial_simulacion(historial)
+
+    campania: Optional[Dict[str, Any]] = None
+    if campania_id is not None:
+        campania = await _db(
+            "obtener_campania", agencia_id, int(campania_id), default=None
+        )
+        if not campania:
+            return _resultado_no_usado("campania_no_encontrada")
+
+    # En simulación se permite probar aunque el asistente aún no esté publicado.
+    asistente = await _db(
+        "obtener_asistente_configuracion",
+        agencia_id,
+        chatbot_configuracion_id,
+        default=None,
+    )
+    if not asistente:
+        return _resultado_no_usado("asistente_inexistente")
+    asistente_sim = dict(asistente)
+    asistente_sim["activo"] = True
 
     conversacion: Optional[Dict[str, Any]] = None
     if conversacion_id:
         conversacion = await _db(
             "obtener_conversacion", agencia_id, conversacion_id, default=None
         )
+        # En simulación no se reutilizan conversaciones reales salvo dry_run
+        # explícito del panel; si aparece una real, se ignora para no mutarla.
+        if conversacion and not bool(conversacion.get("_simulacion")):
+            conversacion = None
 
     if conversacion is None:
         conversacion = {
-            "id": conversacion_id,
+            "id": None,
             "agencia_id": agencia_id,
             "chatbot_configuracion_id": chatbot_configuracion_id,
-            "aspirante_id": aspirante_id,
+            "aspirante_id": None,
             "campania_id": campania_id,
             "canal": canal,
             "estado": "abierta",
             "estado_actual": "inicio",
             "modo_humano": False,
             "ia_habilitada": True,
+            "_simulacion": True,
         }
 
     try:
@@ -437,20 +480,31 @@ async def simular_mensaje(
             construir_contexto,
             agencia_id=agencia_id,
             conversacion=conversacion,
+            asistente=asistente_sim,
+            campania=campania,
             dry_run=True,
         )
 
     except AsistenteInactivo as exc:
+        logger.info(
+            "[SIMULADOR_CONVERSACIONAL] agencia_id=%s chatbot_configuracion_id=%s "
+            "resultado=error codigo=asistente_inactivo",
+            agencia_id,
+            chatbot_configuracion_id,
+        )
         return _resultado_no_usado("asistente_inactivo", detalle=str(exc))
 
     if modo and modo in MODOS_VALIDOS:
         contexto.modo = modo
 
-    if historial:
-        contexto.mensajes = historial[-LIMITE_MENSAJES:]
+    if historial_norm:
+        contexto.mensajes = historial_norm[-LIMITE_MENSAJES:]
+
+    # Forzar dry_run: herramientas no escriben ni envían por canales.
+    contexto.dry_run = True
 
     preparado = crear_agente(contexto, dry_run=True)
-    entrada = _construir_entrada(contexto, texto, None)
+    entrada = _construir_entrada(contexto, mensaje, None)
 
     try:
         ejecucion = await _ejecutar_agente(preparado, entrada)
@@ -459,30 +513,83 @@ async def simular_mensaje(
         logger.warning("chatbot_conversacional: simulación falló: %s", exc)
         return {
             "usado": False,
+            "simulacion": True,
             "motivo": "openai_fallido",
             "respuesta": _texto_respaldo(contexto),
             "error": str(exc),
             "modo": contexto.modo,
-            "modelo": preparado.modelo,
+            "modelo_ia": preparado.modelo,
+            "acciones": [],
+            "herramientas_usadas": [],
+            "uso": {"modelo": preparado.modelo, "tokens_entrada": 0, "tokens_salida": 0},
         }
 
     ctxh = preparado.contexto_herramientas
+    acciones = list(ctxh.acciones or [])
+    herramientas = []
+    for accion in acciones:
+        if isinstance(accion, dict):
+            nombre = accion.get("herramienta") or accion.get("nombre") or accion.get("tool")
+            if nombre:
+                herramientas.append(str(nombre))
+        elif isinstance(accion, str):
+            herramientas.append(accion)
+
+    respuesta = str(ejecucion.get("texto") or "").strip() or _texto_respaldo(contexto)
 
     return {
         "usado": True,
         "simulacion": True,
-        "conversacion_id": contexto.conversacion_id,
-        "respuesta": ejecucion.get("texto"),
+        "conversacion_id": None,
+        "respuesta": respuesta,
         "modo": contexto.modo,
+        "modelo_ia": preparado.modelo,
         "modelo": preparado.modelo,
         "tokens_entrada": ejecucion.get("tokens_entrada"),
         "tokens_salida": ejecucion.get("tokens_salida"),
-        "acciones": ctxh.acciones,
-        "enlaces": ctxh.enlaces,
+        "acciones": acciones,
+        "herramientas_usadas": herramientas,
+        "enlaces": list(ctxh.enlaces or []),
         "escalado": bool(ctxh.escalamiento),
+        "requiere_humano": bool(ctxh.escalamiento),
         "cerrada": bool(ctxh.cierre),
-        "instrucciones": preparado.instrucciones,
+        "estado_actual": contexto.conversacion.get("estado_actual"),
+        "uso": {
+            "modelo": preparado.modelo,
+            "tokens_entrada": ejecucion.get("tokens_entrada") or 0,
+            "tokens_salida": ejecucion.get("tokens_salida") or 0,
+        },
     }
+
+
+def _normalizar_historial_simulacion(
+    historial: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    """Acepta {direccion,texto} o {rol,contenido} y deja el formato del runtime."""
+    out: List[Dict[str, Any]] = []
+    for idx, item in enumerate(historial or []):
+        if not isinstance(item, dict):
+            continue
+        texto = item.get("texto") or item.get("contenido") or item.get("content")
+        if not texto:
+            continue
+        direccion = str(item.get("direccion") or "").strip().lower()
+        if direccion not in {"entrante", "saliente"}:
+            rol = str(item.get("rol") or item.get("role") or "").strip().lower()
+            if rol in {"usuario", "user"}:
+                direccion = "entrante"
+            elif rol in {"asistente", "assistant"}:
+                direccion = "saliente"
+            else:
+                continue
+        out.append(
+            {
+                "id": idx + 1,
+                "direccion": direccion,
+                "texto": str(texto),
+            }
+        )
+    return out[-LIMITE_MENSAJES:]
 
 
 async def procesar_media_como_evidencia(
