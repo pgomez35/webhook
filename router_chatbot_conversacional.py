@@ -27,15 +27,18 @@ import database_chatbot_captacion as db_captacion
 import database_chatbot_conversacional as db
 from router_chatbot_auth import obtener_agencia_chatbot_actual
 from schemas_chatbot_conversacional import (
+    AplicarPlantillaIn,
     AsistenteConfiguracionUpsert,
     AsistenteInicializarIn,
     BeneficioIn,
     CampaniaIn,
+    ConfigRapidaPutIn,
     ConversacionAsignarCampaniaIn,
     ConversacionCerrarIn,
     ConversacionEnviarMensajeIn,
     ConversacionEscalarIn,
     ConversacionTomarIn,
+    CorregirHerramientasIn,
     EvidenciaRequeridaIn,
     EvidenciaRevisionIn,
     FaqConversacionalIn,
@@ -44,6 +47,7 @@ from schemas_chatbot_conversacional import (
     FlujoPasoIn,
     FlujoPasoMoverIn,
     PruebaLiveIn,
+    PublicarAsistenteIn,
     RecursoEnlaceIn,
     ReglaEscalamientoIn,
     RequisitoIn,
@@ -269,29 +273,221 @@ def inicializar_asistente(
     agencia: dict = Depends(obtener_agencia_chatbot_actual),
 ):
     """
-    Prepara el modo conversacional desde la configuración rígida: asistente
-    (inactivo), FAQ importadas, requisitos base y flujo informativo.
-    Es idempotente.
+    Prepara el modo conversacional desde la configuración rígida vía plantilla
+    `agencia_live_estandar` (idempotente, no activa el asistente ni el motor).
 
-    El ``chatbot_configuracion_id`` viene SOLO de la ruta. El body es opcional
-    (`{}` o ausente) y sólo aporta flags (copiar FAQ, requisitos, flujo).
+    El ``chatbot_configuracion_id`` viene SOLO de la ruta. El body es opcional.
     La agencia se toma exclusivamente del JWT.
     """
     cfg_id = int(chatbot_configuracion_id)
     cfg = _configuracion_rigida(agencia, cfg_id)
     opciones = payload if payload is not None else AsistenteInicializarIn()
     try:
-        return db.inicializar_asistente_desde_config(
+        import service_chatbot_config_rapida as svc_rapida
+
+        resumen = svc_rapida.aplicar_plantilla_asistente_conversacional(
             _agencia_id(agencia),
             cfg_id,
-            cfg,
-            db_captacion.obtener_agencia_por_id(_agencia_id(agencia)),
-            copiar_faq=bool(opciones.copiar_faq),
-            crear_requisitos_base=bool(opciones.crear_requisitos_base),
-            crear_flujo_informativo=bool(opciones.crear_flujo_informativo),
+            config_rigida=cfg,
+            agencia=db_captacion.obtener_agencia_por_id(_agencia_id(agencia)),
+            completar_solo_faltantes=True,
+            activar_asistente=False,
+        )
+        # Compatibilidad con clientes que esperan el shape anterior.
+        asistente = resumen.pop("asistente_obj", None) or db.obtener_asistente_por_config(
+            _agencia_id(agencia), cfg_id
+        )
+        return {
+            "asistente": asistente,
+            "asistente_creado": resumen.get("asistente", {}).get("creado")
+            or resumen.get("asistente_creado"),
+            "faqs_importadas": resumen.get("faqs_importadas")
+            or resumen.get("faq", {}).get("importadas", 0),
+            "requisitos_creados": resumen.get("requisitos_creados")
+            or resumen.get("requisitos", {}).get("creados", 0),
+            "flujo_id": resumen.get("flujo_id"),
+            "flujo_creado": resumen.get("flujo_creado")
+            or resumen.get("flujos", {}).get("informativo_creado", False),
+            "pasos_creados": resumen.get("pasos_creados", 0),
+            "plantilla": resumen,
+            "copiar_faq": bool(opciones.copiar_faq),
+            "crear_requisitos_base": bool(opciones.crear_requisitos_base),
+            "crear_flujo_informativo": bool(opciones.crear_flujo_informativo),
+        }
+    except _ERRORES_DATOS as e:
+        raise _http_error(e) from e
+    except Exception as e:
+        from chatbot_conversacional_exceptions import ConversacionalError
+
+        if isinstance(e, ConversacionalError):
+            raise HTTPException(
+                status_code=400,
+                detail={"mensaje": e.mensaje, "detalle": e.detalle},
+            ) from e
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Configuración rápida
+# ---------------------------------------------------------------------------
+
+
+@router.get("/configuraciones/{chatbot_configuracion_id}/configuracion-rapida")
+def get_configuracion_rapida(
+    chatbot_configuracion_id: int,
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
+    import service_chatbot_config_rapida as svc_rapida
+
+    try:
+        return svc_rapida.obtener_configuracion_rapida(_agencia_id(agencia), cfg_id)
+    except _ERRORES_DATOS as e:
+        raise _http_error(e) from e
+
+
+@router.put("/configuraciones/{chatbot_configuracion_id}/configuracion-rapida")
+def put_configuracion_rapida(
+    chatbot_configuracion_id: int,
+    payload: ConfigRapidaPutIn,
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
+    import service_chatbot_config_rapida as svc_rapida
+
+    try:
+        return svc_rapida.guardar_configuracion_rapida(
+            _agencia_id(agencia), cfg_id, _campos(payload)
         )
     except _ERRORES_DATOS as e:
         raise _http_error(e) from e
+    except Exception as e:
+        from chatbot_conversacional_exceptions import ConversacionalError
+
+        if isinstance(e, ConversacionalError):
+            raise HTTPException(
+                status_code=400,
+                detail={"mensaje": e.mensaje, "detalle": e.detalle},
+            ) from e
+        raise
+
+
+@router.post("/configuraciones/{chatbot_configuracion_id}/aplicar-plantilla")
+def post_aplicar_plantilla(
+    chatbot_configuracion_id: int,
+    payload: Optional[AplicarPlantillaIn] = Body(default=None),
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
+    opciones = payload if payload is not None else AplicarPlantillaIn()
+    import service_chatbot_config_rapida as svc_rapida
+
+    try:
+        return svc_rapida.aplicar_plantilla_asistente_conversacional(
+            _agencia_id(agencia),
+            cfg_id,
+            plantilla_codigo=opciones.plantilla_codigo,
+            completar_solo_faltantes=bool(opciones.completar_solo_faltantes),
+            activar_asistente=bool(opciones.activar_asistente),
+            config_rigida=_configuracion_rigida(agencia, cfg_id),
+            agencia=db_captacion.obtener_agencia_por_id(_agencia_id(agencia)),
+        )
+    except Exception as e:
+        from chatbot_conversacional_exceptions import ConversacionalError
+
+        if isinstance(e, ConversacionalError):
+            raise HTTPException(
+                status_code=400,
+                detail={"mensaje": e.mensaje, "detalle": e.detalle},
+            ) from e
+        if isinstance(e, _ERRORES_DATOS):
+            raise _http_error(e) from e
+        raise
+
+
+@router.get("/configuraciones/{chatbot_configuracion_id}/estado-configuracion")
+def get_estado_configuracion(
+    chatbot_configuracion_id: int,
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
+    import service_chatbot_config_rapida as svc_rapida
+
+    return svc_rapida.obtener_estado_configuracion_conversacional(
+        _agencia_id(agencia), cfg_id
+    )
+
+
+@router.post("/configuraciones/{chatbot_configuracion_id}/corregir-herramientas")
+def post_corregir_herramientas(
+    chatbot_configuracion_id: int,
+    payload: Optional[CorregirHerramientasIn] = Body(default=None),
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
+    opciones = payload if payload is not None else CorregirHerramientasIn()
+    import service_chatbot_config_rapida as svc_rapida
+
+    try:
+        return svc_rapida.corregir_herramientas_invalidas(
+            _agencia_id(agencia), cfg_id, confirmar=bool(opciones.confirmar)
+        )
+    except Exception as e:
+        from chatbot_conversacional_exceptions import ConversacionalError
+
+        if isinstance(e, ConversacionalError):
+            raise HTTPException(status_code=400, detail=e.mensaje) from e
+        if isinstance(e, _ERRORES_DATOS):
+            raise _http_error(e) from e
+        raise
+
+
+@router.post("/configuraciones/{chatbot_configuracion_id}/publicar")
+def post_publicar_asistente(
+    chatbot_configuracion_id: int,
+    payload: Optional[PublicarAsistenteIn] = Body(default=None),
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    """Activa asistente_configuracion.activo. No cambia el selector de motor."""
+    cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
+    opciones = payload if payload is not None else PublicarAsistenteIn()
+    import service_chatbot_config_rapida as svc_rapida
+
+    try:
+        return svc_rapida.publicar_asistente(
+            _agencia_id(agencia), cfg_id, forzar=bool(opciones.forzar)
+        )
+    except Exception as e:
+        from chatbot_conversacional_exceptions import ConversacionalError
+
+        if isinstance(e, ConversacionalError):
+            raise HTTPException(
+                status_code=400,
+                detail={"mensaje": e.mensaje, "detalle": e.detalle},
+            ) from e
+        if isinstance(e, _ERRORES_DATOS):
+            raise _http_error(e) from e
+        raise
+
+
+@router.post("/configuraciones/{chatbot_configuracion_id}/despublicar")
+def post_despublicar_asistente(
+    chatbot_configuracion_id: int,
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
+    import service_chatbot_config_rapida as svc_rapida
+
+    try:
+        return svc_rapida.despublicar_asistente(_agencia_id(agencia), cfg_id)
+    except Exception as e:
+        from chatbot_conversacional_exceptions import ConversacionalError
+
+        if isinstance(e, ConversacionalError):
+            raise HTTPException(status_code=400, detail=e.mensaje) from e
+        if isinstance(e, _ERRORES_DATOS):
+            raise _http_error(e) from e
+        raise
 
 
 @router.post("/configuraciones/{chatbot_configuracion_id}/faq/importar")

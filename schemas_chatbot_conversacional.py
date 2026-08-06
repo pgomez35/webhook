@@ -342,6 +342,97 @@ class InicializarAsistenteOut(_Salida):
 
 
 # ---------------------------------------------------------------------------
+# Configuración rápida
+# ---------------------------------------------------------------------------
+
+
+class ConfigRapidaItemRequisito(_Entrada):
+    id: Optional[int] = Field(None, gt=0)
+    nombre: str = Field(..., max_length=160)
+    descripcion: Optional[str] = Field(None, max_length=4000)
+    obligatorio: bool = True
+    activo: bool = True
+    codigo: Optional[str] = Field(None, max_length=80)
+
+
+class ConfigRapidaItemBeneficio(_Entrada):
+    id: Optional[int] = Field(None, gt=0)
+    nombre: str = Field(..., max_length=160)
+    descripcion: Optional[str] = Field(None, max_length=4000)
+    valor: Optional[Any] = None
+    moneda: Optional[str] = Field(None, max_length=10)
+    requiere_confirmacion_humana: bool = False
+    activo: bool = True
+    codigo: Optional[str] = Field(None, max_length=80)
+    tipo: Optional[str] = Field(None, max_length=40)
+
+
+class ConfigRapidaItemFaq(_Entrada):
+    id: Optional[int] = Field(None, gt=0)
+    pregunta: str = Field(..., max_length=2000)
+    respuesta: str = Field(..., max_length=8000)
+    activo: bool = True
+    codigo: Optional[str] = Field(None, max_length=100)
+
+
+class ConfigRapidaGeneralIn(_Entrada):
+    nombre_asistente: Optional[str] = Field(None, max_length=120)
+    descripcion_agencia: Optional[str] = Field(None, max_length=4000)
+    presentacion_inicial: Optional[str] = Field(None, max_length=4000)
+    tono: Optional[Tono] = None
+    modo_informativo_activo: Optional[bool] = None
+    modo_conversion_activo: Optional[bool] = None
+
+
+class ConfigRapidaSolicitudIn(_Entrada):
+    url: Optional[str] = Field(None, max_length=2000)
+    texto_boton: Optional[str] = Field(None, max_length=120)
+
+
+class ConfigRapidaContactoIn(_Entrada):
+    activo: Optional[bool] = None
+    equipo_destino: Optional[str] = Field(None, max_length=120)
+    mensaje_usuario: Optional[str] = Field(None, max_length=2000)
+
+
+class ConfigRapidaEvidenciasIn(_Entrada):
+    activo: Optional[bool] = None
+    pedir_batalla: Optional[bool] = None
+    pedir_mejores_momentos: Optional[bool] = None
+    cantidad: Optional[int] = Field(None, ge=0, le=20)
+    instrucciones: Optional[str] = Field(None, max_length=4000)
+
+
+class ConfigRapidaContenidoIn(_Entrada):
+    requisitos: Optional[List[ConfigRapidaItemRequisito]] = None
+    beneficios: Optional[List[ConfigRapidaItemBeneficio]] = None
+    bonos: Optional[List[ConfigRapidaItemBeneficio]] = None
+    faq: Optional[List[ConfigRapidaItemFaq]] = None
+
+
+class ConfigRapidaPutIn(_Entrada):
+    general: Optional[ConfigRapidaGeneralIn] = None
+    solicitud: Optional[ConfigRapidaSolicitudIn] = None
+    contacto_humano: Optional[ConfigRapidaContactoIn] = None
+    contenido: Optional[ConfigRapidaContenidoIn] = None
+    evidencias: Optional[ConfigRapidaEvidenciasIn] = None
+
+
+class AplicarPlantillaIn(_Entrada):
+    plantilla_codigo: str = "agencia_live_estandar"
+    completar_solo_faltantes: bool = True
+    activar_asistente: bool = False
+
+
+class CorregirHerramientasIn(_Entrada):
+    confirmar: bool = False
+
+
+class PublicarAsistenteIn(_Entrada):
+    forzar: bool = False
+
+
+# ---------------------------------------------------------------------------
 # Requisitos conversacionales
 # ---------------------------------------------------------------------------
 
