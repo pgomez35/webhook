@@ -3605,11 +3605,62 @@ def obtener_o_crear_conversacion(*args: Any, **kwargs: Any) -> Dict[str, Any]:
 
 
 def listar_faq(*args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
-    return listar_faqs(*args, **kwargs)
+    """Alias tolerante: acepta `limite` (se aplica con slice) y 2º arg posicional."""
+    limite = kwargs.pop("limite", None)
+    if len(args) >= 2 and "chatbot_configuracion_id" not in kwargs:
+        kwargs["chatbot_configuracion_id"] = args[1]
+        args = args[:1]
+    kwargs.pop("limit", None)
+    filas = listar_faqs(*args, **kwargs)
+    if limite is not None:
+        try:
+            return list(filas)[: max(0, int(limite))]
+        except (TypeError, ValueError):
+            return list(filas)
+    return filas
 
 
 def listar_recursos_enlaces(*args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
-    return listar_recursos(*args, **kwargs)
+    """Alias tolerante: acepta `limite` y 2º arg posicional como config id."""
+    limite = kwargs.pop("limite", None)
+    if len(args) >= 2 and "chatbot_configuracion_id" not in kwargs:
+        kwargs["chatbot_configuracion_id"] = args[1]
+        args = args[:1]
+    kwargs.pop("limit", None)
+    filas = listar_recursos(*args, **kwargs)
+    if limite is not None:
+        try:
+            return list(filas)[: max(0, int(limite))]
+        except (TypeError, ValueError):
+            return list(filas)
+    return filas
+
+
+def listar_requisitos_gateway(
+    agencia_id: int,
+    chatbot_configuracion_id: Optional[int] = None,
+    *,
+    limite: Optional[int] = None,
+    cur=None,
+    **kwargs: Any,
+) -> List[Dict[str, Any]]:
+    """Compatibilidad con llamadas del context_builder vía gateway."""
+    filas = listar_requisitos(
+        agencia_id,
+        chatbot_configuracion_id=chatbot_configuracion_id,
+        cur=cur,
+        **kwargs,
+    )
+    if limite is not None:
+        try:
+            return list(filas)[: max(0, int(limite))]
+        except (TypeError, ValueError):
+            return list(filas)
+    return filas
+
+
+# El gateway puede resolver por nombre exacto; no sustituimos listar_requisitos
+# nativo (keyword-only). El context_builder ya llama con kwargs correctos.
 
 
 def buscar_faq(

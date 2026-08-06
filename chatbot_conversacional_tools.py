@@ -1080,6 +1080,17 @@ HERRAMIENTAS: Dict[str, Any] = {
     "cerrar_conversacion": cerrar_conversacion,
 }
 
+# Nombres legacy del panel (campos.js) → nombre real del runtime.
+ALIAS_HERRAMIENTAS: Dict[str, str] = {
+    "listar_requisitos": "consultar_requisitos",
+    "listar_beneficios": "consultar_beneficios_vigentes",
+    "buscar_faq": "consultar_faq",
+    "enviar_enlace": "enviar_enlace_autorizado",
+    "agendar_live": "preparar_prueba_live",
+    "registrar_dato_aspirante": "registrar_dato_explicito_aspirante",
+    "avanzar_paso_flujo": "confirmar_interes",
+}
+
 NOMBRES_HERRAMIENTAS = tuple(HERRAMIENTAS)
 
 # Herramientas que solo tienen sentido cuando se busca avanzar el proceso.
@@ -1092,6 +1103,11 @@ HERRAMIENTAS_SOLO_CONVERSION = frozenset(
         "registrar_evidencia_recibida",
     }
 )
+
+
+def _normalizar_nombre_herramienta(nombre: str) -> str:
+    clave = str(nombre or "").strip()
+    return ALIAS_HERRAMIENTAS.get(clave, clave)
 
 
 def obtener_herramientas(
@@ -1108,13 +1124,31 @@ def obtener_herramientas(
     seleccion = list(NOMBRES_HERRAMIENTAS)
 
     if permitidas:
-        desconocidas = [nombre for nombre in permitidas if nombre not in HERRAMIENTAS]
+        normalizadas: List[str] = []
+        desconocidas: List[str] = []
+        vistos = set()
+        for nombre in permitidas:
+            canonico = _normalizar_nombre_herramienta(nombre)
+            if canonico not in HERRAMIENTAS:
+                desconocidas.append(str(nombre))
+                continue
+            if canonico not in vistos:
+                vistos.add(canonico)
+                normalizadas.append(canonico)
+
         if desconocidas:
-            raise HerramientaNoPermitida(
-                "La configuración incluye herramientas inexistentes.",
-                {"desconocidas": desconocidas},
+            logger.warning(
+                "chatbot_conversacional: herramientas desconocidas ignoradas: %s",
+                desconocidas,
             )
-        seleccion = [nombre for nombre in seleccion if nombre in set(permitidas)]
+
+        if normalizadas:
+            seleccion = [nombre for nombre in seleccion if nombre in set(normalizadas)]
+        else:
+            logger.warning(
+                "chatbot_conversacional: ninguna herramienta permitida es válida; "
+                "se usan todas las del modo."
+            )
 
     if modo and modo != "conversion":
         seleccion = [
