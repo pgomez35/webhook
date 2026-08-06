@@ -8,11 +8,13 @@ Orden del flujo de un mensaje entrante:
 4. Si la conversación está en atención humana, no responde la IA.
 5. Resolver modo y campaña.
 6. Construir contexto e instrucciones dinámicas.
-7. Ejecutar el agente.
-8. Enviar la respuesta por el canal (callback o adaptador Meta).
-9. Guardar el mensaje saliente con modelo y tokens.
-10. Actualizar `ultimo_mensaje_at` y `resumen_contexto`.
-11. Si el proveedor de IA falla: mensaje de respaldo, evento de error y, tras
+7. Si la conversación aún no tiene respuesta del asistente y hay
+   `presentacion_inicial`, enviarla literalmente (sin modelo ni herramientas).
+8. Ejecutar el agente (desde el segundo turno o si no hay presentación).
+9. Enviar la respuesta por el canal (callback o adaptador Meta).
+10. Guardar el mensaje saliente con modelo y tokens (o marca de bienvenida literal).
+11. Actualizar `ultimo_mensaje_at` y `resumen_contexto`.
+12. Si el proveedor de IA falla: mensaje de respaldo, evento de error y, tras
     varios fallos seguidos, escalamiento a una persona. El flujo no avanza.
 """
 from __future__ import annotations
@@ -21,6 +23,8 @@ import asyncio
 import inspect
 import json
 import logging
+import re
+import unicodedata
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
@@ -51,6 +55,35 @@ MAX_ERRORES_ANTES_ESCALAR = 3
 ESTADOS_SIN_RESPUESTA_IA = frozenset({"esperando_humano", "bloqueada"})
 CANAL_WHATSAPP = "whatsapp"
 CANAL_INSTAGRAM = "instagram"
+
+# Saludos cortos que disparan la presentación literal en conversaciones nuevas.
+_SALUDOS_EXACTOS = frozenset(
+    {
+        "hola",
+        "hola hola",
+        "holi",
+        "holis",
+        "holaa",
+        "hola!",
+        "buenas",
+        "buen dia",
+        "buenos dias",
+        "buenas tardes",
+        "buenas noches",
+        "buenas buenas",
+        "hey",
+        "hi",
+        "hello",
+        "ola",
+        "saludos",
+        "que tal",
+        "qué tal",
+        "que hubo",
+    }
+)
+_SALUDOS_INICIO = frozenset(
+    {"hola", "holi", "holis", "holaa", "buenas", "hey", "hi", "hello", "ola", "saludos"}
+)
 
 EnviarCallback = Callable[[str], Any]
 
@@ -151,6 +184,114 @@ def estado_aspirante_permitido_para_ia(estado: Optional[str]) -> bool:
 def _texto_respaldo(contexto: Any = None) -> str:
     configuracion = getattr(contexto, "configuracion", None) or {}
     return str(configuracion.get("mensaje_error") or MENSAJE_RESPALDO)
+
+
+def _normalizar_texto_saludo(texto: str) -> str:
+    """Minúsculas sin acentos ni puntuación; conserva palabras para comparar saludos."""
+    valor = str(texto or "").strip().lower()
+    if not valor:
+        return ""
+    valor = unicodedata.normalize("NFD", valor)
+    valor = "".join(ch for ch in valor if unicodedata.category(ch) != "Mn")
+    valor = re.sub(r"[^\w\s]", " ", valor, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", valor).strip()
+
+
+def es_saludo_inicial(texto: str) -> bool:
+    """True si el mensaje es un saludo corto (p. ej. hola, buenas, hi)."""
+    normalizado = _normalizar_texto_saludo(texto)
+    if not normalizado:
+        return False
+    if normalizado in _SALUDOS_EXACTOS:
+        return True
+    partes = normalizado.split()
+    if partes and partes[0] in _SALUDOS_INICIO and len(partes) <= 3:
+        return True
+    return False
+
+
+def texto_presentacion_inicial(asistente: Optional[Dict[str, Any]]) -> Optional[str]:
+    """
+    Devuelve presentacion_inicial tal cual (conserva saltos de línea y emoji).
+    Solo se recortan espacios al inicio/final del bloque completo.
+    """
+    if not isinstance(asistente, dict):
+        return None
+    crudo = asistente.get("presentacion_inicial")
+    if not isinstance(crudo, str):
+        return None
+    if not crudo.strip():
+        return None
+    return crudo.strip("\n\r ")
+
+
+def _mensajes_previos(
+    mensajes: Optional[List[Dict[str, Any]]],
+    mensaje_actual_id: Optional[int],
+) -> List[Dict[str, Any]]:
+    previos: List[Dict[str, Any]] = []
+    for item in mensajes or []:
+        if not isinstance(item, dict):
+            continue
+        if mensaje_actual_id is not None and item.get("id") == mensaje_actual_id:
+            continue
+        previos.append(item)
+    return previos
+
+
+def _tiene_respuesta_asistente(
+    mensajes: Optional[List[Dict[str, Any]]],
+    mensaje_actual_id: Optional[int] = None,
+) -> bool:
+    for item in _mensajes_previos(mensajes, mensaje_actual_id):
+        if str(item.get("direccion") or "").strip().lower() == "saliente":
+            return True
+    return False
+
+
+def _es_primer_mensaje_conversacion(
+    mensajes: Optional[List[Dict[str, Any]]],
+    mensaje_actual_id: Optional[int] = None,
+) -> bool:
+    return len(_mensajes_previos(mensajes, mensaje_actual_id)) == 0
+
+
+def resolver_presentacion_literal(
+    *,
+    asistente: Optional[Dict[str, Any]],
+    mensajes: Optional[List[Dict[str, Any]]],
+    texto_usuario: str,
+    mensaje_actual_id: Optional[int] = None,
+) -> Optional[str]:
+    """
+    Si corresponde enviar la bienvenida literal, retorna el texto exacto.
+    No usa chatbot_configuracion.mensaje_bienvenida.
+    """
+    presentacion = texto_presentacion_inicial(asistente)
+    if not presentacion:
+        return None
+    if _tiene_respuesta_asistente(mensajes, mensaje_actual_id):
+        return None
+    if es_saludo_inicial(texto_usuario) or _es_primer_mensaje_conversacion(
+        mensajes, mensaje_actual_id
+    ):
+        return presentacion
+    return None
+
+
+def _log_bienvenida_literal(
+    *,
+    agencia_id: int,
+    config_id: Optional[int],
+    conversacion_id: Optional[int],
+) -> None:
+    logger.info(
+        "[CHATBOT-CONV] bienvenida_literal=true agencia_id=%s config_id=%s "
+        "conversacion_id=%s fuente=asistente_configuracion.presentacion_inicial",
+        agencia_id,
+        config_id,
+        conversacion_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +437,27 @@ async def procesar_mensaje_conversacional(
         )
 
     await _persistir_modo(contexto, dry_run=dry_run)
+
+    presentacion = resolver_presentacion_literal(
+        asistente=contexto.asistente,
+        mensajes=contexto.mensajes,
+        texto_usuario=texto,
+        mensaje_actual_id=mensaje_entrante_id,
+    )
+    if presentacion:
+        return await _responder_presentacion_literal(
+            contexto=contexto,
+            presentacion=presentacion,
+            conversacion_id=conversacion_id,
+            mensaje_entrante_id=mensaje_entrante_id,
+            texto_usuario=texto,
+            canal=canal,
+            token=token,
+            phone_number_id=phone_number_id,
+            destino=wa_id or usuario_externo_id,
+            enviar_callback=enviar_callback,
+            dry_run=dry_run,
+        )
 
     preparado = crear_agente(contexto, dry_run=dry_run, mensaje_id=mensaje_entrante_id)
     entrada = _construir_entrada(contexto, texto, mensaje_entrante_id)
@@ -503,6 +665,39 @@ async def simular_mensaje(
     # Forzar dry_run: herramientas no escriben ni envían por canales.
     contexto.dry_run = True
 
+    presentacion = resolver_presentacion_literal(
+        asistente=contexto.asistente,
+        mensajes=contexto.mensajes,
+        texto_usuario=mensaje,
+        mensaje_actual_id=None,
+    )
+    if presentacion:
+        _log_bienvenida_literal(
+            agencia_id=agencia_id,
+            config_id=chatbot_configuracion_id or contexto.chatbot_configuracion_id,
+            conversacion_id=None,
+        )
+        return {
+            "usado": True,
+            "simulacion": True,
+            "bienvenida_literal": True,
+            "conversacion_id": None,
+            "respuesta": presentacion,
+            "modo": contexto.modo,
+            "modelo_ia": None,
+            "modelo": None,
+            "tokens_entrada": 0,
+            "tokens_salida": 0,
+            "acciones": [],
+            "herramientas_usadas": [],
+            "enlaces": [],
+            "escalado": False,
+            "requiere_humano": False,
+            "cerrada": False,
+            "estado_actual": contexto.conversacion.get("estado_actual"),
+            "uso": {"modelo": None, "tokens_entrada": 0, "tokens_salida": 0},
+        }
+
     preparado = crear_agente(contexto, dry_run=True)
     entrada = _construir_entrada(contexto, mensaje, None)
 
@@ -690,6 +885,96 @@ def _evidencia_requerida_para(
             return evidencia
 
     return None
+
+
+async def _responder_presentacion_literal(
+    *,
+    contexto: ConversationalContext,
+    presentacion: str,
+    conversacion_id: Optional[int],
+    mensaje_entrante_id: Optional[int],
+    texto_usuario: str,
+    canal: str,
+    token: Optional[str],
+    phone_number_id: Optional[str],
+    destino: Optional[str],
+    enviar_callback: Optional[EnviarCallback],
+    dry_run: bool,
+) -> Dict[str, Any]:
+    """
+    Envía presentacion_inicial sin modelo ni herramientas.
+    No avanza pasos irreversibles del flujo.
+    """
+    _log_bienvenida_literal(
+        agencia_id=contexto.agencia_id,
+        config_id=contexto.chatbot_configuracion_id,
+        conversacion_id=conversacion_id,
+    )
+
+    envio = await _enviar_respuesta(
+        canal=canal,
+        texto=presentacion,
+        enlaces=[],
+        token=token,
+        phone_number_id=phone_number_id,
+        destino=destino,
+        enviar_callback=enviar_callback,
+        dry_run=dry_run,
+    )
+
+    mensaje_saliente = None
+    if presentacion and not dry_run and conversacion_id:
+        mensaje_saliente = await _db(
+            "insertar_mensaje",
+            contexto.agencia_id,
+            conversacion_id,
+            canal=canal,
+            direccion="saliente",
+            remitente_tipo="chatbot",
+            tipo_mensaje="texto",
+            texto=presentacion,
+            estado_envio="enviado" if envio.get("enviado") else "error",
+            error_detalle=envio.get("error"),
+            procesado_por_ia=False,
+            metadata={
+                "bienvenida_literal": True,
+                "fuente": "asistente_configuracion.presentacion_inicial",
+                "modo": contexto.modo,
+            },
+            default=None,
+        )
+        mensaje_saliente = _normalizar_fila_mensaje(mensaje_saliente)
+
+    await _actualizar_cierre_de_turno(
+        contexto,
+        respuesta=presentacion,
+        mensaje_usuario=texto_usuario,
+        acciones=[],
+        escalado=False,
+        cerrada=False,
+        dry_run=dry_run,
+    )
+
+    return {
+        "usado": True,
+        "motivo": None,
+        "bienvenida_literal": True,
+        "conversacion_id": conversacion_id,
+        "mensaje_entrante_id": mensaje_entrante_id,
+        "mensaje_saliente_id": (_normalizar_fila_mensaje(mensaje_saliente) or {}).get("id"),
+        "respuesta": presentacion,
+        "modo": contexto.modo,
+        "modelo": None,
+        "tokens_entrada": 0,
+        "tokens_salida": 0,
+        "acciones": [],
+        "enlaces": [],
+        "escalado": False,
+        "cerrada": False,
+        "enviado": envio.get("enviado"),
+        "error": envio.get("error"),
+        "sdk": None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1156,9 +1441,12 @@ async def _manejar_fallo_ia(
 
 __all__ = [
     "debe_usar_conversacional",
+    "es_saludo_inicial",
     "feature_enabled",
     "procesar_media_como_evidencia",
     "procesar_mensaje_conversacional",
     "resolver_motor_conversacional",
+    "resolver_presentacion_literal",
     "simular_mensaje",
+    "texto_presentacion_inicial",
 ]

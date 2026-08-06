@@ -41,6 +41,7 @@ REGLAS_OBLIGATORIAS: List[str] = [
     "Si detectas molestia, insultos, urgencia, un reclamo, un tema legal, de dinero o algo fuera de tu alcance, transfiere a una persona del equipo.",
     "Si la persona pide hablar con un humano, transfiere de inmediato sin insistir.",
     "Ante duda razonable entre responder o escalar, escala.",
+    "Nunca reformules ni resumas la presentación inicial del asistente: el backend la envía literalmente en el primer contacto.",
 ]
 
 
@@ -90,7 +91,13 @@ def _identidad(ctx: ConversationalContext) -> str:
 
     if asistente.get("presentacion_inicial"):
         lineas.append(
-            f"- Presentación autorizada: {_texto(asistente['presentacion_inicial'], 400)}"
+            "- La presentación inicial autorizada ya se envía literalmente al primer "
+            "contacto/saludo (no la reformules ni la resumas). Texto de referencia: "
+            f"{_texto(asistente['presentacion_inicial'], 400)}"
+        )
+        lineas.append(
+            "- No uses chatbot_configuracion.mensaje_bienvenida: esa fuente es solo "
+            "del chatbot clásico o de migración."
         )
 
     if asistente.get("texto_privacidad"):
@@ -257,11 +264,23 @@ def _flujo(ctx: ConversationalContext) -> str:
         )
 
     if ctx.paso:
+        codigo_paso = str(ctx.paso.get("codigo") or "").strip().lower()
+        presentacion_asistente = str(
+            ctx.asistente.get("presentacion_inicial") or ""
+        ).strip()
         lineas.append(
             f"- Paso actual: {_texto(ctx.paso.get('nombre'), 120)} — acción esperada: {_texto(ctx.paso.get('tipo_accion'), 40)}."
         )
-        if ctx.paso.get("mensaje_instrucciones"):
-            lineas.append(f"- Instrucciones del paso: {_texto(ctx.paso['mensaje_instrucciones'], 400)}")
+        if codigo_paso == "presentacion" and presentacion_asistente:
+            lineas.append(
+                "- El paso codigo=presentacion NO sobrescribe ni compite con "
+                "asistente_configuracion.presentacion_inicial (ya enviada literalmente "
+                "al inicio). Continúa según lo que pregunte la persona."
+            )
+        elif ctx.paso.get("mensaje_instrucciones"):
+            lineas.append(
+                f"- Instrucciones del paso: {_texto(ctx.paso['mensaje_instrucciones'], 400)}"
+            )
         if ctx.paso.get("requiere_humano"):
             lineas.append("- Este paso requiere intervención humana: transfiere la conversación.")
 
