@@ -1222,8 +1222,10 @@ def set_tipo_chatbot(
     tipo_chatbot: str,
 ) -> Dict[str, Any]:
     """
-    Persiste tipo_chatbot, sincroniza flags de config y modos del asistente.
-    No modifica asistente_configuracion.activo.
+    Persiste tipo_chatbot y sincroniza flags internos en una transacción.
+
+    Al elegir informativo o inteligente, si existe asistente_configuracion
+    asociada, queda activo=true (la agencia no administra ese interruptor).
     """
     from chatbot_tipo import modos_asistente_desde_tipo, normalizar_tipo_chatbot, sync_completo_desde_tipo
 
@@ -1231,6 +1233,7 @@ def set_tipo_chatbot(
     if not tipo:
         raise ValueError("tipo_chatbot debe ser 'informativo' o 'inteligente'")
     sync = sync_completo_desde_tipo(tipo)
+    modos = modos_asistente_desde_tipo(tipo)
     with get_connection_chatbot_context() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
@@ -1255,16 +1258,17 @@ def set_tipo_chatbot(
             if not row:
                 raise ValueError("Configuración no encontrada")
 
-            # Sync modos internos del asistente (si existe)
-            modos = modos_asistente_desde_tipo(tipo)
+            # Sync modos internos + activar asistente si existe (sin crear uno nuevo)
             cur.execute(
                 """
                 UPDATE chatbot.asistente_configuracion
-                SET modo_informativo_activo = %s,
+                SET activo = TRUE,
+                    modo_informativo_activo = %s,
                     modo_conversion_activo = %s,
                     modo_predeterminado = %s,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE agencia_id = %s AND chatbot_configuracion_id = %s
+                RETURNING id
                 """,
                 (
                     modos["modo_informativo_activo"],
@@ -1274,16 +1278,18 @@ def set_tipo_chatbot(
                     configuracion_id,
                 ),
             )
+            asistente_row = cur.fetchone()
 
     out = obtener_configuracion_por_id(agencia_id, configuracion_id)
     if not out:
         raise ValueError("Configuración no encontrada")
     logger.info(
         "[CHATBOT-CONFIG] tipo_chatbot=%s usar_asistente=%s usar_rutas=%s "
-        "agencia_id=%s configuracion_id=%s",
+        "asistente_activado=%s agencia_id=%s configuracion_id=%s",
         tipo,
         sync["usar_asistente_conversacional"],
         sync["usar_rutas_adaptativas"],
+        bool(asistente_row),
         agencia_id,
         configuracion_id,
     )

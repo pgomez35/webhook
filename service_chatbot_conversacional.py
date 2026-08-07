@@ -615,8 +615,9 @@ async def procesar_mensaje_conversacional(
             remitente_tipo="chatbot",
             tipo_mensaje="texto",
             texto=respuesta,
-            estado_envio="enviado" if envio.get("enviado") else "error",
+            estado_envio="enviado" if envio.get("enviado") is True else "error",
             error_detalle=envio.get("error"),
+            mensaje_externo_id=envio.get("mensaje_externo_id"),
             procesado_por_ia=True,
             modelo_ia=preparado.modelo,
             prompt_version=preparado.prompt_version,
@@ -626,6 +627,8 @@ async def procesar_mensaje_conversacional(
                 "modo": contexto.modo,
                 "herramientas": [accion.get("herramienta") for accion in ctxh.acciones],
                 "enlaces": [enlace.get("codigo") for enlace in enlaces],
+                "respuesta_enviada": bool(envio.get("enviado") is True),
+                "status_code": envio.get("status_code"),
             },
             default=None,
         )
@@ -648,6 +651,9 @@ async def procesar_mensaje_conversacional(
         "mensaje_entrante_id": mensaje_entrante_id,
         "mensaje_saliente_id": (_normalizar_fila_mensaje(mensaje_saliente) or {}).get("id"),
         "respuesta": respuesta,
+        "respuesta_enviada": bool(envio.get("enviado") is True) or dry_run,
+        "requiere_reintento": not (bool(envio.get("enviado") is True) or dry_run),
+        "mensaje_externo_id": envio.get("mensaje_externo_id"),
         "modo": contexto.modo,
         "modelo": preparado.modelo,
         "tokens_entrada": ejecucion.get("tokens_entrada"),
@@ -1992,25 +1998,46 @@ async def _enviar_respuesta(
     dry_run: bool,
 ) -> Dict[str, Any]:
     if dry_run:
-        return {"enviado": False, "motivo": "simulacion"}
+        return {
+            "enviado": True,
+            "motivo": "simulacion",
+            "dry_run": True,
+            "mensaje_externo_id": None,
+            "status_code": None,
+            "requiere_reintento": False,
+        }
 
     if not texto:
-        return {"enviado": False, "motivo": "respuesta_vacia"}
+        return {
+            "enviado": False,
+            "motivo": "respuesta_vacia",
+            "requiere_reintento": False,
+        }
 
     partes = [texto]
     for enlace in enlaces:
         etiqueta = enlace.get("nombre") or enlace.get("codigo") or "Enlace"
         partes.append(f"{etiqueta}: {enlace['url']}")
 
+    from chatbot_envio_whatsapp import normalizar_resultado_envio
+
+    ultimo: Dict[str, Any] = {"enviado": False}
     if enviar_callback is not None:
         try:
             for parte in partes:
-                await _quizas_await(enviar_callback(parte))
-            return {"enviado": True}
+                resultado = await _quizas_await(enviar_callback(parte))
+                ultimo = normalizar_resultado_envio(resultado)
+                if not ultimo.get("enviado"):
+                    return ultimo
+            return ultimo
 
         except Exception as exc:  # noqa: BLE001
             logger.error("chatbot_conversacional: callback de envío falló: %s", exc)
-            return {"enviado": False, "error": str(exc)}
+            return {
+                "enviado": False,
+                "error": str(exc)[:400],
+                "requiere_reintento": True,
+            }
 
     if canal == CANAL_WHATSAPP:
         return await _enviar_whatsapp(partes, token, phone_number_id, destino)
@@ -2018,7 +2045,7 @@ async def _enviar_respuesta(
     if canal == CANAL_INSTAGRAM:
         return await _enviar_instagram(partes, destino)
 
-    return {"enviado": False, "motivo": f"canal_sin_adaptador:{canal}"}
+    return {"enviado": False, "motivo": f"canal_sin_adaptador:{canal}", "requiere_reintento": True}
 
 
 async def _enviar_whatsapp(
@@ -2028,28 +2055,25 @@ async def _enviar_whatsapp(
     destino: Optional[str],
 ) -> Dict[str, Any]:
     if not token or not phone_number_id or not destino:
-        return {"enviado": False, "motivo": "credenciales_whatsapp_incompletas"}
+        return {
+            "enviado": False,
+            "motivo": "credenciales_whatsapp_incompletas",
+            "requiere_reintento": True,
+        }
 
-    from enviar_msg_wp import enviar_mensaje_texto_simple  # import lazy: evita ciclos
+    from chatbot_envio_whatsapp import enviar_whatsapp_texto_meta
 
+    ultimo: Dict[str, Any] = {"enviado": False}
     for parte in partes:
-        try:
-            codigo, respuesta = await asyncio.to_thread(
-                enviar_mensaje_texto_simple,
-                token=token,
-                numero_id=phone_number_id,
-                telefono_destino=destino,
-                texto=parte,
-            )
-
-        except Exception as exc:  # noqa: BLE001
-            logger.error("chatbot_conversacional: error enviando WhatsApp: %s", exc)
-            return {"enviado": False, "error": str(exc)}
-
-        if not 200 <= int(codigo or 0) < 300:
-            return {"enviado": False, "error": str(respuesta)[:300]}
-
-    return {"enviado": True}
+        ultimo = await enviar_whatsapp_texto_meta(
+            token=token,
+            phone_number_id=phone_number_id,
+            destino=destino,
+            texto=parte,
+        )
+        if not ultimo.get("enviado"):
+            return ultimo
+    return ultimo
 
 
 async def _enviar_instagram(partes: List[str], destino: Optional[str]) -> Dict[str, Any]:

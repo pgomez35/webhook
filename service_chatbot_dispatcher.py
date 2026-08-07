@@ -146,6 +146,13 @@ async def procesar_mensaje_segun_tipo_chatbot(
     resultado = dict(resultado or {})
     resultado.setdefault("tipo_chatbot", TIPO_INTELIGENTE)
     resultado["motor"] = "inteligente"
+    # Normalizar flag de envío: solo True con confirmación Meta (o dry_run).
+    if dry_run and resultado.get("usado"):
+        resultado["respuesta_enviada"] = True
+        resultado["requiere_reintento"] = False
+    elif "respuesta_enviada" not in resultado:
+        resultado["respuesta_enviada"] = bool(resultado.get("enviado") is True)
+        resultado["requiere_reintento"] = not resultado["respuesta_enviada"]
 
     if not resultado.get("usado") and resultado.get("motivo") in {
         "atencion_humana",
@@ -153,8 +160,17 @@ async def procesar_mensaje_segun_tipo_chatbot(
     }:
         from service_chatbot_respuesta_obligatoria import garantizar_respuesta_saliente
 
+        # Solo confirmación de recepción humana; no simula que un asesor tomó
+        # la conversación ni activa modo_humano.
         texto_conf = (
             "Un asesor continuará la conversación contigo. Tu mensaje fue recibido."
+            if resultado.get("motivo") == "atencion_humana"
+            else "Recibí tu mensaje. En breve te responderemos por aquí."
+        )
+        motivo_fb = (
+            "confirmacion_modo_humano"
+            if resultado.get("motivo") == "atencion_humana"
+            else "confirmacion_recepcion"
         )
         envio = await garantizar_respuesta_saliente(
             agencia_id=agencia_id,
@@ -166,18 +182,24 @@ async def procesar_mensaje_segun_tipo_chatbot(
             token=token,
             phone_number_id=phone_number_id,
             destino=wa_id or usuario_externo_id,
-            motivo_fallback="modo_humano",
+            motivo_fallback=motivo_fb,
             mensaje_externo_id=mensaje_externo_id,
         )
+        enviado = bool(envio.get("enviado") is True) or dry_run
         return {
             "usado": True,
+            "atendido": True,
+            "respuesta_generada": True,
             "motivo": resultado.get("motivo"),
             "respuesta": texto_conf,
-            "respuesta_enviada": bool(envio.get("enviado") or dry_run),
-            "modo_humano": True,
+            "respuesta_enviada": enviado,
+            "requiere_reintento": (not enviado) and (not dry_run),
+            "modo_humano": resultado.get("motivo") == "atencion_humana",
             "tipo_chatbot": TIPO_INTELIGENTE,
             "motor": "inteligente",
             "conversacion_id": resultado.get("conversacion_id") or conversacion_id,
+            "mensaje_externo_id": envio.get("mensaje_externo_id"),
+            "error": envio.get("error"),
         }
 
     if resultado.get("motivo") == "mensaje_duplicado":
@@ -245,13 +267,45 @@ async def _garantizar_si_falta(
     if resultado.get("motivo") == "mensaje_duplicado":
         return resultado
 
-    tiene_respuesta = bool(
-        str(resultado.get("respuesta") or "").strip()
-        or resultado.get("respuesta_enviada")
-        or resultado.get("bienvenida_literal")
-        or (resultado.get("usado") and resultado.get("mensaje_saliente_id"))
+    tiene_respuesta_enviada = bool(resultado.get("respuesta_enviada") is True) or (
+        dry_run and bool(str(resultado.get("respuesta") or "").strip())
     )
-    if tiene_respuesta:
+    if tiene_respuesta_enviada:
+        resultado.setdefault("atendido", True)
+        resultado.setdefault("respuesta_generada", True)
+        resultado.setdefault("requiere_reintento", False)
+        return resultado
+
+    # Hay texto generado pero sin confirmación Meta → reintentar envío una vez.
+    texto_existente = str(resultado.get("respuesta") or "").strip()
+    if texto_existente:
+        from service_chatbot_respuesta_obligatoria import garantizar_respuesta_saliente
+
+        envio = await garantizar_respuesta_saliente(
+            agencia_id=agencia_id,
+            conversacion_id=conversacion_id,
+            canal=canal,
+            texto=texto_existente,
+            dry_run=dry_run,
+            enviar_callback=enviar_callback,
+            token=token,
+            phone_number_id=phone_number_id,
+            destino=destino,
+            motivo_fallback="reintento_envio",
+            mensaje_externo_id=mensaje_externo_id,
+        )
+        enviado = bool(envio.get("enviado") is True) or dry_run
+        resultado = dict(resultado)
+        resultado.update(
+            {
+                "atendido": True,
+                "respuesta_generada": True,
+                "respuesta_enviada": enviado,
+                "requiere_reintento": (not enviado) and (not dry_run),
+                "mensaje_externo_id": envio.get("mensaje_externo_id"),
+                "error": envio.get("error") or resultado.get("error"),
+            }
+        )
         return resultado
 
     from service_chatbot_respuesta_obligatoria import garantizar_respuesta_saliente
@@ -274,19 +328,25 @@ async def _garantizar_si_falta(
         motivo_fallback="mensaje_consumido_sin_respuesta",
         mensaje_externo_id=mensaje_externo_id,
     )
-    if not (envio.get("enviado") or dry_run):
+    enviado = bool(envio.get("enviado") is True) or dry_run
+    if not enviado:
         logger.error(
             "[CHATBOT_FALLBACK] ERROR mensaje_consumido_sin_respuesta "
-            "conversacion_id=%s envio_fallido",
+            "conversacion_id=%s envio_fallido respuesta_enviada=false",
             conversacion_id,
         )
     resultado = dict(resultado)
     resultado.update(
         {
             "usado": True,
+            "atendido": True,
+            "respuesta_generada": True,
             "respuesta": texto,
-            "respuesta_enviada": bool(envio.get("enviado") or dry_run),
+            "respuesta_enviada": enviado,
+            "requiere_reintento": (not enviado) and (not dry_run),
             "motivo_fallback": "mensaje_consumido_sin_respuesta",
+            "mensaje_externo_id": envio.get("mensaje_externo_id"),
+            "error": envio.get("error"),
         }
     )
     return resultado

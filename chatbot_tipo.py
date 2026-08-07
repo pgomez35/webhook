@@ -40,7 +40,11 @@ def flags_desde_tipo(tipo: str) -> Tuple[bool, bool]:
 
 
 def modos_asistente_desde_tipo(tipo: str) -> Dict[str, Any]:
-    """Sync interno de modos en asistente_configuracion (no visibles)."""
+    """
+    Sync interno de modos en asistente_configuracion (no visibles a la agencia).
+
+    Al elegir un tipo, el backend también deja activo=true si el asistente existe.
+    """
     tipo_n = normalizar_tipo_chatbot(tipo) or TIPO_INFORMATIVO
     if tipo_n == TIPO_INTELIGENTE:
         return {

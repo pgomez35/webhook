@@ -8,6 +8,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Dict, Optional
 
+from chatbot_envio_whatsapp import normalizar_resultado_envio
+
 logger = logging.getLogger("uvicorn.error")
 
 EnviarCallback = Callable[[str], Any]
@@ -30,7 +32,9 @@ async def garantizar_respuesta_saliente(
 ) -> Dict[str, Any]:
     """
     Envía y/o persiste una respuesta. Si falla el envío, aún registra el intento.
-    No retorna silencio: siempre intenta dejar rastro saliente.
+
+    respuesta_enviada / enviado = true solo con confirmación real de Meta
+    (o dry_run).
     """
     cuerpo = str(texto or "").strip()
     if not cuerpo:
@@ -40,38 +44,73 @@ async def garantizar_respuesta_saliente(
         )
 
     if ya_enviado:
-        return {"enviado": True, "texto": cuerpo, "duplicado_evitado": True}
+        return {
+            "enviado": True,
+            "texto": cuerpo,
+            "duplicado_evitado": True,
+            "mensaje_externo_id": None,
+            "status_code": None,
+            "requiere_reintento": False,
+        }
+
+    if dry_run:
+        return {
+            "enviado": True,
+            "texto": cuerpo,
+            "dry_run": True,
+            "mensaje_externo_id": None,
+            "status_code": None,
+            "requiere_reintento": False,
+        }
 
     enviado = False
     error = None
+    mid = None
+    status_code = None
+    requiere_reintento = True
 
-    if dry_run:
-        return {"enviado": True, "texto": cuerpo, "dry_run": True}
-
-    # Envío por callback (tests / adaptadores) o canal Meta vía service conversacional
     try:
-        if enviar_callback:
-            resultado = enviar_callback(cuerpo)
-            if hasattr(resultado, "__await__"):
-                resultado = await resultado  # type: ignore[misc]
-            enviado = True if resultado is None else bool(resultado)
-        else:
-            from service_chatbot_conversacional import _enviar_respuesta
+        if enviar_callback is None and canal == "whatsapp" and token and phone_number_id and destino:
+            from chatbot_envio_whatsapp import enviar_whatsapp_texto_meta
 
-            envio = await _enviar_respuesta(
-                canal=canal,
-                texto=cuerpo,
-                enlaces=[],
+            envio = await enviar_whatsapp_texto_meta(
                 token=token,
                 phone_number_id=phone_number_id,
                 destino=destino,
-                enviar_callback=None,
-                dry_run=False,
+                texto=cuerpo,
+                conversacion_id=conversacion_id,
             )
-            enviado = bool((envio or {}).get("enviado"))
-            error = (envio or {}).get("error")
+            norm = normalizar_resultado_envio(envio)
+        elif enviar_callback is not None:
+            resultado = enviar_callback(cuerpo)
+            if hasattr(resultado, "__await__"):
+                resultado = await resultado  # type: ignore[misc]
+            norm = normalizar_resultado_envio(resultado)
+        else:
+            logger.error(
+                "[CHATBOT_ENVIO] canal=%s conversacion_id=%s "
+                "respuesta_enviada=false error=sin_callback_ni_credenciales "
+                "requiere_reintento=true",
+                canal,
+                conversacion_id,
+            )
+            norm = {
+                "enviado": False,
+                "mensaje_externo_id": None,
+                "status_code": None,
+                "error": "sin_callback_ni_credenciales",
+                "requiere_reintento": True,
+            }
+
+        enviado = bool(norm.get("enviado") is True)
+        mid = norm.get("mensaje_externo_id")
+        status_code = norm.get("status_code")
+        error = norm.get("error")
+        requiere_reintento = bool(norm.get("requiere_reintento", not enviado))
     except Exception as exc:  # noqa: BLE001
         error = str(exc)[:400]
+        enviado = False
+        requiere_reintento = True
         logger.warning(
             "[CHATBOT_FALLBACK] conversacion_id=%s motivo=%s error_envio=%s",
             conversacion_id,
@@ -83,7 +122,6 @@ async def garantizar_respuesta_saliente(
         try:
             import database_chatbot_conversacional as db_conv
 
-            # Idempotencia: si ya hay saliente ligado al mismo externo reciente, no duplicar
             db_conv.insertar_mensaje(
                 agencia_id,
                 conversacion_id,
@@ -94,29 +132,32 @@ async def garantizar_respuesta_saliente(
                 texto=cuerpo,
                 estado_envio="enviado" if enviado else "error",
                 error_detalle=error,
-                mensaje_externo_id=None,
+                mensaje_externo_id=mid,
                 metadata={
                     "fallback": True,
                     "motivo_fallback": motivo_fallback,
                     "mensaje_externo_origen": mensaje_externo_id,
+                    "status_code": status_code,
+                    "respuesta_enviada": enviado,
                 },
             )
             db_conv.registrar_evento(
                 agencia_id,
                 conversacion_id,
-                tipo_evento="envio_enlace" if motivo_fallback == "envio_enlace" else "error"
-                if not enviado
-                else "cambio_estado",
+                tipo_evento="error" if not enviado else "cambio_estado",
                 nombre_evento="fallback_respuesta"
-                if motivo_fallback.startswith("fallback") or not enviado
+                if not enviado
                 else "respuesta_garantizada",
                 origen="backend",
                 exitoso=bool(enviado),
                 detalle={
                     "motivo": motivo_fallback,
                     "respuesta_enviada": bool(enviado),
+                    "requiere_reintento": requiere_reintento,
                     "requiere_asesor": False,
-                    "modo_humano": False,
+                    "modo_humano": motivo_fallback == "confirmacion_modo_humano",
+                    "mensaje_externo_id": mid,
+                    "status_code": status_code,
                 },
                 error_detalle=error,
             )
@@ -129,9 +170,18 @@ async def garantizar_respuesta_saliente(
 
     logger.info(
         "[CHATBOT_FALLBACK] conversacion_id=%s motivo=%s "
-        "requiere_asesor=false modo_humano=false respuesta_enviada=%s",
+        "respuesta_enviada=%s requiere_reintento=%s",
         conversacion_id,
         motivo_fallback,
         str(bool(enviado)).lower(),
+        str(requiere_reintento).lower(),
     )
-    return {"enviado": enviado, "texto": cuerpo, "error": error}
+    return {
+        "enviado": enviado,
+        "texto": cuerpo,
+        "error": error,
+        "mensaje_externo_id": mid,
+        "status_code": status_code,
+        "requiere_reintento": requiere_reintento,
+        "respuesta_enviada": enviado,
+    }

@@ -613,7 +613,7 @@ async def procesar_mensaje_informativo(
             "usado": True,
             "motivo": None,
             "respuesta": texto_resp,
-            "respuesta_enviada": bool(envio.get("enviado") or dry_run),
+            "respuesta_enviada": bool(envio.get("enviado") is True) or dry_run,
             "modo_humano": True,
             "requiere_asesor": False,
             "enlaces": [],
@@ -649,7 +649,7 @@ async def procesar_mensaje_informativo(
         return {
             "usado": True,
             "respuesta": texto_menu,
-            "respuesta_enviada": bool(envio.get("enviado") or dry_run),
+            "respuesta_enviada": bool(envio.get("enviado") is True) or dry_run,
             "enlaces": [],
             "menu": True,
         }
@@ -821,7 +821,7 @@ async def procesar_mensaje_informativo(
         "usado": True,
         "motivo": None,
         "respuesta": respuesta,
-        "respuesta_enviada": bool(envio.get("enviado") or dry_run),
+        "respuesta_enviada": bool(envio.get("enviado") is True) or dry_run,
         "requiere_asesor": requiere_asesor,
         "modo_humano": False,
         "enlaces": [],

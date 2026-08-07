@@ -1339,13 +1339,15 @@ async def _procesar_conversacional_si_aplica(
         return None
 
     async def _enviar_wa(texto_out: str):
-        await enviar_texto_whatsapp(
+        from chatbot_envio_whatsapp import enviar_whatsapp_texto_meta
+
+        return await enviar_whatsapp_texto_meta(
             token=token,
             phone_number_id=phone_number_id,
-            to=str(wa_id),
-            body=texto_out,
+            destino=str(wa_id),
+            texto=texto_out,
+            conversacion_id=None,
         )
-        return True
 
     try:
         from service_chatbot_dispatcher import procesar_mensaje_segun_tipo_chatbot
@@ -1384,17 +1386,20 @@ async def _procesar_conversacional_si_aplica(
             f"agencia_id={agencia_id} cfg={chatbot_configuracion_id}: {e}"
         )
         try:
-            await enviar_texto_whatsapp(
+            from chatbot_envio_whatsapp import enviar_whatsapp_texto_meta
+
+            await enviar_whatsapp_texto_meta(
                 token=token,
                 phone_number_id=phone_number_id,
-                to=str(wa_id),
-                body=(
+                destino=str(wa_id),
+                texto=(
                     "Recibí tu mensaje. Tuve un problema técnico temporal; "
                     "puedo seguir ayudándote en un momento."
                 ),
             )
         except Exception:
             pass
+        # Atendido para Meta (HTTP 200), pero sin afirmar envío exitoso.
         return True
 
     if isinstance(resultado, dict) and resultado.get("motivo") == "mensaje_duplicado":
@@ -1403,11 +1408,18 @@ async def _procesar_conversacional_si_aplica(
         )
         return True
 
-    print(
-        f"[CHATBOT_TIPO] atendido ok aspirante_id={aspirante.get('id')} "
-        f"cfg={chatbot_configuracion_id} tipo={decision.get('tipo_chatbot')} "
-        f"respuesta_enviada={bool((resultado or {}).get('respuesta_enviada') or (resultado or {}).get('usado'))}"
+    enviado = bool(
+        isinstance(resultado, dict) and resultado.get("respuesta_enviada") is True
     )
+    print(
+        f"[CHATBOT_TIPO] atendido aspirante_id={aspirante.get('id')} "
+        f"cfg={chatbot_configuracion_id} tipo={decision.get('tipo_chatbot')} "
+        f"respuesta_generada={bool((resultado or {}).get('respuesta') or (resultado or {}).get('usado'))} "
+        f"respuesta_enviada={str(enviado).lower()} "
+        f"requiere_reintento={str(bool((resultado or {}).get('requiere_reintento')) or (not enviado)).lower()}"
+    )
+    # True = el producto chatbot consumió el mensaje (Meta no debe reintentar
+    # el webhook). No implica que WhatsApp haya entregado la respuesta.
     return True
 
 
