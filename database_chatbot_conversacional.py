@@ -47,6 +47,7 @@ _TABLAS: Dict[str, str] = {
     "tareas": "chatbot.tareas_candidato",
     "evidencias": "chatbot.evidencias_candidato",
     "eventos": "chatbot.eventos_conversacion",
+    "menu_informativo": "chatbot.menu_informativo_opciones",
 }
 
 # Tablas que llevan updated_at (el trigger lo refresca, se envía igualmente).
@@ -65,6 +66,7 @@ _TABLAS_CON_UPDATED_AT = {
     "conversaciones",
     "tareas",
     "evidencias",
+    "menu_informativo",
 }
 
 # Tablas con borrado lógico disponible.
@@ -80,6 +82,7 @@ _TABLAS_CON_ACTIVO = {
     "pruebas_live",
     "evidencias_requeridas",
     "reglas_escalamiento",
+    "menu_informativo",
 }
 
 # Columnas jsonb (se envuelven con Json) y columnas array (se pasan como lista).
@@ -153,6 +156,19 @@ COLUMNAS_ASISTENTE = {
     "pregunta_clasificacion_nivel",
     "texto_inicio_principiante",
     "texto_inicio_experimentado",
+    # Presentación chatbot informativo (columnas ya disponibles en BD)
+    "mostrar_menu_inicial",
+    "titulo_menu_inicial",
+    "texto_indicacion_menu",
+    "formato_respuestas_informativas",
+    "max_elementos_respuesta",
+    "mostrar_titulo_respuesta",
+    "agregar_pregunta_final",
+    "repetir_menu_despues_respuesta",
+    "mensaje_no_entendido",
+    "mensaje_sin_informacion",
+    "mensaje_escalamiento_sin_bloqueo",
+    "mensaje_modo_humano",
 }
 
 COLUMNAS_REQUISITO = {
@@ -227,11 +243,28 @@ COLUMNAS_FAQ = {
     "actualizado_por",
 }
 
+COLUMNAS_MENU_INFORMATIVO = {
+    "chatbot_configuracion_id",
+    "numero",
+    "codigo",
+    "titulo",
+    "descripcion",
+    "intencion",
+    "tipo_fuente",
+    "respuesta_personalizada",
+    "requiere_asesor",
+    "orden",
+    "activo",
+    "creado_por",
+    "actualizado_por",
+}
+
 COLUMNAS_FLUJO = {
     "chatbot_configuracion_id",
     "codigo",
     "nombre",
     "tipo_flujo",
+    "nivel_objetivo",
     "descripcion",
     "evento_inicio",
     "estado_inicial",
@@ -1329,6 +1362,217 @@ def importar_faqs_desde_json(
 
 
 # ---------------------------------------------------------------------------
+# Menú informativo
+# ---------------------------------------------------------------------------
+
+OPCIONES_MENU_INFORMATIVO_DEFECTO: Tuple[Dict[str, Any], ...] = (
+    {
+        "numero": 1,
+        "codigo": "requisitos",
+        "titulo": "Requisitos para ser creador LIVE",
+        "descripcion": "Conoce los requisitos vigentes para unirte.",
+        "intencion": "requisitos",
+        "tipo_fuente": "requisitos",
+        "requiere_asesor": False,
+        "orden": 1,
+        "activo": True,
+    },
+    {
+        "numero": 2,
+        "codigo": "beneficios",
+        "titulo": "Beneficios de la agencia",
+        "descripcion": "Ventajas de pertenecer a la agencia.",
+        "intencion": "beneficios",
+        "tipo_fuente": "beneficios",
+        "requiere_asesor": False,
+        "orden": 2,
+        "activo": True,
+    },
+    {
+        "numero": 3,
+        "codigo": "bonos_monetizacion",
+        "titulo": "Bonos e incentivos de monetización",
+        "descripcion": "Bonos, incentivos y apoyos vigentes.",
+        "intencion": "bonos",
+        "tipo_fuente": "bonos",
+        "requiere_asesor": False,
+        "orden": 3,
+        "activo": True,
+    },
+    {
+        "numero": 4,
+        "codigo": "como_funciona",
+        "titulo": "Cómo funciona la agencia",
+        "descripcion": "Funcionamiento general y acompañamiento.",
+        "intencion": "agencia",
+        "tipo_fuente": "faq",
+        "requiere_asesor": False,
+        "orden": 4,
+        "activo": True,
+    },
+    {
+        "numero": 5,
+        "codigo": "continuar_proceso",
+        "titulo": "Continuar con el proceso",
+        "descripcion": "Pasos para avanzar en tu solicitud.",
+        "intencion": "proceso",
+        "tipo_fuente": "faq",
+        "requiere_asesor": False,
+        "orden": 5,
+        "activo": True,
+    },
+    {
+        "numero": 6,
+        "codigo": "asesor",
+        "titulo": "Hablar con un asesor",
+        "descripcion": "Solicitar contacto de una persona del equipo.",
+        "intencion": "asesor",
+        "tipo_fuente": "asesor",
+        "requiere_asesor": True,
+        "orden": 6,
+        "activo": True,
+    },
+)
+
+
+def asegurar_menu_informativo_base(
+    agencia_id: int,
+    chatbot_configuracion_id: int,
+    *,
+    cur=None,
+) -> Dict[str, Any]:
+    """
+    Inserta las 6 opciones base del menú informativo si la config no tiene ninguna.
+
+    Idempotente: si ya existe al menos una opción (activa o inactiva), no inserta nada.
+    """
+    with _cursor(cur) as c:
+        _exige_configuracion(agencia_id, int(chatbot_configuracion_id), cur=c)
+        existentes = listar_menu_informativo(
+            agencia_id,
+            chatbot_configuracion_id=int(chatbot_configuracion_id),
+            solo_activas=False,
+            cur=c,
+        )
+        if existentes:
+            return {
+                "insertadas": 0,
+                "total": len(existentes),
+                "opciones": existentes,
+            }
+
+        creadas: List[Dict[str, Any]] = []
+        for plantilla in OPCIONES_MENU_INFORMATIVO_DEFECTO:
+            campos = dict(plantilla)
+            campos["chatbot_configuracion_id"] = int(chatbot_configuracion_id)
+            creadas.append(crear_menu_informativo(agencia_id, campos, cur=c))
+
+        logger.info(
+            "[CHATBOT_MENU] seed agencia_id=%s config_id=%s insertadas=%s",
+            agencia_id,
+            chatbot_configuracion_id,
+            len(creadas),
+        )
+        return {
+            "insertadas": len(creadas),
+            "total": len(creadas),
+            "opciones": creadas,
+        }
+
+
+def listar_menu_informativo(
+    agencia_id: int,
+    *,
+    chatbot_configuracion_id: Optional[int] = None,
+    solo_activas: bool = True,
+    cur=None,
+) -> List[Dict[str, Any]]:
+    where: List[str] = []
+    params: List[Any] = []
+    if chatbot_configuracion_id is not None:
+        where.append("chatbot_configuracion_id = %s")
+        params.append(int(chatbot_configuracion_id))
+    if solo_activas:
+        where.append("activo = TRUE")
+    return _listar_registros(
+        "menu_informativo",
+        agencia_id,
+        where_extra=where,
+        params_extra=params,
+        order_by="orden ASC, numero ASC, id ASC",
+        cur=cur,
+    )
+
+
+def obtener_menu_informativo(
+    agencia_id: int, opcion_id: int, *, cur=None
+) -> Optional[Dict[str, Any]]:
+    return _obtener_registro("menu_informativo", agencia_id, opcion_id, cur=cur)
+
+
+def crear_menu_informativo(
+    agencia_id: int, campos: Dict[str, Any], *, cur=None
+) -> Dict[str, Any]:
+    with _cursor(cur) as c:
+        cfg = (campos or {}).get("chatbot_configuracion_id")
+        if cfg:
+            _exige_configuracion(agencia_id, int(cfg), cur=c)
+        return _crear_registro(
+            "menu_informativo", agencia_id, campos, COLUMNAS_MENU_INFORMATIVO, cur=c
+        )
+
+
+def actualizar_menu_informativo(
+    agencia_id: int, opcion_id: int, campos: Dict[str, Any], *, cur=None
+) -> Optional[Dict[str, Any]]:
+    return _actualizar_registro(
+        "menu_informativo",
+        agencia_id,
+        opcion_id,
+        campos,
+        COLUMNAS_MENU_INFORMATIVO,
+        cur=cur,
+    )
+
+
+def eliminar_menu_informativo(
+    agencia_id: int, opcion_id: int, *, hard: bool = False, cur=None
+) -> bool:
+    return _eliminar_registro(
+        "menu_informativo", agencia_id, opcion_id, hard=hard, cur=cur
+    )
+
+
+def reordenar_menu_informativo(
+    agencia_id: int,
+    chatbot_configuracion_id: int,
+    orden_ids: Sequence[int],
+    *,
+    cur=None,
+) -> List[Dict[str, Any]]:
+    ids = [int(x) for x in (orden_ids or [])]
+    if not ids:
+        raise ErrorDatosConversacional("Debe enviar al menos una opción para reordenar")
+    with _cursor(cur) as c:
+        _exige_configuracion(agencia_id, int(chatbot_configuracion_id), cur=c)
+        for idx, oid in enumerate(ids, start=1):
+            c.execute(
+                """
+                UPDATE chatbot.menu_informativo_opciones
+                SET orden = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND agencia_id = %s AND chatbot_configuracion_id = %s
+                """,
+                (idx, oid, agencia_id, chatbot_configuracion_id),
+            )
+    return listar_menu_informativo(
+        agencia_id,
+        chatbot_configuracion_id=chatbot_configuracion_id,
+        solo_activas=False,
+        cur=cur,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Flujos conversacionales
 # ---------------------------------------------------------------------------
 
@@ -1338,6 +1582,7 @@ def listar_flujos(
     *,
     chatbot_configuracion_id: Optional[int] = None,
     tipo_flujo: Optional[str] = None,
+    nivel_objetivo: Optional[str] = None,
     solo_activos: bool = True,
     cur=None,
 ) -> List[Dict[str, Any]]:
@@ -1349,6 +1594,9 @@ def listar_flujos(
     if tipo_flujo:
         where.append("tipo_flujo = %s")
         params.append(str(tipo_flujo).strip().lower())
+    if nivel_objetivo:
+        where.append("nivel_objetivo = %s")
+        params.append(str(nivel_objetivo).strip().lower())
     if solo_activos:
         where.append("activo = TRUE")
 
@@ -1360,6 +1608,44 @@ def listar_flujos(
         order_by="tipo_flujo ASC, nombre ASC, id ASC",
         cur=cur,
     )
+
+
+def obtener_flujo_por_nivel(
+    agencia_id: int,
+    chatbot_configuracion_id: int,
+    *,
+    nivel: str,
+    tipo_flujo: str = "conversion",
+    cur=None,
+) -> Optional[Dict[str, Any]]:
+    """principiante/experimentado con fallback a general."""
+    nivel_n = str(nivel or "").strip().lower()
+    for candidato in (nivel_n, "general"):
+        if not candidato:
+            continue
+        filas = listar_flujos(
+            agencia_id,
+            chatbot_configuracion_id=chatbot_configuracion_id,
+            tipo_flujo=tipo_flujo,
+            nivel_objetivo=candidato,
+            solo_activos=True,
+            cur=cur,
+        )
+        if filas:
+            return filas[0]
+    # Último recurso: cualquier flujo conversion activo
+    filas = listar_flujos(
+        agencia_id,
+        chatbot_configuracion_id=chatbot_configuracion_id,
+        tipo_flujo=tipo_flujo,
+        solo_activos=True,
+        cur=cur,
+    )
+    return filas[0] if filas else None
+
+
+# alias histórico (firma original sin nivel_objetivo) — listar_flujos ya extendido
+
 
 
 def obtener_flujo(agencia_id: int, flujo_id: int, *, cur=None) -> Optional[Dict[str, Any]]:
@@ -2530,11 +2816,16 @@ def tomar_conversacion(
     motivo: Optional[str] = None,
     cur=None,
 ) -> Optional[Dict[str, Any]]:
-    """Un humano toma el control: la IA deja de responder."""
+    """
+    Un humano autenticado toma el control: la IA deja de responder.
+
+    Solo este camino (o equivalente de panel) debe activar modo_humano=true.
+    """
     with _cursor(cur) as c:
         actual = _obtener_registro("conversaciones", agencia_id, conversacion_id, cur=c)
         if not actual:
             return None
+        ya_humano = bool(actual.get("modo_humano"))
         campos: Dict[str, Any] = {
             "modo_humano": True,
             "ia_habilitada": False,
@@ -2555,9 +2846,42 @@ def tomar_conversacion(
             origen="humano",
             estado_anterior=actual.get("estado"),
             estado_nuevo="esperando_humano",
-            detalle={"manager_id": manager_id, "motivo": motivo},
+            detalle={
+                "manager_id": manager_id,
+                "motivo": motivo,
+                "modo_humano": True,
+                "origen_activacion": "panel_tomar",
+            },
             cur=c,
         )
+        # Confirmación visible al pasar a modo humano (solo en la transición)
+        if not ya_humano:
+            texto_conf = (
+                "Un asesor continuará la conversación contigo. Tu mensaje fue recibido."
+            )
+            try:
+                insertar_mensaje(
+                    agencia_id,
+                    conversacion_id,
+                    canal=str(actual.get("canal") or "whatsapp"),
+                    direccion="saliente",
+                    remitente_tipo="sistema",
+                    tipo_mensaje="texto",
+                    texto=texto_conf,
+                    estado_envio="pendiente",
+                    metadata={
+                        "confirmacion_modo_humano": True,
+                        "manager_id": manager_id,
+                    },
+                    cur=c,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[CHATBOT] no se pudo registrar confirmación modo_humano "
+                    "conversacion_id=%s: %s",
+                    conversacion_id,
+                    exc,
+                )
         return conversacion
 
 
@@ -3602,6 +3926,12 @@ def inicializar_asistente_desde_config(
                 _crear_registro("flujo_pasos", agencia_id, paso, COLUMNAS_FLUJO_PASO, cur=c)
                 pasos_creados += 1
 
+        menu_seed = asegurar_menu_informativo_base(
+            agencia_id,
+            chatbot_configuracion_id,
+            cur=c,
+        )
+
     resumen = {
         "asistente": asistente,
         "asistente_creado": asistente_creado,
@@ -3610,6 +3940,7 @@ def inicializar_asistente_desde_config(
         "flujo_id": int(flujo["id"]) if flujo else None,
         "flujo_creado": flujo_creado,
         "pasos_creados": pasos_creados,
+        "menu_opciones_insertadas": int((menu_seed or {}).get("insertadas") or 0),
     }
     logger.info(
         "[CONVERSACIONAL] init agencia_id=%s config_id=%s asistente_creado=%s "

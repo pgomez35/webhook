@@ -56,6 +56,9 @@ from schemas_chatbot_conversacional import (
     RequisitoIn,
     SimulacionIn,
     TareaCandidatoUpdate,
+    MenuInformativoIn,
+    MenuInformativoUpdate,
+    MenuInformativoReordenarIn,
 )
 
 logger = logging.getLogger("uvicorn.error")
@@ -720,6 +723,114 @@ def eliminar_requisito(
     )
     db.eliminar_requisito(_agencia_id(agencia), int(requisito_id), hard=hard)
     return {"ok": True, "id": int(requisito_id)}
+
+
+# ---------------------------------------------------------------------------
+# Menú informativo
+# ---------------------------------------------------------------------------
+
+@router.get("/configuraciones/{chatbot_configuracion_id}/menu-informativo")
+def listar_menu_informativo(
+    chatbot_configuracion_id: int,
+    solo_activas: bool = Query(False),
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
+    return db.listar_menu_informativo(
+        _agencia_id(agencia),
+        chatbot_configuracion_id=cfg_id,
+        solo_activas=solo_activas,
+    )
+
+
+@router.post(
+    "/configuraciones/{chatbot_configuracion_id}/menu-informativo/inicializar",
+    status_code=200,
+)
+def inicializar_menu_informativo(
+    chatbot_configuracion_id: int,
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
+    try:
+        return db.asegurar_menu_informativo_base(_agencia_id(agencia), cfg_id)
+    except _ERRORES_DATOS as e:
+        raise _http_error(e) from e
+
+
+@router.post(
+    "/configuraciones/{chatbot_configuracion_id}/menu-informativo",
+    status_code=201,
+)
+def crear_menu_informativo(
+    chatbot_configuracion_id: int,
+    payload: MenuInformativoIn,
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
+    try:
+        return db.crear_menu_informativo(
+            _agencia_id(agencia),
+            {**_campos(payload), "chatbot_configuracion_id": cfg_id},
+        )
+    except _ERRORES_DATOS as e:
+        raise _http_error(e) from e
+
+
+@router.put(
+    "/configuraciones/{chatbot_configuracion_id}/menu-informativo/{opcion_id}"
+)
+def actualizar_menu_informativo(
+    chatbot_configuracion_id: int,
+    opcion_id: int,
+    payload: MenuInformativoUpdate,
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
+    _exigir_en_configuracion(
+        agencia, db.obtener_menu_informativo, opcion_id, cfg_id, "Opción de menú"
+    )
+    try:
+        row = db.actualizar_menu_informativo(
+            _agencia_id(agencia), int(opcion_id), _campos(payload)
+        )
+    except _ERRORES_DATOS as e:
+        raise _http_error(e) from e
+    return _o_404(row, "Opción de menú")
+
+
+@router.post(
+    "/configuraciones/{chatbot_configuracion_id}/menu-informativo/reordenar"
+)
+def reordenar_menu_informativo(
+    chatbot_configuracion_id: int,
+    payload: MenuInformativoReordenarIn,
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
+    try:
+        return db.reordenar_menu_informativo(
+            _agencia_id(agencia), cfg_id, payload.orden_ids
+        )
+    except _ERRORES_DATOS as e:
+        raise _http_error(e) from e
+
+
+@router.delete(
+    "/configuraciones/{chatbot_configuracion_id}/menu-informativo/{opcion_id}"
+)
+def eliminar_menu_informativo(
+    chatbot_configuracion_id: int,
+    opcion_id: int,
+    hard: bool = Query(False),
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
+    _exigir_en_configuracion(
+        agencia, db.obtener_menu_informativo, opcion_id, cfg_id, "Opción de menú"
+    )
+    db.eliminar_menu_informativo(_agencia_id(agencia), int(opcion_id), hard=hard)
+    return {"ok": True, "id": int(opcion_id)}
 
 
 # ---------------------------------------------------------------------------

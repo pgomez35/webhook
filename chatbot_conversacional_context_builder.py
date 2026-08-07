@@ -157,6 +157,7 @@ def construir_contexto(
         aspirante=aspirante,
         campania=campania,
         conversacion=conversacion,
+        configuracion=configuracion,
     )
 
     flujo = _resolver_flujo(

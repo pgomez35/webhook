@@ -1,0 +1,292 @@
+"""
+Dispatcher central: decide el motor según chatbot_configuracion.tipo_chatbot.
+
+Contrato de decisión:
+
+  tipo_chatbot = informativo
+  → procesar_mensaje_informativo
+    (menú + información + consultas libres; sin clasificación ni flujo obligatorio)
+
+  tipo_chatbot = inteligente
+  → procesar_mensaje_conversacional
+    (conversación + clasificación + recopilación + flujo;
+     también responde información y retoma pregunta_pendiente)
+
+Entry point único conceptual para WhatsApp, simulador y futuros canales.
+"""
+from __future__ import annotations
+
+import logging
+from typing import Any, Callable, Dict, Optional
+
+from chatbot_tipo import TIPO_INFORMATIVO, TIPO_INTELIGENTE, resolver_tipo_chatbot
+from service_chatbot_motor import resolver_motor_conversacional
+
+logger = logging.getLogger("uvicorn.error")
+
+EnviarCallback = Callable[[str], Any]
+
+
+async def procesar_mensaje_segun_tipo_chatbot(
+    *,
+    agencia_id: int,
+    chatbot_configuracion_id: int,
+    texto: str,
+    canal: str = "whatsapp",
+    conversacion_id: Optional[int] = None,
+    aspirante_id: Optional[int] = None,
+    usuario_externo_id: Optional[str] = None,
+    telefono: Optional[str] = None,
+    nombre_contacto: Optional[str] = None,
+    mensaje_externo_id: Optional[str] = None,
+    tipo_mensaje: str = "texto",
+    cuenta_externa_id: Optional[str] = None,
+    campania_id: Optional[int] = None,
+    token: Optional[str] = None,
+    phone_number_id: Optional[str] = None,
+    wa_id: Optional[str] = None,
+    enviar_callback: Optional[EnviarCallback] = None,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """
+    Enruta exclusivamente por tipo_chatbot.
+
+    Los flags legacy (usar_rutas_adaptativas, modo_predeterminado) no cambian
+    el motor cuando tipo_chatbot es válido.
+    """
+    decision = resolver_motor_conversacional(agencia_id, chatbot_configuracion_id)
+    tipo = resolver_tipo_chatbot(
+        {"tipo_chatbot": decision.get("tipo_chatbot")}
+    ) or decision.get("tipo_chatbot")
+
+    logger.info(
+        "[CHATBOT_TIPO] agencia_id=%s chatbot_configuracion_id=%s "
+        "tipo_chatbot=%s canal=%s conversacion_id=%s",
+        agencia_id,
+        chatbot_configuracion_id,
+        tipo,
+        canal,
+        conversacion_id,
+    )
+    print(
+        f"[CHATBOT_TIPO] agencia_id={agencia_id} "
+        f"chatbot_configuracion_id={chatbot_configuracion_id} "
+        f"tipo_chatbot={tipo} canal={canal} conversacion_id={conversacion_id}"
+    )
+
+    # --- informativo: menú + info + consultas libres ---
+    if tipo == TIPO_INFORMATIVO:
+        from service_chatbot_informativo import procesar_mensaje_informativo
+
+        conv_id = conversacion_id
+        if not conv_id and usuario_externo_id:
+            conv_id = await _asegurar_conversacion(
+                agencia_id=agencia_id,
+                chatbot_configuracion_id=chatbot_configuracion_id,
+                canal=canal,
+                usuario_externo_id=usuario_externo_id,
+                telefono=telefono or wa_id,
+                aspirante_id=aspirante_id,
+                dry_run=dry_run,
+            )
+
+        resultado = await procesar_mensaje_informativo(
+            agencia_id=agencia_id,
+            chatbot_configuracion_id=chatbot_configuracion_id,
+            conversacion_id=conv_id,
+            texto=texto or "",
+            canal=canal,
+            dry_run=dry_run,
+            enviar_callback=enviar_callback,
+            token=token,
+            phone_number_id=phone_number_id,
+            destino=wa_id or usuario_externo_id,
+            aspirante_id=aspirante_id,
+            mensaje_externo_id=mensaje_externo_id,
+        )
+        resultado = dict(resultado or {})
+        resultado.setdefault("tipo_chatbot", TIPO_INFORMATIVO)
+        resultado.setdefault("usado", True)
+        resultado["motor"] = "informativo"
+        return await _garantizar_si_falta(
+            resultado,
+            agencia_id=agencia_id,
+            conversacion_id=conv_id or conversacion_id,
+            canal=canal,
+            enviar_callback=enviar_callback,
+            token=token,
+            phone_number_id=phone_number_id,
+            destino=wa_id or usuario_externo_id,
+            dry_run=dry_run,
+            mensaje_externo_id=mensaje_externo_id,
+        )
+
+    # --- inteligente (default si no es informativo) ---
+    from service_chatbot_conversacional import procesar_mensaje_conversacional
+
+    resultado = await procesar_mensaje_conversacional(
+        agencia_id=agencia_id,
+        texto=texto or "",
+        usuario_externo_id=str(usuario_externo_id or wa_id or ""),
+        chatbot_configuracion_id=int(chatbot_configuracion_id),
+        canal=canal,
+        cuenta_externa_id=cuenta_externa_id or phone_number_id,
+        telefono=telefono or wa_id,
+        nombre_contacto=nombre_contacto,
+        mensaje_externo_id=mensaje_externo_id,
+        tipo_mensaje=tipo_mensaje,
+        aspirante_id=aspirante_id,
+        campania_id=campania_id,
+        token=token,
+        phone_number_id=phone_number_id,
+        wa_id=wa_id,
+        enviar_callback=enviar_callback,
+        dry_run=dry_run,
+    )
+    resultado = dict(resultado or {})
+    resultado.setdefault("tipo_chatbot", TIPO_INTELIGENTE)
+    resultado["motor"] = "inteligente"
+
+    if not resultado.get("usado") and resultado.get("motivo") in {
+        "atencion_humana",
+        "ia_deshabilitada",
+    }:
+        from service_chatbot_respuesta_obligatoria import garantizar_respuesta_saliente
+
+        texto_conf = (
+            "Un asesor continuará la conversación contigo. Tu mensaje fue recibido."
+        )
+        envio = await garantizar_respuesta_saliente(
+            agencia_id=agencia_id,
+            conversacion_id=resultado.get("conversacion_id") or conversacion_id,
+            canal=canal,
+            texto=texto_conf,
+            dry_run=dry_run,
+            enviar_callback=enviar_callback,
+            token=token,
+            phone_number_id=phone_number_id,
+            destino=wa_id or usuario_externo_id,
+            motivo_fallback="modo_humano",
+            mensaje_externo_id=mensaje_externo_id,
+        )
+        return {
+            "usado": True,
+            "motivo": resultado.get("motivo"),
+            "respuesta": texto_conf,
+            "respuesta_enviada": bool(envio.get("enviado") or dry_run),
+            "modo_humano": True,
+            "tipo_chatbot": TIPO_INTELIGENTE,
+            "motor": "inteligente",
+            "conversacion_id": resultado.get("conversacion_id") or conversacion_id,
+        }
+
+    if resultado.get("motivo") == "mensaje_duplicado":
+        return resultado
+
+    return await _garantizar_si_falta(
+        resultado,
+        agencia_id=agencia_id,
+        conversacion_id=resultado.get("conversacion_id") or conversacion_id,
+        canal=canal,
+        enviar_callback=enviar_callback,
+        token=token,
+        phone_number_id=phone_number_id,
+        destino=wa_id or usuario_externo_id,
+        dry_run=dry_run,
+        mensaje_externo_id=mensaje_externo_id,
+    )
+
+
+async def _asegurar_conversacion(
+    *,
+    agencia_id: int,
+    chatbot_configuracion_id: int,
+    canal: str,
+    usuario_externo_id: str,
+    telefono: Optional[str],
+    aspirante_id: Optional[int],
+    dry_run: bool,
+) -> Optional[int]:
+    if dry_run:
+        return None
+    try:
+        import database_chatbot_conversacional as db_conv
+
+        conv = db_conv.buscar_o_crear_conversacion(
+            agencia_id,
+            canal=canal,
+            usuario_externo_id=str(usuario_externo_id),
+            chatbot_configuracion_id=int(chatbot_configuracion_id),
+            telefono=telefono,
+            aspirante_id=aspirante_id,
+        )
+        if isinstance(conv, tuple):
+            conv = conv[0]
+        return (conv or {}).get("id") if isinstance(conv, dict) else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[CHATBOT_TIPO] no se pudo asegurar conversación: %s", exc)
+        return None
+
+
+async def _garantizar_si_falta(
+    resultado: Dict[str, Any],
+    *,
+    agencia_id: int,
+    conversacion_id: Optional[int],
+    canal: str,
+    enviar_callback: Optional[EnviarCallback],
+    token: Optional[str],
+    phone_number_id: Optional[str],
+    destino: Optional[str],
+    dry_run: bool,
+    mensaje_externo_id: Optional[str],
+) -> Dict[str, Any]:
+    """Si el motor no dejó respuesta visible, fuerza fallback."""
+    if resultado.get("motivo") == "mensaje_duplicado":
+        return resultado
+
+    tiene_respuesta = bool(
+        str(resultado.get("respuesta") or "").strip()
+        or resultado.get("respuesta_enviada")
+        or resultado.get("bienvenida_literal")
+        or (resultado.get("usado") and resultado.get("mensaje_saliente_id"))
+    )
+    if tiene_respuesta:
+        return resultado
+
+    from service_chatbot_respuesta_obligatoria import garantizar_respuesta_saliente
+
+    texto = (
+        "No estoy seguro de haber entendido. ¿Podrías explicármelo de otra manera? "
+        "También puedes preguntarme por requisitos, beneficios, bonos o el proceso "
+        "de ingreso."
+    )
+    envio = await garantizar_respuesta_saliente(
+        agencia_id=agencia_id,
+        conversacion_id=conversacion_id,
+        canal=canal,
+        texto=texto,
+        dry_run=dry_run,
+        enviar_callback=enviar_callback,
+        token=token,
+        phone_number_id=phone_number_id,
+        destino=destino,
+        motivo_fallback="mensaje_consumido_sin_respuesta",
+        mensaje_externo_id=mensaje_externo_id,
+    )
+    if not (envio.get("enviado") or dry_run):
+        logger.error(
+            "[CHATBOT_FALLBACK] ERROR mensaje_consumido_sin_respuesta "
+            "conversacion_id=%s envio_fallido",
+            conversacion_id,
+        )
+    resultado = dict(resultado)
+    resultado.update(
+        {
+            "usado": True,
+            "respuesta": texto,
+            "respuesta_enviada": bool(envio.get("enviado") or dry_run),
+            "motivo_fallback": "mensaje_consumido_sin_respuesta",
+        }
+    )
+    return resultado

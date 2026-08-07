@@ -142,7 +142,19 @@ def inferir_nivel_desde_texto(texto: str) -> Tuple[str, float, bool, Optional[st
 
 
 def usar_rutas_adaptativas(configuracion: Optional[Dict[str, Any]]) -> bool:
+    """
+    Clasificación + flujo del chatbot inteligente.
+
+    Fuente principal: tipo_chatbot. Flags legacy solo si el tipo no es válido.
+    """
+    from chatbot_tipo import TIPO_INTELIGENTE, TIPO_INFORMATIVO, resolver_tipo_chatbot
+
     cfg = configuracion or {}
+    tipo = resolver_tipo_chatbot(cfg)
+    if tipo == TIPO_INTELIGENTE:
+        return True
+    if tipo == TIPO_INFORMATIVO:
+        return False
     return bool(cfg.get("usar_asistente_conversacional")) and bool(
         cfg.get("usar_rutas_adaptativas")
     )

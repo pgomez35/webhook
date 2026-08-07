@@ -31,6 +31,7 @@ from schemas_chatbot_captacion import (
     ChatbotConfiguracionUpdate,
     ChatbotConfiguracionUsarAsistenteIn,
     ChatbotConfiguracionUsarRutasAdaptativasIn,
+    ChatbotConfiguracionTipoIn,
     ChatbotResumenResponse,
     MediaEliminarRequest,
     MediaEliminarResponse,
@@ -102,6 +103,8 @@ def _agencia_response(agencia: dict) -> AgenciaChatbotResponse:
 
 
 def _config_response(agencia: dict, cfg: dict) -> ChatbotConfiguracionResponse:
+    from chatbot_tipo import resolver_tipo_chatbot
+
     return ChatbotConfiguracionResponse(
         id=cfg["id"],
         agencia=_agencia_response(agencia),
@@ -128,12 +131,15 @@ def _config_response(agencia: dict, cfg: dict) -> ChatbotConfiguracionResponse:
         activo=bool(cfg.get("activo")),
         usar_asistente_conversacional=bool(cfg.get("usar_asistente_conversacional")),
         usar_rutas_adaptativas=bool(cfg.get("usar_rutas_adaptativas")),
+        tipo_chatbot=resolver_tipo_chatbot(cfg),
         created_at=cfg.get("created_at"),
         updated_at=cfg.get("updated_at"),
     )
 
 
 def _config_resumen(cfg: dict) -> ChatbotConfiguracionResumen:
+    from chatbot_tipo import resolver_tipo_chatbot
+
     return ChatbotConfiguracionResumen(
         id=cfg["id"],
         codigo=cfg.get("codigo") or "",
@@ -146,6 +152,7 @@ def _config_resumen(cfg: dict) -> ChatbotConfiguracionResumen:
         activo=bool(cfg.get("activo")),
         usar_asistente_conversacional=bool(cfg.get("usar_asistente_conversacional")),
         usar_rutas_adaptativas=bool(cfg.get("usar_rutas_adaptativas")),
+        tipo_chatbot=resolver_tipo_chatbot(cfg),
         updated_at=cfg.get("updated_at"),
     )
 
@@ -431,12 +438,38 @@ def patch_usar_rutas_adaptativas(
     Activa clasificación adaptativa de nivel/intención.
 
     No modifica ``asistente_configuracion.activo``.
+    Endpoint legacy de compatibilidad; preferir ``tipo-chatbot``.
     """
     try:
         cfg = db.set_usar_rutas_adaptativas(
             int(agencia["id"]),
             configuracion_id,
             payload.usar_rutas_adaptativas,
+        )
+    except ValueError as e:
+        raise _http_from_value_error(e) from e
+    return _config_response(agencia, cfg)
+
+
+@router.patch(
+    "/configuraciones/{configuracion_id}/tipo-chatbot",
+    response_model=ChatbotConfiguracionResponse,
+)
+def patch_tipo_chatbot(
+    configuracion_id: int,
+    payload: ChatbotConfiguracionTipoIn,
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    """
+    Selector visible: informativo | inteligente.
+
+    Sincroniza flags legacy. No modifica ``asistente_configuracion.activo``.
+    """
+    try:
+        cfg = db.set_tipo_chatbot(
+            int(agencia["id"]),
+            configuracion_id,
+            payload.tipo_chatbot,
         )
     except ValueError as e:
         raise _http_from_value_error(e) from e

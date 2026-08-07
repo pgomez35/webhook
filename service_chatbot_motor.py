@@ -1,16 +1,22 @@
 """
-Selección de motor chatbot (clásico vs conversacional).
+Selección de motor chatbot (informativo | inteligente | clásico legacy).
 
-Archivo plano en la raíz del backend (desplegable sin subcarpetas).
+Fuente principal: chatbot_configuracion.tipo_chatbot.
 
-Semántica:
-- usar_asistente_conversacional=false → clásico
-- true + usar_rutas_adaptativas=false → conversacional actual
-- true + usar_rutas_adaptativas=true → conversacional adaptativo
-- true sin asistente activo → clásico con warning explícito
+Decisión central (contrato):
 
-No usa asistente_configuracion.activo para seleccionar el motor; solo para
-confirmar que el asistente puede atender.
+  tipo_chatbot = informativo
+  → menú + información + consultas libres
+  → no clasificación de aspirante
+  → no flujo obligatorio de conversión
+
+  tipo_chatbot = inteligente
+  → conversación + clasificación + recopilación + flujo
+  → también responde información
+  → retoma el punto pendiente
+
+Compatibilidad: usar_asistente_conversacional / usar_rutas_adaptativas
+solo como fallback de lectura si tipo_chatbot no es válido.
 """
 from __future__ import annotations
 
@@ -19,6 +25,12 @@ import os
 from typing import Any, Dict, Optional
 
 import database_chatbot_captacion as db_captacion
+from chatbot_tipo import (
+    TIPO_INFORMATIVO,
+    TIPO_INTELIGENTE,
+    enriquecer_config_con_tipo,
+    resolver_tipo_chatbot,
+)
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -53,6 +65,7 @@ def _log_router_motor(
     *,
     agencia_id: int,
     chatbot_configuracion_id: Optional[int],
+    tipo_chatbot: Optional[str],
     usar_asistente_conversacional: Optional[bool],
     usar_rutas_adaptativas: Optional[bool],
     asistente_id: Optional[int],
@@ -60,10 +73,10 @@ def _log_router_motor(
     motor_seleccionado: str,
     motivo: str,
 ) -> None:
-    """Log sanitizado (sin tokens ni secretos). También print para Render."""
     msg = (
-        f"[chatbot_router] agencia_id={agencia_id} "
+        f"[CHATBOT_TIPO] agencia_id={agencia_id} "
         f"chatbot_configuracion_id={chatbot_configuracion_id} "
+        f"tipo_chatbot={tipo_chatbot} "
         f"usar_asistente_conversacional={usar_asistente_conversacional} "
         f"usar_rutas_adaptativas={usar_rutas_adaptativas} "
         f"asistente_id={asistente_id} asistente_activo={asistente_activo} "
@@ -71,6 +84,14 @@ def _log_router_motor(
     )
     logger.info(msg)
     print(msg)
+    print(
+        f"[chatbot_router] agencia_id={agencia_id} "
+        f"chatbot_configuracion_id={chatbot_configuracion_id} "
+        f"usar_asistente_conversacional={usar_asistente_conversacional} "
+        f"usar_rutas_adaptativas={usar_rutas_adaptativas} "
+        f"asistente_id={asistente_id} asistente_activo={asistente_activo} "
+        f"motor_seleccionado={motor_seleccionado} motivo={motivo}"
+    )
 
 
 def resolver_motor_conversacional(
@@ -78,14 +99,19 @@ def resolver_motor_conversacional(
     chatbot_configuracion_id: Optional[int],
 ) -> Dict[str, Any]:
     """
-    Decide el motor antes de procesar ``etapa_chatbot``.
+    Decide el motor antes de procesar el mensaje.
 
-    Usa solo módulos planos: ``database_chatbot_captacion`` y
-    ``database_chatbot_conversacional``.
+    Retorna claves:
+    - tipo_chatbot: informativo | inteligente
+    - motor_seleccionado: informativo | inteligente | clasico
+    - usar_conversacional: True si usa el stack conversacional (inteligente)
+    - usar_informativo: True si usa el menú informativo
     """
     decision: Dict[str, Any] = {
         "usar_conversacional": False,
+        "usar_informativo": False,
         "motor_seleccionado": "clasico",
+        "tipo_chatbot": None,
         "motivo": "sin_configuracion",
         "usar_asistente_conversacional": False,
         "usar_rutas_adaptativas": False,
@@ -93,6 +119,7 @@ def resolver_motor_conversacional(
         "asistente_activo": None,
         "chatbot_configuracion_id": chatbot_configuracion_id,
         "agencia_id": agencia_id,
+        "openai_configurado": _openai_configurado(),
     }
 
     if not chatbot_configuracion_id:
@@ -100,6 +127,7 @@ def resolver_motor_conversacional(
         _log_router_motor(
             agencia_id=agencia_id,
             chatbot_configuracion_id=None,
+            tipo_chatbot=None,
             usar_asistente_conversacional=None,
             usar_rutas_adaptativas=None,
             asistente_id=None,
@@ -116,15 +144,10 @@ def resolver_motor_conversacional(
     )
     if not configuracion:
         decision["motivo"] = "configuracion_inexistente_o_otra_agencia"
-        logger.warning(
-            "[chatbot_router] configuración inaccesible agencia_id=%s "
-            "chatbot_configuracion_id=%s (inexistente o de otra agencia)",
-            agencia_id,
-            chatbot_configuracion_id,
-        )
         _log_router_motor(
             agencia_id=agencia_id,
             chatbot_configuracion_id=int(chatbot_configuracion_id),
+            tipo_chatbot=None,
             usar_asistente_conversacional=None,
             usar_rutas_adaptativas=None,
             asistente_id=None,
@@ -134,112 +157,67 @@ def resolver_motor_conversacional(
         )
         return decision
 
-    flag_motor = bool(configuracion.get("usar_asistente_conversacional"))
-    flag_adaptativo = bool(configuracion.get("usar_rutas_adaptativas"))
+    cfg = enriquecer_config_con_tipo(configuracion)
+    tipo = resolver_tipo_chatbot(cfg)
+    flag_motor = bool(cfg.get("usar_asistente_conversacional"))
+    flag_adaptativo = bool(cfg.get("usar_rutas_adaptativas"))
+    decision["tipo_chatbot"] = tipo
     decision["usar_asistente_conversacional"] = flag_motor
     decision["usar_rutas_adaptativas"] = flag_adaptativo
 
-    if not flag_motor:
-        decision["motivo"] = "selector_plataforma_desactivado"
-        _log_router_motor(
-            agencia_id=agencia_id,
-            chatbot_configuracion_id=int(chatbot_configuracion_id),
-            usar_asistente_conversacional=False,
-            usar_rutas_adaptativas=flag_adaptativo,
-            asistente_id=None,
-            asistente_activo=None,
-            motor_seleccionado="clasico",
-            motivo=decision["motivo"],
-        )
-        return decision
-
     asistente = _obtener_asistente(int(agencia_id), int(chatbot_configuracion_id))
-    if not asistente:
-        decision["motivo"] = "asistente_inexistente"
-        logger.warning(
-            "[chatbot_router] usar_asistente_conversacional=true pero no hay "
-            "asistente_configuracion agencia_id=%s chatbot_configuracion_id=%s; "
-            "fallback a flujo clásico",
-            agencia_id,
-            chatbot_configuracion_id,
-        )
+    if asistente:
+        decision["asistente_id"] = asistente.get("id")
+        decision["asistente_activo"] = bool(asistente.get("activo"))
+
+    # --- Contrato: tipo_chatbot manda ---
+    if tipo == TIPO_INFORMATIVO:
+        decision["usar_informativo"] = True
+        decision["usar_conversacional"] = False
+        decision["motor_seleccionado"] = "informativo"
+        decision["motivo"] = "tipo_chatbot_informativo"
         _log_router_motor(
             agencia_id=agencia_id,
             chatbot_configuracion_id=int(chatbot_configuracion_id),
-            usar_asistente_conversacional=True,
+            tipo_chatbot=tipo,
+            usar_asistente_conversacional=flag_motor,
             usar_rutas_adaptativas=flag_adaptativo,
-            asistente_id=None,
-            asistente_activo=None,
-            motor_seleccionado="clasico",
+            asistente_id=decision["asistente_id"],
+            asistente_activo=decision["asistente_activo"],
+            motor_seleccionado="informativo",
             motivo=decision["motivo"],
         )
         return decision
 
-    asistente_id = asistente.get("id")
-    asistente_activo = bool(asistente.get("activo"))
-    decision["asistente_id"] = asistente_id
-    decision["asistente_activo"] = asistente_activo
-
-    if not asistente_activo:
-        decision["motivo"] = "asistente_inactivo"
-        logger.warning(
-            "[chatbot_router] usar_asistente_conversacional=true pero "
-            "asistente_configuracion.activo=false asistente_id=%s "
-            "agencia_id=%s chatbot_configuracion_id=%s; fallback a flujo clásico",
-            asistente_id,
-            agencia_id,
-            chatbot_configuracion_id,
-        )
-        _log_router_motor(
-            agencia_id=agencia_id,
-            chatbot_configuracion_id=int(chatbot_configuracion_id),
-            usar_asistente_conversacional=True,
-            usar_rutas_adaptativas=flag_adaptativo,
-            asistente_id=asistente_id,
-            asistente_activo=False,
-            motor_seleccionado="clasico",
-            motivo=decision["motivo"],
-        )
-        return decision
-
-    if not _openai_configurado():
-        decision["motivo"] = "openai_no_configurado"
-        logger.warning(
-            "[chatbot_router] motor conversacional solicitado pero OPENAI no "
-            "está configurado; fallback a flujo clásico agencia_id=%s "
-            "chatbot_configuracion_id=%s",
-            agencia_id,
-            chatbot_configuracion_id,
-        )
-        _log_router_motor(
-            agencia_id=agencia_id,
-            chatbot_configuracion_id=int(chatbot_configuracion_id),
-            usar_asistente_conversacional=True,
-            usar_rutas_adaptativas=flag_adaptativo,
-            asistente_id=asistente_id,
-            asistente_activo=True,
-            motor_seleccionado="clasico",
-            motivo=decision["motivo"],
-        )
-        return decision
-
+    # tipo_chatbot = inteligente → siempre motor inteligente (no degradar a menú)
     decision["usar_conversacional"] = True
-    decision["motor_seleccionado"] = (
-        "conversacional_adaptativo" if flag_adaptativo else "conversacional"
-    )
+    decision["usar_informativo"] = False
+    decision["motor_seleccionado"] = "inteligente"
+    decision["usar_asistente_conversacional"] = True
+    decision["usar_rutas_adaptativas"] = True
+
+    avisos = []
+    if not asistente:
+        avisos.append("asistente_inexistente")
+    elif not decision["asistente_activo"]:
+        avisos.append("asistente_inactivo")
+    if not decision["openai_configurado"]:
+        avisos.append("openai_no_configurado")
     decision["motivo"] = (
-        "selector_asistente_y_rutas_adaptativas"
-        if flag_adaptativo
-        else "selector_y_asistente_activos"
+        "tipo_chatbot_inteligente"
+        if not avisos
+        else f"tipo_chatbot_inteligente|{','.join(avisos)}"
     )
+
     _log_router_motor(
         agencia_id=agencia_id,
         chatbot_configuracion_id=int(chatbot_configuracion_id),
+        tipo_chatbot=TIPO_INTELIGENTE,
         usar_asistente_conversacional=True,
-        usar_rutas_adaptativas=flag_adaptativo,
-        asistente_id=asistente_id,
-        asistente_activo=True,
-        motor_seleccionado=decision["motor_seleccionado"],
+        usar_rutas_adaptativas=True,
+        asistente_id=decision["asistente_id"],
+        asistente_activo=decision["asistente_activo"],
+        motor_seleccionado="inteligente",
         motivo=decision["motivo"],
     )
     return decision
@@ -252,5 +230,16 @@ def debe_usar_conversacional(
     return bool(
         resolver_motor_conversacional(agencia_id, chatbot_configuracion_id).get(
             "usar_conversacional"
+        )
+    )
+
+
+def debe_usar_informativo(
+    agencia_id: int,
+    chatbot_configuracion_id: Optional[int],
+) -> bool:
+    return bool(
+        resolver_motor_conversacional(agencia_id, chatbot_configuracion_id).get(
+            "usar_informativo"
         )
     )

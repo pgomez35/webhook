@@ -1143,15 +1143,13 @@ async def transferir_a_humano(
     prioridad: str = "normal",
 ) -> str:
     """
-    Transfiere la conversación a una persona del equipo y detiene las respuestas automáticas.
+    Solicita seguimiento de un asesor. NO silencia el chatbot.
 
-    Usa esta herramienta SOLO cuando:
-    - la persona pide explícitamente hablar con un asesor/humano;
-    - pulsó una opción explícita de hablar con asesor;
-    - una regla de escalamiento exige transferencia inmediata.
+    Usa esta herramienta cuando la persona pide hablar con un asesor o cuando
+    una regla exige marcar la consulta como pendiente humana.
 
-    NO la uses porque falló un enlace, porque requiere_asesor=true o porque
-    creaste una tarea de seguimiento. Eso no silencia el chatbot.
+    NO activa modo_humano. Solo un asesor autenticado desde el panel puede
+    tomar la conversación (modo_humano=true).
 
     Args:
         motivo: Razón concreta del escalamiento.
@@ -1171,32 +1169,43 @@ async def transferir_a_humano(
         None,
     )
 
-    # modo_humano=true: operador/transferencia activa. Silencia la IA.
-    # requiere_asesor: seguimiento pendiente (también se marca aquí).
-    _actualizar_conversacion(
-        ctxh,
-        {
-            "estado": "esperando_humano",
-            "modo_humano": True,
-            "motivo_escalamiento": motivo_limpio,
-        },
-    )
+    # Solo requiere_asesor: el chatbot SIGUE respondiendo.
     _marcar_requiere_asesor(
         ctxh,
         motivo=motivo_limpio,
-        origen="transferir_a_humano",
+        origen="solicitar_asesor",
         transferencia_solicitada=True,
     )
+
+    # Crear tarea de seguimiento si es posible (sin modo_humano).
+    if not ctxh.dry_run and ctxh.conversacion_id:
+        gw.call_opcional(
+            "crear_tarea",
+            ctxh.agencia_id,
+            {
+                "conversacion_id": ctxh.conversacion_id,
+                "aspirante_id": ctxh.contexto.aspirante_id,
+                "tipo_tarea": "seguimiento_humano",
+                "titulo": "Solicitud de asesor",
+                "descripcion": motivo_limpio[:500],
+                "estado": "pendiente",
+                "creada_por_tipo": "chatbot",
+            },
+        )
 
     ctxh.escalamiento = {
         "motivo": motivo_limpio,
         "prioridad": prioridad_normalizada,
         "regla": (regla or {}).get("evento"),
-        "mensaje_usuario": (regla or {}).get("mensaje_usuario"),
+        "mensaje_usuario": (regla or {}).get("mensaje_usuario")
+        or (
+            "Dejé tu solicitud pendiente para que un asesor te contacte. "
+            "Mientras tanto puedo seguir respondiendo tus preguntas."
+        ),
         "requiere_asesor": True,
         "transferencia_solicitada": True,
-        "modo_humano": True,
-        "origen_activacion": "transferir_a_humano",
+        "modo_humano": False,
+        "origen_activacion": "solicitar_asesor",
         "motivo_transferencia": motivo_limpio,
     }
 
@@ -1206,21 +1215,26 @@ async def transferir_a_humano(
         tipo_evento="escalamiento",
         detalle=ctxh.escalamiento,
         estado_anterior=ctxh.contexto.conversacion.get("estado"),
-        estado_nuevo="esperando_humano",
+        estado_nuevo=ctxh.contexto.conversacion.get("estado"),
     )
     logger.info(
         "[CHATBOT-TRANSFERENCIA] aspirante_id=%s conversacion_id=%s "
-        "modo_humano=true requiere_asesor=true transferencia_solicitada=true "
-        "origen=transferir_a_humano motivo=%s",
+        "modo_humano=false requiere_asesor=true transferencia_solicitada=true "
+        "origen=solicitar_asesor motivo=%s",
         ctxh.contexto.aspirante_id,
         ctxh.conversacion_id,
         motivo_limpio[:120],
     )
     return _ok(
-        transferido=True,
-        mensaje_sugerido=(regla or {}).get("mensaje_usuario"),
-        nota="Despídete con calidez, sin prometer tiempos exactos de respuesta. "
-        "El chatbot quedará en silencio hasta que un operador libere la conversación.",
+        transferido=False,
+        asesor_solicitado=True,
+        modo_humano=False,
+        requiere_asesor=True,
+        mensaje_sugerido=ctxh.escalamiento.get("mensaje_usuario"),
+        nota=(
+            "Informa que la solicitud quedó pendiente para un asesor. "
+            "NO digas que un asesor ya tomó el chat. Sigue respondiendo preguntas."
+        ),
     )
 
 

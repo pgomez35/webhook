@@ -1,15 +1,19 @@
 """
 Resolución del modo conversacional (informativo / conversión).
 
-Orden de precedencia:
-1. `campania.modo_predeterminado` si la campaña está activa y vigente.
-2. `aspirante.modo_conversacional`.
-3. `asistente.modo_predeterminado`.
-4. Fallback por origen: ads con candidato preseleccionado -> conversión;
-   orgánico o desconocido -> informativo.
+Fuente principal: chatbot_configuracion.tipo_chatbot.
 
-Sobre el modo resuelto se aplican los interruptores del asistente
-(`modo_informativo_activo` / `modo_conversion_activo`).
+  tipo_chatbot=inteligente → modo conversión (clasificación + flujo + info)
+  tipo_chatbot=informativo → modo informativo (el dispatcher ya enruta al menú)
+
+Si tipo_chatbot no es válido, se usa la precedencia legacy:
+1. campania.modo_predeterminado
+2. aspirante.modo_conversacional
+3. asistente.modo_predeterminado
+4. fallback por origen ads/orgánico
+
+Los flags modo_*_activo se sincronizan desde tipo_chatbot y no deben
+contradecir el tipo cuando este es válido.
 """
 from __future__ import annotations
 
@@ -27,6 +31,7 @@ ORIGENES_ADS = frozenset(
     {"instagram_ads", "facebook_ads", "messenger_ads", "tiktok_ads"}
 )
 
+ORIGEN_TIPO_CHATBOT = "tipo_chatbot"
 ORIGEN_CAMPANIA = "campania"
 ORIGEN_ASPIRANTE = "aspirante"
 ORIGEN_ASISTENTE = "asistente"
@@ -126,6 +131,7 @@ def resolver_modo(
     aspirante: Optional[Dict[str, Any]] = None,
     campania: Optional[Dict[str, Any]] = None,
     conversacion: Optional[Dict[str, Any]] = None,
+    configuracion: Optional[Dict[str, Any]] = None,
     hoy: Optional[date] = None,
 ) -> ResolucionModo:
     asistente = asistente or {}
@@ -138,7 +144,37 @@ def resolver_modo(
 
     campania_manda = campania_vigente(campania, hoy)
     campania_id = (campania or {}).get("id") if campania_manda else None
+    if campania_id is None and conversacion:
+        campania_id = conversacion.get("campania_id")
 
+    # --- tipo_chatbot explícito prevalece ---
+    try:
+        from chatbot_tipo import TIPO_INFORMATIVO, TIPO_INTELIGENTE, normalizar_tipo_chatbot
+
+        tipo_explicito = normalizar_tipo_chatbot((configuracion or {}).get("tipo_chatbot"))
+    except Exception:
+        tipo_explicito = None
+
+    if tipo_explicito == TIPO_INTELIGENTE:
+        # Conversación + clasificación + flujo; la campaña no lo degrada a menú.
+        return ResolucionModo(
+            modo=MODO_CONVERSION,
+            origen=ORIGEN_TIPO_CHATBOT,
+            campania_id=campania_id,
+            ajustado=False,
+            motivo_ajuste=None,
+        )
+
+    if tipo_explicito == TIPO_INFORMATIVO:
+        return ResolucionModo(
+            modo=MODO_INFORMATIVO,
+            origen=ORIGEN_TIPO_CHATBOT,
+            campania_id=campania_id,
+            ajustado=False,
+            motivo_ajuste=None,
+        )
+
+    # --- compatibilidad legacy sin tipo_chatbot válido ---
     modo = None
     origen = ORIGEN_FALLBACK
 
@@ -162,9 +198,6 @@ def resolver_modo(
         origen = ORIGEN_FALLBACK
 
     modo, ajustado, motivo = _aplicar_interruptores(modo, asistente)
-
-    if campania_id is None and conversacion:
-        campania_id = conversacion.get("campania_id")
 
     return ResolucionModo(
         modo=modo,

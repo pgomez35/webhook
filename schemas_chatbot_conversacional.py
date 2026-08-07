@@ -292,6 +292,9 @@ class AsistenteConfiguracionOut(_Salida):
     )
     texto_inicio_principiante: Optional[str] = None
     texto_inicio_experimentado: Optional[str] = None
+    formato_respuestas_informativas: Literal[
+        "lista", "texto_breve", "automatico"
+    ] = "lista"
     creado_por: Optional[int] = None
     actualizado_por: Optional[int] = None
     created_at: Optional[datetime] = None
@@ -335,6 +338,9 @@ class AsistenteConfiguracionUpdate(_Entrada):
     pregunta_clasificacion_nivel: Optional[str] = Field(None, max_length=2000)
     texto_inicio_principiante: Optional[str] = Field(None, max_length=4000)
     texto_inicio_experimentado: Optional[str] = Field(None, max_length=4000)
+    formato_respuestas_informativas: Optional[
+        Literal["lista", "texto_breve", "automatico"]
+    ] = None
 
     @field_validator("nombre_asistente")
     @classmethod
@@ -2129,6 +2135,96 @@ class AccionSimpleOut(_Salida):
     mensaje: Optional[str] = None
     id: Optional[int] = None
 
+
+# ---------------------------------------------------------------------------
+# Menú informativo
+# ---------------------------------------------------------------------------
+
+TipoFuenteMenuInformativo = Literal[
+    "requisitos",
+    "beneficios",
+    "bonos",
+    "faq",
+    "texto",
+    "asesor",
+]
+
+
+class MenuInformativoCreate(_Entrada):
+    chatbot_configuracion_id: Optional[int] = Field(None, gt=0)
+    numero: int = Field(..., ge=1, le=99)
+    codigo: str = Field(..., max_length=100)
+    titulo: str = Field(..., max_length=200)
+    descripcion: Optional[str] = Field(None, max_length=1000)
+    intencion: Optional[str] = Field(None, max_length=60)
+    tipo_fuente: TipoFuenteMenuInformativo = "faq"
+    respuesta_personalizada: Optional[str] = Field(None, max_length=8000)
+    requiere_asesor: bool = False
+    orden: int = Field(0, ge=0)
+    activo: bool = True
+
+    @field_validator("codigo")
+    @classmethod
+    def _val_codigo(cls, v: str) -> str:
+        return _normalizar_codigo(v)
+
+    @field_validator("titulo")
+    @classmethod
+    def _val_titulo(cls, v: str) -> str:
+        return _texto_obligatorio(v, "titulo")
+
+
+class MenuInformativoUpdate(_Entrada):
+    numero: Optional[int] = Field(None, ge=1, le=99)
+    codigo: Optional[str] = Field(None, max_length=100)
+    titulo: Optional[str] = Field(None, max_length=200)
+    descripcion: Optional[str] = Field(None, max_length=1000)
+    intencion: Optional[str] = Field(None, max_length=60)
+    tipo_fuente: Optional[TipoFuenteMenuInformativo] = None
+    respuesta_personalizada: Optional[str] = Field(None, max_length=8000)
+    requiere_asesor: Optional[bool] = None
+    orden: Optional[int] = Field(None, ge=0)
+    activo: Optional[bool] = None
+
+    @field_validator("codigo")
+    @classmethod
+    def _val_codigo(cls, v: Optional[str]) -> Optional[str]:
+        return None if v is None else _normalizar_codigo(v)
+
+    @field_validator("titulo")
+    @classmethod
+    def _val_titulo(cls, v: Optional[str]) -> Optional[str]:
+        return None if v is None else _texto_obligatorio(v, "titulo")
+
+
+class MenuInformativoOut(_Salida):
+    id: int
+    agencia_id: int
+    chatbot_configuracion_id: int
+    numero: int
+    codigo: str
+    titulo: str
+    descripcion: Optional[str] = None
+    intencion: Optional[str] = None
+    tipo_fuente: TipoFuenteMenuInformativo
+    respuesta_personalizada: Optional[str] = None
+    requiere_asesor: bool = False
+    orden: int = 0
+    activo: bool = True
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class MenuInformativoReordenarIn(_Entrada):
+    orden_ids: List[int] = Field(..., min_length=1)
+
+
+class MenuInformativoInicializarOut(_Salida):
+    insertadas: int = 0
+    total: int = 0
+    opciones: List[MenuInformativoOut] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Alias de compatibilidad con router_chatbot_conversacional
 # ---------------------------------------------------------------------------
@@ -2154,3 +2250,4 @@ ReglaEscalamientoIn = ReglaEscalamientoCreate
 RequisitoIn = RequisitoCreate
 SimulacionIn = SimularMensajeIn
 TareaCandidatoUpdate = TareaUpdate
+MenuInformativoIn = MenuInformativoCreate

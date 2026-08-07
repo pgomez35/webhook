@@ -51,6 +51,7 @@ from chatbot_conversacional_tools import (
 )
 from chatbot_conversacional_clasificacion import (
     clasificar_mensaje,
+    inferir_intencion,
     usar_rutas_adaptativas,
 )
 
@@ -447,12 +448,37 @@ async def procesar_mensaje_conversacional(
 
     await _persistir_modo(contexto, dry_run=dry_run)
 
+    interrupcion = await _intentar_interrupcion_informativa(
+        contexto=contexto,
+        conversacion_id=conversacion_id,
+        mensaje_entrante_id=mensaje_entrante_id,
+        texto_usuario=texto,
+        canal=canal,
+        token=token,
+        phone_number_id=phone_number_id,
+        destino=wa_id or usuario_externo_id,
+        enviar_callback=enviar_callback,
+        dry_run=dry_run,
+    )
+    if interrupcion:
+        return interrupcion
+
     if usar_rutas_adaptativas(contexto.configuracion):
         resultado_cls = await _aplicar_clasificacion_adaptativa(
             contexto, texto_usuario=texto, dry_run=dry_run
         )
         respuesta_directa = (resultado_cls or {}).get("respuesta_directa")
         if respuesta_directa:
+            pendiente_guardar = None
+            if (
+                ((resultado_cls or {}).get("clasificacion") or {}).get("accion_propuesta")
+                == "preguntar_nivel"
+            ):
+                pendiente_guardar = {
+                    "paso_id": contexto.conversacion.get("paso_actual_id"),
+                    "campo": "nivel_experiencia",
+                    "texto": respuesta_directa,
+                }
             return await _responder_presentacion_literal(
                 contexto=contexto,
                 presentacion=respuesta_directa,
@@ -465,10 +491,35 @@ async def procesar_mensaje_conversacional(
                 destino=wa_id or usuario_externo_id,
                 enviar_callback=enviar_callback,
                 dry_run=dry_run,
+                pregunta_pendiente=pendiente_guardar,
             )
         accion = ((resultado_cls or {}).get("clasificacion") or {}).get(
             "accion_propuesta"
         )
+        # Duda informativa durante clasificación / inicio: responder info y
+        # conservar/retomar la pregunta de experiencia si el nivel sigue abierto.
+        if accion in {
+            "mostrar_beneficios",
+            "mostrar_requisitos",
+            "mostrar_bonos",
+            "mostrar_categorias",
+            "responder_informacion",
+        }:
+            info_resp = await _responder_info_y_retomar_si_aplica(
+                contexto=contexto,
+                accion=accion,
+                texto_usuario=texto,
+                conversacion_id=conversacion_id,
+                mensaje_entrante_id=mensaje_entrante_id,
+                canal=canal,
+                token=token,
+                phone_number_id=phone_number_id,
+                destino=wa_id or usuario_externo_id,
+                enviar_callback=enviar_callback,
+                dry_run=dry_run,
+            )
+            if info_resp:
+                return info_resp
         if accion == "enviar_solicitud":
             return await _responder_envio_solicitud_adaptativo(
                 contexto=contexto,
@@ -945,6 +996,365 @@ def _evidencia_requerida_para(
     return None
 
 
+INTERRUPCIONES_INFORMATIVAS = frozenset(
+    {"requisitos", "beneficios", "bonos", "agencia", "proceso", "faq"}
+)
+
+
+def _contexto_conversacion_dict(conversacion: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    conv = conversacion or {}
+    ctx = conv.get("contexto") or {}
+    if isinstance(ctx, str):
+        try:
+            ctx = json.loads(ctx)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            ctx = {}
+    return dict(ctx) if isinstance(ctx, dict) else {}
+
+
+def _leer_pregunta_pendiente(conversacion: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    pendiente = _contexto_conversacion_dict(conversacion).get("pregunta_pendiente")
+    return pendiente if isinstance(pendiente, dict) else None
+
+
+async def _guardar_pregunta_pendiente(
+    contexto: ConversationalContext,
+    pendiente: Dict[str, Any],
+    *,
+    dry_run: bool,
+) -> None:
+    ctx = _contexto_conversacion_dict(contexto.conversacion)
+    ctx["pregunta_pendiente"] = pendiente
+    contexto.conversacion["contexto"] = ctx
+    if dry_run or not contexto.conversacion_id:
+        return
+    await _db(
+        "actualizar_conversacion",
+        contexto.agencia_id,
+        contexto.conversacion_id,
+        {"contexto": ctx},
+    )
+
+
+async def _limpiar_pregunta_pendiente(
+    contexto: ConversationalContext,
+    *,
+    dry_run: bool,
+) -> None:
+    ctx = _contexto_conversacion_dict(contexto.conversacion)
+    if "pregunta_pendiente" not in ctx:
+        return
+    ctx.pop("pregunta_pendiente", None)
+    contexto.conversacion["contexto"] = ctx
+    if dry_run or not contexto.conversacion_id:
+        return
+    await _db(
+        "actualizar_conversacion",
+        contexto.agencia_id,
+        contexto.conversacion_id,
+        {"contexto": ctx},
+    )
+
+
+def _detectar_intencion_interrupcion_informativa(texto: str) -> Optional[str]:
+    """Detecta preguntas informativas durante un paso con pregunta pendiente."""
+    intencion, _conf = inferir_intencion(texto)
+    if intencion in {"requisitos", "beneficios", "bonos"}:
+        return intencion
+    if intencion == "informacion":
+        return "faq"
+
+    from service_chatbot_informativo import _normalizar as normalizar_informativo
+
+    n = normalizar_informativo(texto)
+    if any(k in n for k in ("agencia", "funcionamiento", "como funciona", "funciona")):
+        return "agencia"
+    if any(k in n for k in ("proceso", "continuar", "solicitud", "unirme", "incorpor")):
+        return "proceso"
+    return None
+
+
+def _construir_texto_informativo_inteligente(
+    contexto: ConversationalContext,
+    intencion: str,
+    texto_consulta: str,
+) -> str:
+    from service_chatbot_informativo import (
+        construir_respuesta_por_intencion_informativa,
+        presentacion_desde_asistente,
+    )
+    import database_chatbot_conversacional as db_conv
+
+    presentacion = presentacion_desde_asistente(contexto.asistente)
+    texto, _req = construir_respuesta_por_intencion_informativa(
+        intencion,
+        agencia_id=contexto.agencia_id,
+        chatbot_configuracion_id=int(contexto.chatbot_configuracion_id or 0),
+        presentacion=presentacion,
+        texto_consulta=texto_consulta,
+        db_conv=db_conv,
+    )
+    return str(texto or "").strip()
+
+
+async def _responder_info_y_retomar_si_aplica(
+    *,
+    contexto: ConversationalContext,
+    accion: str,
+    texto_usuario: str,
+    conversacion_id: Optional[int],
+    mensaje_entrante_id: Optional[int],
+    canal: str,
+    token: Optional[str],
+    phone_number_id: Optional[str],
+    destino: Optional[str],
+    enviar_callback: Optional[EnviarCallback],
+    dry_run: bool,
+) -> Optional[Dict[str, Any]]:
+    """
+    Responde una duda informativa y, si el nivel sigue abierto, retoma la
+    pregunta de experiencia sin perder el flujo.
+    """
+    mapa = {
+        "mostrar_beneficios": "beneficios",
+        "mostrar_requisitos": "requisitos",
+        "mostrar_bonos": "bonos",
+        "mostrar_categorias": "agencia",
+        "responder_informacion": "faq",
+    }
+    intencion = mapa.get(accion)
+    if not intencion:
+        return None
+
+    info = _construir_texto_informativo_inteligente(
+        contexto, intencion, texto_usuario
+    )
+    if not info:
+        return None
+
+    asistente = contexto.asistente or {}
+    nivel = str(
+        (contexto.conversacion or {}).get("nivel_experiencia")
+        or (contexto.aspirante or {}).get("nivel_experiencia")
+        or "desconocido"
+    ).lower()
+    pendiente_existente = _leer_pregunta_pendiente(contexto.conversacion)
+    pregunta = None
+    pendiente_guardar = None
+
+    if nivel in {"", "desconocido", "none", "null"}:
+        pregunta = str(
+            (pendiente_existente or {}).get("texto")
+            or asistente.get("pregunta_clasificacion_nivel")
+            or asistente.get("presentacion_inicial")
+            or "¿Ya has realizado transmisiones LIVE?"
+        ).strip()
+        pendiente_guardar = {
+            "paso_id": (contexto.conversacion or {}).get("paso_actual_id"),
+            "campo": "nivel_experiencia",
+            "texto": pregunta,
+        }
+
+    if pregunta and pregunta not in info:
+        if pregunta.startswith("¿"):
+            respuesta = f"{info}\n\nPara orientarte mejor, {pregunta}"
+        else:
+            respuesta = f"{info}\n\n{pregunta}"
+    else:
+        respuesta = info
+
+    envio = await _enviar_respuesta(
+        canal=canal,
+        texto=respuesta,
+        enlaces=[],
+        token=token,
+        phone_number_id=phone_number_id,
+        destino=destino,
+        enviar_callback=enviar_callback,
+        dry_run=dry_run,
+    )
+
+    mensaje_saliente = None
+    if respuesta and not dry_run and conversacion_id:
+        mensaje_saliente = await _db(
+            "insertar_mensaje",
+            contexto.agencia_id,
+            conversacion_id,
+            canal=canal,
+            direccion="saliente",
+            remitente_tipo="chatbot",
+            tipo_mensaje="texto",
+            texto=respuesta,
+            estado_envio="enviado" if envio.get("enviado") else "error",
+            error_detalle=envio.get("error"),
+            procesado_por_ia=False,
+            metadata={
+                "info_con_retoma": True,
+                "intencion": intencion,
+                "modo_humano": False,
+            },
+            default=None,
+        )
+        mensaje_saliente = _normalizar_fila_mensaje(mensaje_saliente)
+
+    if pendiente_guardar:
+        await _guardar_pregunta_pendiente(
+            contexto, pendiente_guardar, dry_run=dry_run
+        )
+
+    await _actualizar_cierre_de_turno(
+        contexto,
+        respuesta=respuesta,
+        mensaje_usuario=texto_usuario,
+        acciones=[{"tipo": "info_y_retoma", "intencion": intencion}],
+        escalado=False,
+        cerrada=False,
+        dry_run=dry_run,
+    )
+
+    return {
+        "usado": True,
+        "motivo": None,
+        "conversacion_id": conversacion_id,
+        "mensaje_entrante_id": mensaje_entrante_id,
+        "mensaje_saliente_id": (_normalizar_fila_mensaje(mensaje_saliente) or {}).get("id"),
+        "respuesta": respuesta,
+        "modo": contexto.modo,
+        "acciones": [{"tipo": "info_y_retoma", "intencion": intencion}],
+        "enlaces": [],
+        "escalado": False,
+        "cerrada": False,
+        "enviado": envio.get("enviado"),
+        "error": envio.get("error"),
+        "pregunta_pendiente": pendiente_guardar,
+        "tipo_chatbot": "inteligente",
+        "modo_humano": False,
+    }
+
+
+async def _intentar_interrupcion_informativa(
+    *,
+    contexto: ConversationalContext,
+    conversacion_id: Optional[int],
+    mensaje_entrante_id: Optional[int],
+    texto_usuario: str,
+    canal: str,
+    token: Optional[str],
+    phone_number_id: Optional[str],
+    destino: Optional[str],
+    enviar_callback: Optional[EnviarCallback],
+    dry_run: bool,
+) -> Optional[Dict[str, Any]]:
+    """
+    Si hay pregunta o paso pendiente y el usuario pide info, responde primero
+    la duda y retoma el punto pendiente una sola vez.
+    """
+    pendiente = _leer_pregunta_pendiente(contexto.conversacion)
+    if not pendiente:
+        paso = contexto.paso or {}
+        texto_paso = str(
+            paso.get("mensaje_usuario")
+            or paso.get("descripcion")
+            or paso.get("nombre")
+            or ""
+        ).strip()
+        if (contexto.conversacion or {}).get("paso_actual_id") and texto_paso:
+            pendiente = {
+                "paso_id": (contexto.conversacion or {}).get("paso_actual_id"),
+                "campo": paso.get("codigo") or "paso_actual",
+                "texto": texto_paso,
+            }
+        else:
+            return None
+
+    intencion = _detectar_intencion_interrupcion_informativa(texto_usuario)
+    if not intencion or intencion not in INTERRUPCIONES_INFORMATIVAS:
+        return None
+
+    info = _construir_texto_informativo_inteligente(
+        contexto, intencion, texto_usuario
+    )
+    if not info:
+        return None
+
+    pregunta = str(pendiente.get("texto") or "").strip()
+    if pregunta and pregunta not in info:
+        if pregunta.startswith("¿") or pregunta.endswith("?"):
+            respuesta = f"{info}\n\nPara continuar, {pregunta}"
+        else:
+            respuesta = f"{info}\n\nPara continuar: {pregunta}"
+    else:
+        respuesta = info
+
+    envio = await _enviar_respuesta(
+        canal=canal,
+        texto=respuesta,
+        enlaces=[],
+        token=token,
+        phone_number_id=phone_number_id,
+        destino=destino,
+        enviar_callback=enviar_callback,
+        dry_run=dry_run,
+    )
+
+    mensaje_saliente = None
+    if respuesta and not dry_run and conversacion_id:
+        mensaje_saliente = await _db(
+            "insertar_mensaje",
+            contexto.agencia_id,
+            conversacion_id,
+            canal=canal,
+            direccion="saliente",
+            remitente_tipo="chatbot",
+            tipo_mensaje="texto",
+            texto=respuesta,
+            estado_envio="enviado" if envio.get("enviado") else "error",
+            error_detalle=envio.get("error"),
+            procesado_por_ia=False,
+            metadata={
+                "interrupcion_informativa": True,
+                "intencion": intencion,
+                "pregunta_pendiente": pendiente,
+                "modo_humano": False,
+            },
+            default=None,
+        )
+        mensaje_saliente = _normalizar_fila_mensaje(mensaje_saliente)
+
+    await _guardar_pregunta_pendiente(contexto, pendiente, dry_run=dry_run)
+
+    await _actualizar_cierre_de_turno(
+        contexto,
+        respuesta=respuesta,
+        mensaje_usuario=texto_usuario,
+        acciones=[{"tipo": "interrupcion_informativa", "intencion": intencion}],
+        escalado=False,
+        cerrada=False,
+        dry_run=dry_run,
+    )
+
+    return {
+        "usado": True,
+        "motivo": None,
+        "conversacion_id": conversacion_id,
+        "mensaje_entrante_id": mensaje_entrante_id,
+        "mensaje_saliente_id": (_normalizar_fila_mensaje(mensaje_saliente) or {}).get("id"),
+        "respuesta": respuesta,
+        "modo": contexto.modo,
+        "modelo": None,
+        "acciones": [{"tipo": "interrupcion_informativa", "intencion": intencion}],
+        "enlaces": [],
+        "escalado": False,
+        "cerrada": False,
+        "enviado": envio.get("enviado"),
+        "error": envio.get("error"),
+        "modo_humano": False,
+        "pregunta_pendiente": pendiente,
+        "tipo_chatbot": "inteligente",
+        "sdk": None,
+    }
+
+
 async def _aplicar_clasificacion_adaptativa(
     contexto: ConversationalContext,
     *,
@@ -971,6 +1381,17 @@ async def _aplicar_clasificacion_adaptativa(
             "clasificacion": resultado.clasificacion.model_dump(),
             "respuesta_directa": resultado.texto_respuesta_directa,
         }
+
+    pendiente = _leer_pregunta_pendiente(contexto.conversacion)
+    if pendiente and pendiente.get("campo") == "nivel_experiencia":
+        if (
+            resultado.clasificacion.nivel_declarado_explicitamente
+            or (
+                resultado.clasificacion.nivel_experiencia != "desconocido"
+                and float(resultado.clasificacion.confianza_nivel or 0) >= 0.75
+            )
+        ):
+            await _limpiar_pregunta_pendiente(contexto, dry_run=dry_run)
 
     if resultado.campos_conversacion:
         await _db(
@@ -1029,6 +1450,7 @@ async def _responder_presentacion_literal(
     destino: Optional[str],
     enviar_callback: Optional[EnviarCallback],
     dry_run: bool,
+    pregunta_pendiente: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Envía presentacion_inicial sin modelo ni herramientas.
@@ -1073,6 +1495,11 @@ async def _responder_presentacion_literal(
             default=None,
         )
         mensaje_saliente = _normalizar_fila_mensaje(mensaje_saliente)
+
+    if pregunta_pendiente:
+        await _guardar_pregunta_pendiente(
+            contexto, pregunta_pendiente, dry_run=dry_run
+        )
 
     await _actualizar_cierre_de_turno(
         contexto,
@@ -1245,23 +1672,13 @@ async def _responder_transferencia_adaptativa(
     enviar_callback: Optional[EnviarCallback],
     dry_run: bool,
 ) -> Dict[str, Any]:
-    """Transferencia explícita (intención asesor): sí activa modo_humano."""
+    """Solicitud de asesor: marca requiere_asesor, NO activa modo_humano."""
     motivo = "solicitud_explicita_asesor"
     texto = (
-        "Claro, te derivo con una persona del equipo para que te acompañe. "
-        "En breve continuarán contigo por este mismo chat."
+        "Dejé tu solicitud pendiente para que un asesor te contacte. "
+        "Mientras tanto puedo seguir respondiendo tus preguntas."
     )
     if not dry_run and conversacion_id:
-        await _db(
-            "actualizar_conversacion",
-            contexto.agencia_id,
-            conversacion_id,
-            {
-                "estado": "esperando_humano",
-                "modo_humano": True,
-                "motivo_escalamiento": motivo,
-            },
-        )
         aspirante_id = contexto.aspirante_id
         if aspirante_id:
             try:
@@ -1283,21 +1700,21 @@ async def _responder_transferencia_adaptativa(
             contexto.agencia_id,
             conversacion_id,
             tipo_evento="escalamiento",
-            nombre_evento="transferencia_adaptativa",
+            nombre_evento="solicitud_asesor_adaptativa",
             origen="backend",
             estado_anterior=contexto.conversacion.get("estado"),
-            estado_nuevo="esperando_humano",
+            estado_nuevo=contexto.conversacion.get("estado"),
             detalle={
                 "requiere_asesor": True,
                 "transferencia_solicitada": True,
-                "modo_humano": True,
+                "modo_humano": False,
                 "motivo_transferencia": motivo,
                 "origen_activacion": "clasificacion_adaptativa",
             },
         )
         logger.info(
             "[CHATBOT-TRANSFERENCIA] aspirante_id=%s conversacion_id=%s "
-            "modo_humano=true requiere_asesor=true transferencia_solicitada=true "
+            "modo_humano=false requiere_asesor=true transferencia_solicitada=true "
             "origen=clasificacion_adaptativa",
             contexto.aspirante_id,
             conversacion_id,
@@ -1329,8 +1746,9 @@ async def _responder_transferencia_adaptativa(
             error_detalle=envio.get("error"),
             procesado_por_ia=False,
             metadata={
-                "accion_adaptativa": "transferir_humano",
-                "modo_humano": True,
+                "accion_adaptativa": "solicitar_asesor",
+                "modo_humano": False,
+                "requiere_asesor": True,
                 "transferencia_solicitada": True,
             },
             default=None,
@@ -1342,7 +1760,7 @@ async def _responder_transferencia_adaptativa(
         respuesta=texto,
         mensaje_usuario=texto_usuario,
         acciones=[],
-        escalado=True,
+        escalado=False,
         cerrada=False,
         dry_run=dry_run,
     )
@@ -1358,12 +1776,12 @@ async def _responder_transferencia_adaptativa(
         "modelo": None,
         "acciones": [],
         "enlaces": [],
-        "escalado": True,
+        "escalado": False,
         "cerrada": False,
         "enviado": envio.get("enviado"),
         "error": envio.get("error"),
         "requiere_asesor": True,
-        "modo_humano": True,
+        "modo_humano": False,
         "sdk": None,
     }
 
@@ -1796,21 +2214,37 @@ async def _manejar_fallo_ia(
                 contexto.agencia_id,
                 conversacion_id,
                 {
-                    "estado": "esperando_humano",
-                    "modo_humano": True,
                     "motivo_escalamiento": "fallos_consecutivos_ia",
                 },
             )
+            # No activar modo_humano por error del modelo: solo requiere_asesor.
+            aspirante_id = contexto.aspirante_id
+            if aspirante_id:
+                try:
+                    import database_chatbot_captacion as db_cap
+
+                    await asyncio.to_thread(
+                        db_cap.actualizar_aspirante_admin,
+                        contexto.agencia_id,
+                        int(aspirante_id),
+                        requiere_asesor=True,
+                    )
+                except Exception:
+                    pass
             await _db(
                 "registrar_evento",
                 contexto.agencia_id,
                 conversacion_id,
                 tipo_evento="escalamiento",
-                nombre_evento="escalamiento_por_errores_ia",
+                nombre_evento="requiere_asesor_por_errores_ia",
                 origen="backend",
                 estado_anterior=contexto.conversacion.get("estado"),
-                estado_nuevo="esperando_humano",
-                detalle={"errores_recientes": errores_recientes},
+                estado_nuevo=contexto.conversacion.get("estado"),
+                detalle={
+                    "errores_recientes": errores_recientes,
+                    "requiere_asesor": True,
+                    "modo_humano": False,
+                },
             )
 
     return {

@@ -1329,99 +1329,84 @@ async def _procesar_conversacional_si_aplica(
         )
         return None
 
-    if not decision.get("usar_conversacional"):
+    # Sin tipo informativo/inteligente activo → flujo clásico legacy
+    if not decision.get("usar_informativo") and not decision.get("usar_conversacional"):
         print(
-            f"[chatbot_router] NO conversacional → clásico "
+            f"[chatbot_router] NO tipo nuevo → clásico "
             f"motivo={decision.get('motivo')} "
             f"cfg={chatbot_configuracion_id}"
         )
         return None
 
-    try:
-        from service_chatbot_conversacional import (
-            procesar_mensaje_conversacional,
+    async def _enviar_wa(texto_out: str):
+        await enviar_texto_whatsapp(
+            token=token,
+            phone_number_id=phone_number_id,
+            to=str(wa_id),
+            body=texto_out,
         )
-    except Exception as e:
-        logger.warning(
-            "[chatbot_router] motor conversacional seleccionado pero "
-            "service_chatbot_conversacional no está desplegado; flujo clásico "
-            "agencia_id=%s chatbot_configuracion_id=%s",
-            agencia_id,
-            chatbot_configuracion_id,
-        )
-        print(
-            f"[chatbot_router] IMPORT FALLÓ service_chatbot_conversacional: {e} "
-            f"→ flujo clásico (cfg={chatbot_configuracion_id})"
-        )
-        return None
+        return True
 
-    print(
-        f"[chatbot_router] desviando a conversacional "
-        f"agencia_id={agencia_id} aspirante_id={aspirante.get('id')} "
-        f"cfg={chatbot_configuracion_id}"
-    )
-    logger.info(
-        "[chatbot_router] desviando a conversacional agencia_id=%s aspirante_id=%s "
-        "chatbot_configuracion_id=%s tipo=%s",
-        agencia_id,
-        aspirante.get("id"),
-        chatbot_configuracion_id,
-        tipo,
-    )
     try:
-        resultado = await procesar_mensaje_conversacional(
+        from service_chatbot_dispatcher import procesar_mensaje_segun_tipo_chatbot
+
+        resultado = await procesar_mensaje_segun_tipo_chatbot(
             agencia_id=agencia_id,
-            texto=texto or payload_id or "",
-            usuario_externo_id=str(wa_id),
             chatbot_configuracion_id=int(chatbot_configuracion_id),
+            texto=texto or payload_id or "",
             canal="whatsapp",
-            cuenta_externa_id=phone_number_id,
+            aspirante_id=aspirante.get("id"),
+            usuario_externo_id=str(wa_id),
             telefono=str(wa_id),
             nombre_contacto=aspirante.get("nombre"),
             mensaje_externo_id=message_id_meta,
             tipo_mensaje=_TIPOS_MENSAJE_CONVERSACIONAL.get(
                 str(tipo or "").lower(), "texto"
             ),
-            aspirante_id=aspirante.get("id"),
+            cuenta_externa_id=phone_number_id,
             campania_id=_campania_desde_referral(agencia_id, referral_meta),
             token=token,
             phone_number_id=phone_number_id,
             wa_id=str(wa_id),
+            enviar_callback=_enviar_wa,
+            dry_run=False,
         )
     except Exception as e:
-        # El asistente está activo: reintentar con el flujo rígido reenviaría
-        # la bienvenida y duplicaría la conversación. Se consume el mensaje.
         logger.exception(
-            "[CHATBOT-CONV] fallo procesando mensaje agencia_id=%s aspirante_id=%s "
+            "[CHATBOT_TIPO] fallo dispatcher agencia_id=%s aspirante_id=%s "
             "chatbot_configuracion_id=%s",
             agencia_id,
             aspirante.get("id"),
             chatbot_configuracion_id,
         )
         print(
-            f"[CHATBOT-CONV] excepción procesando mensaje "
+            f"[CHATBOT_TIPO] excepción dispatcher "
             f"agencia_id={agencia_id} cfg={chatbot_configuracion_id}: {e}"
+        )
+        try:
+            await enviar_texto_whatsapp(
+                token=token,
+                phone_number_id=phone_number_id,
+                to=str(wa_id),
+                body=(
+                    "Recibí tu mensaje. Tuve un problema técnico temporal; "
+                    "puedo seguir ayudándote en un momento."
+                ),
+            )
+        except Exception:
+            pass
+        return True
+
+    if isinstance(resultado, dict) and resultado.get("motivo") == "mensaje_duplicado":
+        print(
+            "[CHATBOT-CONV] mensaje consumido sin respuesta IA motivo=mensaje_duplicado"
         )
         return True
 
-    if isinstance(resultado, dict) and not resultado.get("usado"):
-        motivo = resultado.get("motivo")
-        if motivo in _MOTIVOS_CONVERSACIONAL_CONSUMEN:
-            print(
-                f"[CHATBOT-CONV] mensaje consumido sin respuesta IA motivo={motivo}"
-            )
-            return True
-        logger.info(
-            "[CHATBOT-CONV] asistente no atendió (motivo=%s); continúa flujo clásico",
-            motivo,
-        )
-        print(
-            f"[CHATBOT-CONV] no atendió motivo={motivo} → continúa flujo clásico"
-        )
-        return None
     print(
-        f"[CHATBOT-CONV] atendido ok aspirante_id={aspirante.get('id')} "
-        f"cfg={chatbot_configuracion_id}"
+        f"[CHATBOT_TIPO] atendido ok aspirante_id={aspirante.get('id')} "
+        f"cfg={chatbot_configuracion_id} tipo={decision.get('tipo_chatbot')} "
+        f"respuesta_enviada={bool((resultado or {}).get('respuesta_enviada') or (resultado or {}).get('usado'))}"
     )
     return True
 

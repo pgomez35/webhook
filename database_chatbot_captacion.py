@@ -736,6 +736,9 @@ def crear_configuracion_default(agencia_id: int) -> Dict[str, Any]:
 
 
 def crear_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
+    from chatbot_tipo import preparar_payload_tipo
+
+    data = preparar_payload_tipo(dict(data or {}))
     faqs_plain = _faqs_plain(data)
     recursos_plain = _recursos_plain(data)
     codigo = str(data.get("codigo") or "").strip().lower()[:80]
@@ -743,6 +746,9 @@ def crear_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str, Any]
     es_predeterminada = bool(data.get("es_predeterminada"))
     nombre = str(data.get("nombre") or "").strip()[:120]
     texto_opcion = str(data.get("texto_opcion") or "").strip()[:40]
+    tipo_chatbot = str(data.get("tipo_chatbot") or "informativo").strip().lower()[:20]
+    if tipo_chatbot not in {"informativo", "inteligente"}:
+        tipo_chatbot = "informativo"
     if not codigo:
         raise ValueError("codigo es obligatorio")
     if not nombre:
@@ -778,6 +784,7 @@ def crear_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str, Any]
                         es_predeterminada,
                         orden,
                         activo,
+                        tipo_chatbot,
                         usar_asistente_conversacional,
                         usar_rutas_adaptativas,
                         mensaje_bienvenida,
@@ -794,7 +801,7 @@ def crear_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str, Any]
                         recursos_bienvenida,
                         mensaje_error
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     RETURNING *
@@ -808,7 +815,8 @@ def crear_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str, Any]
                         es_predeterminada,
                         int(orden),
                         bool(data.get("activo", False)),
-                        bool(data.get("usar_asistente_conversacional", False)),
+                        tipo_chatbot,
+                        bool(data.get("usar_asistente_conversacional", True)),
                         bool(data.get("usar_rutas_adaptativas", False)),
                         data["mensaje_bienvenida"],
                         data["pregunta_usuario"],
@@ -830,6 +838,11 @@ def crear_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str, Any]
                     raise ValueError(
                         f"Ya existe una configuración con código '{codigo}' en esta agencia"
                     ) from e
+                if "tipo_chatbot" in str(e).lower():
+                    raise ValueError(
+                        "La columna tipo_chatbot no está disponible. "
+                        "Ejecute la migración SQL pendiente."
+                    ) from e
                 raise
             row = cur.fetchone()
             if not row:
@@ -839,12 +852,13 @@ def crear_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str, Any]
                 _limpiar_otras_predeterminadas(cur, agencia_id, cfg_id)
             logger.info(
                 "[CHATBOT-CONFIG] creada agencia_id=%s configuracion_id=%s "
-                "plataforma_codigo=%s codigo=%s activo=%s",
+                "plataforma_codigo=%s codigo=%s activo=%s tipo_chatbot=%s",
                 agencia_id,
                 cfg_id,
                 plataforma_codigo,
                 codigo,
                 bool(data.get("activo", False)),
+                tipo_chatbot,
             )
     return obtener_configuracion_por_id(agencia_id, cfg_id) or dict(row)
 
@@ -859,6 +873,9 @@ def actualizar_configuracion(
     Actualiza una configuración por id (preferido) o, en compatibilidad,
     la primera de la agencia si no se indica configuracion_id.
     """
+    from chatbot_tipo import preparar_payload_tipo
+
+    data = preparar_payload_tipo(dict(data or {}))
     faqs_plain = _faqs_plain(data)
     recursos_plain = _recursos_plain(data)
 
@@ -877,15 +894,17 @@ def actualizar_configuracion(
 
     logger.info(
         "[CHATBOT-CONFIG] actualizar agencia_id=%s configuracion_id=%s "
-        "faqs=%s recursos=%s",
+        "faqs=%s recursos=%s tipo_chatbot=%s",
         agencia_id,
         configuracion_id,
         len(faqs_plain),
         len(recursos_plain),
+        data.get("tipo_chatbot"),
     )
 
     sets = [
         "activo = %s",
+        "tipo_chatbot = %s",
         "usar_asistente_conversacional = %s",
         "usar_rutas_adaptativas = %s",
         "mensaje_bienvenida = %s",
@@ -903,8 +922,12 @@ def actualizar_configuracion(
         "mensaje_error = %s",
         "updated_at = CURRENT_TIMESTAMP",
     ]
+    tipo_chatbot = str(data.get("tipo_chatbot") or "informativo").strip().lower()[:20]
+    if tipo_chatbot not in {"informativo", "inteligente"}:
+        tipo_chatbot = "informativo"
     params: List[Any] = [
         data["activo"],
+        tipo_chatbot,
         bool(data.get("usar_asistente_conversacional", False)),
         bool(data.get("usar_rutas_adaptativas", False)),
         data["mensaje_bienvenida"],
@@ -1187,6 +1210,80 @@ def set_usar_rutas_adaptativas(
         "[CHATBOT-CONFIG] usar_rutas_adaptativas=%s "
         "agencia_id=%s configuracion_id=%s",
         bool(usar_rutas_adaptativas),
+        agencia_id,
+        configuracion_id,
+    )
+    return out
+
+
+def set_tipo_chatbot(
+    agencia_id: int,
+    configuracion_id: int,
+    tipo_chatbot: str,
+) -> Dict[str, Any]:
+    """
+    Persiste tipo_chatbot, sincroniza flags de config y modos del asistente.
+    No modifica asistente_configuracion.activo.
+    """
+    from chatbot_tipo import modos_asistente_desde_tipo, normalizar_tipo_chatbot, sync_completo_desde_tipo
+
+    tipo = normalizar_tipo_chatbot(tipo_chatbot)
+    if not tipo:
+        raise ValueError("tipo_chatbot debe ser 'informativo' o 'inteligente'")
+    sync = sync_completo_desde_tipo(tipo)
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                UPDATE chatbot.chatbot_configuracion
+                SET tipo_chatbot = %s,
+                    usar_asistente_conversacional = %s,
+                    usar_rutas_adaptativas = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND agencia_id = %s
+                RETURNING id
+                """,
+                (
+                    sync["tipo_chatbot"],
+                    sync["usar_asistente_conversacional"],
+                    sync["usar_rutas_adaptativas"],
+                    configuracion_id,
+                    agencia_id,
+                ),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise ValueError("Configuración no encontrada")
+
+            # Sync modos internos del asistente (si existe)
+            modos = modos_asistente_desde_tipo(tipo)
+            cur.execute(
+                """
+                UPDATE chatbot.asistente_configuracion
+                SET modo_informativo_activo = %s,
+                    modo_conversion_activo = %s,
+                    modo_predeterminado = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE agencia_id = %s AND chatbot_configuracion_id = %s
+                """,
+                (
+                    modos["modo_informativo_activo"],
+                    modos["modo_conversion_activo"],
+                    modos["modo_predeterminado"],
+                    agencia_id,
+                    configuracion_id,
+                ),
+            )
+
+    out = obtener_configuracion_por_id(agencia_id, configuracion_id)
+    if not out:
+        raise ValueError("Configuración no encontrada")
+    logger.info(
+        "[CHATBOT-CONFIG] tipo_chatbot=%s usar_asistente=%s usar_rutas=%s "
+        "agencia_id=%s configuracion_id=%s",
+        tipo,
+        sync["usar_asistente_conversacional"],
+        sync["usar_rutas_adaptativas"],
         agencia_id,
         configuracion_id,
     )

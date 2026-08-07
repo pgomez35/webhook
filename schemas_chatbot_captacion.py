@@ -303,6 +303,7 @@ class ChatbotConfiguracionResumen(BaseModel):
     activo: bool = True
     usar_asistente_conversacional: bool = False
     usar_rutas_adaptativas: bool = False
+    tipo_chatbot: str = "informativo"
     updated_at: Optional[datetime] = None
 
 
@@ -332,6 +333,7 @@ class ChatbotConfiguracionResponse(BaseModel):
     activo: bool
     usar_asistente_conversacional: bool = False
     usar_rutas_adaptativas: bool = False
+    tipo_chatbot: str = "informativo"
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -346,6 +348,7 @@ class ChatbotConfiguracionCreate(BaseModel):
     es_predeterminada: bool = False
     orden: Optional[int] = Field(None, ge=1)
     activo: bool = False
+    tipo_chatbot: Optional[str] = Field("informativo", max_length=20)
     usar_asistente_conversacional: bool = False
     usar_rutas_adaptativas: bool = False
     mensaje_bienvenida: str = Field(..., max_length=600)
@@ -413,6 +416,7 @@ class ChatbotConfiguracionUpdate(BaseModel):
     model_config = {"extra": "forbid"}
 
     activo: bool
+    tipo_chatbot: Optional[str] = Field(None, max_length=20)
     usar_asistente_conversacional: bool = False
     usar_rutas_adaptativas: bool = False
     codigo: Optional[str] = Field(None, max_length=80)
@@ -516,6 +520,22 @@ class ChatbotConfiguracionUsarRutasAdaptativasIn(BaseModel):
     model_config = {"extra": "forbid"}
 
     usar_rutas_adaptativas: bool
+
+
+class ChatbotConfiguracionTipoIn(BaseModel):
+    """Selector visible: informativo | inteligente."""
+
+    model_config = {"extra": "forbid"}
+
+    tipo_chatbot: str = Field(..., max_length=20)
+
+    @field_validator("tipo_chatbot")
+    @classmethod
+    def validar_tipo(cls, v: str) -> str:
+        valor = str(v or "").strip().lower()
+        if valor not in {"informativo", "inteligente"}:
+            raise ValueError("tipo_chatbot debe ser 'informativo' o 'inteligente'")
+        return valor
 
 
 class ChatbotConfiguracionReordenarItem(BaseModel):
