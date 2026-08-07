@@ -468,12 +468,41 @@ async def procesar_mensaje_conversacional(
             contexto, texto_usuario=texto, dry_run=dry_run
         )
         respuesta_directa = (resultado_cls or {}).get("respuesta_directa")
+        accion = ((resultado_cls or {}).get("clasificacion") or {}).get(
+            "accion_propuesta"
+        )
+        nivel_cls = str(
+            ((resultado_cls or {}).get("clasificacion") or {}).get("nivel_experiencia")
+            or "desconocido"
+        )
+        # Guardia: adaptativa + nivel abierto nunca cae al agente libre.
+        if (
+            not respuesta_directa
+            and nivel_cls == "desconocido"
+            and accion
+            not in {
+                "mostrar_beneficios",
+                "mostrar_requisitos",
+                "mostrar_bonos",
+                "mostrar_categorias",
+                "responder_informacion",
+                "transferir_humano",
+                "enviar_solicitud",
+            }
+        ):
+            from chatbot_conversacional_clasificacion import (
+                TEXTO_ACLARACION_NIVEL,
+                construir_pregunta_clasificacion,
+            )
+
+            respuesta_directa = construir_pregunta_clasificacion(
+                contexto.asistente or {}
+            ) or TEXTO_ACLARACION_NIVEL
+            accion = "aclarar_nivel"
+
         if respuesta_directa:
             pendiente_guardar = None
-            if (
-                ((resultado_cls or {}).get("clasificacion") or {}).get("accion_propuesta")
-                == "preguntar_nivel"
-            ):
+            if accion in {"preguntar_nivel", "aclarar_nivel"}:
                 pendiente_guardar = {
                     "paso_id": contexto.conversacion.get("paso_actual_id"),
                     "campo": "nivel_experiencia",
@@ -493,9 +522,6 @@ async def procesar_mensaje_conversacional(
                 dry_run=dry_run,
                 pregunta_pendiente=pendiente_guardar,
             )
-        accion = ((resultado_cls or {}).get("clasificacion") or {}).get(
-            "accion_propuesta"
-        )
         # Duda informativa durante clasificación / inicio: responder info y
         # conservar/retomar la pregunta de experiencia si el nivel sigue abierto.
         if accion in {
@@ -521,6 +547,27 @@ async def procesar_mensaje_conversacional(
             if info_resp:
                 return info_resp
         if accion == "enviar_solicitud":
+            if nivel_cls == "desconocido":
+                from chatbot_conversacional_clasificacion import TEXTO_ACLARACION_NIVEL
+
+                return await _responder_presentacion_literal(
+                    contexto=contexto,
+                    presentacion=TEXTO_ACLARACION_NIVEL,
+                    conversacion_id=conversacion_id,
+                    mensaje_entrante_id=mensaje_entrante_id,
+                    texto_usuario=texto,
+                    canal=canal,
+                    token=token,
+                    phone_number_id=phone_number_id,
+                    destino=wa_id or usuario_externo_id,
+                    enviar_callback=enviar_callback,
+                    dry_run=dry_run,
+                    pregunta_pendiente={
+                        "paso_id": contexto.conversacion.get("paso_actual_id"),
+                        "campo": "nivel_experiencia",
+                        "texto": TEXTO_ACLARACION_NIVEL,
+                    },
+                )
             return await _responder_envio_solicitud_adaptativo(
                 contexto=contexto,
                 conversacion_id=conversacion_id,
@@ -1437,10 +1484,85 @@ async def _aplicar_clasificacion_adaptativa(
             detalle=resultado.detalle_evento,
         )
 
+    if getattr(resultado, "seleccionar_flujo", False):
+        await _seleccionar_flujo_por_nivel_confirmado(
+            contexto,
+            nivel=resultado.clasificacion.nivel_experiencia,
+            dry_run=dry_run,
+        )
+
     return {
         "clasificacion": resultado.clasificacion.model_dump(),
         "respuesta_directa": resultado.texto_respuesta_directa,
     }
+
+
+async def _seleccionar_flujo_por_nivel_confirmado(
+    contexto: ConversationalContext,
+    *,
+    nivel: str,
+    dry_run: bool,
+) -> None:
+    """
+    Tras confirmar principiante/experimentado, elige flujo conversion
+    con nivel_objetivo (fallback general). No elige prueba LIVE por keyword.
+    """
+    nivel_n = str(nivel or "").strip().lower()
+    if nivel_n not in {"principiante", "experimentado"}:
+        return
+    if dry_run or not contexto.conversacion_id or not contexto.chatbot_configuracion_id:
+        return
+
+    flujo = await _db(
+        "obtener_flujo_por_nivel",
+        contexto.agencia_id,
+        contexto.chatbot_configuracion_id,
+        nivel=nivel_n,
+        tipo_flujo="conversion",
+        default=None,
+    )
+    if not flujo:
+        return
+
+    flujo_id = flujo.get("id")
+    pasos = (
+        await _db(
+            "listar_flujo_pasos",
+            contexto.agencia_id,
+            flujo_id,
+            solo_activos=True,
+            default=[],
+        )
+        or []
+    )
+    pasos_ord = sorted(
+        [p for p in pasos if p],
+        key=lambda p: (int(p.get("orden") or 0), int(p.get("id") or 0)),
+    )
+    primer_paso = pasos_ord[0] if pasos_ord else None
+    campos = {
+        "flujo_id": flujo_id,
+        "paso_actual_id": (primer_paso or {}).get("id"),
+        "estado_actual": "flujo_seleccionado",
+    }
+    await _db(
+        "actualizar_conversacion",
+        contexto.agencia_id,
+        contexto.conversacion_id,
+        campos,
+    )
+    contexto.conversacion.update(campos)
+    contexto.flujo = flujo
+    contexto.paso = primer_paso
+    logger.info(
+        "[CLASIFICACION] flujo_seleccionado conversacion_id=%s nivel=%s "
+        "flujo_id=%s paso_id=%s nivel_objetivo=%s",
+        contexto.conversacion_id,
+        nivel_n,
+        flujo_id,
+        campos.get("paso_actual_id"),
+        flujo.get("nivel_objetivo"),
+    )
 
 
 async def _responder_presentacion_literal(

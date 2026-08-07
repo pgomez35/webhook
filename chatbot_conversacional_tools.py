@@ -18,7 +18,7 @@ import logging
 import typing
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Any, Dict, Generic, List, Optional, TypeVar
+from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
@@ -783,6 +783,19 @@ async def crear_tarea_candidato(
     ctxh = _ctx(ctx)
 
     datos = tarea.model_dump()
+    tipo_tarea = str(datos.get("tipo_tarea") or "").strip().lower()
+    if tipo_tarea in {"agendar_live", "preparar_live", "prueba_live", "solicitar_live"}:
+        ok_live, motivo_live = puede_ejecutar_accion_conversion_live(ctxh)
+        if not ok_live:
+            _registrar(
+                ctxh,
+                herramienta="crear_tarea_candidato",
+                exitoso=False,
+                error_detalle=motivo_live[:240],
+                detalle={"tipo_tarea": tipo_tarea},
+            )
+            return _error(motivo_live)
+
     creada = None
 
     if not ctxh.dry_run:
@@ -808,6 +821,107 @@ async def crear_tarea_candidato(
         detalle={"tipo_tarea": datos["tipo_tarea"], "titulo": datos["titulo"][:180]},
     )
     return _ok(tarea_id=(creada or {}).get("id"), tipo_tarea=datos["tipo_tarea"])
+
+
+def _nivel_experiencia_resuelto(ctxh: ContextoHerramientas) -> str:
+    from chatbot_conversacional_clasificacion import nivel_resuelto
+
+    return nivel_resuelto(
+        ctxh.contexto.conversacion or {},
+        ctxh.contexto.aspirante,
+    )
+
+
+def _pasos_previos_obligatorios_cumplidos(ctxh: ContextoHerramientas) -> bool:
+    """
+    Verifica que los pasos activos anteriores al actual (si son obligatorios)
+    no queden pendientes. Sin historial de cumplimiento explícito, solo bloquea
+    si el paso actual no es el primero y no hay flujo/paso coherentes.
+    """
+    paso = ctxh.contexto.paso or {}
+    flujo = ctxh.contexto.flujo or {}
+    if not paso or not flujo:
+        return False
+    orden_actual = int(paso.get("orden") or 0)
+    if orden_actual <= 0:
+        return True
+    # Si hay pregunta pendiente de clasificación, no se cumplieron previos.
+    meta = (ctxh.contexto.conversacion or {}).get("metadata") or {}
+    if isinstance(meta, dict):
+        pendiente = meta.get("pregunta_pendiente") or {}
+        if isinstance(pendiente, dict) and pendiente.get("campo") == "nivel_experiencia":
+            return False
+    return True
+
+
+def puede_ejecutar_accion_conversion_live(
+    ctxh: ContextoHerramientas,
+    *,
+    tipos_accion_permitidos: Optional[frozenset] = None,
+) -> Tuple[bool, str]:
+    """
+    Gate duro para preparar_prueba_live / agendar_live / enlace LIVE.
+
+    Requiere conversación, nivel resuelto (si el flujo lo exige vía estrategia
+    adaptativa), flujo seleccionado, paso activo con tipo_accion adecuada y
+    pasos previos coherentes. Nunca se activa solo por la palabra «Live».
+    """
+    tipos = tipos_accion_permitidos or frozenset({"agendar_live", "solicitar_live"})
+    conv = ctxh.contexto.conversacion or {}
+    if not ctxh.conversacion_id and not conv.get("id"):
+        return False, "No hay conversación activa para agendar o preparar LIVE."
+
+    asistente = ctxh.contexto.asistente or {}
+    estrategia = str(asistente.get("estrategia_nivel_aspirante") or "adaptativa").lower()
+    nivel = _nivel_experiencia_resuelto(ctxh)
+    if estrategia == "adaptativa" and nivel == "desconocido":
+        return (
+            False,
+            "Aún no confirmamos si ya has hecho LIVE. Responde esa pregunta antes "
+            "de agendar una prueba.",
+        )
+
+    flujo = ctxh.contexto.flujo or {}
+    if not flujo.get("id") and not conv.get("flujo_id"):
+        return False, "Todavía no hay un flujo de conversión seleccionado."
+
+    paso = ctxh.contexto.paso or {}
+    paso_id = paso.get("id") or conv.get("paso_actual_id")
+    if not paso_id:
+        return False, "No hay un paso activo del flujo para esta acción."
+
+    if paso.get("activo") is False:
+        return False, "El paso actual del flujo no está activo."
+
+    tipo_accion = str(paso.get("tipo_accion") or "").strip().lower()
+    if tipo_accion not in tipos:
+        return (
+            False,
+            "El paso actual no permite agendar ni preparar una prueba LIVE. "
+            "Continúa con el siguiente paso del proceso.",
+        )
+
+    if not _pasos_previos_obligatorios_cumplidos(ctxh):
+        return (
+            False,
+            "Todavía faltan pasos previos del flujo antes de la prueba LIVE.",
+        )
+
+    return True, ""
+
+
+def _es_recurso_live(recurso: Optional[Dict[str, Any]]) -> bool:
+    if not recurso:
+        return False
+    tipo = str(recurso.get("tipo") or "").lower()
+    codigo = str(recurso.get("codigo") or "").lower()
+    nombre = str(recurso.get("nombre") or "").lower()
+    if tipo in {"live", "prueba_live", "agendar_live", "calendario_live"}:
+        return True
+    return any(
+        token in codigo or token in nombre
+        for token in ("live", "prueba_live", "agendar")
+    )
 
 
 def preparar_envio_enlace_autorizado(
@@ -886,6 +1000,25 @@ def preparar_envio_enlace_autorizado(
             "activo y puede responder otras preguntas.",
             motivo_log="recurso_inexistente",
         )
+
+    # Enlaces de prueba LIVE solo si el paso del flujo lo autoriza.
+    if _es_recurso_live(recurso):
+        ok_live, motivo_live = puede_ejecutar_accion_conversion_live(
+            ctxh,
+            tipos_accion_permitidos=frozenset(
+                {"agendar_live", "solicitar_live", "enviar_enlace"}
+            ),
+        )
+        if not ok_live:
+            return {
+                "ok": False,
+                "error": motivo_live,
+                "codigo": codigo,
+                "requiere_asesor": False,
+                "modo_humano": False,
+                "chatbot_continua": True,
+                "mensaje_usuario": motivo_live,
+            }
 
     if not _vigente(recurso):
         return _fallo(
@@ -999,6 +1132,17 @@ async def preparar_prueba_live(
 ) -> str:
     """Devuelve las condiciones e instrucciones vigentes de la prueba LIVE."""
     ctxh = _ctx(ctx)
+
+    ok_live, motivo_live = puede_ejecutar_accion_conversion_live(ctxh)
+    if not ok_live:
+        _registrar(
+            ctxh,
+            herramienta="preparar_prueba_live",
+            exitoso=False,
+            error_detalle=motivo_live[:240],
+        )
+        return _error(motivo_live)
+
     prueba = ctxh.contexto.prueba_live
 
     if not prueba:
@@ -1321,12 +1465,17 @@ def obtener_herramientas(
     permitidas: Optional[List[str]] = None,
     *,
     modo: Optional[str] = None,
+    nivel_experiencia: Optional[str] = None,
+    estrategia_nivel: Optional[str] = None,
 ) -> List[Any]:
     """
     Devuelve los objetos de herramienta habilitados.
 
     `permitidas` proviene de `asistente_configuracion.herramientas_permitidas`;
     si viene vacío se habilitan todas las del modo.
+
+    Con estrategia adaptativa y nivel desconocido se excluyen herramientas de
+    conversión LIVE (no se agenda por keyword).
     """
     seleccion = list(NOMBRES_HERRAMIENTAS)
 
@@ -1361,6 +1510,12 @@ def obtener_herramientas(
         seleccion = [
             nombre for nombre in seleccion if nombre not in HERRAMIENTAS_SOLO_CONVERSION
         ]
+
+    estrategia = str(estrategia_nivel or "adaptativa").strip().lower()
+    nivel = str(nivel_experiencia or "desconocido").strip().lower()
+    if estrategia == "adaptativa" and nivel == "desconocido":
+        bloqueadas = {"preparar_prueba_live", "solicitar_evidencias", "registrar_evidencia_recibida"}
+        seleccion = [nombre for nombre in seleccion if nombre not in bloqueadas]
 
     return [HERRAMIENTAS[nombre] for nombre in seleccion]
 

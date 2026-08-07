@@ -166,6 +166,8 @@ def construir_contexto(
         campania=campania,
         configuracion_id=configuracion_id,
         modo=resolucion.modo,
+        aspirante=aspirante,
+        asistente=asistente,
     )
     flujo = _verificar_agencia(flujo, agencia_id, "flujo")
 
@@ -291,6 +293,8 @@ def _resolver_flujo(
     campania: Optional[Dict[str, Any]],
     configuracion_id: Optional[int],
     modo: str,
+    aspirante: Optional[Dict[str, Any]] = None,
+    asistente: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     flujo_id = conversacion.get("flujo_id") or (campania or {}).get("flujo_id")
 
@@ -298,6 +302,28 @@ def _resolver_flujo(
         return gw.call_opcional("obtener_flujo", agencia_id, flujo_id)
 
     if not configuracion_id:
+        return None
+
+    # Si el nivel ya está resuelto, preferir flujo conversion por nivel_objetivo.
+    from chatbot_conversacional_clasificacion import nivel_resuelto
+
+    nivel = nivel_resuelto(conversacion, aspirante)
+    estrategia = str(
+        (asistente or {}).get("estrategia_nivel_aspirante") or "adaptativa"
+    ).lower()
+    if nivel in {"principiante", "experimentado"} and modo == "conversion":
+        flujo_nivel = gw.call_opcional(
+            "obtener_flujo_por_nivel",
+            agencia_id,
+            configuracion_id,
+            nivel=nivel,
+            tipo_flujo="conversion",
+        )
+        if flujo_nivel:
+            return flujo_nivel
+
+    # Adaptativa sin nivel: no preseleccionar flujo de conversión/LIVE.
+    if estrategia == "adaptativa" and nivel == "desconocido" and modo == "conversion":
         return None
 
     return gw.call_opcional(

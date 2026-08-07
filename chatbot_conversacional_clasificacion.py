@@ -1,8 +1,10 @@
 """
 Clasificación adaptativa de nivel e intención (archivo plano, raíz).
 
-El modelo propone; este módulo valida prioridades, construye la acción y
-prepara campos de persistencia sobre columnas ya existentes.
+Contrato inteligente (tipo_chatbot=inteligente / rutas adaptativas):
+- Si estrategia=adaptativa y nivel desconocido → preguntar experiencia primero.
+- Textos ambiguos (live, tiktok, sí…) no confirman nivel ni abren agendamiento.
+- Declaraciones explícitas confirman principiante/experimentado y habilitan flujo.
 """
 from __future__ import annotations
 
@@ -27,23 +29,27 @@ _PATRONES_EXPERIMENTADO = (
     r"\bya hago\b",
     r"\bya hago live",
     r"\bya hago lives\b",
+    r"\bya realizo\b",
     r"\bhago lives?\b",
     r"\bhago transmisiones\b",
     r"\btengo experiencia\b",
+    r"\bhago live desde\b",
+    r"\bhago live hace\b",
+    r"\bhago lives hace\b",
+    r"\bdesde hace\b.*\blive",
+    r"\blive hace\b",
     r"\bsoy bueno\b",
-    r"\bno me gusta dar vueltas\b",
-    r"\bm[eé]teme\b",
-    r"\bvamos con toda\b",
-    r"\bquiero entrar\b",
-    r"\bquiero incorpor",
-    r"\bingresar\b",
-    r"\bunirme\b",
-    r"\bsolicitud\b",
-    r"\benviar(?:me)? (?:el )?enlace\b",
+    r"\bya transmit",
 )
 _PATRONES_PRINCIPIANTE = (
     r"\bnunca he hecho\b",
     r"\bnunca he hecho live",
+    r"\bnunca he hecho lives\b",
+    r"\bnunca hice\b",
+    r"\bno he hecho live",
+    r"\bno he hecho lives\b",
+    r"\bno tengo experiencia\b",
+    r"\bsin experiencia\b",
     r"\bno s[eé] c[oó]mo\b",
     r"\bsoy nuevo\b",
     r"\bsoy nueva\b",
@@ -51,6 +57,7 @@ _PATRONES_PRINCIPIANTE = (
     r"\bempezar desde cero\b",
     r"\bquiero aprender\b",
     r"\bnunca transmit",
+    r"\bno s[eé] hacer live",
 )
 _PATRONES_BONOS = (r"\bbono", r"\bincentivo", r"\bbienvenida")
 _PATRONES_REQUISITOS = (r"\brequisito", r"\bqu[eé] piden\b", r"\bnecesito para")
@@ -65,6 +72,37 @@ _PATRONES_ASESOR = (
 )
 _PATRONES_SALUDO = (
     r"^(hola|buenas|hey|hi|hello|holi|holis|saludos|informaci[oó]n|info)(\s.*)?$",
+)
+_TEXTOS_AMBIGUOS_NIVEL = frozenset(
+    {
+        "live",
+        "lives",
+        "tiktok",
+        "tik tok",
+        "transmision",
+        "transmisión",
+        "transmisiones",
+        "si",
+        "sí",
+        "no",
+        "ok",
+        "okay",
+        "vale",
+        "no se",
+        "no sé",
+        "nose",
+        "tal vez",
+        "quizas",
+        "quizá",
+        "quiza",
+        "mas o menos",
+        "más o menos",
+    }
+)
+
+TEXTO_ACLARACION_NIVEL = (
+    "Para orientarte bien, ¿ya has realizado transmisiones LIVE o quieres "
+    "comenzar desde cero?"
 )
 
 
@@ -97,6 +135,39 @@ def es_saludo_o_info_corta(texto: str) -> bool:
         "informacion",
         "info",
     }
+
+
+def es_texto_ambiguo_nivel(texto: str) -> bool:
+    """Palabras sueltas que no confirman experiencia LIVE."""
+    n = _normalizar(texto)
+    if not n:
+        return True
+    if n in _TEXTOS_AMBIGUOS_NIVEL:
+        return True
+    # Una sola palabra corta genérica
+    tokens = n.split()
+    if len(tokens) == 1 and tokens[0] in {
+        "live",
+        "lives",
+        "tiktok",
+        "transmision",
+        "si",
+        "no",
+        "ok",
+    }:
+        return True
+    return False
+
+
+def construir_pregunta_clasificacion(asistente: Optional[Dict[str, Any]]) -> str:
+    a = asistente or {}
+    pregunta = str(a.get("pregunta_clasificacion_nivel") or "").strip()
+    if not pregunta:
+        pregunta = "¿Ya has realizado transmisiones LIVE?"
+    presentacion = str(a.get("presentacion_inicial") or "").strip()
+    if presentacion and pregunta not in presentacion:
+        return f"{presentacion}\n\n{pregunta}"
+    return pregunta or TEXTO_ACLARACION_NIVEL
 
 
 def inferir_intencion(texto: str) -> Tuple[str, float]:
@@ -134,6 +205,8 @@ def inferir_intencion(texto: str) -> Tuple[str, float]:
 def inferir_nivel_desde_texto(texto: str) -> Tuple[str, float, bool, Optional[str]]:
     """Retorna (nivel, confianza, declarado_explicitamente, evidencia_breve)."""
     n = _normalizar(texto)
+    if es_texto_ambiguo_nivel(texto):
+        return "desconocido", 0.1, False, None
     if _coincide(n, _PATRONES_PRINCIPIANTE):
         return "principiante", 0.93, True, n[:180] or None
     if _coincide(n, _PATRONES_EXPERIMENTADO):
@@ -160,6 +233,27 @@ def usar_rutas_adaptativas(configuracion: Optional[Dict[str, Any]]) -> bool:
     )
 
 
+def nivel_resuelto(conversacion: Optional[Dict[str, Any]], aspirante: Optional[Dict[str, Any]] = None) -> str:
+    conv = conversacion or {}
+    asp = aspirante or {}
+    for fuente in (conv, asp):
+        nivel = str(fuente.get("nivel_experiencia") or "desconocido").lower()
+        if nivel in {"principiante", "experimentado"}:
+            confirmado = bool(
+                fuente.get("nivel_experiencia_confirmado")
+                or fuente.get("nivel_experiencia_confirmado_at")
+                or str(fuente.get("nivel_experiencia_fuente") or "") in FUENTES_ESTABLES
+            )
+            conf = 0.0
+            try:
+                conf = float(fuente.get("nivel_experiencia_confianza") or 0)
+            except (TypeError, ValueError):
+                conf = 0.0
+            if confirmado or conf >= 0.75:
+                return nivel
+    return "desconocido"
+
+
 @dataclass
 class ResultadoClasificacion:
     clasificacion: ClasificacionConversacional
@@ -170,6 +264,7 @@ class ResultadoClasificacion:
     persistir_nivel_estable: bool
     incremento_preguntas: int
     texto_respuesta_directa: Optional[str]
+    seleccionar_flujo: bool = False
 
 
 def _float_safe(valor: Any, default: float = 0.0) -> float:
@@ -212,7 +307,7 @@ def clasificar_mensaje(
     confirmado_conv = bool(conversacion.get("nivel_experiencia_confirmado"))
     intencion_prev = str(conversacion.get("intencion_actual") or "desconocida")
     preguntas = int(conversacion.get("preguntas_clasificacion_realizadas") or 0)
-    max_preguntas = int(asistente.get("max_preguntas_clasificacion") or 1)
+    max_preguntas = max(1, int(asistente.get("max_preguntas_clasificacion") or 3))
     preguntar_si_ambiguo = bool(asistente.get("preguntar_nivel_si_ambiguo", True))
     permitir_reclass = bool(asistente.get("permitir_reclasificacion_automatica", True))
 
@@ -223,6 +318,7 @@ def clasificar_mensaje(
 
     nivel_txt, conf_txt, declarado, evidencia = inferir_nivel_desde_texto(texto)
     intencion, conf_int = inferir_intencion(texto)
+    ambiguo = es_texto_ambiguo_nivel(texto)
 
     # --- Prioridad de nivel ---
     nivel = "desconocido"
@@ -233,6 +329,7 @@ def clasificar_mensaje(
     incremento = 0
     respuesta_directa: Optional[str] = None
     accion = "responder_texto"
+    seleccionar_flujo = False
 
     if bloqueado and nivel_conv in NIVELES and nivel_conv != "desconocido":
         nivel, fuente, confianza = nivel_conv, fuente_conv or "manual", max(conf_conv, 0.99)
@@ -243,7 +340,7 @@ def clasificar_mensaje(
     elif fuente_asp in {"formulario_ads", "campana"} and nivel_asp != "desconocido":
         nivel, fuente, confianza = nivel_asp, fuente_asp, max(conf_asp, 0.9)
         confirmar = True
-        persistir_estable = False  # ya estable
+        persistir_estable = False
     elif declarado and nivel_txt in {"principiante", "experimentado"}:
         if estrategia == "nivel_fijo" and not permitir_reclass:
             nivel = str(asistente.get("nivel_fijo") or "desconocido")
@@ -252,27 +349,63 @@ def clasificar_mensaje(
             nivel, fuente, confianza = nivel_txt, "declarada", conf_txt
             confirmar = True
             persistir_estable = True
+            seleccionar_flujo = True
+            if nivel == "principiante":
+                accion = "orientar_principiante"
+                respuesta_directa = (
+                    str(asistente.get("texto_inicio_principiante") or "").strip()
+                    or (
+                        "Perfecto. Como estás comenzando, te voy a orientar paso a paso: "
+                        "primero te explico cómo funciona TikTok LIVE y qué necesitas, "
+                        "sin pedirte todavía una prueba LIVE."
+                    )
+                )
+            else:
+                accion = "orientar_experimentado"
+                respuesta_directa = (
+                    str(asistente.get("texto_inicio_experimentado") or "").strip()
+                    or (
+                        "Gracias. Como ya tienes experiencia con LIVE, te guío con el "
+                        "proceso directo de la agencia."
+                    )
+                )
     elif confirmado_asp and nivel_asp != "desconocido":
         nivel, fuente, confianza = nivel_asp, fuente_asp or "declarada", max(conf_asp, 0.85)
         confirmar = True
     elif (
         nivel_txt != "desconocido"
         and conf_txt >= umbral
+        and declarado
         and (permitir_reclass or estrategia != "nivel_fijo")
         and not bloqueado
     ):
-        if estrategia == "nivel_fijo":
-            nivel = str(asistente.get("nivel_fijo") or "desconocido")
-            fuente, confianza, confirmar = "configuracion_fija", 1.0, True
-        else:
-            nivel, fuente, confianza = nivel_txt, "inferida", conf_txt
-            confirmar = conf_txt >= umbral
-            persistir_estable = confirmar
+        nivel, fuente, confianza = nivel_txt, "declarada", conf_txt
+        confirmar = True
+        persistir_estable = True
+        seleccionar_flujo = True
     elif estrategia == "nivel_fijo":
         nivel = str(asistente.get("nivel_fijo") or "desconocido")
         fuente, confianza, confirmar = "configuracion_fija", 1.0, True
+        if es_saludo_o_info_corta(texto):
+            if nivel == "principiante":
+                accion = "orientar_principiante"
+                respuesta_directa = (
+                    str(asistente.get("texto_inicio_principiante") or "").strip()
+                    or str(asistente.get("presentacion_inicial") or "").strip()
+                    or None
+                )
+            elif nivel == "experimentado":
+                accion = "orientar_experimentado"
+                respuesta_directa = (
+                    str(asistente.get("texto_inicio_experimentado") or "").strip()
+                    or str(asistente.get("presentacion_inicial") or "").strip()
+                    or None
+                )
+            else:
+                respuesta_directa = (
+                    str(asistente.get("presentacion_inicial") or "").strip() or None
+                )
     elif estrategia == "orientada_principiantes":
-        # Orientación: guía el tono, NO confirma nivel estable.
         nivel = nivel_conv if nivel_conv != "desconocido" else "desconocido"
         fuente = fuente_conv or "inferida"
         confianza = conf_conv
@@ -283,7 +416,7 @@ def clasificar_mensaje(
                 or str(asistente.get("presentacion_inicial") or "").strip()
                 or None
             )
-            accion = "responder_informacion"
+            accion = "orientar_principiante"
     elif estrategia == "orientada_experimentados":
         nivel = nivel_conv if nivel_conv != "desconocido" else "desconocido"
         fuente = fuente_conv or "inferida"
@@ -295,50 +428,66 @@ def clasificar_mensaje(
                 or str(asistente.get("presentacion_inicial") or "").strip()
                 or None
             )
-            accion = "continuar_flujo"
+            accion = "orientar_experimentado"
     else:
         # adaptativa
-        if nivel_conv != "desconocido":
+        if nivel_conv in {"principiante", "experimentado"} and (
+            confirmado_conv or conf_conv >= umbral
+        ):
             nivel, fuente, confianza = nivel_conv, fuente_conv or "inferida", conf_conv
-            confirmar = confirmado_conv
-        elif es_saludo_o_info_corta(texto) or nivel_txt == "desconocido":
-            if (
-                preguntar_si_ambiguo
-                and preguntas < max_preguntas
-                and nivel == "desconocido"
-            ):
-                accion = "preguntar_nivel"
-                incremento = 1
-                respuesta_directa = (
-                    str(asistente.get("presentacion_inicial") or "").strip()
-                    or str(asistente.get("pregunta_clasificacion_nivel") or "").strip()
-                    or None
-                )
+            confirmar = confirmado_conv or conf_conv >= umbral
+        elif es_saludo_o_info_corta(texto):
+            accion = "preguntar_nivel"
+            incremento = 1 if preguntas < max_preguntas else 0
+            respuesta_directa = construir_pregunta_clasificacion(asistente)
+        elif ambiguo or (nivel_txt == "desconocido" and not declarado):
+            if preguntar_si_ambiguo:
+                accion = "aclarar_nivel"
+                respuesta_directa = TEXTO_ACLARACION_NIVEL
+                # Aclaración no agota el cupo de clasificación.
+                incremento = 0
             else:
                 pred = str(asistente.get("nivel_predeterminado") or "desconocido")
-                nivel, fuente, confianza = pred, "inferida", 0.4
-                confirmar = False
+                if pred in {"principiante", "experimentado"}:
+                    nivel, fuente, confianza = pred, "inferida", 0.4
+                    confirmar = False
 
-    # Acciones por intención (no borran nivel)
+    # Intenciones informativas / asesor: no sustituyen la clasificación pendiente.
+    nivel_abierto = nivel in {"desconocido", ""} and not confirmar
     if intencion == "asesor":
         accion = "transferir_humano"
-    elif intencion == "bonos":
-        accion = "mostrar_bonos"
-    elif intencion == "requisitos":
-        accion = "mostrar_requisitos"
-    elif intencion == "beneficios":
-        accion = "mostrar_beneficios"
-    elif intencion == "categorias":
-        accion = "mostrar_categorias"
-    elif intencion in {"incorporacion", "solicitud"}:
-        accion = "enviar_solicitud"
-    elif intencion == "evidencias":
-        accion = "solicitar_evidencias"
-    elif accion == "responder_texto" and intencion == "informacion":
-        accion = "responder_informacion"
+    elif intencion in {"bonos", "requisitos", "beneficios", "categorias"} and (
+        nivel_abierto or accion in {"preguntar_nivel", "aclarar_nivel"}
+    ):
+        # Se responde info + se retoma pregunta (capa superior).
+        mapa = {
+            "bonos": "mostrar_bonos",
+            "requisitos": "mostrar_requisitos",
+            "beneficios": "mostrar_beneficios",
+            "categorias": "mostrar_categorias",
+        }
+        accion = mapa[intencion]
+    elif nivel_abierto and intencion in {"incorporacion", "solicitud", "evidencias"}:
+        # No saltar a solicitud/evidencias/live sin nivel.
+        accion = "aclarar_nivel"
+        respuesta_directa = TEXTO_ACLARACION_NIVEL
+    elif not nivel_abierto:
+        if intencion == "bonos":
+            accion = "mostrar_bonos"
+        elif intencion == "requisitos":
+            accion = "mostrar_requisitos"
+        elif intencion == "beneficios":
+            accion = "mostrar_beneficios"
+        elif intencion == "categorias":
+            accion = "mostrar_categorias"
+        elif intencion in {"incorporacion", "solicitud"}:
+            accion = "enviar_solicitud"
+        elif intencion == "evidencias":
+            accion = "solicitar_evidencias"
+        elif accion == "responder_texto" and intencion == "informacion":
+            accion = "responder_informacion"
 
     if estrategia == "nivel_fijo" and not declarado:
-        # Impedir que una inferencia débil cambie el fijo.
         nivel = str(asistente.get("nivel_fijo") or nivel)
         fuente = "configuracion_fija"
         confianza = 1.0
@@ -392,7 +541,12 @@ def clasificar_mensaje(
         }
 
     intencion_cambio = clasificacion.intencion != intencion_prev
-    registrar = nivel_cambio or intencion_cambio or clasificacion.nivel_declarado_explicitamente
+    registrar = (
+        nivel_cambio
+        or intencion_cambio
+        or clasificacion.nivel_declarado_explicitamente
+        or accion in {"preguntar_nivel", "aclarar_nivel"}
+    )
     detalle = {
         "nivel_anterior": nivel_conv,
         "nivel_nuevo": clasificacion.nivel_experiencia,
@@ -401,6 +555,7 @@ def clasificar_mensaje(
         "intencion_anterior": intencion_prev,
         "intencion_nueva": clasificacion.intencion,
         "estrategia": estrategia,
+        "ambiguo": ambiguo,
         "reclasificado": bool(
             nivel_cambio and nivel_conv not in {"desconocido", clasificacion.nivel_experiencia}
         ),
@@ -408,7 +563,7 @@ def clasificar_mensaje(
 
     logger.info(
         "[CLASIFICACION] agencia_id=%s aspirante_id=%s conversacion_id=%s "
-        "nivel=%s intencion=%s ruta_accion=%s confianza=%.3f fuente=%s",
+        "nivel=%s intencion=%s ruta_accion=%s confianza=%.3f fuente=%s ambiguo=%s",
         conversacion.get("agencia_id"),
         conversacion.get("aspirante_id") or aspirante.get("id"),
         conversacion.get("id"),
@@ -417,6 +572,7 @@ def clasificar_mensaje(
         clasificacion.accion_propuesta,
         clasificacion.confianza_nivel,
         clasificacion.fuente_nivel,
+        ambiguo,
     )
 
     return ResultadoClasificacion(
@@ -428,6 +584,7 @@ def clasificar_mensaje(
         persistir_nivel_estable=bool(campos_asp),
         incremento_preguntas=incremento,
         texto_respuesta_directa=respuesta_directa,
+        seleccionar_flujo=seleccionar_flujo,
     )
 
 

@@ -130,9 +130,15 @@ def crear_agente(
     modelo = resolver_modelo(contexto.asistente)
     tokens = max_tokens_salida(contexto.asistente)
 
+    from chatbot_conversacional_clasificacion import nivel_resuelto
+
     herramientas = obtener_herramientas(
         contexto.herramientas_permitidas or None,
         modo=contexto.modo,
+        nivel_experiencia=nivel_resuelto(
+            contexto.conversacion or {}, contexto.aspirante
+        ),
+        estrategia_nivel=(contexto.asistente or {}).get("estrategia_nivel_aspirante"),
     )
 
     contexto_herramientas = ContextoHerramientas(

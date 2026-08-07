@@ -53,6 +53,7 @@ IntencionConversacional = Literal[
 ]
 AccionPropuestaClasificacion = Literal[
     "preguntar_nivel",
+    "aclarar_nivel",
     "responder_informacion",
     "mostrar_requisitos",
     "mostrar_beneficios",
@@ -62,6 +63,8 @@ AccionPropuestaClasificacion = Literal[
     "solicitar_evidencias",
     "confirmar_recepcion",
     "continuar_flujo",
+    "orientar_principiante",
+    "orientar_experimentado",
     "transferir_humano",
     "responder_texto",
     "ninguna",
@@ -288,7 +291,7 @@ class AsistenteConfiguracionOut(_Salida):
     umbral_confianza_nivel: float = 0.75
     max_preguntas_clasificacion: int = 1
     pregunta_clasificacion_nivel: str = (
-        "¿Ya realizas transmisiones LIVE o quieres conocer cómo comenzar?"
+        "¿Ya has realizado transmisiones LIVE?"
     )
     texto_inicio_principiante: Optional[str] = None
     texto_inicio_experimentado: Optional[str] = None
