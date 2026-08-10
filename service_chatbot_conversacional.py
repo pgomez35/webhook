@@ -1139,7 +1139,7 @@ def _construir_texto_informativo_inteligente(
     import database_chatbot_conversacional as db_conv
 
     presentacion = presentacion_desde_asistente(contexto.asistente)
-    texto, _req = construir_respuesta_por_intencion_informativa(
+    texto, _req, _lista = construir_respuesta_por_intencion_informativa(
         intencion,
         agencia_id=contexto.agencia_id,
         chatbot_configuracion_id=int(contexto.chatbot_configuracion_id or 0),

@@ -236,7 +236,7 @@ def construir_texto_menu(
         "",
     ]
     for op in numerar_opciones_activas(opciones):
-        titulo = str(op.get("titulo") or "").strip()
+        titulo = _titulo_opcion_menu_corta(str(op.get("titulo") or "").strip())
         if not titulo:
             continue
         lineas.append(f"{int(op['numero_visible'])}. {titulo}")
@@ -391,7 +391,23 @@ def _tema_requisito(texto: str) -> Optional[str]:
         return "comunicacion"
     if any(k in n for k in ("energia", "camara", "actitud", "entretenid")):
         return "energia"
+    if any(k in n for k in ("responsable", "compromiso", "horario", "meta")):
+        return "compromiso"
+    if any(k in n for k in ("disponibilidad", "disponible")):
+        return "disponibilidad"
     return None
+
+
+_ETIQUETAS_TEMA_REQUISITO = {
+    "edad": "Mayoría de edad (18+)",
+    "horas_dia": "Mínimo 2 horas diarias",
+    "semana": "Constancia durante la semana",
+    "equipo": "Teléfono e internet estables",
+    "comunicacion": "Buena comunicación en LIVE",
+    "energia": "Energía frente a la cámara",
+    "compromiso": "Compromiso con horarios y metas",
+    "disponibilidad": "Disponibilidad para transmitir",
+}
 
 
 def _deduplicar_frases(items: List[str]) -> List[str]:
@@ -548,10 +564,10 @@ def construir_respuesta_por_intencion_informativa(
     presentacion: Dict[str, Any],
     texto_consulta: str,
     db_conv: Any,
-) -> Tuple[str, bool]:
+) -> Tuple[str, bool, Optional[Dict[str, Any]]]:
     """
     Construye respuesta SOLO desde tablas autorizadas según intención.
-    Retorna (texto, requiere_asesor).
+    Retorna (texto, requiere_asesor, lista_detalle|None).
     """
     intencion_n = _normalizar(intencion)
     requiere_asesor = False
@@ -563,6 +579,7 @@ def construir_respuesta_por_intencion_informativa(
                 or DEFAULTS_PRESENTACION["mensaje_escalamiento_sin_bloqueo"]
             ),
             True,
+            None,
         )
 
     if intencion_n == "requisitos":
@@ -572,8 +589,9 @@ def construir_respuesta_por_intencion_informativa(
             solo_activos=True,
         )
         reqs = sorted(reqs or [], key=lambda r: int(r.get("orden") or 0))
-        texto = construir_respuesta_requisitos(reqs, presentacion)
-        return texto, not bool(texto)
+        texto, items = construir_respuesta_requisitos(reqs, presentacion)
+        lista = empaquetar_lista_detalle("requisitos", "Requisitos", items) if items else None
+        return texto, not bool(texto), lista
 
     if intencion_n == "beneficios":
         bens = db_conv.listar_beneficios(
@@ -581,13 +599,14 @@ def construir_respuesta_por_intencion_informativa(
             chatbot_configuracion_id=chatbot_configuracion_id,
             solo_activos=True,
         )
-        texto = construir_respuesta_beneficios(
+        texto, items = construir_respuesta_beneficios(
             bens or [],
             presentacion,
             tipos=("beneficio", "capacitacion", "acompanamiento", "otro"),
             titulo="Beneficios de pertenecer a la agencia",
         )
-        return texto, not bool(texto)
+        lista = empaquetar_lista_detalle("beneficios", "Beneficios", items) if items else None
+        return texto, not bool(texto), lista
 
     if intencion_n == "bonos":
         bens = db_conv.listar_beneficios(
@@ -595,13 +614,14 @@ def construir_respuesta_por_intencion_informativa(
             chatbot_configuracion_id=chatbot_configuracion_id,
             solo_activos=True,
         )
-        texto = construir_respuesta_beneficios(
+        texto, items = construir_respuesta_beneficios(
             bens or [],
             presentacion,
             tipos=("bono", "incentivo"),
             titulo="Bonos e incentivos",
         )
-        return texto, not bool(texto)
+        lista = empaquetar_lista_detalle("bonos", "Bonos e incentivos", items) if items else None
+        return texto, not bool(texto), lista
 
     if intencion_n in {"agencia", "proceso", "faq"}:
         faqs = db_conv.listar_faqs(
@@ -611,59 +631,309 @@ def construir_respuesta_por_intencion_informativa(
         )
         intencion_faq = None if intencion_n == "faq" else intencion_n
         texto = _buscar_faq(faqs or [], intencion_faq, texto_consulta)
-        return texto, not bool(texto)
+        return texto, not bool(texto), None
 
-    return "", True
+    return "", True, None
+
+
+def empaquetar_lista_detalle(
+    tipo: str,
+    titulo: str,
+    items: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    return {
+        "tipo": str(tipo or "").strip().lower(),
+        "titulo": str(titulo or "").strip(),
+        "items": [
+            {
+                "n": int(it.get("n") or 0),
+                "titulo": str(it.get("titulo") or "").strip(),
+                "detalle": str(it.get("detalle") or "").strip(),
+            }
+            for it in (items or [])
+            if int(it.get("n") or 0) > 0 and str(it.get("titulo") or "").strip()
+        ],
+    }
+
+
+def construir_texto_detalle_item(
+    item: Dict[str, Any],
+    *,
+    presentacion: Optional[Dict[str, Any]] = None,
+    total: int = 0,
+) -> str:
+    p = presentacion_desde_asistente(presentacion)
+    titulo = str(item.get("titulo") or "").strip() or "Detalle"
+    detalle = str(item.get("detalle") or "").strip() or "Sin detalle adicional."
+    lineas = [f"*{titulo}*", "", detalle]
+    if p.get("agregar_pregunta_final"):
+        lineas.append("")
+        if total > 1:
+            lineas.append(
+                f"Escribe otro *número* (1-{int(total)}) para más detalle, "
+                "o *menu* para ver las opciones."
+            )
+        else:
+            lineas.append("Escribe *menu* para ver las opciones otra vez.")
+    return "\n".join(lineas).strip()
+
+
+def resolver_item_lista_detalle(
+    texto: str,
+    lista: Optional[Dict[str, Any]],
+) -> Tuple[Optional[Dict[str, Any]], str]:
+    """
+    Retorna (item|None, modo) con modo ∈ {detalle, invalido, ninguna}.
+    Solo aplica si hay lista pendiente y el usuario envió un número.
+    """
+    items = list((lista or {}).get("items") or [])
+    if not items:
+        return None, "ninguna"
+    numero = extraer_numero_opcion(texto)
+    if numero is None:
+        return None, "ninguna"
+    for item in items:
+        if int(item.get("n") or 0) == int(numero):
+            return item, "detalle"
+    return None, "invalido"
+
+
+def _contexto_conversacion(conversacion: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not conversacion:
+        return {}
+    ctx = conversacion.get("contexto")
+    if isinstance(ctx, str):
+        try:
+            ctx = json.loads(ctx)
+        except Exception:
+            ctx = {}
+    return dict(ctx or {}) if isinstance(ctx, dict) else {}
+
+
+def _persistir_contexto_conversacion(
+    *,
+    db_conv: Any,
+    agencia_id: int,
+    conversacion_id: Optional[int],
+    conversacion: Optional[Dict[str, Any]],
+    contexto: Dict[str, Any],
+    dry_run: bool,
+) -> None:
+    if conversacion is not None:
+        conversacion["contexto"] = contexto
+    if dry_run or not conversacion_id:
+        return
+    try:
+        db_conv.actualizar_conversacion(
+            agencia_id,
+            int(conversacion_id),
+            {"contexto": contexto},
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[CHATBOT_MENU] no se pudo guardar contexto: %s", exc)
+
+
+def _set_lista_detalle_pendiente(
+    *,
+    db_conv: Any,
+    agencia_id: int,
+    conversacion_id: Optional[int],
+    conversacion: Optional[Dict[str, Any]],
+    lista: Optional[Dict[str, Any]],
+    dry_run: bool,
+) -> None:
+    ctx = _contexto_conversacion(conversacion)
+    if lista and (lista.get("items") or []):
+        ctx["lista_detalle_pendiente"] = lista
+    else:
+        ctx.pop("lista_detalle_pendiente", None)
+    _persistir_contexto_conversacion(
+        db_conv=db_conv,
+        agencia_id=agencia_id,
+        conversacion_id=conversacion_id,
+        conversacion=conversacion,
+        contexto=ctx,
+        dry_run=dry_run,
+    )
+
+
+def _resumir_frase(texto: str, *, max_len: int = 72) -> str:
+    """Primera frase corta para listados numerados."""
+    t = _limpiar_frase_requisito(texto)
+    if not t:
+        return ""
+    # Cortar en el primer punto si hay más de una oración.
+    for sep in (". ", "! ", "? "):
+        if sep in t[:-1]:
+            t = t.split(sep, 1)[0].rstrip(".") + "."
+            break
+    if len(t) > max_len:
+        t = t[: max_len - 1].rstrip(" .,;:") + "…"
+    return t
+
+
+def _titulo_opcion_menu_corta(titulo: str) -> str:
+    """Títulos limpios del menú principal (solo visualización)."""
+    n = _normalizar(titulo)
+    mapa = {
+        "requisitos para ser creador live": "Requisitos",
+        "requisitos": "Requisitos",
+        "beneficios de pertenecer a la agencia": "Beneficios",
+        "beneficios de la agencia": "Beneficios",
+        "beneficios": "Beneficios",
+        "bonos e incentivos de monetizacion": "Bonos e incentivos",
+        "bonos e incentivos": "Bonos e incentivos",
+        "como funciona la agencia": "Cómo funciona",
+        "continuar con el proceso": "Continuar proceso",
+        "hablar con un asesor": "Hablar con un asesor",
+    }
+    if n in mapa:
+        return mapa[n]
+    crudo = str(titulo or "").strip()
+    if len(crudo) <= 36:
+        return crudo
+    return _resumir_frase(crudo, max_len=36).rstrip(".")
+
+
+def _titulo_corto_requisito(requisito: Dict[str, Any]) -> str:
+    """Título breve para la lista numerada (el detalle va al elegir el número)."""
+    nombre = str(requisito.get("nombre") or "").strip()
+    desc = str(
+        requisito.get("descripcion") or requisito.get("valor_texto") or ""
+    ).strip()
+    tema = _tema_requisito(f"{nombre} {desc}")
+    if tema and tema in _ETIQUETAS_TEMA_REQUISITO:
+        return _ETIQUETAS_TEMA_REQUISITO[tema]
+    if nombre and not _es_pregunta(nombre) and len(nombre) <= 42:
+        return _limpiar_frase_requisito(nombre).rstrip(".")
+    if desc and not _es_pregunta(desc):
+        return _resumir_frase(desc, max_len=42).rstrip(".")
+    if nombre:
+        return _resumir_frase(nombre, max_len=42).rstrip(".")
+    return _resumir_frase(desc or "Requisito", max_len=42).rstrip(".")
+
+
+def _detalle_requisito(requisito: Dict[str, Any]) -> str:
+    nombre = str(requisito.get("nombre") or "").strip()
+    desc = str(
+        requisito.get("descripcion") or requisito.get("valor_texto") or ""
+    ).strip()
+    if desc and not _es_pregunta(desc):
+        return _limpiar_frase_requisito(desc)
+    if nombre and desc and _es_pregunta(desc):
+        return _limpiar_frase_requisito(nombre)
+    return _limpiar_frase_requisito(desc or nombre or "Sin detalle adicional.")
+
+
+def preparar_items_requisitos(
+    requisitos: List[Dict[str, Any]],
+    *,
+    max_elementos: int = 8,
+) -> List[Dict[str, Any]]:
+    """Lista numerada con título corto + detalle para profundizar."""
+    crudos: List[Dict[str, Any]] = []
+    for r in requisitos or []:
+        if not _vigente(r):
+            continue
+        if r.get("permitir_mencion_automatica") is False:
+            continue
+        titulo = _titulo_corto_requisito(r)
+        if not titulo:
+            continue
+        crudos.append(
+            {
+                "id": r.get("id"),
+                "titulo": titulo,
+                "detalle": _detalle_requisito(r),
+                "_clave": _normalizar(titulo),
+            }
+        )
+
+    # Dedup por tema/clave conservando el más completo.
+    vistos: List[str] = []
+    tema_idx: Dict[str, int] = {}
+    dedup: List[Dict[str, Any]] = []
+    for item in crudos:
+        clave = item["_clave"]
+        tema = _tema_requisito(item["titulo"] + " " + item["detalle"])
+        if tema is not None and tema in tema_idx:
+            idx = tema_idx[tema]
+            if len(item["detalle"]) > len(dedup[idx]["detalle"]):
+                dedup[idx] = item
+                vistos[idx] = clave
+            continue
+        if any(clave in v or v in clave for v in vistos):
+            continue
+        if tema is not None:
+            tema_idx[tema] = len(dedup)
+        dedup.append(item)
+        vistos.append(clave)
+
+    out: List[Dict[str, Any]] = []
+    for idx, item in enumerate(dedup[: max(1, int(max_elementos or 8))], start=1):
+        out.append(
+            {
+                "n": idx,
+                "id": item.get("id"),
+                "titulo": item["titulo"],
+                "detalle": item["detalle"],
+            }
+        )
+    return out
+
+
+def construir_texto_lista_detalle(
+    items: List[Dict[str, Any]],
+    *,
+    titulo: str,
+    introduccion: str,
+    presentacion: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Lista numerada + ✅ para elegir detalle con un número."""
+    p = presentacion_desde_asistente(presentacion)
+    lineas: List[str] = []
+    if p.get("mostrar_titulo_respuesta"):
+        lineas.append(str(titulo).strip())
+        lineas.append("")
+    if introduccion:
+        lineas.append(str(introduccion).strip())
+        lineas.append("")
+    for item in items:
+        lineas.append(f"{int(item['n'])}. ✅ {item['titulo']}")
+    if p.get("agregar_pregunta_final"):
+        lineas.append("")
+        lineas.append(
+            "Escribe el *número* para más detalle, o *menu* para ver las opciones."
+        )
+    return "\n".join(lineas).strip()
 
 
 def construir_respuesta_requisitos(
     requisitos: List[Dict[str, Any]],
     presentacion: Dict[str, Any],
-) -> str:
-    items: List[str] = []
-    for r in requisitos:
-        if not _vigente(r):
-            continue
-        if r.get("permitir_mencion_automatica") is False:
-            continue
-        frase = _texto_item_requisito(r)
-        if frase:
-            items.append(frase)
-
-    items = _deduplicar_frases(items)
-    pregunta = (
-        "Si quieres, puedo explicarte cualquiera de estos requisitos."
-        if presentacion.get("agregar_pregunta_final")
-        else None
-    )
-    # En informativo los requisitos siempre van como lista limpia con ✅,
-    # aunque el formato general sea texto_breve.
-    return formatear_lista(
-        items,
-        formato="lista",
-        titulo=(
-            "Requisitos para ser creador LIVE 🎥"
-            if presentacion.get("mostrar_titulo_respuesta")
-            else None
-        ),
-        mostrar_titulo=bool(presentacion.get("mostrar_titulo_respuesta")),
-        numerada=False,
-        introduccion="Para formar parte de la agencia necesitas:",
-        vineta="✅",
-        pregunta_final=pregunta,
+) -> Tuple[str, List[Dict[str, Any]]]:
+    items = preparar_items_requisitos(
+        requisitos,
         max_elementos=int(presentacion.get("max_elementos_respuesta") or 8),
     )
+    texto = construir_texto_lista_detalle(
+        items,
+        titulo="Requisitos para ser creador LIVE 🎥",
+        introduccion="Para formar parte de la agencia necesitas:",
+        presentacion=presentacion,
+    )
+    return texto, items
 
 
-def construir_respuesta_beneficios(
+def preparar_items_beneficios(
     beneficios: List[Dict[str, Any]],
-    presentacion: Dict[str, Any],
     *,
     tipos: Tuple[str, ...],
-    titulo: str,
-) -> str:
-    items = []
-    for b in beneficios:
+    max_elementos: int = 8,
+) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    n = 0
+    for b in beneficios or []:
         if not _vigente(b):
             continue
         if b.get("permitir_mencion_automatica") is False:
@@ -673,26 +943,50 @@ def construir_respuesta_beneficios(
         tipo = str(b.get("tipo") or "").lower()
         if tipos and tipo not in tipos:
             continue
-        texto = (
+        detalle = (
             str(b.get("texto_autorizado") or "").strip()
             or str(b.get("descripcion_corta") or "").strip()
             or str(b.get("nombre") or "").strip()
         )
-        if not texto:
+        if not detalle:
             continue
         if b.get("requiere_validacion_humana"):
-            texto = f"{texto} (sujeto a validación del equipo)"
-        items.append(texto)
-    pregunta = "¿Te gustaría conocer otra opción del menú?" if presentacion.get("agregar_pregunta_final") else None
-    return formatear_lista(
-        items,
-        formato=presentacion.get("formato_respuestas_informativas") or "lista",
-        titulo=titulo if presentacion.get("mostrar_titulo_respuesta") else None,
-        mostrar_titulo=bool(presentacion.get("mostrar_titulo_respuesta")),
-        numerada=False,
-        pregunta_final=pregunta,
+            detalle = f"{detalle} (sujeto a validación del equipo)"
+        nombre = str(b.get("nombre") or "").strip()
+        titulo = _resumir_frase(nombre or detalle, max_len=72)
+        n += 1
+        out.append(
+            {
+                "n": n,
+                "id": b.get("id"),
+                "titulo": titulo,
+                "detalle": _limpiar_frase_requisito(detalle),
+            }
+        )
+        if n >= max(1, int(max_elementos or 8)):
+            break
+    return out
+
+
+def construir_respuesta_beneficios(
+    beneficios: List[Dict[str, Any]],
+    presentacion: Dict[str, Any],
+    *,
+    tipos: Tuple[str, ...],
+    titulo: str,
+) -> Tuple[str, List[Dict[str, Any]]]:
+    items = preparar_items_beneficios(
+        beneficios,
+        tipos=tipos,
         max_elementos=int(presentacion.get("max_elementos_respuesta") or 8),
     )
+    texto = construir_texto_lista_detalle(
+        items,
+        titulo=titulo,
+        introduccion="Esto es lo que ofrece la agencia:",
+        presentacion=presentacion,
+    )
+    return texto, items
 
 
 def construir_respuesta_proceso(
@@ -892,8 +1186,23 @@ async def procesar_mensaje_informativo(
     # Menú inicial / volver al menú (menu, volver, menu anterior, otra opción…)
     texto_in = str(texto or "").strip()
     mostrar_menu = bool(presentacion.get("mostrar_menu_inicial", True))
+    ctx_conv = _contexto_conversacion(conversacion)
+    lista_detalle = ctx_conv.get("lista_detalle_pendiente")
+    if not isinstance(lista_detalle, dict):
+        lista_detalle = None
+    lista_detalle_a_guardar: Optional[Dict[str, Any]] = None
+    limpiar_lista_detalle = False
 
     if (not texto_in or es_comando_volver_menu(texto_in)) and mostrar_menu and opciones:
+        limpiar_lista_detalle = True
+        _set_lista_detalle_pendiente(
+            db_conv=db_conv,
+            agencia_id=agencia_id,
+            conversacion_id=conversacion_id,
+            conversacion=conversacion,
+            lista=None,
+            dry_run=dry_run,
+        )
         envio = await garantizar_respuesta_saliente(
             agencia_id=agencia_id,
             conversacion_id=conversacion_id,
@@ -921,6 +1230,82 @@ async def procesar_mensaje_informativo(
             "menu": True,
         }
 
+    # Si hay lista numerada pendiente (requisitos/beneficios/…), el número
+    # profundiza en un ítem; no compite con el menú principal.
+    if lista_detalle:
+        item_det, modo_det = resolver_item_lista_detalle(texto_in, lista_detalle)
+        if modo_det == "detalle" and item_det:
+            items_lista = list(lista_detalle.get("items") or [])
+            respuesta = construir_texto_detalle_item(
+                item_det,
+                presentacion=presentacion,
+                total=len(items_lista),
+            )
+            if respuesta and texto_menu and texto_menu not in respuesta:
+                respuesta = _con_pie_menu(respuesta, presentacion)
+            envio = await garantizar_respuesta_saliente(
+                agencia_id=agencia_id,
+                conversacion_id=conversacion_id,
+                canal=canal,
+                texto=respuesta,
+                dry_run=dry_run,
+                enviar_callback=enviar_callback,
+                token=token,
+                phone_number_id=phone_number_id,
+                destino=destino,
+                motivo_fallback="detalle_lista",
+                mensaje_externo_id=mensaje_externo_id,
+            )
+            logger.info(
+                "[CHATBOT_MENU] conversacion_id=%s entrada=detalle_lista "
+                "item=%s respuesta_enviada=%s",
+                conversacion_id,
+                item_det.get("n"),
+                bool(envio.get("enviado") or dry_run),
+            )
+            return {
+                "usado": True,
+                "motivo": None,
+                "respuesta": respuesta,
+                "respuesta_enviada": bool(envio.get("enviado") is True) or dry_run,
+                "requiere_asesor": False,
+                "modo_humano": False,
+                "enlaces": [],
+                "intencion": str(lista_detalle.get("tipo") or "detalle"),
+                "detalle_lista": True,
+            }
+        if modo_det == "invalido":
+            total = len(list(lista_detalle.get("items") or []))
+            respuesta = (
+                f"Ese número no está en la lista. Escribe un número del *1* al *{total}*, "
+                "o *menu* para ver las opciones."
+            )
+            if texto_menu and texto_menu not in respuesta:
+                respuesta = _con_pie_menu(respuesta, presentacion)
+            envio = await garantizar_respuesta_saliente(
+                agencia_id=agencia_id,
+                conversacion_id=conversacion_id,
+                canal=canal,
+                texto=respuesta,
+                dry_run=dry_run,
+                enviar_callback=enviar_callback,
+                token=token,
+                phone_number_id=phone_number_id,
+                destino=destino,
+                motivo_fallback="detalle_lista_invalido",
+                mensaje_externo_id=mensaje_externo_id,
+            )
+            return {
+                "usado": True,
+                "motivo": "detalle_lista_invalido",
+                "respuesta": respuesta,
+                "respuesta_enviada": bool(envio.get("enviado") is True) or dry_run,
+                "requiere_asesor": False,
+                "modo_humano": False,
+                "enlaces": [],
+                "intencion": str(lista_detalle.get("tipo") or "detalle"),
+            }
+
     opcion, modo = resolver_opcion_menu(texto_in, opciones)
     requiere_asesor = False
     respuesta = ""
@@ -931,6 +1316,7 @@ async def procesar_mensaje_informativo(
             f"Esa opción no existe. Estas son las disponibles:\n\n{texto_menu}"
         )
         intencion = "menu"
+        limpiar_lista_detalle = True
     elif opcion:
         intencion = str(opcion.get("intencion") or opcion.get("codigo") or "info")
         tipo_fuente = str(opcion.get("tipo_fuente") or "faq").lower()
@@ -943,20 +1329,25 @@ async def procesar_mensaje_informativo(
                 chatbot_configuracion_id=chatbot_configuracion_id,
                 solo_activos=True,
             )
-            # ordenar por orden
             reqs = sorted(reqs or [], key=lambda r: int(r.get("orden") or 0))
-            respuesta = construir_respuesta_requisitos(reqs, presentacion)
+            respuesta, items = construir_respuesta_requisitos(reqs, presentacion)
+            lista_detalle_a_guardar = empaquetar_lista_detalle(
+                "requisitos", "Requisitos", items
+            )
         elif tipo_fuente == "beneficios":
             bens = db_conv.listar_beneficios(
                 agencia_id,
                 chatbot_configuracion_id=chatbot_configuracion_id,
                 solo_activos=True,
             )
-            respuesta = construir_respuesta_beneficios(
+            respuesta, items = construir_respuesta_beneficios(
                 bens or [],
                 presentacion,
                 tipos=("beneficio", "capacitacion", "acompanamiento", "otro"),
                 titulo="Beneficios de pertenecer a la agencia",
+            )
+            lista_detalle_a_guardar = empaquetar_lista_detalle(
+                "beneficios", "Beneficios", items
             )
         elif tipo_fuente == "bonos":
             bens = db_conv.listar_beneficios(
@@ -964,20 +1355,25 @@ async def procesar_mensaje_informativo(
                 chatbot_configuracion_id=chatbot_configuracion_id,
                 solo_activos=True,
             )
-            respuesta = construir_respuesta_beneficios(
+            respuesta, items = construir_respuesta_beneficios(
                 bens or [],
                 presentacion,
                 tipos=("bono", "incentivo"),
                 titulo="Bonos e incentivos",
             )
+            lista_detalle_a_guardar = empaquetar_lista_detalle(
+                "bonos", "Bonos e incentivos", items
+            )
         elif tipo_fuente == "texto":
             respuesta = str(opcion.get("respuesta_personalizada") or "").strip()
+            limpiar_lista_detalle = True
         elif tipo_fuente == "asesor":
             requiere_asesor = True
             respuesta = str(
                 presentacion.get("mensaje_escalamiento_sin_bloqueo")
                 or DEFAULTS_PRESENTACION["mensaje_escalamiento_sin_bloqueo"]
             )
+            limpiar_lista_detalle = True
         else:  # faq
             faqs = db_conv.listar_faqs(
                 agencia_id,
@@ -985,6 +1381,7 @@ async def procesar_mensaje_informativo(
                 solo_activos=True,
             )
             respuesta = _buscar_faq(faqs or [], intencion, texto_in)
+            limpiar_lista_detalle = True
 
         if not respuesta:
             respuesta = str(
@@ -992,9 +1389,13 @@ async def procesar_mensaje_informativo(
                 or DEFAULTS_PRESENTACION["mensaje_sin_informacion"]
             )
             requiere_asesor = True
+            limpiar_lista_detalle = True
+            lista_detalle_a_guardar = None
 
         if presentacion.get("repetir_menu_despues_respuesta") and opciones:
             respuesta = f"{respuesta}\n\n{texto_menu}"
+            limpiar_lista_detalle = True
+            lista_detalle_a_guardar = None
     else:
         # Intento FAQ libre
         faqs = []
@@ -1010,11 +1411,12 @@ async def procesar_mensaje_informativo(
         if respuesta:
             intencion = "faq"
             modo = "texto"
+            limpiar_lista_detalle = True
         else:
             clasif = clasificar_intencion_informativa_semantica(texto_in)
             intencion = str(clasif.get("intencion") or "desconocida")
             consulta = str(clasif.get("consulta_reformulada") or texto_in)
-            respuesta, req_ia = construir_respuesta_por_intencion_informativa(
+            respuesta, req_ia, lista_ia = construir_respuesta_por_intencion_informativa(
                 intencion,
                 agencia_id=agencia_id,
                 chatbot_configuracion_id=chatbot_configuracion_id,
@@ -1024,6 +1426,10 @@ async def procesar_mensaje_informativo(
             )
             requiere_asesor = req_ia or intencion == "desconocida"
             modo = "semantica"
+            if lista_ia:
+                lista_detalle_a_guardar = lista_ia
+            else:
+                limpiar_lista_detalle = True
             if not respuesta:
                 respuesta = str(
                     presentacion.get("mensaje_sin_informacion")
@@ -1043,6 +1449,27 @@ async def procesar_mensaje_informativo(
                     )
             if opciones and intencion == "desconocida":
                 respuesta = f"{respuesta}\n\n{texto_menu}"
+                limpiar_lista_detalle = True
+                lista_detalle_a_guardar = None
+
+    if lista_detalle_a_guardar is not None:
+        _set_lista_detalle_pendiente(
+            db_conv=db_conv,
+            agencia_id=agencia_id,
+            conversacion_id=conversacion_id,
+            conversacion=conversacion,
+            lista=lista_detalle_a_guardar,
+            dry_run=dry_run,
+        )
+    elif limpiar_lista_detalle and lista_detalle:
+        _set_lista_detalle_pendiente(
+            db_conv=db_conv,
+            agencia_id=agencia_id,
+            conversacion_id=conversacion_id,
+            conversacion=conversacion,
+            lista=None,
+            dry_run=dry_run,
+        )
 
     if requiere_asesor and aspirante_id and not dry_run:
         try:
