@@ -524,13 +524,24 @@ def analizar_informacion(
     payload: Dict[str, Any],
     *,
     cur=None,
+    usar_ia: Optional[bool] = None,
 ) -> Dict[str, Any]:
-    """Dry-run: no escribe en BD."""
+    """Dry-run: no escribe en BD.
+
+    usar_ia=False evita OpenAI (segundos en lugar de ~1 min).
+    Si no se pasa, respeta payload['usar_ia'] (default True).
+    """
     with db._cursor(cur) as c:
         db._exige_configuracion(agencia_id, chatbot_configuracion_id, cur=c)
 
+    if usar_ia is None:
+        usar_ia = bool((payload or {}).get("usar_ia", True))
+
     base = _analizar_heuristico(payload)
-    propuesta = _analizar_con_openai(payload, base)
+    propuesta = _analizar_con_openai(payload, base) if usar_ia else base
+    if not usar_ia:
+        propuesta = dict(propuesta or {})
+        propuesta["origen_analisis"] = "heuristico"
 
     # Adjuntar IDs existentes por coincidencia (sin guardar)
     with db._cursor(cur) as c:

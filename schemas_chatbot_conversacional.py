@@ -560,6 +560,8 @@ class AnalizarInformacionIn(_Entrada):
     faq_texto: Optional[str] = Field(None, max_length=40000)
     proceso_ingreso_texto: Optional[str] = Field(None, max_length=20000)
     enlaces_contacto_texto: Optional[str] = Field(None, max_length=20000)
+    # False = solo analizador local (rápido). True = también OpenAI (más lento).
+    usar_ia: bool = True
 
 
 class PropuestaItemRequisito(_Entrada):
