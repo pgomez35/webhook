@@ -1492,6 +1492,20 @@ def asegurar_menu_informativo_base(
         }
         max_orden = max((int(o.get("orden") or 0) for o in existentes), default=0)
         max_numero = max((int(o.get("numero") or 0) for o in existentes), default=0)
+
+        # Si «Otras preguntas» existe pero está inactiva, reactivarla.
+        reactivadas = 0
+        for o in existentes:
+            if (
+                str(o.get("codigo") or "").strip().lower() == "otras_preguntas"
+                and o.get("activo") is False
+                and o.get("id")
+            ):
+                actualizar_menu_informativo(
+                    agencia_id, int(o["id"]), {"activo": True}, cur=c
+                )
+                reactivadas += 1
+
         # Solo completar opciones nuevas de la plantilla (no reinsertar borradas a propósito
         # salvo otras_preguntas, que es el atajo de FAQ).
         completar = [
@@ -1500,22 +1514,55 @@ def asegurar_menu_informativo_base(
             if str(p.get("codigo") or "").strip().lower() == "otras_preguntas"
             and "otras_preguntas" not in codigos
         ]
-        creadas = []
+        creadas: List[Dict[str, Any]] = []
+        asesor = next(
+            (
+                o
+                for o in existentes
+                if str(o.get("codigo") or "").strip().lower() == "asesor"
+                and o.get("id")
+            ),
+            None,
+        )
         for plantilla in completar:
-            max_orden += 1
-            max_numero += 1
             campos = dict(plantilla)
             campos["chatbot_configuracion_id"] = int(chatbot_configuracion_id)
-            campos["orden"] = max_orden
-            campos["numero"] = max_numero
-            creadas.append(crear_menu_informativo(agencia_id, campos, cur=c))
+            campos["activo"] = True
+            if asesor:
+                # Insertar justo antes de «Hablar con un asesor».
+                num_asesor = int(asesor.get("numero") or (max_numero + 1))
+                ord_asesor = int(asesor.get("orden") or (max_orden + 1))
+                temp = max(max_numero, max_orden, num_asesor, ord_asesor) + 10
+                actualizar_menu_informativo(
+                    agencia_id,
+                    int(asesor["id"]),
+                    {"numero": temp, "orden": temp},
+                    cur=c,
+                )
+                campos["numero"] = num_asesor
+                campos["orden"] = ord_asesor
+                creadas.append(crear_menu_informativo(agencia_id, campos, cur=c))
+                actualizar_menu_informativo(
+                    agencia_id,
+                    int(asesor["id"]),
+                    {"numero": num_asesor + 1, "orden": ord_asesor + 1},
+                    cur=c,
+                )
+            else:
+                max_orden += 1
+                max_numero += 1
+                campos["orden"] = max_orden
+                campos["numero"] = max_numero
+                creadas.append(crear_menu_informativo(agencia_id, campos, cur=c))
 
-        if creadas:
+        if creadas or reactivadas:
             logger.info(
-                "[CHATBOT_MENU] completar agencia_id=%s config_id=%s insertadas=%s",
+                "[CHATBOT_MENU] completar agencia_id=%s config_id=%s "
+                "insertadas=%s reactivadas=%s",
                 agencia_id,
                 chatbot_configuracion_id,
                 len(creadas),
+                reactivadas,
             )
             existentes = listar_menu_informativo(
                 agencia_id,
@@ -1526,6 +1573,7 @@ def asegurar_menu_informativo_base(
 
         return {
             "insertadas": len(creadas),
+            "reactivadas": reactivadas,
             "total": len(existentes),
             "opciones": existentes,
         }

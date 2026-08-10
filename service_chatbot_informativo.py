@@ -1486,31 +1486,33 @@ async def procesar_mensaje_informativo(
     except Exception as exc:  # noqa: BLE001
         logger.warning("[CHATBOT_MENU] no se pudo listar menú: %s", exc)
 
-    # Sembrar menú vacío o completar opciones nuevas (p. ej. otras_preguntas)
-    # solo cuando falten; evita I/O en cada mensaje si el menú ya está al día.
+    # Completar «Otras preguntas» en menús ya existentes (idempotente).
     if not dry_run:
-        codigos_menu = {
-            str(o.get("codigo") or "").strip().lower()
-            for o in (opciones or [])
-            if o.get("codigo")
-        }
-        necesita_seed = (not opciones) or ("otras_preguntas" not in codigos_menu)
-        if necesita_seed:
-            try:
-                seed = db_conv.asegurar_menu_informativo_base(
+        try:
+            seed = db_conv.asegurar_menu_informativo_base(
+                agencia_id,
+                chatbot_configuracion_id,
+            )
+            codigos_menu = {
+                str(o.get("codigo") or "").strip().lower()
+                for o in (opciones or [])
+                if o.get("codigo")
+            }
+            if (
+                not opciones
+                or "otras_preguntas" not in codigos_menu
+                or int(seed.get("insertadas") or 0) > 0
+                or int(seed.get("reactivadas") or 0) > 0
+            ):
+                opciones = db_conv.listar_menu_informativo(
                     agencia_id,
-                    chatbot_configuracion_id,
+                    chatbot_configuracion_id=chatbot_configuracion_id,
+                    solo_activas=True,
                 )
-                if not opciones or int(seed.get("insertadas") or 0) > 0:
-                    opciones = db_conv.listar_menu_informativo(
-                        agencia_id,
-                        chatbot_configuracion_id=chatbot_configuracion_id,
-                        solo_activas=True,
-                    )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "[CHATBOT_MENU] no se pudo sembrar/completar menú: %s", exc
-                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[CHATBOT_MENU] no se pudo sembrar/completar menú: %s", exc
+            )
 
     opciones = ordenar_opciones_menu(opciones)
     nombre_agencia = str(

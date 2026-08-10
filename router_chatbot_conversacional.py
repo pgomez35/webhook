@@ -736,6 +736,11 @@ def listar_menu_informativo(
     agencia: dict = Depends(obtener_agencia_chatbot_actual),
 ):
     cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
+    # Completa «Otras preguntas» en menús ya existentes.
+    try:
+        db.asegurar_menu_informativo_base(_agencia_id(agencia), cfg_id)
+    except _ERRORES_DATOS:
+        pass
     return db.listar_menu_informativo(
         _agencia_id(agencia),
         chatbot_configuracion_id=cfg_id,
