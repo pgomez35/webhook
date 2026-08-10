@@ -1900,9 +1900,7 @@ def _aliases_intencion_faq(intencion: Optional[str], *, codigo_opcion: str = "")
         if c == canon or c in aliases:
             keys |= set(aliases)
             keys.add(canon)
-    # "Cómo funciona" suele documentarse también como proceso de ingreso.
-    if c == "como_funciona" or n == "agencia":
-        keys |= set(mapa["proceso"])
+    # "Cómo funciona" NO arrastra FAQs de proceso automáticamente.
     return frozenset(keys)
 
 
@@ -1956,14 +1954,16 @@ def construir_respuesta_menu_faq(
     intencion_forzada: Optional[str] = None,
 ) -> Tuple[str, Optional[Dict[str, Any]], bool]:
     """
-    Resuelve opciones tipo FAQ (p. ej. Cómo funciona / Continuar proceso).
+    Resuelve opciones tipo FAQ del menú.
 
-    Prioridad:
-    1) FAQs de la intención (lista si hay varias)
-    2) Búsqueda FAQ por texto/título
-    3) respuesta_personalizada de la opción
-    4) descripcion_agencia (asistente)
-    5) descripción de la opción / mensaje orientativo
+    "Cómo funciona" (agencia):
+      1) respuesta_personalizada de la opción
+      2) descripcion_agencia configurada en el panel
+      3) FAQ solo si el usuario hace una pregunta concreta
+      4) mensaje orientativo si falta configurar
+
+    Otras opciones (p. ej. Continuar proceso):
+      FAQs de la intención / búsqueda / textos de respaldo.
 
     Retorna (texto, lista_detalle|None, encontrado).
     """
@@ -1971,18 +1971,66 @@ def construir_respuesta_menu_faq(
     intencion = str(intencion_forzada or opcion.get("intencion") or "").strip()
     codigo = _normalizar(str(opcion.get("codigo") or ""))
     titulo_op = str(opcion.get("titulo") or "").strip()
+    texto_in = str(texto_usuario or "").strip()
+    personalizada = str(opcion.get("respuesta_personalizada") or "").strip()
+    desc_agencia = str(presentacion.get("descripcion_agencia") or "").strip()
+    desc_op = str(opcion.get("descripcion") or "").strip()
 
-    texto_busqueda = str(texto_usuario or "").strip()
+    es_como_funciona = (
+        _normalizar(intencion) == "agencia"
+        or codigo in {"como_funciona", "agencia"}
+        or "funciona" in _normalizar(titulo_op)
+    )
+
+    def _es_seleccion_esta_opcion() -> bool:
+        if not texto_in or _es_solo_seleccion_menu(texto_in):
+            return True
+        n = _normalizar(texto_in)
+        t = _normalizar(titulo_op)
+        if t and (n == t or n in t):
+            return True
+        if codigo and n == codigo:
+            return True
+        if n in {"como funciona", "como funciona la agencia", "funcionamiento"}:
+            return True
+        return False
+
+    # —— Cómo funciona: texto configurado, no lista de FAQs ——
+    if es_como_funciona:
+        if _es_seleccion_esta_opcion():
+            if personalizada:
+                return personalizada, None, True
+            if desc_agencia:
+                return desc_agencia, None, True
+            return (
+                "Aún no tengo cargada la explicación de cómo funciona la agencia. "
+                "Configúrala en el panel (Descripción de la agencia / Cómo funciona) "
+                "o escribe *asesor* para hablar con el equipo.",
+                None,
+                True,
+            )
+        # Pregunta concreta → FAQ puntual (sin listar todas).
+        texto = _buscar_faq(faqs or [], intencion or None, texto_in)
+        if texto:
+            return texto, None, True
+        texto = _buscar_faq(faqs or [], None, texto_in)
+        if texto:
+            return texto, None, True
+        if personalizada:
+            return personalizada, None, True
+        if desc_agencia:
+            return desc_agencia, None, True
+        return "", None, False
+
+    # —— Resto (proceso, faq genérico, etc.) ——
+    texto_busqueda = texto_in
     if (not texto_busqueda) or _es_solo_seleccion_menu(texto_busqueda):
         texto_busqueda = " ".join(
-            p
-            for p in (
-                titulo_op,
-                str(opcion.get("descripcion") or "").strip(),
-                intencion,
-            )
-            if p
+            p for p in (titulo_op, desc_op, intencion) if p
         )
+
+    if personalizada and _es_seleccion_esta_opcion():
+        return personalizada, None, True
 
     faqs_int = _faqs_por_intencion(
         faqs, intencion, codigo_opcion=str(opcion.get("codigo") or "")
@@ -2022,27 +2070,15 @@ def construir_respuesta_menu_faq(
     if texto:
         return texto, None, True
 
-    if texto_usuario and not _es_solo_seleccion_menu(texto_usuario):
-        texto = _buscar_faq(faqs or [], None, str(texto_usuario))
+    if texto_in and not _es_solo_seleccion_menu(texto_in):
+        texto = _buscar_faq(faqs or [], None, texto_in)
         if texto:
             return texto, None, True
 
-    personalizada = str(opcion.get("respuesta_personalizada") or "").strip()
     if personalizada:
         return personalizada, None, True
 
-    desc_agencia = str(presentacion.get("descripcion_agencia") or "").strip()
-    if desc_agencia and (
-        _normalizar(intencion) == "agencia"
-        or codigo in {"como_funciona", "agencia"}
-        or "funciona" in _normalizar(titulo_op)
-    ):
-        return desc_agencia, None, True
-
-    desc_op = str(opcion.get("descripcion") or "").strip()
     if _normalizar(intencion) == "proceso" or codigo == "continuar_proceso":
-        if personalizada:
-            return personalizada, None, True
         if desc_op and len(desc_op) > 40:
             return desc_op, None, True
         return (
@@ -2052,19 +2088,7 @@ def construir_respuesta_menu_faq(
             True,
         )
 
-    if desc_agencia and _normalizar(intencion) in {"agencia", "faq"}:
-        return desc_agencia, None, True
-
     if desc_op and len(desc_op) > 40:
         return desc_op, None, True
-
-    if _normalizar(intencion) == "agencia" or codigo in {"como_funciona", "agencia"}:
-        return (
-            "Aún no tengo cargada la explicación general de la agencia. "
-            "Puedes preguntarme por *requisitos*, *beneficios* o *bonos*, "
-            "o escribir *asesor* para hablar con el equipo.",
-            None,
-            True,
-        )
 
     return "", None, False
