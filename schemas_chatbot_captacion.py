@@ -673,6 +673,7 @@ class ChatbotAspiranteReiniciarFlujoIn(BaseModel):
     model_config = {"extra": "forbid"}
 
     limpiar_respuestas: bool = False
+    modo_prueba: bool = True
 
 
 class ChatbotResumenResponse(BaseModel):

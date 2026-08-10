@@ -690,15 +690,18 @@ def reiniciar_flujo_aspirante(
     """
     Reinicia el flujo conversacional (etapa_chatbot=inicio).
 
-    Limpia chatbot_configuracion_id, requiere_asesor y campos de respuesta del
-    aspirante. También restablece la conversación activa más reciente
-    (modo_humano=false, manager_id=null, estado abierta, intención desconocida).
-    Conserva nivel_experiencia estable/bloqueado manual.
+    Por defecto usa modo_prueba=true: cierra conversaciones abiertas, limpia
+    flujo/paso/contexto, cancela tareas pendientes y resetea el nivel si no
+    está bloqueado manualmente. El siguiente mensaje del mismo número crea
+    una conversación nueva desde cero.
+
+    Con modo_prueba=false hace un reinicio suave (conversación abierta).
     """
     row = db.reiniciar_flujo_aspirante(
         agencia["id"],
         aspirante_id,
         limpiar_respuestas=bool(payload.limpiar_respuestas),
+        modo_prueba=bool(payload.modo_prueba),
     )
     if not row:
         raise HTTPException(status_code=404, detail="Aspirante no encontrado.")

@@ -1756,20 +1756,32 @@ def reiniciar_flujo_aspirante(
     aspirante_id: int,
     *,
     limpiar_respuestas: bool = False,
+    modo_prueba: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """
-    Reinicia el flujo conversacional del chatbot para un aspirante de la agencia.
+    Reinicia el flujo del chatbot para un aspirante de la agencia.
 
-    En una sola transacción:
-    - restablece chatbot_aspirantes (incluye requiere_asesor=false);
-    - limpia la conversación activa más reciente (modo_humano, manager, estado,
-      intención y preguntas de clasificación);
-    - conserva nivel_experiencia estable/bloqueado manual en aspirante y, si
-      aplica, en la conversación.
+    Siempre (en una sola transacción):
+    - restablece chatbot_aspirantes a nuevo/inicio (requiere_asesor=false);
+    - limpia progreso conversacional (flujo, paso, contexto, resumen, intención);
+    - cancela tareas_candidato abiertas (pendiente/en_progreso).
 
-    No elimina el registro ni altera telefono, agencia_id, whatsapp_account_id
-    o fecha_registro.
+    Con modo_prueba=True (default, recomendado para re-probar el mismo número):
+    - cierra conversaciones abiertas ligadas al aspirante/teléfono;
+    - el siguiente mensaje crea conversación nueva (sin historial en contexto);
+    - resetea nivel_experiencia del aspirante si no está bloqueado manualmente.
+
+    Con modo_prueba=False (reinicio suave legacy):
+    - deja la conversación abierta y limpia su progreso;
+    - conserva nivel estable del aspirante.
+
+    No elimina el aspirante ni altera telefono, agencia_id, whatsapp_account_id
+    o fecha_registro. Tampoco borra mensajes, evidencias ni evaluaciones.
     """
+    # limpiar_respuestas se conserva por compatibilidad de API (ya limpia siempre)
+    _ = limpiar_respuestas
+    modo_prueba = bool(modo_prueba)
+
     sets = [
         "estado = %s",
         "etapa_chatbot = %s",
@@ -1781,19 +1793,16 @@ def reiniciar_flujo_aspirante(
         "usuario_plataforma = NULL",
         "mayor_edad = NULL",
         "disponibilidad_live = NULL",
+        "modo_conversacional = NULL",
         "updated_at = CURRENT_TIMESTAMP",
     ]
     params: List[Any] = ["nuevo", "inicio"]
-    # limpiar_respuestas se conserva por compatibilidad de API (ya limpia siempre)
-    _ = limpiar_respuestas
-
-    params.extend([aspirante_id, agencia_id])
 
     with get_connection_chatbot_context() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
-                SELECT id, requiere_asesor, nivel_experiencia,
+                SELECT id, telefono, requiere_asesor, nivel_experiencia,
                        nivel_experiencia_bloqueado_manual
                 FROM chatbot.chatbot_aspirantes
                 WHERE id = %s AND agencia_id = %s
@@ -1806,7 +1815,22 @@ def reiniciar_flujo_aspirante(
                 return None
 
             requiere_asesor_anterior = bool(aspirante_prev.get("requiere_asesor"))
+            nivel_bloqueado_asp = bool(
+                aspirante_prev.get("nivel_experiencia_bloqueado_manual")
+            )
+            telefono = str(aspirante_prev.get("telefono") or "").strip() or None
 
+            if modo_prueba and not nivel_bloqueado_asp:
+                sets.extend(
+                    [
+                        "nivel_experiencia = 'desconocido'",
+                        "nivel_experiencia_fuente = NULL",
+                        "nivel_experiencia_confianza = NULL",
+                        "nivel_experiencia_confirmado_at = NULL",
+                    ]
+                )
+
+            params.extend([aspirante_id, agencia_id])
             cur.execute(
                 f"""
                 UPDATE chatbot.chatbot_aspirantes
@@ -1820,43 +1844,78 @@ def reiniciar_flujo_aspirante(
             if not row:
                 return None
 
-            cur.execute(
-                """
-                SELECT id, modo_humano, estado, estado_actual,
-                       nivel_experiencia_bloqueado_manual, manager_id
-                FROM chatbot.conversaciones
-                WHERE aspirante_id = %s AND agencia_id = %s
-                ORDER BY COALESCE(ultimo_mensaje_at, iniciada_at, created_at) DESC NULLS LAST,
-                         id DESC
-                LIMIT 1
-                """,
-                (aspirante_id, agencia_id),
-            )
-            conv = cur.fetchone()
+            # Conversaciones abiertas del aspirante (y por teléfono / wa_id).
+            conv_params: List[Any] = [agencia_id, aspirante_id]
+            if telefono:
+                conv_sql = """
+                    SELECT id, modo_humano, estado, estado_actual,
+                           nivel_experiencia_bloqueado_manual, manager_id, aspirante_id
+                    FROM chatbot.conversaciones
+                    WHERE agencia_id = %s
+                      AND estado <> 'cerrada'
+                      AND (
+                        aspirante_id = %s
+                        OR telefono = %s
+                        OR usuario_externo_id = %s
+                      )
+                    ORDER BY COALESCE(ultimo_mensaje_at, iniciada_at, created_at) DESC NULLS LAST,
+                             id DESC
+                    """
+                conv_params.extend([telefono, telefono])
+            else:
+                conv_sql = """
+                    SELECT id, modo_humano, estado, estado_actual,
+                           nivel_experiencia_bloqueado_manual, manager_id, aspirante_id
+                    FROM chatbot.conversaciones
+                    WHERE agencia_id = %s
+                      AND estado <> 'cerrada'
+                      AND aspirante_id = %s
+                    ORDER BY COALESCE(ultimo_mensaje_at, iniciada_at, created_at) DESC NULLS LAST,
+                             id DESC
+                    """
+
+            cur.execute(conv_sql, conv_params)
+            conversaciones = list(cur.fetchall() or [])
+
             conversaciones_actualizadas = 0
             conversacion_id = None
             modo_humano_anterior = False
+            tareas_canceladas = 0
+            estado_nuevo_conv = "cerrada" if modo_prueba else "abierta"
 
-            if conv:
-                conversacion_id = int(conv["id"])
-                modo_humano_anterior = bool(conv.get("modo_humano"))
+            for conv in conversaciones:
+                cid = int(conv["id"])
+                if conversacion_id is None:
+                    conversacion_id = cid
+                    modo_humano_anterior = bool(conv.get("modo_humano"))
+
                 nivel_bloqueado_conv = bool(
                     conv.get("nivel_experiencia_bloqueado_manual")
                 )
-                # Conservar nivel en aspirante siempre en este reinicio; en
-                # conversación solo limpiar clasificación dinámica salvo bloqueo.
                 campos_conv = [
                     "modo_humano = FALSE",
                     "manager_id = NULL",
                     "ia_habilitada = TRUE",
-                    "estado = 'abierta'",
+                    f"estado = '{estado_nuevo_conv}'",
                     "estado_actual = 'inicio'",
+                    "flujo_id = NULL",
+                    "paso_actual_id = NULL",
+                    "contexto = '{}'::jsonb",
+                    "resumen_contexto = NULL",
                     "preguntas_clasificacion_realizadas = 0",
                     "intencion_actual = 'desconocida'",
                     "intencion_confianza = NULL",
+                    "intencion_actualizada_at = NULL",
+                    "ultima_clasificacion_at = NULL",
                     "motivo_escalamiento = NULL",
+                    "escalada_at = NULL",
                     "updated_at = CURRENT_TIMESTAMP",
                 ]
+                if modo_prueba:
+                    campos_conv.append("cerrada_at = CURRENT_TIMESTAMP")
+                else:
+                    campos_conv.append("cerrada_at = NULL")
+
                 if not nivel_bloqueado_conv:
                     campos_conv.extend(
                         [
@@ -1865,6 +1924,7 @@ def reiniciar_flujo_aspirante(
                             "nivel_experiencia_confianza = NULL",
                             "nivel_experiencia_confirmado = FALSE",
                             "estrategia_nivel_aplicada = NULL",
+                            "nivel_experiencia_actualizado_at = NULL",
                         ]
                     )
 
@@ -1874,9 +1934,9 @@ def reiniciar_flujo_aspirante(
                     SET {", ".join(campos_conv)}
                     WHERE id = %s AND agencia_id = %s
                     """,
-                    (conversacion_id, agencia_id),
+                    (cid, agencia_id),
                 )
-                conversaciones_actualizadas = cur.rowcount or 0
+                conversaciones_actualizadas += cur.rowcount or 0
 
                 try:
                     cur.execute(
@@ -1886,52 +1946,82 @@ def reiniciar_flujo_aspirante(
                             origen, estado_anterior, estado_nuevo, exitoso, detalle
                         ) VALUES (
                             %s, %s, 'cambio_estado', 'reinicio_flujo_aspirante',
-                            'backend', %s, 'abierta', TRUE, %s
+                            'backend', %s, %s, TRUE, %s
                         )
                         """,
                         (
                             agencia_id,
-                            conversacion_id,
+                            cid,
                             conv.get("estado"),
+                            estado_nuevo_conv,
                             Json(
                                 {
                                     "aspirante_id": aspirante_id,
-                                    "modo_humano_anterior": modo_humano_anterior,
+                                    "modo_prueba": modo_prueba,
+                                    "modo_humano_anterior": bool(conv.get("modo_humano")),
                                     "modo_humano_nuevo": False,
                                     "requiere_asesor_anterior": requiere_asesor_anterior,
                                     "requiere_asesor_nuevo": False,
-                                    "nivel_bloqueado_conservado": nivel_bloqueado_conv
-                                    or bool(
-                                        aspirante_prev.get(
-                                            "nivel_experiencia_bloqueado_manual"
-                                        )
+                                    "nivel_aspirante_reseteado": bool(
+                                        modo_prueba and not nivel_bloqueado_asp
                                     ),
+                                    "nivel_bloqueado_conservado": nivel_bloqueado_conv
+                                    or nivel_bloqueado_asp,
+                                    "flujo_limpiado": True,
+                                    "contexto_limpiado": True,
                                 }
                             ),
                         ),
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
-                        "[CHATBOT-REINICIO] no se pudo registrar evento aspirante_id=%s: %s",
+                        "[CHATBOT-REINICIO] no se pudo registrar evento "
+                        "aspirante_id=%s conversacion_id=%s: %s",
                         aspirante_id,
+                        cid,
                         exc,
                     )
 
+            # Cancelar tareas abiertas del aspirante (y de sus conversaciones).
+            cur.execute(
+                """
+                UPDATE chatbot.tareas_candidato
+                SET estado = 'cancelada',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE agencia_id = %s
+                  AND estado IN ('pendiente', 'en_progreso')
+                  AND (
+                    aspirante_id = %s
+                    OR conversacion_id IN (
+                        SELECT id FROM chatbot.conversaciones
+                        WHERE agencia_id = %s AND aspirante_id = %s
+                    )
+                  )
+                """,
+                (agencia_id, aspirante_id, agencia_id, aspirante_id),
+            )
+            tareas_canceladas = cur.rowcount or 0
+
             logger.info(
                 "[CHATBOT-REINICIO] aspirante_id=%s conversacion_id=%s "
-                "modo_humano_anterior=%s modo_humano_nuevo=false "
+                "modo_prueba=%s modo_humano_anterior=%s modo_humano_nuevo=false "
                 "requiere_asesor_anterior=%s requiere_asesor_nuevo=false "
-                "conversaciones_actualizadas=%s",
+                "conversaciones_actualizadas=%s tareas_canceladas=%s "
+                "estado_conversacion=%s",
                 aspirante_id,
                 conversacion_id,
+                str(modo_prueba).lower(),
                 str(modo_humano_anterior).lower(),
                 str(requiere_asesor_anterior).lower(),
                 conversaciones_actualizadas,
+                tareas_canceladas,
+                estado_nuevo_conv,
             )
             logger.info(
-                "[CHATBOT] flujo reiniciado agencia_id=%s aspirante_id=%s",
+                "[CHATBOT] flujo reiniciado agencia_id=%s aspirante_id=%s modo_prueba=%s",
                 agencia_id,
                 aspirante_id,
+                str(modo_prueba).lower(),
             )
 
     return obtener_aspirante(agencia_id, aspirante_id)
