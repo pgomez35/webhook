@@ -124,36 +124,56 @@ def presentacion_desde_asistente(asistente: Optional[Dict[str, Any]]) -> Dict[st
     return out
 
 
-def construir_texto_menu(
-    *,
-    nombre_agencia: str,
-    opciones: List[Dict[str, Any]],
-    presentacion: Optional[Dict[str, Any]] = None,
-) -> str:
-    p = presentacion_desde_asistente(presentacion)
-    lineas = [
-        f"¡Hola! 👋 Bienvenido(a) a {nombre_agencia or 'la agencia'}.",
-        str(p.get("titulo_menu_inicial") or DEFAULTS_PRESENTACION["titulo_menu_inicial"]),
-        "",
-    ]
-    for op in opciones:
-        num = op.get("numero")
-        titulo = str(op.get("titulo") or "").strip()
-        if num is None or not titulo:
-            continue
-        lineas.append(f"{int(num)}. {titulo}")
-    lineas.append("")
-    lineas.append(
-        str(p.get("texto_indicacion_menu") or DEFAULTS_PRESENTACION["texto_indicacion_menu"])
-    )
-    return "\n".join(lineas)
-
-
 def ordenar_opciones_menu(opciones: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return sorted(
         [o for o in (opciones or []) if o and o.get("activo") is not False],
         key=lambda o: (int(o.get("orden") or 0), int(o.get("numero") or 0), int(o.get("id") or 0)),
     )
+
+
+def numerar_opciones_activas(opciones: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Asigna número visible 1..N solo a opciones activas, en orden de menú.
+
+    Así, si se deshabilitan opciones intermedias, el menú no muestra huecos
+    (p. ej. 1,2,3,5,7) y la respuesta del usuario coincide con lo listado.
+    """
+    out: List[Dict[str, Any]] = []
+    for idx, op in enumerate(ordenar_opciones_menu(opciones), start=1):
+        copia = dict(op)
+        copia["numero_visible"] = idx
+        out.append(copia)
+    return out
+
+
+def construir_texto_menu(
+    *,
+    nombre_agencia: str,
+    opciones: List[Dict[str, Any]],
+    presentacion: Optional[Dict[str, Any]] = None,
+    presentacion_inicial: Optional[str] = None,
+) -> str:
+    p = presentacion_desde_asistente(presentacion)
+    encabezado = str(presentacion_inicial or "").strip()
+    if not encabezado:
+        encabezado = f"¡Hola! 👋 Bienvenido(a) a {nombre_agencia or 'la agencia'}."
+
+    lineas = [
+        encabezado,
+        "",
+        str(p.get("titulo_menu_inicial") or DEFAULTS_PRESENTACION["titulo_menu_inicial"]),
+        "",
+    ]
+    for op in numerar_opciones_activas(opciones):
+        titulo = str(op.get("titulo") or "").strip()
+        if not titulo:
+            continue
+        lineas.append(f"{int(op['numero_visible'])}. {titulo}")
+    lineas.append("")
+    lineas.append(
+        str(p.get("texto_indicacion_menu") or DEFAULTS_PRESENTACION["texto_indicacion_menu"])
+    )
+    return "\n".join(lineas)
 
 
 def extraer_numero_opcion(texto: str) -> Optional[int]:
@@ -179,12 +199,15 @@ def resolver_opcion_menu(
 ) -> Tuple[Optional[Dict[str, Any]], str]:
     """
     Retorna (opcion|None, modo) donde modo ∈ {numero, texto, invalido, ninguna}.
+
+    El número del usuario se interpreta como el número visible del menú (1..N
+    de opciones activas), no como el campo fijo `numero` en base de datos.
     """
-    activas = ordenar_opciones_menu(opciones)
+    activas = numerar_opciones_activas(opciones)
     numero = extraer_numero_opcion(texto)
     if numero is not None:
         for op in activas:
-            if int(op.get("numero") or 0) == int(numero):
+            if int(op.get("numero_visible") or 0) == int(numero):
                 return op, "numero"
         return None, "invalido"
 
@@ -584,6 +607,7 @@ async def procesar_mensaje_informativo(
         nombre_agencia=nombre_agencia,
         opciones=opciones,
         presentacion=presentacion,
+        presentacion_inicial=(asistente or {}).get("presentacion_inicial"),
     )
 
     # Conversación / modo humano
