@@ -41,11 +41,11 @@ DEFAULTS_PRESENTACION = {
         "Escribe el número de la opción o cuéntame qué deseas saber."
     ),
     "formato_respuestas_informativas": "lista",
-    "max_elementos_respuesta": 8,
+    "max_elementos_respuesta": 15,
     "mostrar_titulo_respuesta": True,
     "agregar_pregunta_final": True,
     "repetir_menu_despues_respuesta": False,
-    "pie_volver_menu": "",
+    "pie_volver_menu": "Escribe *menu* para volver al menú.",
     "mensaje_no_entendido": (
         "No entendí tu mensaje. Puedes escribir el número de una opción "
         "o contarme qué deseas saber."
@@ -146,8 +146,9 @@ def _pie_volver_menu(presentacion: Optional[Dict[str, Any]]) -> str:
     if not pie:
         return ""
     n = _normalizar(pie)
-    if "escribe menu" in n and "opciones" in n:
-        return ""
+    # Omite solo el pie antiguo redundante ("…opciones otra vez").
+    if "escribe menu" in n and "opciones otra vez" in n:
+        return str(DEFAULTS_PRESENTACION["pie_volver_menu"] or "").strip()
     return pie
 
 
@@ -198,10 +199,10 @@ def presentacion_desde_asistente(asistente: Optional[Dict[str, Any]]) -> Dict[st
             out[clave] = a[clave]
     try:
         out["max_elementos_respuesta"] = max(
-            1, min(20, int(out.get("max_elementos_respuesta") or 8))
+            1, min(20, int(out.get("max_elementos_respuesta") or 15))
         )
     except (TypeError, ValueError):
-        out["max_elementos_respuesta"] = 8
+        out["max_elementos_respuesta"] = 15
     formato = str(out.get("formato_respuestas_informativas") or "lista").lower()
     if formato not in {"lista", "texto_breve", "automatico"}:
         formato = "lista"
@@ -219,10 +220,13 @@ def presentacion_desde_asistente(asistente: Optional[Dict[str, Any]]) -> Dict[st
             indicacion = DEFAULTS_PRESENTACION["texto_indicacion_menu"]
         out["texto_indicacion_menu"] = indicacion
 
-    # Nunca reinyectar el pie redundante de *menu*.
+    # Nunca reinyectar el pie largo redundante antiguo.
     pie = str(out.get("pie_volver_menu") or "").strip()
-    if pie and "escribe menu" in _normalizar(pie) and "opciones" in _normalizar(pie):
-        out["pie_volver_menu"] = ""
+    n_pie = _normalizar(pie)
+    if pie and "escribe menu" in n_pie and "opciones otra vez" in n_pie:
+        out["pie_volver_menu"] = DEFAULTS_PRESENTACION["pie_volver_menu"]
+    elif not pie:
+        out["pie_volver_menu"] = DEFAULTS_PRESENTACION["pie_volver_menu"]
     return out
 
 
@@ -429,18 +433,6 @@ def _tema_requisito(texto: str) -> Optional[str]:
     return None
 
 
-_ETIQUETAS_TEMA_REQUISITO = {
-    "edad": "Mayoría de edad (18+)",
-    "horas_dia": "Mínimo 2 horas diarias",
-    "semana": "Constancia durante la semana",
-    "equipo": "Teléfono e internet estables",
-    "comunicacion": "Buena comunicación en LIVE",
-    "energia": "Energía frente a la cámara",
-    "compromiso": "Compromiso con horarios y metas",
-    "disponibilidad": "Disponibilidad para transmitir",
-}
-
-
 def _deduplicar_frases(items: List[str]) -> List[str]:
     """Evita listar dos veces el mismo requisito (p. ej. edad duplicada)."""
     out: List[str] = []
@@ -622,7 +614,7 @@ def construir_respuesta_por_intencion_informativa(
         reqs = sorted(reqs or [], key=lambda r: int(r.get("orden") or 0))
         items = preparar_items_requisitos(
             reqs,
-            max_elementos=int(presentacion.get("max_elementos_respuesta") or 8),
+            max_elementos=int(presentacion.get("max_elementos_respuesta") or 15),
         )
         texto, lista, _det = construir_respuesta_lista_o_detalle(
             texto_consulta,
@@ -643,7 +635,7 @@ def construir_respuesta_por_intencion_informativa(
         items = preparar_items_beneficios(
             bens or [],
             tipos=("beneficio", "capacitacion", "acompanamiento", "otro"),
-            max_elementos=int(presentacion.get("max_elementos_respuesta") or 8),
+            max_elementos=int(presentacion.get("max_elementos_respuesta") or 15),
         )
         texto, lista, _det = construir_respuesta_lista_o_detalle(
             texto_consulta,
@@ -664,7 +656,7 @@ def construir_respuesta_por_intencion_informativa(
         items = preparar_items_beneficios(
             bens or [],
             tipos=("bono", "incentivo"),
-            max_elementos=int(presentacion.get("max_elementos_respuesta") or 8),
+            max_elementos=int(presentacion.get("max_elementos_respuesta") or 15),
         )
         texto, lista, _det = construir_respuesta_lista_o_detalle(
             texto_consulta,
@@ -719,11 +711,15 @@ def construir_texto_detalle_item(
     titulo = str(item.get("titulo") or "").strip() or "Detalle"
     detalle = str(item.get("detalle") or "").strip() or "Sin detalle adicional."
     lineas = [f"*{titulo}*", "", detalle]
-    if p.get("agregar_pregunta_final") and total > 1:
+    if p.get("agregar_pregunta_final"):
         lineas.append("")
-        lineas.append(
-            f"Escribe otro *número* (1-{int(total)}) para más detalle."
-        )
+        if total > 1:
+            lineas.append(
+                f"Escribe otro *número* (1-{int(total)}) para más detalle, "
+                "o *menu* para volver al menú."
+            )
+        else:
+            lineas.append("Escribe *menu* para volver al menú.")
     return "\n".join(lineas).strip()
 
 
@@ -993,54 +989,39 @@ def _resumir_frase(texto: str, *, max_len: int = 72) -> str:
 
 
 def _titulo_opcion_menu_corta(titulo: str) -> str:
-    """Títulos limpios del menú principal (solo visualización)."""
-    n = _normalizar(titulo)
-    mapa = {
-        "requisitos para ser creador live": "Requisitos",
-        "requisitos": "Requisitos",
-        "beneficios de pertenecer a la agencia": "Beneficios",
-        "beneficios de la agencia": "Beneficios",
-        "beneficios": "Beneficios",
-        "bonos e incentivos de monetizacion": "Bonos e incentivos",
-        "bonos e incentivos": "Bonos e incentivos",
-        "como funciona la agencia": "Cómo funciona",
-        "continuar con el proceso": "Continuar proceso",
-        "hablar con un asesor": "Hablar con un asesor",
-    }
-    if n in mapa:
-        return mapa[n]
-    crudo = str(titulo or "").strip()
-    if len(crudo) <= 36:
+    """Título del menú = texto configurado (sin reescribir etiquetas fijas)."""
+    crudo = re.sub(r"\s+", " ", str(titulo or "").strip())
+    if not crudo:
+        return ""
+    # Solo acorta si es excesivamente largo para WhatsApp.
+    if len(crudo) <= 60:
         return crudo
-    return _resumir_frase(crudo, max_len=36).rstrip(".")
+    return _resumir_frase(crudo, max_len=60).rstrip(".")
 
 
 def _titulo_corto_requisito(requisito: Dict[str, Any]) -> str:
-    """Título breve para la lista numerada (el detalle va al elegir el número)."""
-    nombre = str(requisito.get("nombre") or "").strip()
+    """Título de lista = nombre configurado en el admin (sin reescribir)."""
+    nombre = re.sub(r"\s+", " ", str(requisito.get("nombre") or "").strip())
+    if nombre and not _es_pregunta(nombre):
+        return nombre
     desc = str(
         requisito.get("descripcion") or requisito.get("valor_texto") or ""
     ).strip()
-    tema = _tema_requisito(f"{nombre} {desc}")
-    if tema and tema in _ETIQUETAS_TEMA_REQUISITO:
-        return _ETIQUETAS_TEMA_REQUISITO[tema]
-    if nombre and not _es_pregunta(nombre) and len(nombre) <= 42:
-        return _limpiar_frase_requisito(nombre).rstrip(".")
     if desc and not _es_pregunta(desc):
-        return _resumir_frase(desc, max_len=42).rstrip(".")
-    if nombre:
-        return _resumir_frase(nombre, max_len=42).rstrip(".")
-    return _resumir_frase(desc or "Requisito", max_len=42).rstrip(".")
+        return _resumir_frase(desc, max_len=80).rstrip(".")
+    return nombre or _resumir_frase(desc or "Requisito", max_len=80).rstrip(".")
 
 
 def _detalle_requisito(requisito: Dict[str, Any]) -> str:
+    """Detalle = descripción configurada; si es pregunta de formulario, usa el nombre."""
     nombre = str(requisito.get("nombre") or "").strip()
     desc = str(
         requisito.get("descripcion") or requisito.get("valor_texto") or ""
     ).strip()
     if desc and not _es_pregunta(desc):
         return _limpiar_frase_requisito(desc)
-    if nombre and desc and _es_pregunta(desc):
+    if desc and _es_pregunta(desc) and nombre:
+        # Evita responder solo con "¿Eres mayor de 18?" en WhatsApp.
         return _limpiar_frase_requisito(nombre)
     return _limpiar_frase_requisito(desc or nombre or "Sin detalle adicional.")
 
@@ -1048,9 +1029,9 @@ def _detalle_requisito(requisito: Dict[str, Any]) -> str:
 def preparar_items_requisitos(
     requisitos: List[Dict[str, Any]],
     *,
-    max_elementos: int = 8,
+    max_elementos: int = 15,
 ) -> List[Dict[str, Any]]:
-    """Lista numerada con título corto + detalle para profundizar."""
+    """Lista numerada con nombre configurado + detalle de la descripción."""
     crudos: List[Dict[str, Any]] = []
     for r in requisitos or []:
         if not _vigente(r):
@@ -1060,16 +1041,19 @@ def preparar_items_requisitos(
         titulo = _titulo_corto_requisito(r)
         if not titulo:
             continue
+        desc_raw = str(r.get("descripcion") or r.get("valor_texto") or "")
         crudos.append(
             {
                 "id": r.get("id"),
                 "titulo": titulo,
                 "detalle": _detalle_requisito(r),
                 "_clave": _normalizar(titulo),
+                "_detalle_pregunta": _es_pregunta(desc_raw),
             }
         )
 
-    # Dedup por tema/clave conservando el más completo.
+    # Dedup por tema/clave: evita repetir p. ej. dos requisitos de edad.
+    # Conserva el de mejor detalle (descripción afirmativa / más completa).
     vistos: List[str] = []
     tema_idx: Dict[str, int] = {}
     dedup: List[Dict[str, Any]] = []
@@ -1078,7 +1062,15 @@ def preparar_items_requisitos(
         tema = _tema_requisito(item["titulo"] + " " + item["detalle"])
         if tema is not None and tema in tema_idx:
             idx = tema_idx[tema]
-            if len(item["detalle"]) > len(dedup[idx]["detalle"]):
+            actual = dedup[idx]
+            reemplazar = False
+            if item.get("_detalle_pregunta") and not actual.get("_detalle_pregunta"):
+                reemplazar = False
+            elif (not item.get("_detalle_pregunta")) and actual.get("_detalle_pregunta"):
+                reemplazar = True
+            elif len(item["detalle"]) > len(actual["detalle"]):
+                reemplazar = True
+            if reemplazar:
                 dedup[idx] = item
                 vistos[idx] = clave
             continue
@@ -1090,7 +1082,7 @@ def preparar_items_requisitos(
         vistos.append(clave)
 
     out: List[Dict[str, Any]] = []
-    for idx, item in enumerate(dedup[: max(1, int(max_elementos or 8))], start=1):
+    for idx, item in enumerate(dedup[: max(1, int(max_elementos or 15))], start=1):
         out.append(
             {
                 "n": idx,
@@ -1122,7 +1114,9 @@ def construir_texto_lista_detalle(
         lineas.append(_linea_lista_numerada(int(item["n"]), item["titulo"]))
     if p.get("agregar_pregunta_final"):
         lineas.append("")
-        lineas.append("Escribe el *número* para más detalle.")
+        lineas.append(
+            "Escribe el *número* para más detalle, o *menu* para volver al menú."
+        )
     return "\n".join(lineas).strip()
 
 
@@ -1132,7 +1126,7 @@ def construir_respuesta_requisitos(
 ) -> Tuple[str, List[Dict[str, Any]]]:
     items = preparar_items_requisitos(
         requisitos,
-        max_elementos=int(presentacion.get("max_elementos_respuesta") or 8),
+        max_elementos=int(presentacion.get("max_elementos_respuesta") or 15),
     )
     texto = construir_texto_lista_detalle(
         items,
@@ -1147,8 +1141,9 @@ def preparar_items_beneficios(
     beneficios: List[Dict[str, Any]],
     *,
     tipos: Tuple[str, ...],
-    max_elementos: int = 8,
+    max_elementos: int = 15,
 ) -> List[Dict[str, Any]]:
+    """Lista numerada: título = nombre del admin; detalle = texto/descripción configurada."""
     out: List[Dict[str, Any]] = []
     n = 0
     for b in beneficios or []:
@@ -1161,17 +1156,19 @@ def preparar_items_beneficios(
         tipo = str(b.get("tipo") or "").lower()
         if tipos and tipo not in tipos:
             continue
-        detalle = (
+
+        nombre = re.sub(r"\s+", " ", str(b.get("nombre") or "").strip())
+        detalle_raw = (
             str(b.get("texto_autorizado") or "").strip()
             or str(b.get("descripcion_corta") or "").strip()
-            or str(b.get("nombre") or "").strip()
+            or str(b.get("descripcion_completa") or "").strip()
         )
-        if not detalle:
+        if not nombre and not detalle_raw:
             continue
+        titulo = nombre or _resumir_frase(detalle_raw, max_len=80).rstrip(".")
+        detalle = detalle_raw or nombre
         if b.get("requiere_validacion_humana"):
-            detalle = f"{detalle} (sujeto a validación del equipo)"
-        nombre = str(b.get("nombre") or "").strip()
-        titulo = _resumir_frase(nombre or detalle, max_len=72)
+            detalle = f"{detalle.rstrip('.')} (sujeto a validación del equipo)"
         n += 1
         out.append(
             {
@@ -1181,7 +1178,7 @@ def preparar_items_beneficios(
                 "detalle": _limpiar_frase_requisito(detalle),
             }
         )
-        if n >= max(1, int(max_elementos or 8)):
+        if n >= max(1, int(max_elementos or 15)):
             break
     return out
 
@@ -1196,7 +1193,7 @@ def construir_respuesta_beneficios(
     items = preparar_items_beneficios(
         beneficios,
         tipos=tipos,
-        max_elementos=int(presentacion.get("max_elementos_respuesta") or 8),
+        max_elementos=int(presentacion.get("max_elementos_respuesta") or 15),
     )
     texto = construir_texto_lista_detalle(
         items,
@@ -1219,7 +1216,7 @@ def construir_respuesta_proceso(
         mostrar_titulo=bool(presentacion.get("mostrar_titulo_respuesta")),
         numerada=True,
         pregunta_final=pregunta,
-        max_elementos=int(presentacion.get("max_elementos_respuesta") or 8),
+        max_elementos=int(presentacion.get("max_elementos_respuesta") or 15),
     )
 
 
@@ -1549,7 +1546,7 @@ async def procesar_mensaje_informativo(
             reqs = sorted(reqs or [], key=lambda r: int(r.get("orden") or 0))
             items = preparar_items_requisitos(
                 reqs,
-                max_elementos=int(presentacion.get("max_elementos_respuesta") or 8),
+                max_elementos=int(presentacion.get("max_elementos_respuesta") or 15),
             )
             respuesta, lista_detalle_a_guardar, _det = construir_respuesta_lista_o_detalle(
                 texto_in,
@@ -1568,7 +1565,7 @@ async def procesar_mensaje_informativo(
             items = preparar_items_beneficios(
                 bens or [],
                 tipos=("beneficio", "capacitacion", "acompanamiento", "otro"),
-                max_elementos=int(presentacion.get("max_elementos_respuesta") or 8),
+                max_elementos=int(presentacion.get("max_elementos_respuesta") or 15),
             )
             respuesta, lista_detalle_a_guardar, _det = construir_respuesta_lista_o_detalle(
                 texto_in,
@@ -1587,7 +1584,7 @@ async def procesar_mensaje_informativo(
             items = preparar_items_beneficios(
                 bens or [],
                 tipos=("bono", "incentivo"),
-                max_elementos=int(presentacion.get("max_elementos_respuesta") or 8),
+                max_elementos=int(presentacion.get("max_elementos_respuesta") or 15),
             )
             respuesta, lista_detalle_a_guardar, _det = construir_respuesta_lista_o_detalle(
                 texto_in,
