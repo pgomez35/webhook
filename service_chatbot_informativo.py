@@ -208,6 +208,10 @@ def presentacion_desde_asistente(asistente: Optional[Dict[str, Any]]) -> Dict[st
         formato = "lista"
     out["formato_respuestas_informativas"] = formato
 
+    # Contexto de agencia para "Cómo funciona" y similares.
+    if a.get("descripcion_agencia") is not None:
+        out["descripcion_agencia"] = a.get("descripcion_agencia")
+
     # Indicación del menú: solo la primera frase (sin el recordatorio de *menu*).
     indicacion = str(out.get("texto_indicacion_menu") or "").strip()
     if indicacion:
@@ -674,9 +678,23 @@ def construir_respuesta_por_intencion_informativa(
             chatbot_configuracion_id=chatbot_configuracion_id,
             solo_activos=True,
         )
-        intencion_faq = None if intencion_n == "faq" else intencion_n
-        texto = _buscar_faq(faqs or [], intencion_faq, texto_consulta)
-        return texto, not bool(texto), None
+        opcion_virtual = {
+            "intencion": intencion_n,
+            "codigo": "como_funciona" if intencion_n == "agencia" else intencion_n,
+            "titulo": {
+                "agencia": "Cómo funciona la agencia",
+                "proceso": "Continuar con el proceso",
+                "faq": "Información",
+            }.get(intencion_n, "Información"),
+        }
+        texto, lista, ok = construir_respuesta_menu_faq(
+            opcion=opcion_virtual,
+            faqs=faqs or [],
+            texto_usuario=texto_consulta,
+            presentacion=presentacion,
+            intencion_forzada=intencion_n,
+        )
+        return texto, (not ok), lista
 
     return "", True, None
 
@@ -1604,14 +1622,24 @@ async def procesar_mensaje_informativo(
                 or DEFAULTS_PRESENTACION["mensaje_escalamiento_sin_bloqueo"]
             )
             limpiar_lista_detalle = True
-        else:  # faq
+        else:  # faq (cómo funciona, continuar proceso, etc.)
             faqs = db_conv.listar_faqs(
                 agencia_id,
                 chatbot_configuracion_id=chatbot_configuracion_id,
                 solo_activos=True,
             )
-            respuesta = _buscar_faq(faqs or [], intencion, texto_in)
-            limpiar_lista_detalle = True
+            respuesta, lista_faq, ok_faq = construir_respuesta_menu_faq(
+                opcion=opcion,
+                faqs=faqs or [],
+                texto_usuario=texto_in,
+                presentacion=presentacion,
+            )
+            if lista_faq:
+                lista_detalle_a_guardar = lista_faq
+            else:
+                limpiar_lista_detalle = True
+            if not ok_faq:
+                respuesta = ""
 
         if not respuesta:
             respuesta = str(
@@ -1773,6 +1801,11 @@ def _buscar_faq(
         fi = _normalizar(str(faq.get("intencion") or ""))
         if intencion_n and fi == intencion_n:
             score += 5
+        # Alias faq_proceso / faq_agencia, etc.
+        if intencion_n and _faq_coincide_claves(
+            faq, _aliases_intencion_faq(intencion_n)
+        ):
+            score += 5
         pregunta = _normalizar(str(faq.get("pregunta") or ""))
         if pregunta and (pregunta in n or n in pregunta):
             score += 4
@@ -1783,19 +1816,241 @@ def _buscar_faq(
             cn = _normalizar(str(c))
             if cn and cn in n:
                 score += 2
+        categoria = _normalizar(str(faq.get("categoria") or ""))
+        if intencion_n and categoria and (
+            categoria == intencion_n
+            or _faq_coincide_claves(faq, _aliases_intencion_faq(intencion_n))
+        ):
+            score += 3
         if score:
             mejores.append((score, faq))
     if not mejores:
-        # Si hay intención, tomar FAQ de esa intención
+        # Si hay intención, tomar FAQ de esa intención (o alias faq_proceso…)
         if intencion_n:
-            for faq in faqs:
-                if _normalizar(str(faq.get("intencion") or "")) == intencion_n and _vigente(faq):
-                    return str(
-                        faq.get("respuesta_completa")
-                        or faq.get("respuesta_corta")
-                        or ""
-                    ).strip()
+            for faq in _faqs_por_intencion(faqs, intencion_n):
+                texto = str(
+                    faq.get("respuesta_completa")
+                    or faq.get("respuesta_corta")
+                    or ""
+                ).strip()
+                if texto:
+                    return texto
         return ""
     mejores.sort(key=lambda x: (-x[0], -int((x[1].get("prioridad") or 0))))
     faq = mejores[0][1]
     return str(faq.get("respuesta_completa") or faq.get("respuesta_corta") or "").strip()
+
+
+def _aliases_intencion_faq(intencion: Optional[str], *, codigo_opcion: str = "") -> frozenset:
+    """
+    Normaliza intenciones del menú a las variantes usadas en FAQ
+    (p. ej. proceso ↔ faq_proceso, agencia ↔ faq_agencia).
+    """
+    mapa = {
+        "proceso": frozenset(
+            {
+                "proceso",
+                "faq_proceso",
+                "continuar_proceso",
+                "proceso_ingreso",
+                "incorporacion",
+                "solicitud",
+            }
+        ),
+        "agencia": frozenset(
+            {
+                "agencia",
+                "faq_agencia",
+                "como_funciona",
+                "funcionamiento",
+                "info_agencia",
+            }
+        ),
+        "faq": frozenset({"faq", "general", "informacion"}),
+        "requisitos": frozenset({"requisitos", "faq_requisitos"}),
+        "beneficios": frozenset({"beneficios", "faq_beneficios"}),
+        "bonos": frozenset({"bonos", "faq_bonos", "incentivos"}),
+    }
+    keys: set = set()
+    n = _normalizar(intencion or "")
+    c = _normalizar(codigo_opcion or "")
+    if n in mapa:
+        keys |= set(mapa[n])
+    elif n:
+        keys.add(n)
+        if not n.startswith("faq_"):
+            keys.add(f"faq_{n}")
+        elif n.startswith("faq_") and len(n) > 4:
+            keys.add(n[4:])
+    for canon, aliases in mapa.items():
+        if c == canon or c in aliases:
+            keys |= set(aliases)
+            keys.add(canon)
+    # "Cómo funciona" suele documentarse también como proceso de ingreso.
+    if c == "como_funciona" or n == "agencia":
+        keys |= set(mapa["proceso"])
+    return frozenset(keys)
+
+
+def _faq_coincide_claves(faq: Dict[str, Any], claves: frozenset) -> bool:
+    if not claves:
+        return False
+    campos = (
+        _normalizar(str(faq.get("intencion") or "")),
+        _normalizar(str(faq.get("categoria") or "")),
+        _normalizar(str(faq.get("codigo") or "")),
+    )
+    for campo in campos:
+        if not campo:
+            continue
+        if campo in claves:
+            return True
+        # codigo tipo faq_proceso / proceso_ingreso
+        for clave in claves:
+            if clave and (campo == clave or campo.endswith(f"_{clave}") or campo.startswith(f"{clave}_")):
+                return True
+    return False
+
+
+def _faqs_por_intencion(
+    faqs: List[Dict[str, Any]],
+    intencion: Optional[str],
+    *,
+    codigo_opcion: str = "",
+) -> List[Dict[str, Any]]:
+    claves = _aliases_intencion_faq(intencion, codigo_opcion=codigo_opcion)
+    if not claves:
+        return []
+    out: List[Dict[str, Any]] = []
+    for faq in faqs or []:
+        if not _vigente(faq):
+            continue
+        if _faq_coincide_claves(faq, claves):
+            out.append(faq)
+    return sorted(
+        out,
+        key=lambda f: (-int(f.get("prioridad") or 0), int(f.get("id") or 0)),
+    )
+
+
+def construir_respuesta_menu_faq(
+    *,
+    opcion: Optional[Dict[str, Any]],
+    faqs: List[Dict[str, Any]],
+    texto_usuario: str,
+    presentacion: Dict[str, Any],
+    intencion_forzada: Optional[str] = None,
+) -> Tuple[str, Optional[Dict[str, Any]], bool]:
+    """
+    Resuelve opciones tipo FAQ (p. ej. Cómo funciona / Continuar proceso).
+
+    Prioridad:
+    1) FAQs de la intención (lista si hay varias)
+    2) Búsqueda FAQ por texto/título
+    3) respuesta_personalizada de la opción
+    4) descripcion_agencia (asistente)
+    5) descripción de la opción / mensaje orientativo
+
+    Retorna (texto, lista_detalle|None, encontrado).
+    """
+    opcion = opcion or {}
+    intencion = str(intencion_forzada or opcion.get("intencion") or "").strip()
+    codigo = _normalizar(str(opcion.get("codigo") or ""))
+    titulo_op = str(opcion.get("titulo") or "").strip()
+
+    texto_busqueda = str(texto_usuario or "").strip()
+    if (not texto_busqueda) or _es_solo_seleccion_menu(texto_busqueda):
+        texto_busqueda = " ".join(
+            p
+            for p in (
+                titulo_op,
+                str(opcion.get("descripcion") or "").strip(),
+                intencion,
+            )
+            if p
+        )
+
+    faqs_int = _faqs_por_intencion(
+        faqs, intencion, codigo_opcion=str(opcion.get("codigo") or "")
+    )
+    items_faq: List[Dict[str, Any]] = []
+    for faq in faqs_int:
+        detalle = str(
+            faq.get("respuesta_completa") or faq.get("respuesta_corta") or ""
+        ).strip()
+        if not detalle:
+            continue
+        pregunta = str(faq.get("pregunta") or faq.get("codigo") or "Información").strip()
+        items_faq.append(
+            {
+                "n": len(items_faq) + 1,
+                "id": faq.get("id"),
+                "titulo": pregunta,
+                "detalle": detalle,
+            }
+        )
+
+    if len(items_faq) > 1:
+        texto, lista, _det = construir_respuesta_lista_o_detalle(
+            texto_usuario,
+            items_faq,
+            tipo=f"faq_{_normalizar(intencion) or 'info'}",
+            titulo=titulo_op or "Información",
+            introduccion="Puedo contarte sobre:",
+            presentacion=presentacion,
+        )
+        return texto, lista, True
+
+    if len(items_faq) == 1:
+        return items_faq[0]["detalle"], None, True
+
+    texto = _buscar_faq(faqs or [], intencion or None, texto_busqueda)
+    if texto:
+        return texto, None, True
+
+    if texto_usuario and not _es_solo_seleccion_menu(texto_usuario):
+        texto = _buscar_faq(faqs or [], None, str(texto_usuario))
+        if texto:
+            return texto, None, True
+
+    personalizada = str(opcion.get("respuesta_personalizada") or "").strip()
+    if personalizada:
+        return personalizada, None, True
+
+    desc_agencia = str(presentacion.get("descripcion_agencia") or "").strip()
+    if desc_agencia and (
+        _normalizar(intencion) == "agencia"
+        or codigo in {"como_funciona", "agencia"}
+        or "funciona" in _normalizar(titulo_op)
+    ):
+        return desc_agencia, None, True
+
+    desc_op = str(opcion.get("descripcion") or "").strip()
+    if _normalizar(intencion) == "proceso" or codigo == "continuar_proceso":
+        if personalizada:
+            return personalizada, None, True
+        if desc_op and len(desc_op) > 40:
+            return desc_op, None, True
+        return (
+            "Para continuar con el proceso puedes preguntarme lo que necesites "
+            "o escribir *asesor* para que una persona del equipo te guíe.",
+            None,
+            True,
+        )
+
+    if desc_agencia and _normalizar(intencion) in {"agencia", "faq"}:
+        return desc_agencia, None, True
+
+    if desc_op and len(desc_op) > 40:
+        return desc_op, None, True
+
+    if _normalizar(intencion) == "agencia" or codigo in {"como_funciona", "agencia"}:
+        return (
+            "Aún no tengo cargada la explicación general de la agencia. "
+            "Puedes preguntarme por *requisitos*, *beneficios* o *bonos*, "
+            "o escribir *asesor* para hablar con el equipo.",
+            None,
+            True,
+        )
+
+    return "", None, False
