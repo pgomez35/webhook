@@ -585,6 +585,7 @@ class PropuestaItemBeneficio(_Entrada):
     moneda: Optional[str] = None
     requiere_validacion_humana: bool = False
     requiere_confirmacion_humana: Optional[bool] = None
+    orden: Optional[int] = None
 
 
 class PropuestaItemFaq(_Entrada):
