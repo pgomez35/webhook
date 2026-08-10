@@ -152,6 +152,20 @@ def _pie_volver_menu(presentacion: Optional[Dict[str, Any]]) -> str:
     return pie
 
 
+def _ya_indica_volver_menu(texto: str) -> bool:
+    """True si el cuerpo ya explica cómo volver al menú (evita duplicar el pie)."""
+    n = _normalizar(texto)
+    if not n:
+        return False
+    if "escribe menu" in n:
+        return True
+    if "volver al menu" in n or "ver el menu" in n or "ver las opciones" in n:
+        return True
+    if "o menu" in n and "menu" in n:
+        return True
+    return False
+
+
 def _con_pie_menu(respuesta: str, presentacion: Optional[Dict[str, Any]]) -> str:
     cuerpo = str(respuesta or "").strip()
     if not cuerpo:
@@ -159,7 +173,7 @@ def _con_pie_menu(respuesta: str, presentacion: Optional[Dict[str, Any]]) -> str
     pie = _pie_volver_menu(presentacion)
     if not pie:
         return cuerpo
-    if "escribe *menu*" in cuerpo.lower() or "escribe menu" in _normalizar(cuerpo):
+    if _ya_indica_volver_menu(cuerpo):
         return cuerpo
     return f"{cuerpo}\n\n{pie}"
 
