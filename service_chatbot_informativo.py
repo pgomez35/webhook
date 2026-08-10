@@ -38,15 +38,14 @@ DEFAULTS_PRESENTACION = {
     "mostrar_menu_inicial": True,
     "titulo_menu_inicial": "Puedo ayudarte con información sobre:",
     "texto_indicacion_menu": (
-        "Escribe el número de la opción, cuéntame qué deseas saber "
-        "o escribe *menu* para ver las opciones otra vez."
+        "Escribe el número de la opción o cuéntame qué deseas saber."
     ),
     "formato_respuestas_informativas": "lista",
     "max_elementos_respuesta": 8,
     "mostrar_titulo_respuesta": True,
     "agregar_pregunta_final": True,
     "repetir_menu_despues_respuesta": False,
-    "pie_volver_menu": "Escribe *menu* para ver las opciones otra vez.",
+    "pie_volver_menu": "",
     "mensaje_no_entendido": (
         "No entendí tu mensaje. Puedes escribir el número de una opción "
         "o contarme qué deseas saber."
@@ -137,10 +136,19 @@ def es_comando_volver_menu(texto: str) -> bool:
 
 
 def _pie_volver_menu(presentacion: Optional[Dict[str, Any]]) -> str:
+    """Pie opcional; el aviso de *menu* redundante se omite siempre."""
     p = presentacion or {}
-    return str(
-        p.get("pie_volver_menu") or DEFAULTS_PRESENTACION["pie_volver_menu"]
+    pie = str(
+        p.get("pie_volver_menu")
+        if p.get("pie_volver_menu") is not None
+        else DEFAULTS_PRESENTACION["pie_volver_menu"]
     ).strip()
+    if not pie:
+        return ""
+    n = _normalizar(pie)
+    if "escribe menu" in n and "opciones" in n:
+        return ""
+    return pie
 
 
 def _con_pie_menu(respuesta: str, presentacion: Optional[Dict[str, Any]]) -> str:
@@ -153,6 +161,12 @@ def _con_pie_menu(respuesta: str, presentacion: Optional[Dict[str, Any]]) -> str
     if "escribe *menu*" in cuerpo.lower() or "escribe menu" in _normalizar(cuerpo):
         return cuerpo
     return f"{cuerpo}\n\n{pie}"
+
+
+def _linea_lista_numerada(numero: int, texto: str) -> str:
+    """Formato unificado de menús/listas: 1. ✅ Título"""
+    titulo = str(texto or "").strip()
+    return f"{int(numero)}. ✅ {titulo}"
 
 
 def _vigente(registro: Dict[str, Any], hoy: Optional[date] = None) -> bool:
@@ -192,6 +206,23 @@ def presentacion_desde_asistente(asistente: Optional[Dict[str, Any]]) -> Dict[st
     if formato not in {"lista", "texto_breve", "automatico"}:
         formato = "lista"
     out["formato_respuestas_informativas"] = formato
+
+    # Indicación del menú: solo la primera frase (sin el recordatorio de *menu*).
+    indicacion = str(out.get("texto_indicacion_menu") or "").strip()
+    if indicacion:
+        for sep in (". ", "! ", "? "):
+            if sep in indicacion[:-1]:
+                indicacion = indicacion.split(sep, 1)[0].rstrip(".") + "."
+                break
+        n_ind = _normalizar(indicacion)
+        if "escribe menu" in n_ind:
+            indicacion = DEFAULTS_PRESENTACION["texto_indicacion_menu"]
+        out["texto_indicacion_menu"] = indicacion
+
+    # Nunca reinyectar el pie redundante de *menu*.
+    pie = str(out.get("pie_volver_menu") or "").strip()
+    if pie and "escribe menu" in _normalizar(pie) and "opciones" in _normalizar(pie):
+        out["pie_volver_menu"] = ""
     return out
 
 
@@ -239,7 +270,7 @@ def construir_texto_menu(
         titulo = _titulo_opcion_menu_corta(str(op.get("titulo") or "").strip())
         if not titulo:
             continue
-        lineas.append(f"{int(op['numero_visible'])}. {titulo}")
+        lineas.append(_linea_lista_numerada(int(op["numero_visible"]), titulo))
     lineas.append("")
     lineas.append(
         str(p.get("texto_indicacion_menu") or DEFAULTS_PRESENTACION["texto_indicacion_menu"])
@@ -446,7 +477,7 @@ def formatear_lista(
     pregunta_final: Optional[str] = None,
     max_elementos: int = 8,
     introduccion: Optional[str] = None,
-    vineta: str = "-",
+    vineta: str = "✅",
 ) -> str:
     utiles = [str(i).strip() for i in items if str(i or "").strip()]
     utiles = _limitar(utiles, max_elementos)
@@ -465,10 +496,10 @@ def formatear_lista(
         lineas.append("")
 
     if usar_lista:
-        marca = str(vineta or "-").strip() or "-"
+        marca = str(vineta or "✅").strip() or "✅"
         for idx, item in enumerate(utiles, start=1):
             if numerada:
-                lineas.append(f"{idx}. {item}")
+                lineas.append(_linea_lista_numerada(idx, item))
             else:
                 lineas.append(f"{marca} {item}")
     else:
@@ -589,9 +620,19 @@ def construir_respuesta_por_intencion_informativa(
             solo_activos=True,
         )
         reqs = sorted(reqs or [], key=lambda r: int(r.get("orden") or 0))
-        texto, items = construir_respuesta_requisitos(reqs, presentacion)
-        lista = empaquetar_lista_detalle("requisitos", "Requisitos", items) if items else None
-        return texto, not bool(texto), lista
+        items = preparar_items_requisitos(
+            reqs,
+            max_elementos=int(presentacion.get("max_elementos_respuesta") or 8),
+        )
+        texto, lista, _det = construir_respuesta_lista_o_detalle(
+            texto_consulta,
+            items,
+            tipo="requisitos",
+            titulo="Requisitos para ser creador LIVE 🎥",
+            introduccion="Para formar parte de la agencia necesitas:",
+            presentacion=presentacion,
+        )
+        return texto, not bool(texto), lista if items else None
 
     if intencion_n == "beneficios":
         bens = db_conv.listar_beneficios(
@@ -599,14 +640,20 @@ def construir_respuesta_por_intencion_informativa(
             chatbot_configuracion_id=chatbot_configuracion_id,
             solo_activos=True,
         )
-        texto, items = construir_respuesta_beneficios(
+        items = preparar_items_beneficios(
             bens or [],
-            presentacion,
             tipos=("beneficio", "capacitacion", "acompanamiento", "otro"),
-            titulo="Beneficios de pertenecer a la agencia",
+            max_elementos=int(presentacion.get("max_elementos_respuesta") or 8),
         )
-        lista = empaquetar_lista_detalle("beneficios", "Beneficios", items) if items else None
-        return texto, not bool(texto), lista
+        texto, lista, _det = construir_respuesta_lista_o_detalle(
+            texto_consulta,
+            items,
+            tipo="beneficios",
+            titulo="Beneficios de pertenecer a la agencia",
+            introduccion="Esto es lo que ofrece la agencia:",
+            presentacion=presentacion,
+        )
+        return texto, not bool(texto), lista if items else None
 
     if intencion_n == "bonos":
         bens = db_conv.listar_beneficios(
@@ -614,14 +661,20 @@ def construir_respuesta_por_intencion_informativa(
             chatbot_configuracion_id=chatbot_configuracion_id,
             solo_activos=True,
         )
-        texto, items = construir_respuesta_beneficios(
+        items = preparar_items_beneficios(
             bens or [],
-            presentacion,
             tipos=("bono", "incentivo"),
-            titulo="Bonos e incentivos",
+            max_elementos=int(presentacion.get("max_elementos_respuesta") or 8),
         )
-        lista = empaquetar_lista_detalle("bonos", "Bonos e incentivos", items) if items else None
-        return texto, not bool(texto), lista
+        texto, lista, _det = construir_respuesta_lista_o_detalle(
+            texto_consulta,
+            items,
+            tipo="bonos",
+            titulo="Bonos e incentivos",
+            introduccion="Esto es lo que ofrece la agencia:",
+            presentacion=presentacion,
+        )
+        return texto, not bool(texto), lista if items else None
 
     if intencion_n in {"agencia", "proceso", "faq"}:
         faqs = db_conv.listar_faqs(
@@ -666,16 +719,109 @@ def construir_texto_detalle_item(
     titulo = str(item.get("titulo") or "").strip() or "Detalle"
     detalle = str(item.get("detalle") or "").strip() or "Sin detalle adicional."
     lineas = [f"*{titulo}*", "", detalle]
-    if p.get("agregar_pregunta_final"):
+    if p.get("agregar_pregunta_final") and total > 1:
         lineas.append("")
-        if total > 1:
-            lineas.append(
-                f"Escribe otro *número* (1-{int(total)}) para más detalle, "
-                "o *menu* para ver las opciones."
-            )
-        else:
-            lineas.append("Escribe *menu* para ver las opciones otra vez.")
+        lineas.append(
+            f"Escribe otro *número* (1-{int(total)}) para más detalle."
+        )
     return "\n".join(lineas).strip()
+
+
+_STOPWORDS_CONSULTA = frozenset(
+    {
+        "que",
+        "es",
+        "el",
+        "la",
+        "los",
+        "las",
+        "de",
+        "del",
+        "un",
+        "una",
+        "unos",
+        "unas",
+        "me",
+        "te",
+        "se",
+        "mi",
+        "tu",
+        "su",
+        "al",
+        "lo",
+        "como",
+        "cual",
+        "cuales",
+        "cuando",
+        "donde",
+        "porque",
+        "por",
+        "para",
+        "con",
+        "sin",
+        "sobre",
+        "hay",
+        "tiene",
+        "tienen",
+        "quiero",
+        "saber",
+        "explica",
+        "explicame",
+        "explicar",
+        "dime",
+        "cuentame",
+        "info",
+        "informacion",
+        "mas",
+        "detalle",
+        "detalles",
+        "significa",
+        "consiste",
+        "puedes",
+        "podrias",
+        "hola",
+    }
+)
+
+
+def _tokens_consulta(texto: str) -> List[str]:
+    return [
+        t
+        for t in _normalizar(texto).split()
+        if len(t) > 2 and t not in _STOPWORDS_CONSULTA
+    ]
+
+
+def _score_coincidencia_item(texto_n: str, item: Dict[str, Any]) -> int:
+    """Puntúa qué tan bien una pregunta en texto apunta a un ítem de la lista."""
+    titulo = _normalizar(str(item.get("titulo") or ""))
+    detalle = _normalizar(str(item.get("detalle") or ""))
+    if not texto_n or not titulo:
+        return 0
+    if titulo == texto_n or titulo in texto_n or texto_n in titulo:
+        return 100
+
+    toks_q = set(_tokens_consulta(texto_n))
+    if not toks_q:
+        return 0
+    toks_t = set(_tokens_consulta(titulo))
+    toks_d = set(_tokens_consulta(detalle))
+    solapa_t = toks_q & toks_t
+    solapa_d = toks_q & toks_d
+    score = 0
+    if solapa_t:
+        score += 35 + 15 * len(solapa_t)
+        # Coincidencia casi completa del título (p. ej. "bono incorporacion").
+        if toks_t and len(solapa_t) >= max(1, len(toks_t) - 1):
+            score += 25
+    if solapa_d:
+        score += 8 * min(3, len(solapa_d))
+    # Palabra distintiva larga del título dentro de la pregunta.
+    for tok in toks_t:
+        if len(tok) >= 6 and tok in texto_n:
+            score += 20
+            break
+    return score
 
 
 def resolver_item_lista_detalle(
@@ -684,18 +830,92 @@ def resolver_item_lista_detalle(
 ) -> Tuple[Optional[Dict[str, Any]], str]:
     """
     Retorna (item|None, modo) con modo ∈ {detalle, invalido, ninguna}.
-    Solo aplica si hay lista pendiente y el usuario envió un número.
+
+    Acepta número (1, 2…) o pregunta en texto sobre un ítem
+    (p. ej. "qué es el bono de incorporación").
     """
     items = list((lista or {}).get("items") or [])
     if not items:
         return None, "ninguna"
+
     numero = extraer_numero_opcion(texto)
-    if numero is None:
+    if numero is not None:
+        for item in items:
+            if int(item.get("n") or 0) == int(numero):
+                return item, "detalle"
+        return None, "invalido"
+
+    texto_n = _normalizar(texto)
+    if not texto_n:
         return None, "ninguna"
+
+    mejor: Optional[Dict[str, Any]] = None
+    mejor_score = 0
+    segundo = 0
     for item in items:
-        if int(item.get("n") or 0) == int(numero):
-            return item, "detalle"
-    return None, "invalido"
+        score = _score_coincidencia_item(texto_n, item)
+        if score > mejor_score:
+            segundo = mejor_score
+            mejor_score = score
+            mejor = item
+        elif score > segundo:
+            segundo = score
+
+    # Umbral: evita falsos positivos; exige margen si hay empate cercano.
+    if mejor and mejor_score >= 40 and (mejor_score - segundo) >= 10:
+        return mejor, "detalle"
+    if mejor and mejor_score >= 70:
+        return mejor, "detalle"
+    return None, "ninguna"
+
+
+def _es_solo_seleccion_menu(texto: str) -> bool:
+    """
+    True si el mensaje es solo elegir opción de menú (1, uno, opción 2),
+    no una pregunta sobre un ítem concreto.
+    """
+    n = _normalizar(texto)
+    if not n:
+        return True
+    if extraer_numero_opcion(texto) is None:
+        return False
+    # "1", "uno", "opcion 2", "opc 3"
+    return len(n.split()) <= 2
+
+
+def construir_respuesta_lista_o_detalle(
+    texto_usuario: str,
+    items: List[Dict[str, Any]],
+    *,
+    tipo: str,
+    titulo: str,
+    introduccion: str,
+    presentacion: Dict[str, Any],
+) -> Tuple[str, Dict[str, Any], bool]:
+    """
+    Si el usuario pregunta por un ítem concreto → detalle;
+    si no → lista numerada. Siempre devuelve la lista para dejarla pendiente.
+    """
+    lista = empaquetar_lista_detalle(tipo, titulo, items)
+    # Si acabamos de elegir la opción del menú con un número ("1"/"uno"),
+    # mostramos la lista completa; el detalle por número aplica cuando ya
+    # hay lista pendiente en el siguiente turno.
+    if items and not _es_solo_seleccion_menu(texto_usuario):
+        item, modo = resolver_item_lista_detalle(texto_usuario, lista)
+        if modo == "detalle" and item:
+            texto = construir_texto_detalle_item(
+                item,
+                presentacion=presentacion,
+                total=len(list(lista.get("items") or [])),
+            )
+            return texto, lista, True
+    texto = construir_texto_lista_detalle(
+        items,
+        titulo=titulo,
+        introduccion=introduccion,
+        presentacion=presentacion,
+    )
+    return texto, lista, False
 
 
 def _contexto_conversacion(conversacion: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -899,12 +1119,10 @@ def construir_texto_lista_detalle(
         lineas.append(str(introduccion).strip())
         lineas.append("")
     for item in items:
-        lineas.append(f"{int(item['n'])}. ✅ {item['titulo']}")
+        lineas.append(_linea_lista_numerada(int(item["n"]), item["titulo"]))
     if p.get("agregar_pregunta_final"):
         lineas.append("")
-        lineas.append(
-            "Escribe el *número* para más detalle, o *menu* para ver las opciones."
-        )
+        lineas.append("Escribe el *número* para más detalle.")
     return "\n".join(lineas).strip()
 
 
@@ -1277,8 +1495,7 @@ async def procesar_mensaje_informativo(
         if modo_det == "invalido":
             total = len(list(lista_detalle.get("items") or []))
             respuesta = (
-                f"Ese número no está en la lista. Escribe un número del *1* al *{total}*, "
-                "o *menu* para ver las opciones."
+                f"Ese número no está en la lista. Escribe un número del *1* al *{total}*."
             )
             if texto_menu and texto_menu not in respuesta:
                 respuesta = _con_pie_menu(respuesta, presentacion)
@@ -1330,9 +1547,17 @@ async def procesar_mensaje_informativo(
                 solo_activos=True,
             )
             reqs = sorted(reqs or [], key=lambda r: int(r.get("orden") or 0))
-            respuesta, items = construir_respuesta_requisitos(reqs, presentacion)
-            lista_detalle_a_guardar = empaquetar_lista_detalle(
-                "requisitos", "Requisitos", items
+            items = preparar_items_requisitos(
+                reqs,
+                max_elementos=int(presentacion.get("max_elementos_respuesta") or 8),
+            )
+            respuesta, lista_detalle_a_guardar, _det = construir_respuesta_lista_o_detalle(
+                texto_in,
+                items,
+                tipo="requisitos",
+                titulo="Requisitos para ser creador LIVE 🎥",
+                introduccion="Para formar parte de la agencia necesitas:",
+                presentacion=presentacion,
             )
         elif tipo_fuente == "beneficios":
             bens = db_conv.listar_beneficios(
@@ -1340,14 +1565,18 @@ async def procesar_mensaje_informativo(
                 chatbot_configuracion_id=chatbot_configuracion_id,
                 solo_activos=True,
             )
-            respuesta, items = construir_respuesta_beneficios(
+            items = preparar_items_beneficios(
                 bens or [],
-                presentacion,
                 tipos=("beneficio", "capacitacion", "acompanamiento", "otro"),
-                titulo="Beneficios de pertenecer a la agencia",
+                max_elementos=int(presentacion.get("max_elementos_respuesta") or 8),
             )
-            lista_detalle_a_guardar = empaquetar_lista_detalle(
-                "beneficios", "Beneficios", items
+            respuesta, lista_detalle_a_guardar, _det = construir_respuesta_lista_o_detalle(
+                texto_in,
+                items,
+                tipo="beneficios",
+                titulo="Beneficios de pertenecer a la agencia",
+                introduccion="Esto es lo que ofrece la agencia:",
+                presentacion=presentacion,
             )
         elif tipo_fuente == "bonos":
             bens = db_conv.listar_beneficios(
@@ -1355,14 +1584,18 @@ async def procesar_mensaje_informativo(
                 chatbot_configuracion_id=chatbot_configuracion_id,
                 solo_activos=True,
             )
-            respuesta, items = construir_respuesta_beneficios(
+            items = preparar_items_beneficios(
                 bens or [],
-                presentacion,
                 tipos=("bono", "incentivo"),
-                titulo="Bonos e incentivos",
+                max_elementos=int(presentacion.get("max_elementos_respuesta") or 8),
             )
-            lista_detalle_a_guardar = empaquetar_lista_detalle(
-                "bonos", "Bonos e incentivos", items
+            respuesta, lista_detalle_a_guardar, _det = construir_respuesta_lista_o_detalle(
+                texto_in,
+                items,
+                tipo="bonos",
+                titulo="Bonos e incentivos",
+                introduccion="Esto es lo que ofrece la agencia:",
+                presentacion=presentacion,
             )
         elif tipo_fuente == "texto":
             respuesta = str(opcion.get("respuesta_personalizada") or "").strip()
