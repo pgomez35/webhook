@@ -37,12 +37,16 @@ NUMEROS_TEXTO = {
 DEFAULTS_PRESENTACION = {
     "mostrar_menu_inicial": True,
     "titulo_menu_inicial": "Puedo ayudarte con información sobre:",
-    "texto_indicacion_menu": "Escribe el número de la opción o cuéntame qué deseas saber.",
+    "texto_indicacion_menu": (
+        "Escribe el número de la opción, cuéntame qué deseas saber "
+        "o escribe *menu* para ver las opciones otra vez."
+    ),
     "formato_respuestas_informativas": "lista",
     "max_elementos_respuesta": 8,
     "mostrar_titulo_respuesta": True,
     "agregar_pregunta_final": True,
     "repetir_menu_despues_respuesta": False,
+    "pie_volver_menu": "Escribe *menu* para ver las opciones otra vez.",
     "mensaje_no_entendido": (
         "No entendí tu mensaje. Puedes escribir el número de una opción "
         "o contarme qué deseas saber."
@@ -61,6 +65,44 @@ DEFAULTS_PRESENTACION = {
         "y te responderá por aquí."
     ),
 }
+
+# Frases que solo piden remostrar el menú (sin buscar FAQ / IA).
+_COMANDOS_VOLVER_MENU = frozenset(
+    {
+        "menu",
+        "menú",
+        "menus",
+        "inicio",
+        "opciones",
+        "opcion",
+        "opción",
+        "volver",
+        "atras",
+        "atrás",
+        "regresar",
+        "hola",
+        "buenas",
+        "hey",
+        "hi",
+        "hello",
+        "holi",
+        "info",
+    }
+)
+_PATRONES_VOLVER_MENU = (
+    "menu anterior",
+    "menú anterior",
+    "volver al menu",
+    "volver al menú",
+    "volver menu",
+    "ver menu",
+    "ver menú",
+    "mostrar menu",
+    "mostrar menú",
+    "otra opcion",
+    "otra opción",
+    "otras opciones",
+)
 
 INTENCIONES_INFORMATIVAS_IA = frozenset(
     {
@@ -82,6 +124,35 @@ def _normalizar(texto: str) -> str:
     valor = "".join(ch for ch in valor if unicodedata.category(ch) != "Mn")
     valor = re.sub(r"[^\w\s]", " ", valor, flags=re.UNICODE)
     return re.sub(r"\s+", " ", valor).strip()
+
+
+def es_comando_volver_menu(texto: str) -> bool:
+    """True si el usuario solo pide remostrar el menú / elegir otra opción."""
+    n = _normalizar(texto)
+    if not n:
+        return False
+    if n in _COMANDOS_VOLVER_MENU:
+        return True
+    return any(p in n for p in _PATRONES_VOLVER_MENU)
+
+
+def _pie_volver_menu(presentacion: Optional[Dict[str, Any]]) -> str:
+    p = presentacion or {}
+    return str(
+        p.get("pie_volver_menu") or DEFAULTS_PRESENTACION["pie_volver_menu"]
+    ).strip()
+
+
+def _con_pie_menu(respuesta: str, presentacion: Optional[Dict[str, Any]]) -> str:
+    cuerpo = str(respuesta or "").strip()
+    if not cuerpo:
+        return cuerpo
+    pie = _pie_volver_menu(presentacion)
+    if not pie:
+        return cuerpo
+    if "escribe *menu*" in cuerpo.lower() or "escribe menu" in _normalizar(cuerpo):
+        return cuerpo
+    return f"{cuerpo}\n\n{pie}"
 
 
 def _vigente(registro: Dict[str, Any], hoy: Optional[date] = None) -> bool:
@@ -254,6 +325,101 @@ def _limitar(items: List[str], maximo: int) -> List[str]:
     return items[: max(1, int(maximo or 8))]
 
 
+def _es_pregunta(texto: str) -> bool:
+    t = str(texto or "").strip()
+    if not t:
+        return False
+    if t.startswith("¿") or t.endswith("?"):
+        return True
+    n = _normalizar(t)
+    return n.startswith(
+        ("eres ", "tienes ", "puedes ", "cuentas ", "dispones ", "quieres ")
+    )
+
+
+def _limpiar_frase_requisito(texto: str) -> str:
+    """Deja una frase corta y afirmativa para listar en WhatsApp."""
+    t = re.sub(r"\s+", " ", str(texto or "").strip())
+    t = re.sub(
+        r"^(la persona debe|se requiere|es necesario|necesitas|debes)\s+",
+        "",
+        t,
+        flags=re.IGNORECASE,
+    )
+    # Quita emojis/viñetas sueltos al inicio (la marca ✅ ya aporta el acento).
+    t = re.sub(r"^[\W_🚀✅✔️☑️●•\-]+\s*", "", t)
+    if not t:
+        return ""
+    if t[0].islower():
+        t = t[0].upper() + t[1:]
+    if t[-1] not in ".!…":
+        t = f"{t}."
+    return t
+
+
+def _texto_item_requisito(requisito: Dict[str, Any]) -> Optional[str]:
+    """
+    Prioriza descripción afirmativa; si la descripción es pregunta (estilo
+    formulario), usa el nombre. Evita el formato 'Nombre: ¿pregunta?'.
+    """
+    nombre = str(requisito.get("nombre") or "").strip()
+    desc = str(
+        requisito.get("descripcion") or requisito.get("valor_texto") or ""
+    ).strip()
+
+    if desc and not _es_pregunta(desc):
+        return _limpiar_frase_requisito(desc)
+    if nombre:
+        return _limpiar_frase_requisito(nombre)
+    if desc:
+        return _limpiar_frase_requisito(desc)
+    return None
+
+
+def _tema_requisito(texto: str) -> Optional[str]:
+    """Agrupa requisitos equivalentes para no repetirlos en el menú."""
+    n = _normalizar(texto)
+    if any(k in n for k in ("18", "edad", "mayor de edad", "mayoria de edad")):
+        return "edad"
+    if "hora" in n and ("dia" in n or "diaria" in n):
+        return "horas_dia"
+    if "semana" in n or "varios dia" in n:
+        return "semana"
+    if any(k in n for k in ("telefono", "celular", "conexion", "internet")):
+        return "equipo"
+    if any(k in n for k in ("hablador", "convers", "interact", "comunicativ", "audiencia")):
+        return "comunicacion"
+    if any(k in n for k in ("energia", "camara", "actitud", "entretenid")):
+        return "energia"
+    return None
+
+
+def _deduplicar_frases(items: List[str]) -> List[str]:
+    """Evita listar dos veces el mismo requisito (p. ej. edad duplicada)."""
+    out: List[str] = []
+    vistos: List[str] = []
+    tema_idx: Dict[str, int] = {}
+    for item in items:
+        clave = _normalizar(item)
+        if not clave:
+            continue
+        tema = _tema_requisito(item)
+        if tema is not None and tema in tema_idx:
+            idx = tema_idx[tema]
+            # Conserva la frase más clara/completa del mismo tema.
+            if len(item) > len(out[idx]):
+                out[idx] = item
+                vistos[idx] = clave
+            continue
+        if any(clave in v or v in clave for v in vistos):
+            continue
+        if tema is not None:
+            tema_idx[tema] = len(out)
+        out.append(item)
+        vistos.append(clave)
+    return out
+
+
 def formatear_lista(
     items: List[str],
     *,
@@ -263,6 +429,8 @@ def formatear_lista(
     numerada: bool = False,
     pregunta_final: Optional[str] = None,
     max_elementos: int = 8,
+    introduccion: Optional[str] = None,
+    vineta: str = "-",
 ) -> str:
     utiles = [str(i).strip() for i in items if str(i or "").strip()]
     utiles = _limitar(utiles, max_elementos)
@@ -276,13 +444,17 @@ def formatear_lista(
     if mostrar_titulo and titulo:
         lineas.append(str(titulo).strip())
         lineas.append("")
+    if introduccion:
+        lineas.append(str(introduccion).strip())
+        lineas.append("")
 
     if usar_lista:
+        marca = str(vineta or "-").strip() or "-"
         for idx, item in enumerate(utiles, start=1):
             if numerada:
                 lineas.append(f"{idx}. {item}")
             else:
-                lineas.append(f"- {item}")
+                lineas.append(f"{marca} {item}")
     else:
         # texto_breve: máximo dos párrafos
         if len(utiles) == 1:
@@ -448,25 +620,36 @@ def construir_respuesta_requisitos(
     requisitos: List[Dict[str, Any]],
     presentacion: Dict[str, Any],
 ) -> str:
-    items = []
+    items: List[str] = []
     for r in requisitos:
         if not _vigente(r):
             continue
         if r.get("permitir_mencion_automatica") is False:
             continue
-        nombre = str(r.get("nombre") or "").strip()
-        desc = str(r.get("descripcion") or r.get("valor_texto") or "").strip()
-        if not nombre:
-            continue
-        items.append(f"{nombre}: {desc}" if desc else nombre)
-    items.sort(key=lambda _: 0)  # ya vienen ordenados
-    pregunta = "¿Quieres que te explique alguno con más detalle?" if presentacion.get("agregar_pregunta_final") else None
+        frase = _texto_item_requisito(r)
+        if frase:
+            items.append(frase)
+
+    items = _deduplicar_frases(items)
+    pregunta = (
+        "Si quieres, puedo explicarte cualquiera de estos requisitos."
+        if presentacion.get("agregar_pregunta_final")
+        else None
+    )
+    # En informativo los requisitos siempre van como lista limpia con ✅,
+    # aunque el formato general sea texto_breve.
     return formatear_lista(
         items,
-        formato=presentacion.get("formato_respuestas_informativas") or "lista",
-        titulo="Requisitos para ser creador LIVE" if presentacion.get("mostrar_titulo_respuesta") else None,
+        formato="lista",
+        titulo=(
+            "Requisitos para ser creador LIVE 🎥"
+            if presentacion.get("mostrar_titulo_respuesta")
+            else None
+        ),
         mostrar_titulo=bool(presentacion.get("mostrar_titulo_respuesta")),
         numerada=False,
+        introduccion="Para formar parte de la agencia necesitas:",
+        vineta="✅",
         pregunta_final=pregunta,
         max_elementos=int(presentacion.get("max_elementos_respuesta") or 8),
     )
@@ -610,6 +793,69 @@ async def procesar_mensaje_informativo(
         presentacion_inicial=(asistente or {}).get("presentacion_inicial"),
     )
 
+    # Anti-duplicado: Meta puede reenviar el mismo webhook si tardamos.
+    if mensaje_externo_id and not dry_run:
+        try:
+            if db_conv.mensaje_externo_ya_procesado(
+                agencia_id, str(mensaje_externo_id), canal=canal
+            ):
+                logger.info(
+                    "[CHATBOT_MENU] mensaje_duplicado mensaje_externo_id=%s "
+                    "conversacion_id=%s",
+                    mensaje_externo_id,
+                    conversacion_id,
+                )
+                return {
+                    "usado": True,
+                    "motivo": "mensaje_duplicado",
+                    "respuesta": None,
+                    "respuesta_enviada": True,
+                    "requiere_reintento": False,
+                    "enlaces": [],
+                }
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[CHATBOT_MENU] dedup inbound falló: %s", exc)
+
+    if conversacion_id and mensaje_externo_id and not dry_run:
+        try:
+            insertado = db_conv.insertar_mensaje(
+                agencia_id,
+                int(conversacion_id),
+                canal=canal,
+                direccion="entrante",
+                remitente_tipo="usuario",
+                tipo_mensaje="texto",
+                texto=str(texto or "")[:4000],
+                mensaje_externo_id=str(mensaje_externo_id),
+                estado_envio="recibido",
+                procesado_por_ia=False,
+            )
+            creado = True
+            if isinstance(insertado, tuple) and len(insertado) > 1:
+                creado = bool(insertado[1])
+            if not creado:
+                return {
+                    "usado": True,
+                    "motivo": "mensaje_duplicado",
+                    "respuesta": None,
+                    "respuesta_enviada": True,
+                    "requiere_reintento": False,
+                    "enlaces": [],
+                }
+        except Exception as exc:  # noqa: BLE001
+            if db_conv.mensaje_externo_ya_procesado(
+                agencia_id, str(mensaje_externo_id), canal=canal
+            ):
+                return {
+                    "usado": True,
+                    "motivo": "mensaje_duplicado",
+                    "respuesta": None,
+                    "respuesta_enviada": True,
+                    "requiere_reintento": False,
+                    "enlaces": [],
+                }
+            logger.warning("[CHATBOT_MENU] no se pudo insertar entrante: %s", exc)
+
     # Conversación / modo humano
     conversacion = None
     if conversacion_id:
@@ -643,14 +889,11 @@ async def procesar_mensaje_informativo(
             "enlaces": [],
         }
 
-    # Primer contacto / menú inicial
+    # Menú inicial / volver al menú (menu, volver, menu anterior, otra opción…)
     texto_in = str(texto or "").strip()
-    es_saludo = _normalizar(texto_in) in {
-        "hola", "buenas", "hey", "hi", "hello", "holi", "menu", "menú", "inicio", "info",
-    }
     mostrar_menu = bool(presentacion.get("mostrar_menu_inicial", True))
 
-    if (not texto_in or es_saludo) and mostrar_menu and opciones:
+    if (not texto_in or es_comando_volver_menu(texto_in)) and mostrar_menu and opciones:
         envio = await garantizar_respuesta_saliente(
             agencia_id=agencia_id,
             conversacion_id=conversacion_id,
@@ -665,7 +908,7 @@ async def procesar_mensaje_informativo(
             mensaje_externo_id=mensaje_externo_id,
         )
         logger.info(
-            "[CHATBOT_MENU] conversacion_id=%s entrada=saludo opcion=menu "
+            "[CHATBOT_MENU] conversacion_id=%s entrada=menu opcion=menu "
             "intencion=menu respuesta_enviada=%s",
             conversacion_id,
             bool(envio.get("enviado") or dry_run),
@@ -808,6 +1051,10 @@ async def procesar_mensaje_informativo(
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("[CHATBOT_MENU] no se pudo marcar requiere_asesor: %s", exc)
+
+    # Pie corto para volver al menú (si la respuesta no es ya el menú completo).
+    if respuesta and texto_menu and texto_menu not in respuesta:
+        respuesta = _con_pie_menu(respuesta, presentacion)
 
     # Nunca modo_humano por falta de info
     envio = await garantizar_respuesta_saliente(

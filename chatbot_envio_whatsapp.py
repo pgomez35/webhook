@@ -92,7 +92,7 @@ def normalizar_resultado_envio(
         except (TypeError, ValueError):
             status_i = None
         ok_http = status_i is not None and 200 <= status_i < 300
-        enviado = bool(resultado.get("enviado") is True and ok_http and mid)
+        enviado = bool(resultado.get("enviado") is True and ok_http)
         if resultado.get("dry_run"):
             enviado = True
         return {
@@ -114,7 +114,7 @@ def normalizar_resultado_envio(
             status_i = int(status)
         except (TypeError, ValueError):
             status_i = None
-        ok = bool(mid) and status_i is not None and 200 <= status_i < 300
+        ok = status_i is not None and 200 <= status_i < 300
         return {
             "enviado": ok,
             "mensaje_externo_id": str(mid) if mid else None,
@@ -130,7 +130,7 @@ def normalizar_resultado_envio(
     except (TypeError, ValueError):
         status_i = None
     ok_http = status_i is not None and 200 <= status_i < 300
-    enviado = bool(resultado.get("enviado") is True and ok_http and mid)
+    enviado = bool(resultado.get("enviado") is True and ok_http)
     return {
         "enviado": enviado,
         "mensaje_externo_id": str(mid) if mid else None,
@@ -203,7 +203,17 @@ async def enviar_whatsapp_texto_meta(
     except (TypeError, ValueError):
         status_i = 0
     mid = extraer_mensaje_externo_id(respuesta_api)
-    ok = 200 <= status_i < 300 and bool(mid)
+    # HTTP 2xx ya implica entrega a Meta. Exigir wamid evitaba marcar éxito y
+    # provocaba reenvíos duplicados (garantizar + reintento del dispatcher).
+    ok_http = 200 <= status_i < 300
+    ok = ok_http
+    if ok_http and not mid:
+        logger.warning(
+            "[CHATBOT_ENVIO] canal=whatsapp conversacion_id=%s status_code=%s "
+            "sin wamid; se marca enviado para evitar duplicados",
+            conversacion_id,
+            status_i,
+        )
     error = None
     if not ok:
         if isinstance(respuesta_api, dict):
