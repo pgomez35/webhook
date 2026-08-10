@@ -1423,13 +1423,24 @@ OPCIONES_MENU_INFORMATIVO_DEFECTO: Tuple[Dict[str, Any], ...] = (
     },
     {
         "numero": 6,
+        "codigo": "otras_preguntas",
+        "titulo": "Otras preguntas",
+        "descripcion": "Haz una pregunta que no esté en el menú.",
+        "intencion": "faq",
+        "tipo_fuente": "pregunta_libre",
+        "requiere_asesor": False,
+        "orden": 6,
+        "activo": True,
+    },
+    {
+        "numero": 7,
         "codigo": "asesor",
         "titulo": "Hablar con un asesor",
         "descripcion": "Solicitar contacto de una persona del equipo.",
         "intencion": "asesor",
         "tipo_fuente": "asesor",
         "requiere_asesor": True,
-        "orden": 6,
+        "orden": 7,
         "activo": True,
     },
 )
@@ -1442,9 +1453,10 @@ def asegurar_menu_informativo_base(
     cur=None,
 ) -> Dict[str, Any]:
     """
-    Inserta las 6 opciones base del menú informativo si la config no tiene ninguna.
+    Inserta las opciones base del menú informativo si la config no tiene ninguna.
 
-    Idempotente: si ya existe al menos una opción (activa o inactiva), no inserta nada.
+    Si ya hay opciones, solo agrega las faltantes por código (p. ej. otras_preguntas)
+    sin tocar las existentes.
     """
     with _cursor(cur) as c:
         _exige_configuracion(agencia_id, int(chatbot_configuracion_id), cur=c)
@@ -1454,29 +1466,68 @@ def asegurar_menu_informativo_base(
             solo_activas=False,
             cur=c,
         )
-        if existentes:
+        if not existentes:
+            creadas: List[Dict[str, Any]] = []
+            for plantilla in OPCIONES_MENU_INFORMATIVO_DEFECTO:
+                campos = dict(plantilla)
+                campos["chatbot_configuracion_id"] = int(chatbot_configuracion_id)
+                creadas.append(crear_menu_informativo(agencia_id, campos, cur=c))
+
+            logger.info(
+                "[CHATBOT_MENU] seed agencia_id=%s config_id=%s insertadas=%s",
+                agencia_id,
+                chatbot_configuracion_id,
+                len(creadas),
+            )
             return {
-                "insertadas": 0,
-                "total": len(existentes),
-                "opciones": existentes,
+                "insertadas": len(creadas),
+                "total": len(creadas),
+                "opciones": creadas,
             }
 
-        creadas: List[Dict[str, Any]] = []
-        for plantilla in OPCIONES_MENU_INFORMATIVO_DEFECTO:
+        codigos = {
+            str(o.get("codigo") or "").strip().lower()
+            for o in existentes
+            if o.get("codigo")
+        }
+        max_orden = max((int(o.get("orden") or 0) for o in existentes), default=0)
+        max_numero = max((int(o.get("numero") or 0) for o in existentes), default=0)
+        # Solo completar opciones nuevas de la plantilla (no reinsertar borradas a propósito
+        # salvo otras_preguntas, que es el atajo de FAQ).
+        completar = [
+            p
+            for p in OPCIONES_MENU_INFORMATIVO_DEFECTO
+            if str(p.get("codigo") or "").strip().lower() == "otras_preguntas"
+            and "otras_preguntas" not in codigos
+        ]
+        creadas = []
+        for plantilla in completar:
+            max_orden += 1
+            max_numero += 1
             campos = dict(plantilla)
             campos["chatbot_configuracion_id"] = int(chatbot_configuracion_id)
+            campos["orden"] = max_orden
+            campos["numero"] = max_numero
             creadas.append(crear_menu_informativo(agencia_id, campos, cur=c))
 
-        logger.info(
-            "[CHATBOT_MENU] seed agencia_id=%s config_id=%s insertadas=%s",
-            agencia_id,
-            chatbot_configuracion_id,
-            len(creadas),
-        )
+        if creadas:
+            logger.info(
+                "[CHATBOT_MENU] completar agencia_id=%s config_id=%s insertadas=%s",
+                agencia_id,
+                chatbot_configuracion_id,
+                len(creadas),
+            )
+            existentes = listar_menu_informativo(
+                agencia_id,
+                chatbot_configuracion_id=int(chatbot_configuracion_id),
+                solo_activas=False,
+                cur=c,
+            )
+
         return {
             "insertadas": len(creadas),
-            "total": len(creadas),
-            "opciones": creadas,
+            "total": len(existentes),
+            "opciones": existentes,
         }
 
 

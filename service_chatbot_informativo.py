@@ -63,6 +63,15 @@ DEFAULTS_PRESENTACION = {
         "Recibí tu mensaje. Un asesor está atendiendo esta conversación "
         "y te responderá por aquí."
     ),
+    "mensaje_pedir_otra_pregunta": (
+        "Claro. ¿Qué quieres saber?\n\n"
+        "Escríbeme tu pregunta y te respondo con la información disponible."
+    ),
+    "mensaje_faq_no_encontrada": (
+        "No encontré una respuesta confirmada para esa pregunta. "
+        "Puedes reformularla, escribir *menu* para ver las opciones "
+        "o *asesor* para hablar con una persona del equipo."
+    ),
 }
 
 # Frases que solo piden remostrar el menú (sin buscar FAQ / IA).
@@ -317,6 +326,68 @@ def extraer_numero_opcion(texto: str) -> Optional[int]:
     return None
 
 
+_STOPWORDS_MENU = frozenset(
+    {
+        "como",
+        "que",
+        "cual",
+        "cuales",
+        "cuando",
+        "donde",
+        "porque",
+        "para",
+        "por",
+        "con",
+        "sin",
+        "una",
+        "unos",
+        "unas",
+        "sobre",
+        "esta",
+        "este",
+        "esto",
+        "tiene",
+        "tienen",
+        "puedo",
+        "puede",
+        "quiero",
+        "saber",
+        "dime",
+        "explica",
+        "explicame",
+        "es",
+        "la",
+        "el",
+        "los",
+        "las",
+        "de",
+        "del",
+        "se",
+        "me",
+        "te",
+        "mi",
+        "tu",
+        "su",
+        "al",
+        "lo",
+        "hay",
+        "son",
+        "mas",
+        "muy",
+        "the",
+        "and",
+    }
+)
+
+
+def _tokens_menu_utiles(texto_n: str) -> List[str]:
+    return [
+        t
+        for t in str(texto_n or "").split()
+        if len(t) > 2 and t not in _STOPWORDS_MENU
+    ]
+
+
 def resolver_opcion_menu(
     texto: str,
     opciones: List[Dict[str, Any]],
@@ -339,37 +410,89 @@ def resolver_opcion_menu(
     if not n:
         return None, "ninguna"
 
-    # Coincidencia por codigo / titulo / intencion
+    # Coincidencia exacta / contención fuerte por codigo / titulo / intencion
     for op in activas:
         candidatos = [
             _normalizar(str(op.get("codigo") or "")),
             _normalizar(str(op.get("titulo") or "")),
             _normalizar(str(op.get("intencion") or "")),
-            _normalizar(str(op.get("descripcion") or "")),
         ]
         for c in candidatos:
-            if c and (c == n or c in n or n in c):
+            if not c:
+                continue
+            if c == n or c in n or (n in c and len(n) >= 6):
                 return op, "texto"
 
-    # Palabras clave por intención conocida
+    # Palabras clave por intención / código conocido (score, no first-hit débil)
     mapa = {
         "requisitos": ("requisito", "requisitos"),
         "beneficios": ("beneficio", "beneficios"),
-        "bonos": ("bono", "bonos", "incentivo", "incentivos"),
-        "monetizacion": ("monetizacion", "monetización", "live", "lives"),
+        "bonos": (
+            "bono",
+            "bonos",
+            "incentivo",
+            "incentivos",
+            "monetiza",
+            "monetizar",
+            "monetizacion",
+        ),
+        "bonos_monetizacion": (
+            "bono",
+            "bonos",
+            "incentivo",
+            "incentivos",
+            "monetiza",
+            "monetizar",
+            "monetizacion",
+        ),
+        "monetizacion": (
+            "monetiza",
+            "monetizar",
+            "monetizacion",
+            "bono",
+            "bonos",
+            "incentivo",
+        ),
         "agencia": ("agencia", "funcionamiento", "como funciona"),
+        "como_funciona": ("agencia", "funcionamiento", "como funciona"),
         "proceso": ("proceso", "continuar", "solicitud", "unirme"),
+        "continuar_proceso": ("proceso", "continuar", "solicitud", "unirme"),
+        "otras_preguntas": (
+            "otra pregunta",
+            "otras preguntas",
+            "otra consulta",
+            "otras consultas",
+            "preguntar",
+            "otra duda",
+        ),
         "asesor": ("asesor", "humano", "persona", "agente", "manager"),
     }
+    mejor: Optional[Dict[str, Any]] = None
+    mejor_score = 0
+    toks = _tokens_menu_utiles(n)
     for op in activas:
-        intencion = _normalizar(str(op.get("intencion") or op.get("codigo") or ""))
-        claves = mapa.get(intencion, ())
-        if any(k in n for k in claves):
-            return op, "texto"
-        # título contiene palabra del usuario
+        score = 0
+        intencion = _normalizar(str(op.get("intencion") or ""))
+        codigo = _normalizar(str(op.get("codigo") or ""))
         titulo = _normalizar(str(op.get("titulo") or ""))
-        if titulo and any(tok in titulo for tok in n.split() if len(tok) > 3):
-            return op, "texto"
+        claves = set(mapa.get(intencion, ())) | set(mapa.get(codigo, ()))
+        for k in claves:
+            if k and k in n:
+                # Frases o términos distintivos pesan más que tokens cortos.
+                score += 12 if " " in k or len(k) >= 6 else 8
+        # Evitar que "como" solo active "Cómo funciona…".
+        if titulo:
+            solapa = [t for t in toks if t in titulo]
+            if solapa:
+                score += 6 * len(solapa)
+                if any(len(t) >= 6 for t in solapa):
+                    score += 4
+        if score > mejor_score:
+            mejor_score = score
+            mejor = op
+
+    if mejor and mejor_score >= 8:
+        return mejor, "texto"
 
     return None, "ninguna"
 
@@ -911,6 +1034,36 @@ def _es_solo_seleccion_menu(texto: str) -> bool:
     return len(n.split()) <= 2
 
 
+def _parece_pregunta_libre(texto: str) -> bool:
+    """True si el mensaje parece una consulta/pregunta y no solo elegir menú."""
+    crudo = str(texto or "").strip()
+    if not crudo or _es_solo_seleccion_menu(crudo):
+        return False
+    if "?" in crudo or "¿" in crudo:
+        return True
+    n = _normalizar(crudo)
+    toks = _tokens_menu_utiles(n)
+    if not toks:
+        return False
+    prefijos = (
+        "que ",
+        "como ",
+        "cual ",
+        "cuales ",
+        "cuanto ",
+        "cuantos ",
+        "donde ",
+        "por que ",
+        "porque ",
+        "para que ",
+    )
+    if any(n.startswith(p) for p in prefijos):
+        return True
+    if any(p in n for p in ("explic", "significa", "consiste", "diferencia")):
+        return True
+    return len(n.split()) >= 4 and len(toks) >= 2
+
+
 def construir_respuesta_lista_o_detalle(
     texto_usuario: str,
     items: List[Dict[str, Any]],
@@ -993,8 +1146,34 @@ def _set_lista_detalle_pendiente(
     ctx = _contexto_conversacion(conversacion)
     if lista and (lista.get("items") or []):
         ctx["lista_detalle_pendiente"] = lista
+        ctx.pop("pregunta_faq_pendiente", None)
     else:
         ctx.pop("lista_detalle_pendiente", None)
+    _persistir_contexto_conversacion(
+        db_conv=db_conv,
+        agencia_id=agencia_id,
+        conversacion_id=conversacion_id,
+        conversacion=conversacion,
+        contexto=ctx,
+        dry_run=dry_run,
+    )
+
+
+def _set_pregunta_faq_pendiente(
+    *,
+    db_conv: Any,
+    agencia_id: int,
+    conversacion_id: Optional[int],
+    conversacion: Optional[Dict[str, Any]],
+    activa: bool,
+    dry_run: bool,
+) -> None:
+    ctx = _contexto_conversacion(conversacion)
+    if activa:
+        ctx["pregunta_faq_pendiente"] = True
+        ctx.pop("lista_detalle_pendiente", None)
+    else:
+        ctx.pop("pregunta_faq_pendiente", None)
     _persistir_contexto_conversacion(
         db_conv=db_conv,
         agencia_id=agencia_id,
@@ -1450,6 +1629,14 @@ async def procesar_mensaje_informativo(
             lista=None,
             dry_run=dry_run,
         )
+        _set_pregunta_faq_pendiente(
+            db_conv=db_conv,
+            agencia_id=agencia_id,
+            conversacion_id=conversacion_id,
+            conversacion=conversacion,
+            activa=False,
+            dry_run=dry_run,
+        )
         envio = await garantizar_respuesta_saliente(
             agencia_id=agencia_id,
             conversacion_id=conversacion_id,
@@ -1476,6 +1663,69 @@ async def procesar_mensaje_informativo(
             "enlaces": [],
             "menu": True,
         }
+
+    # Tras "Otras preguntas": la siguiente entrada se consulta en FAQ
+    # (salvo que elijan otra opción del menú).
+    if ctx_conv.get("pregunta_faq_pendiente") and texto_in:
+        op_menu, modo_menu = resolver_opcion_menu(texto_in, opciones)
+        if not (modo_menu in {"numero", "texto"} and op_menu):
+            _set_pregunta_faq_pendiente(
+                db_conv=db_conv,
+                agencia_id=agencia_id,
+                conversacion_id=conversacion_id,
+                conversacion=conversacion,
+                activa=False,
+                dry_run=dry_run,
+            )
+            faqs_pend: List[Dict[str, Any]] = []
+            try:
+                faqs_pend = db_conv.listar_faqs(
+                    agencia_id,
+                    chatbot_configuracion_id=chatbot_configuracion_id,
+                    solo_activos=True,
+                ) or []
+            except Exception:
+                faqs_pend = []
+            respuesta = _buscar_faq(faqs_pend, None, texto_in)
+            if not respuesta:
+                respuesta = str(
+                    presentacion.get("mensaje_faq_no_encontrada")
+                    or DEFAULTS_PRESENTACION["mensaje_faq_no_encontrada"]
+                )
+            respuesta = _con_pie_menu(respuesta, presentacion)
+            envio = await garantizar_respuesta_saliente(
+                agencia_id=agencia_id,
+                conversacion_id=conversacion_id,
+                canal=canal,
+                texto=respuesta,
+                dry_run=dry_run,
+                enviar_callback=enviar_callback,
+                token=token,
+                phone_number_id=phone_number_id,
+                destino=destino,
+                motivo_fallback="faq_otras_preguntas",
+                mensaje_externo_id=mensaje_externo_id,
+            )
+            return {
+                "usado": True,
+                "motivo": None,
+                "respuesta": respuesta,
+                "respuesta_enviada": bool(envio.get("enviado") is True) or dry_run,
+                "requiere_asesor": False,
+                "modo_humano": False,
+                "enlaces": [],
+                "intencion": "faq",
+                "faq": True,
+                "otras_preguntas": True,
+            }
+        _set_pregunta_faq_pendiente(
+            db_conv=db_conv,
+            agencia_id=agencia_id,
+            conversacion_id=conversacion_id,
+            conversacion=conversacion,
+            activa=False,
+            dry_run=dry_run,
+        )
 
     # Si hay lista numerada pendiente (requisitos/beneficios/…), el número
     # profundiza en un ítem; no compite con el menú principal.
@@ -1550,6 +1800,52 @@ async def procesar_mensaje_informativo(
                 "modo_humano": False,
                 "enlaces": [],
                 "intencion": str(lista_detalle.get("tipo") or "detalle"),
+            }
+
+    # Preguntas libres: buscar FAQ antes de forzar una opción del menú
+    # (p. ej. "cómo se monetiza?" no debe solo reabrir la lista de bonos).
+    if _parece_pregunta_libre(texto_in):
+        faqs_libres: List[Dict[str, Any]] = []
+        try:
+            faqs_libres = db_conv.listar_faqs(
+                agencia_id,
+                chatbot_configuracion_id=chatbot_configuracion_id,
+                solo_activos=True,
+            ) or []
+        except Exception:
+            faqs_libres = []
+        respuesta_faq = _buscar_faq(faqs_libres, None, texto_in)
+        if respuesta_faq:
+            respuesta = _con_pie_menu(respuesta_faq, presentacion)
+            envio = await garantizar_respuesta_saliente(
+                agencia_id=agencia_id,
+                conversacion_id=conversacion_id,
+                canal=canal,
+                texto=respuesta,
+                dry_run=dry_run,
+                enviar_callback=enviar_callback,
+                token=token,
+                phone_number_id=phone_number_id,
+                destino=destino,
+                motivo_fallback="faq_pregunta_libre",
+                mensaje_externo_id=mensaje_externo_id,
+            )
+            logger.info(
+                "[CHATBOT_MENU] conversacion_id=%s entrada=faq_libre "
+                "respuesta_enviada=%s",
+                conversacion_id,
+                bool(envio.get("enviado") or dry_run),
+            )
+            return {
+                "usado": True,
+                "motivo": None,
+                "respuesta": respuesta,
+                "respuesta_enviada": bool(envio.get("enviado") is True) or dry_run,
+                "requiere_asesor": False,
+                "modo_humano": False,
+                "enlaces": [],
+                "intencion": "faq",
+                "faq": True,
             }
 
     opcion, modo = resolver_opcion_menu(texto_in, opciones)
@@ -1629,6 +1925,24 @@ async def procesar_mensaje_informativo(
         elif tipo_fuente == "texto":
             respuesta = str(opcion.get("respuesta_personalizada") or "").strip()
             limpiar_lista_detalle = True
+        elif tipo_fuente in {"pregunta_libre", "otras_preguntas"} or _normalizar(
+            str(opcion.get("codigo") or "")
+        ) == "otras_preguntas":
+            respuesta = str(
+                presentacion.get("mensaje_pedir_otra_pregunta")
+                or opcion.get("respuesta_personalizada")
+                or DEFAULTS_PRESENTACION["mensaje_pedir_otra_pregunta"]
+            ).strip()
+            limpiar_lista_detalle = True
+            lista_detalle_a_guardar = None
+            _set_pregunta_faq_pendiente(
+                db_conv=db_conv,
+                agencia_id=agencia_id,
+                conversacion_id=conversacion_id,
+                conversacion=conversacion,
+                activa=True,
+                dry_run=dry_run,
+            )
         elif tipo_fuente == "asesor":
             requiere_asesor = True
             respuesta = str(
@@ -1636,6 +1950,14 @@ async def procesar_mensaje_informativo(
                 or DEFAULTS_PRESENTACION["mensaje_escalamiento_sin_bloqueo"]
             )
             limpiar_lista_detalle = True
+            _set_pregunta_faq_pendiente(
+                db_conv=db_conv,
+                agencia_id=agencia_id,
+                conversacion_id=conversacion_id,
+                conversacion=conversacion,
+                activa=False,
+                dry_run=dry_run,
+            )
         else:  # faq (cómo funciona, continuar proceso, etc.)
             faqs = db_conv.listar_faqs(
                 agencia_id,
