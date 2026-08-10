@@ -72,6 +72,11 @@ DEFAULTS_PRESENTACION = {
         "Puedes reformularla, escribir *menu* para ver las opciones "
         "o *asesor* para hablar con una persona del equipo."
     ),
+    "mensaje_opcion_no_valida": (
+        "Esa no es una opción válida del menú.\n\n"
+        "Escribe el *número* de una opción, *menu* para verlas otra vez "
+        "u *Otras preguntas* para consultar algo que no esté en la lista."
+    ),
 }
 
 # Frases que solo piden remostrar el menú (sin buscar FAQ / IA).
@@ -257,6 +262,65 @@ def presentacion_desde_asistente(asistente: Optional[Dict[str, Any]]) -> Dict[st
     return out
 
 
+def _opcion_otras_preguntas_sintetica(
+    opciones: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Opción en memoria si la BD aún no la tiene (p. ej. check constraint viejo)."""
+    asesor = next(
+        (
+            o
+            for o in (opciones or [])
+            if _normalizar(str(o.get("codigo") or "")) == "asesor"
+        ),
+        None,
+    )
+    numero = int((asesor or {}).get("numero") or 0) or (
+        max((int(o.get("numero") or 0) for o in (opciones or [])), default=0) + 1
+    )
+    orden = int((asesor or {}).get("orden") or 0) or (
+        max((int(o.get("orden") or 0) for o in (opciones or [])), default=0) + 1
+    )
+    return {
+        "id": None,
+        "numero": numero,
+        "codigo": "otras_preguntas",
+        "titulo": "Otras preguntas",
+        "descripcion": "Haz una pregunta que no esté en el menú.",
+        "intencion": "faq",
+        "tipo_fuente": "faq",
+        "requiere_asesor": False,
+        "orden": orden,
+        "activo": True,
+        "_sintetica": True,
+    }
+
+
+def garantizar_opcion_otras_preguntas(
+    opciones: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    """Asegura que el listado usado para el menú incluya Otras preguntas."""
+    lista = [dict(o) for o in (opciones or []) if o]
+    if any(_normalizar(str(o.get("codigo") or "")) == "otras_preguntas" for o in lista):
+        return lista
+    sintetica = _opcion_otras_preguntas_sintetica(lista)
+    asesor_idx = next(
+        (
+            i
+            for i, o in enumerate(lista)
+            if _normalizar(str(o.get("codigo") or "")) == "asesor"
+        ),
+        None,
+    )
+    if asesor_idx is None:
+        lista.append(sintetica)
+    else:
+        asesor = lista[asesor_idx]
+        asesor["numero"] = int(asesor.get("numero") or sintetica["numero"]) + 1
+        asesor["orden"] = int(asesor.get("orden") or sintetica["orden"]) + 1
+        lista.insert(asesor_idx, sintetica)
+    return lista
+
+
 def ordenar_opciones_menu(opciones: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return sorted(
         [o for o in (opciones or []) if o and o.get("activo") is not False],
@@ -397,6 +461,9 @@ def resolver_opcion_menu(
 
     El número del usuario se interpreta como el número visible del menú (1..N
     de opciones activas), no como el campo fijo `numero` en base de datos.
+
+    Las preguntas libres (p. ej. «qué es monetizar?») no hacen match débil por
+    keywords: deben entrar por la opción «Otras preguntas».
     """
     activas = numerar_opciones_activas(opciones)
     numero = extraer_numero_opcion(texto)
@@ -420,41 +487,30 @@ def resolver_opcion_menu(
         for c in candidatos:
             if not c:
                 continue
-            if c == n or c in n or (n in c and len(n) >= 6):
+            if c == n or (n in c and len(n) >= 6) or (c in n and len(c) >= 10):
                 return op, "texto"
 
-    # Palabras clave por intención / código conocido (score, no first-hit débil)
+    # Preguntas libres: solo atajos explícitos a Otras preguntas / asesor.
+    if _parece_pregunta_libre(texto):
+        for op in activas:
+            codigo = _normalizar(str(op.get("codigo") or ""))
+            titulo = _normalizar(str(op.get("titulo") or ""))
+            if codigo in {"otras_preguntas", "asesor"} and (
+                codigo == n or titulo == n or (titulo and titulo in n)
+            ):
+                return op, "texto"
+        return None, "ninguna"
+
+    # Palabras clave solo para mensajes cortos de menú (no preguntas).
+    # Sin «monetizar»: eso se consulta por Otras preguntas / FAQ.
     mapa = {
         "requisitos": ("requisito", "requisitos"),
         "beneficios": ("beneficio", "beneficios"),
-        "bonos": (
-            "bono",
-            "bonos",
-            "incentivo",
-            "incentivos",
-            "monetiza",
-            "monetizar",
-            "monetizacion",
-        ),
-        "bonos_monetizacion": (
-            "bono",
-            "bonos",
-            "incentivo",
-            "incentivos",
-            "monetiza",
-            "monetizar",
-            "monetizacion",
-        ),
-        "monetizacion": (
-            "monetiza",
-            "monetizar",
-            "monetizacion",
-            "bono",
-            "bonos",
-            "incentivo",
-        ),
-        "agencia": ("agencia", "funcionamiento", "como funciona"),
-        "como_funciona": ("agencia", "funcionamiento", "como funciona"),
+        "bonos": ("bono", "bonos", "incentivo", "incentivos"),
+        "bonos_monetizacion": ("bono", "bonos", "incentivo", "incentivos"),
+        "monetizacion": ("bono", "bonos", "incentivo"),
+        "agencia": ("funcionamiento", "como funciona"),
+        "como_funciona": ("funcionamiento", "como funciona"),
         "proceso": ("proceso", "continuar", "solicitud", "unirme"),
         "continuar_proceso": ("proceso", "continuar", "solicitud", "unirme"),
         "otras_preguntas": (
@@ -462,7 +518,6 @@ def resolver_opcion_menu(
             "otras preguntas",
             "otra consulta",
             "otras consultas",
-            "preguntar",
             "otra duda",
         ),
         "asesor": ("asesor", "humano", "persona", "agente", "manager"),
@@ -478,9 +533,7 @@ def resolver_opcion_menu(
         claves = set(mapa.get(intencion, ())) | set(mapa.get(codigo, ()))
         for k in claves:
             if k and k in n:
-                # Frases o términos distintivos pesan más que tokens cortos.
                 score += 12 if " " in k or len(k) >= 6 else 8
-        # Evitar que "como" solo active "Cómo funciona…".
         if titulo:
             solapa = [t for t in toks if t in titulo]
             if solapa:
@@ -491,7 +544,8 @@ def resolver_opcion_menu(
             mejor_score = score
             mejor = op
 
-    if mejor and mejor_score >= 8:
+    # Umbral alto: evita falsos positivos tipo «monetizar» → bonos.
+    if mejor and mejor_score >= 12 and len(n.split()) <= 4:
         return mejor, "texto"
 
     return None, "ninguna"
@@ -1488,32 +1542,34 @@ async def procesar_mensaje_informativo(
 
     # Completar «Otras preguntas» en menús ya existentes (idempotente).
     if not dry_run:
-        try:
-            seed = db_conv.asegurar_menu_informativo_base(
-                agencia_id,
-                chatbot_configuracion_id,
-            )
-            codigos_menu = {
-                str(o.get("codigo") or "").strip().lower()
-                for o in (opciones or [])
-                if o.get("codigo")
-            }
-            if (
-                not opciones
-                or "otras_preguntas" not in codigos_menu
-                or int(seed.get("insertadas") or 0) > 0
-                or int(seed.get("reactivadas") or 0) > 0
-            ):
-                opciones = db_conv.listar_menu_informativo(
+        codigos_menu = {
+            str(o.get("codigo") or "").strip().lower()
+            for o in (opciones or [])
+            if o.get("codigo")
+        }
+        if "otras_preguntas" not in codigos_menu:
+            try:
+                seed = db_conv.asegurar_menu_informativo_base(
                     agencia_id,
-                    chatbot_configuracion_id=chatbot_configuracion_id,
-                    solo_activas=True,
+                    chatbot_configuracion_id,
                 )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "[CHATBOT_MENU] no se pudo sembrar/completar menú: %s", exc
-            )
+                if (
+                    not opciones
+                    or int(seed.get("insertadas") or 0) > 0
+                    or int(seed.get("reactivadas") or 0) > 0
+                ):
+                    opciones = db_conv.listar_menu_informativo(
+                        agencia_id,
+                        chatbot_configuracion_id=chatbot_configuracion_id,
+                        solo_activas=True,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[CHATBOT_MENU] no se pudo sembrar/completar menú: %s", exc
+                )
 
+    # Si la BD rechazó el insert (p. ej. constraint viejo), igual mostramos la opción.
+    opciones = garantizar_opcion_otras_preguntas(opciones)
     opciones = ordenar_opciones_menu(opciones)
     nombre_agencia = str(
         (agencia or {}).get("nombre")
@@ -1816,62 +1872,20 @@ async def procesar_mensaje_informativo(
                 "intencion": str(lista_detalle.get("tipo") or "detalle"),
             }
 
-    # Preguntas libres: buscar FAQ antes de forzar una opción del menú
-    # (p. ej. "cómo se monetiza?" no debe solo reabrir la lista de bonos).
-    if _parece_pregunta_libre(texto_in):
-        faqs_libres: List[Dict[str, Any]] = []
-        try:
-            faqs_libres = db_conv.listar_faqs(
-                agencia_id,
-                chatbot_configuracion_id=chatbot_configuracion_id,
-                solo_activos=True,
-            ) or []
-        except Exception:
-            faqs_libres = []
-        respuesta_faq = _buscar_faq(faqs_libres, None, texto_in)
-        if respuesta_faq:
-            respuesta = _con_pie_menu(respuesta_faq, presentacion)
-            envio = await garantizar_respuesta_saliente(
-                agencia_id=agencia_id,
-                conversacion_id=conversacion_id,
-                canal=canal,
-                texto=respuesta,
-                dry_run=dry_run,
-                enviar_callback=enviar_callback,
-                token=token,
-                phone_number_id=phone_number_id,
-                destino=destino,
-                motivo_fallback="faq_pregunta_libre",
-                mensaje_externo_id=mensaje_externo_id,
-            )
-            logger.info(
-                "[CHATBOT_MENU] conversacion_id=%s entrada=faq_libre "
-                "respuesta_enviada=%s",
-                conversacion_id,
-                bool(envio.get("enviado") or dry_run),
-            )
-            return {
-                "usado": True,
-                "motivo": None,
-                "respuesta": respuesta,
-                "respuesta_enviada": bool(envio.get("enviado") is True) or dry_run,
-                "requiere_asesor": False,
-                "modo_humano": False,
-                "enlaces": [],
-                "intencion": "faq",
-                "faq": True,
-            }
-
+    # Fuera de «Otras preguntas», no contestamos consultas libres ni con IA:
+    # el menú es numerado; las preguntas van por esa opción.
     opcion, modo = resolver_opcion_menu(texto_in, opciones)
     requiere_asesor = False
     respuesta = ""
     intencion = "desconocida"
 
-    if modo == "invalido":
-        respuesta = (
-            f"Esa opción no existe. Estas son las disponibles:\n\n{texto_menu}"
+    if modo == "invalido" or (modo == "ninguna" and texto_in):
+        respuesta = str(
+            presentacion.get("mensaje_opcion_no_valida")
+            or DEFAULTS_PRESENTACION["mensaje_opcion_no_valida"]
         )
         intencion = "menu"
+        modo = "invalido" if modo != "invalido" else modo
         limpiar_lista_detalle = True
     elif opcion:
         intencion = str(opcion.get("intencion") or opcion.get("codigo") or "info")
@@ -2005,60 +2019,11 @@ async def procesar_mensaje_informativo(
             limpiar_lista_detalle = True
             lista_detalle_a_guardar = None
     else:
-        # Intento FAQ libre
-        faqs = []
-        try:
-            faqs = db_conv.listar_faqs(
-                agencia_id,
-                chatbot_configuracion_id=chatbot_configuracion_id,
-                solo_activos=True,
-            )
-        except Exception:
-            faqs = []
-        respuesta = _buscar_faq(faqs or [], None, texto_in)
-        if respuesta:
-            intencion = "faq"
-            modo = "texto"
-            limpiar_lista_detalle = True
-        else:
-            clasif = clasificar_intencion_informativa_semantica(texto_in)
-            intencion = str(clasif.get("intencion") or "desconocida")
-            consulta = str(clasif.get("consulta_reformulada") or texto_in)
-            respuesta, req_ia, lista_ia = construir_respuesta_por_intencion_informativa(
-                intencion,
-                agencia_id=agencia_id,
-                chatbot_configuracion_id=chatbot_configuracion_id,
-                presentacion=presentacion,
-                texto_consulta=consulta,
-                db_conv=db_conv,
-            )
-            requiere_asesor = req_ia or intencion == "desconocida"
-            modo = "semantica"
-            if lista_ia:
-                lista_detalle_a_guardar = lista_ia
-            else:
-                limpiar_lista_detalle = True
-            if not respuesta:
-                respuesta = str(
-                    presentacion.get("mensaje_sin_informacion")
-                    or presentacion.get("mensaje_no_entendido")
-                    or DEFAULTS_PRESENTACION["mensaje_sin_informacion"]
-                )
-            if intencion == "desconocida" and conversacion_id and not dry_run:
-                try:
-                    db_conv.actualizar_conversacion(
-                        agencia_id,
-                        int(conversacion_id),
-                        {"ia_habilitada": True},
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "[CHATBOT_MENU] no se pudo marcar ia_habilitada: %s", exc
-                    )
-            if opciones and intencion == "desconocida":
-                respuesta = f"{respuesta}\n\n{texto_menu}"
-                limpiar_lista_detalle = True
-                lista_detalle_a_guardar = None
+        # Sin texto útil: remostrar menú (sin IA semántica; evita demoras).
+        respuesta = texto_menu
+        intencion = "menu"
+        modo = "menu"
+        limpiar_lista_detalle = True
 
     if lista_detalle_a_guardar is not None:
         _set_lista_detalle_pendiente(

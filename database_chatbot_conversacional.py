@@ -1427,7 +1427,9 @@ OPCIONES_MENU_INFORMATIVO_DEFECTO: Tuple[Dict[str, Any], ...] = (
         "titulo": "Otras preguntas",
         "descripcion": "Haz una pregunta que no esté en el menú.",
         "intencion": "faq",
-        "tipo_fuente": "pregunta_libre",
+        # Debe ser un valor permitido por chk_menu_informativo_fuente en BD
+        # (requisitos|beneficios|bonos|faq|texto|asesor). El motor usa el código.
+        "tipo_fuente": "faq",
         "requiere_asesor": False,
         "orden": 6,
         "activo": True,
@@ -1528,32 +1530,45 @@ def asegurar_menu_informativo_base(
             campos = dict(plantilla)
             campos["chatbot_configuracion_id"] = int(chatbot_configuracion_id)
             campos["activo"] = True
-            if asesor:
-                # Insertar justo antes de «Hablar con un asesor».
-                num_asesor = int(asesor.get("numero") or (max_numero + 1))
-                ord_asesor = int(asesor.get("orden") or (max_orden + 1))
-                temp = max(max_numero, max_orden, num_asesor, ord_asesor) + 10
-                actualizar_menu_informativo(
+            # BD: chk_menu_informativo_fuente no admite pregunta_libre.
+            if str(campos.get("codigo") or "").strip().lower() == "otras_preguntas":
+                campos["tipo_fuente"] = "faq"
+                campos["intencion"] = str(campos.get("intencion") or "faq")
+            try:
+                if asesor:
+                    # Insertar justo antes de «Hablar con un asesor».
+                    num_asesor = int(asesor.get("numero") or (max_numero + 1))
+                    ord_asesor = int(asesor.get("orden") or (max_orden + 1))
+                    temp = max(max_numero, max_orden, num_asesor, ord_asesor) + 10
+                    actualizar_menu_informativo(
+                        agencia_id,
+                        int(asesor["id"]),
+                        {"numero": temp, "orden": temp},
+                        cur=c,
+                    )
+                    campos["numero"] = num_asesor
+                    campos["orden"] = ord_asesor
+                    creadas.append(crear_menu_informativo(agencia_id, campos, cur=c))
+                    actualizar_menu_informativo(
+                        agencia_id,
+                        int(asesor["id"]),
+                        {"numero": num_asesor + 1, "orden": ord_asesor + 1},
+                        cur=c,
+                    )
+                else:
+                    max_orden += 1
+                    max_numero += 1
+                    campos["orden"] = max_orden
+                    campos["numero"] = max_numero
+                    creadas.append(crear_menu_informativo(agencia_id, campos, cur=c))
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    "[CHATBOT_MENU] no se pudo insertar otras_preguntas "
+                    "agencia_id=%s config_id=%s: %s",
                     agencia_id,
-                    int(asesor["id"]),
-                    {"numero": temp, "orden": temp},
-                    cur=c,
+                    chatbot_configuracion_id,
+                    exc,
                 )
-                campos["numero"] = num_asesor
-                campos["orden"] = ord_asesor
-                creadas.append(crear_menu_informativo(agencia_id, campos, cur=c))
-                actualizar_menu_informativo(
-                    agencia_id,
-                    int(asesor["id"]),
-                    {"numero": num_asesor + 1, "orden": ord_asesor + 1},
-                    cur=c,
-                )
-            else:
-                max_orden += 1
-                max_numero += 1
-                campos["orden"] = max_orden
-                campos["numero"] = max_numero
-                creadas.append(crear_menu_informativo(agencia_id, campos, cur=c))
 
         if creadas or reactivadas:
             logger.info(
