@@ -281,7 +281,9 @@ def _flujo(ctx: ConversationalContext) -> str:
             )
         elif ctx.paso.get("mensaje_instrucciones"):
             lineas.append(
-                f"- Instrucciones del paso: {_texto(ctx.paso['mensaje_instrucciones'], 400)}"
+                "- Instrucciones INTERNAS del paso (NUNCA las envíes literalmente "
+                f"al usuario; úsalas solo para formular un mensaje natural): "
+                f"{_texto(ctx.paso['mensaje_instrucciones'], 400)}"
             )
         if ctx.paso.get("requiere_humano"):
             lineas.append("- Este paso requiere intervención humana: transfiere la conversación.")

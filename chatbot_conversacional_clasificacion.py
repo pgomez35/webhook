@@ -160,14 +160,68 @@ def es_texto_ambiguo_nivel(texto: str) -> bool:
 
 
 def construir_pregunta_clasificacion(asistente: Optional[Dict[str, Any]]) -> str:
+    """Saludo + pregunta de nivel para chatbot INTELIGENTE (sin menú informativo)."""
     a = asistente or {}
     pregunta = str(a.get("pregunta_clasificacion_nivel") or "").strip()
     if not pregunta:
         pregunta = "¿Ya has realizado transmisiones LIVE?"
-    presentacion = str(a.get("presentacion_inicial") or "").strip()
+
+    presentacion = _presentacion_saludo_inteligente(a)
     if presentacion and pregunta not in presentacion:
         return f"{presentacion}\n\n{pregunta}"
     return pregunta or TEXTO_ACLARACION_NIVEL
+
+
+def _presentacion_saludo_inteligente(asistente: Dict[str, Any]) -> str:
+    """
+    Presentación del saludo inteligente: no reutiliza frases de menú informativo
+    («elige una opción», «escribe el número», etc.).
+    """
+    crudo = str(asistente.get("presentacion_inicial") or "").strip()
+    if not crudo:
+        nombre = str(
+            asistente.get("nombre_asistente") or "la agencia"
+        ).strip() or "la agencia"
+        return (
+            f"¡Hola! 👋 Bienvenido(a) a {nombre}.\n"
+            "Estoy aquí para orientarte y ayudarte a encontrar el proceso "
+            "más adecuado para ti."
+        )
+
+    lineas_ok: List[str] = []
+    for linea in crudo.splitlines():
+        n = _normalizar(linea)
+        if not n:
+            if lineas_ok and lineas_ok[-1] != "":
+                lineas_ok.append("")
+            continue
+        if any(
+            x in n
+            for x in (
+                "elige una opcion",
+                "elegir una opcion",
+                "elige un numero",
+                "escribe el numero",
+                "escribe un numero",
+                "volver al menu",
+                "ver el menu",
+                "opciones del menu",
+            )
+        ):
+            continue
+        lineas_ok.append(linea.rstrip())
+
+    texto = "\n".join(lineas_ok).strip()
+    if not texto:
+        nombre = str(
+            asistente.get("nombre_asistente") or "la agencia"
+        ).strip() or "la agencia"
+        return (
+            f"¡Hola! 👋 Bienvenido(a) a {nombre}.\n"
+            "Estoy aquí para orientarte y ayudarte a encontrar el proceso "
+            "más adecuado para ti."
+        )
+    return texto
 
 
 def inferir_intencion(texto: str) -> Tuple[str, float]:

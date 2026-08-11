@@ -506,11 +506,56 @@ async def procesar_mensaje_conversacional(
                 pendiente_guardar = {
                     "paso_id": contexto.conversacion.get("paso_actual_id"),
                     "campo": "nivel_experiencia",
-                    "texto": respuesta_directa,
+                    "texto": str(
+                        (contexto.asistente or {}).get("pregunta_clasificacion_nivel")
+                        or "¿Ya has realizado transmisiones LIVE?"
+                    ).strip(),
                 }
+                return await _responder_presentacion_literal(
+                    contexto=contexto,
+                    presentacion=_sanitizar_respuesta_usuario(respuesta_directa),
+                    conversacion_id=conversacion_id,
+                    mensaje_entrante_id=mensaje_entrante_id,
+                    texto_usuario=texto,
+                    canal=canal,
+                    token=token,
+                    phone_number_id=phone_number_id,
+                    destino=wa_id or usuario_externo_id,
+                    enviar_callback=enviar_callback,
+                    dry_run=dry_run,
+                    pregunta_pendiente=pendiente_guardar,
+                )
+
+            # Tras orientar principiante/experimentado: continuar al siguiente paso.
+            if accion in {"orientar_experimentado", "orientar_principiante"}:
+                logger.info(
+                    "[CHATBOT_INTELIGENTE] conversacion_id=%s nivel=%s "
+                    "flujo_id=%s paso_actual_id=%s accion=clasificacion_completada",
+                    conversacion_id,
+                    nivel_cls,
+                    (contexto.flujo or {}).get("id")
+                    or (contexto.conversacion or {}).get("flujo_id"),
+                    (contexto.paso or {}).get("id")
+                    or (contexto.conversacion or {}).get("paso_actual_id"),
+                )
+                return await _resolver_siguiente_paso_pendiente(
+                    contexto=contexto,
+                    prefijo=respuesta_directa,
+                    conversacion_id=conversacion_id,
+                    mensaje_entrante_id=mensaje_entrante_id,
+                    texto_usuario=texto,
+                    canal=canal,
+                    token=token,
+                    phone_number_id=phone_number_id,
+                    destino=wa_id or usuario_externo_id,
+                    enviar_callback=enviar_callback,
+                    dry_run=dry_run,
+                    origen="clasificacion",
+                )
+
             return await _responder_presentacion_literal(
                 contexto=contexto,
-                presentacion=respuesta_directa,
+                presentacion=_sanitizar_respuesta_usuario(respuesta_directa),
                 conversacion_id=conversacion_id,
                 mensaje_entrante_id=mensaje_entrante_id,
                 texto_usuario=texto,
@@ -1053,6 +1098,177 @@ INTERRUPCIONES_INFORMATIVAS = frozenset(
     {"requisitos", "beneficios", "bonos", "agencia", "proceso", "faq"}
 )
 
+# Campos / patrones que NUNCA deben enviarse al usuario.
+_CAMPOS_PASO_SOLO_INTERNOS = frozenset(
+    {
+        "mensaje_instrucciones",
+        "configuracion",
+        "estado_exitoso",
+        "estado_fallido",
+        "siguiente_paso_id",
+        "siguiente_paso_fallo_id",
+    }
+)
+_PATRONES_INSTRUCCION_INTERNA = (
+    "reconoce que",
+    "explica el proposito",
+    "explica el propósito",
+    "usa la herramienta",
+    "usando la herramienta",
+    "transfiere a una persona",
+    "transfiere al equipo",
+    "no prometas",
+    "sin evaluar al candidato",
+    "para el asistente",
+    "mensaje_instrucciones",
+    "tipo_accion",
+    "paso_actual_id",
+)
+_PIES_MENU_INFORMATIVO = (
+    "escribe el numero para mas detalle",
+    "escribe otro numero",
+    "o menu para volver al menu",
+    "para volver al menu",
+    "escribe menu para volver",
+)
+
+
+def _normalizar_texto_salida(texto: str) -> str:
+    valor = str(texto or "").strip().lower()
+    valor = unicodedata.normalize("NFD", valor)
+    valor = "".join(ch for ch in valor if unicodedata.category(ch) != "Mn")
+    valor = re.sub(r"[^\w\s]", " ", valor, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", valor).strip()
+
+
+def _parece_instruccion_interna(texto: str) -> bool:
+    """True si el texto parece instrucción para el asistente, no mensaje al usuario."""
+    crudo = str(texto or "").strip()
+    if not crudo:
+        return False
+    n = _normalizar_texto_salida(crudo)
+    if any(p in n for p in _PATRONES_INSTRUCCION_INTERNA):
+        return True
+    # Imperativos típicos de prompt sin signo de pregunta.
+    if "?" not in crudo and "¿" not in crudo:
+        if re.match(
+            r"^(reconoce|explica|confirma|solicita|envia|envía|transfiere|"
+            r"menciona|responde con base|presentate|preséntate)\b",
+            n,
+        ):
+            return True
+    return False
+
+
+def _quitar_pies_menu_informativo(texto: str) -> str:
+    """Elimina pies de navegación del menú informativo en salidas del inteligente."""
+    lineas_ok: List[str] = []
+    for linea in str(texto or "").splitlines():
+        n = _normalizar_texto_salida(linea)
+        if any(p in n for p in _PIES_MENU_INFORMATIVO):
+            continue
+        if "escribe" in n and "numero" in n and ("detalle" in n or "menu" in n):
+            continue
+        if n.startswith("escribe menu"):
+            continue
+        lineas_ok.append(linea.rstrip())
+    return "\n".join(lineas_ok).strip()
+
+
+def _sanitizar_respuesta_usuario(texto: str) -> str:
+    """
+    Frontera de salida: solo texto dirigido al usuario.
+    Quita pies de menú informativo y líneas que parecen instrucciones internas.
+    """
+    limpio = _quitar_pies_menu_informativo(texto)
+    lineas_ok: List[str] = []
+    filtradas = 0
+    for linea in limpio.splitlines():
+        if _parece_instruccion_interna(linea):
+            filtradas += 1
+            continue
+        # Evitar prefijos "Para continuar: <instrucción interna>"
+        if re.match(r"(?i)^\s*para continuar\s*:\s*", linea):
+            resto = re.sub(r"(?i)^\s*para continuar\s*:\s*", "", linea).strip()
+            if _parece_instruccion_interna(resto):
+                filtradas += 1
+                continue
+        lineas_ok.append(linea.rstrip())
+    if filtradas:
+        logger.warning(
+            "[CHATBOT_SEGURIDAD_SALIDA] motivo=instruccion_interna_en_respuesta "
+            "lineas_filtradas=%s",
+            filtradas,
+        )
+    return "\n".join(lineas_ok).strip()
+
+
+def _texto_publico_paso(paso: Optional[Dict[str, Any]]) -> Optional[str]:
+    """
+    Texto visible para el usuario a partir del paso.
+    NUNCA usa mensaje_instrucciones ni configuración interna.
+    """
+    if not isinstance(paso, dict) or not paso:
+        return None
+
+    # Campos explícitamente públicos (si existen en datos futuros / custom).
+    for clave in ("mensaje_usuario", "pregunta_usuario", "texto_publico"):
+        valor = str(paso.get(clave) or "").strip()
+        if valor and not _parece_instruccion_interna(valor):
+            return valor
+
+    # descripcion solo si parece mensaje al usuario (pregunta / texto natural).
+    descripcion = str(paso.get("descripcion") or "").strip()
+    if descripcion and not _parece_instruccion_interna(descripcion):
+        if "?" in descripcion or "¿" in descripcion or len(descripcion) < 160:
+            # Evitar descripciones largas tipo instructivo.
+            if not _parece_instruccion_interna(descripcion):
+                return descripcion
+
+    nombre = str(paso.get("nombre") or "").strip()
+    if nombre and ("?" in nombre or nombre.startswith("¿")):
+        return nombre
+
+    tipo = str(paso.get("tipo_accion") or "").strip().lower()
+    codigo = _normalizar_texto_salida(str(paso.get("codigo") or ""))
+    nombre_n = _normalizar_texto_salida(nombre)
+
+    if "edad" in codigo or "mayor" in codigo or "mayoria" in nombre_n:
+        return "Antes de continuar, ¿eres mayor de 18 años?"
+    if "disponib" in codigo or "disponib" in nombre_n:
+        return (
+            "¿Tienes disponibilidad para realizar transmisiones LIVE "
+            "varios días a la semana?"
+        )
+    if tipo == "confirmar_interes":
+        return "¿Te gustaría continuar con el proceso de ingreso a la agencia?"
+    if tipo == "hacer_pregunta":
+        if nombre:
+            return f"Para continuar, ¿me confirmas lo relacionado con «{nombre}»?"
+        return "Para continuar, ¿me confirmas ese dato?"
+    if tipo == "explicar_requisitos":
+        return "¿Quieres que te comparta los requisitos para continuar?"
+    if tipo == "explicar_beneficios":
+        return "¿Te cuento los beneficios de la agencia?"
+    if tipo == "explicar_bonos":
+        return "¿Quieres conocer los bonos e incentivos vigentes?"
+    if tipo == "enviar_enlace":
+        return "Cuando quieras, te envío el enlace para continuar tu solicitud."
+    if tipo in {"agendar_live", "solicitar_live"}:
+        return "Cuando estés listo, te indico cómo continuar con la prueba LIVE."
+    if tipo == "solicitar_evidencias":
+        return "Cuando corresponda, te pediré las evidencias necesarias."
+    if tipo == "transferir_humano":
+        return (
+            "Si prefieres, puedo dejar tu caso marcado para que un asesor "
+            "del equipo lo revise."
+        )
+    if tipo == "informar" and nombre:
+        return f"Continuemos con: {nombre}. ¿Seguimos?"
+    if nombre:
+        return f"Siguiente paso: {nombre}. ¿Continuamos?"
+    return "¿Seguimos con el siguiente paso del proceso?"
+
 
 def _contexto_conversacion_dict(conversacion: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     conv = conversacion or {}
@@ -1076,6 +1292,14 @@ async def _guardar_pregunta_pendiente(
     *,
     dry_run: bool,
 ) -> None:
+    texto = str(pendiente.get("texto") or "").strip()
+    if _parece_instruccion_interna(texto):
+        # Nunca persistir instrucciones internas como pregunta al usuario.
+        publico = _texto_publico_paso(contexto.paso)
+        if not publico:
+            return
+        pendiente = dict(pendiente)
+        pendiente["texto"] = publico
     ctx = _contexto_conversacion_dict(contexto.conversacion)
     ctx["pregunta_pendiente"] = pendiente
     contexto.conversacion["contexto"] = ctx
@@ -1115,11 +1339,12 @@ def _detectar_intencion_interrupcion_informativa(texto: str) -> Optional[str]:
     if intencion in {"requisitos", "beneficios", "bonos"}:
         return intencion
     if intencion == "informacion":
-        return "faq"
+        # Puede ser saludo corto; solo FAQ si parece pregunta.
+        if "?" in str(texto or "") or "¿" in str(texto or ""):
+            return "faq"
+        return None
 
-    from service_chatbot_informativo import _normalizar as normalizar_informativo
-
-    n = normalizar_informativo(texto)
+    n = _normalizar_texto_salida(texto)
     if any(k in n for k in ("agencia", "funcionamiento", "como funciona", "funciona")):
         return "agencia"
     if any(k in n for k in ("proceso", "continuar", "solicitud", "unirme", "incorpor")):
@@ -1127,11 +1352,402 @@ def _detectar_intencion_interrupcion_informativa(texto: str) -> Optional[str]:
     return None
 
 
+MENSAJE_SIN_CONOCIMIENTO_PROCESO = (
+    "No tengo información confirmada sobre el proceso de ingreso en este momento. "
+    "Puedo seguir ayudándote con otras dudas o dejar tu consulta para el equipo."
+)
+
+_CODIGO_FLUJO_CONVERSION = "conversion_base"
+_CLAVES_FAQ_PROCESO = (
+    "proceso",
+    "ingreso",
+    "ingresar",
+    "unirme",
+    "entrar",
+    "incorpor",
+    "pasos",
+    "como entro",
+    "como ingreso",
+    "que sigue",
+)
+
+
+def _listar_pasos_flujo_seguro(
+    *,
+    agencia_id: int,
+    flujo_id: Optional[int],
+) -> List[Dict[str, Any]]:
+    if not flujo_id:
+        return []
+    try:
+        import database_chatbot_conversacional as db_conv
+
+        return (
+            db_conv.listar_flujo_pasos(
+                agencia_id,
+                int(flujo_id),
+                solo_activos=True,
+            )
+            or []
+        )
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _obtener_flujo_proceso_configurado(
+    contexto: ConversationalContext,
+) -> Optional[Dict[str, Any]]:
+    """
+    Flujo donde se persiste «Proceso de ingreso» (carga → conversion_base).
+    Sin crear tablas nuevas.
+    """
+    cfg_id = contexto.chatbot_configuracion_id
+    if not cfg_id:
+        return None
+    try:
+        import database_chatbot_conversacional as db_conv
+
+        flujos = (
+            db_conv.listar_flujos(
+                contexto.agencia_id,
+                chatbot_configuracion_id=int(cfg_id),
+                tipo_flujo="conversion",
+                solo_activos=True,
+            )
+            or []
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    if not flujos:
+        return None
+    por_codigo = next(
+        (
+            f
+            for f in flujos
+            if str(f.get("codigo") or "").strip().lower() == _CODIGO_FLUJO_CONVERSION
+        ),
+        None,
+    )
+    return por_codigo or flujos[0]
+
+
+def _pasos_publicos_seguros(
+    pasos: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    """
+    Representación pública sanitizada de pasos.
+    Excluye mensaje_instrucciones, configuracion, estados y textos internos.
+    """
+    out: List[Dict[str, Any]] = []
+    for p in sorted(
+        [x for x in (pasos or []) if x],
+        key=lambda x: (int(x.get("orden") or 0), int(x.get("id") or 0)),
+    ):
+        nombre = str(p.get("nombre") or "").strip()
+        if not nombre or _parece_instruccion_interna(nombre):
+            continue
+        # Evitar códigos crudos como nombre visible.
+        if "_" in nombre and " " not in nombre and len(nombre) < 40:
+            continue
+
+        texto_publico = ""
+        for clave in ("texto_publico", "mensaje_usuario", "pregunta_usuario"):
+            cand = str(p.get(clave) or "").strip()
+            if cand and not _parece_instruccion_interna(cand):
+                texto_publico = cand
+                break
+        if not texto_publico:
+            desc = str(p.get("descripcion") or "").strip()
+            if (
+                desc
+                and not _parece_instruccion_interna(desc)
+                and ("?" in desc or "¿" in desc or len(desc) <= 160)
+            ):
+                texto_publico = desc
+
+        tipo = str(p.get("tipo_accion") or "").strip().lower()
+        out.append(
+            {
+                "nombre": nombre[:160],
+                "tipo_accion": tipo,
+                "texto_publico": texto_publico[:400] if texto_publico else "",
+            }
+        )
+        if len(out) >= 12:
+            break
+    return out
+
+
+def _texto_proceso_configurado(
+    pasos_publicos: List[Dict[str, Any]],
+) -> Optional[str]:
+    """
+    Fuente 1: texto de «Proceso de ingreso» ya persistido como pasos públicos
+    (nombres configurados en carga → flujo_pasos).
+    """
+    utiles = [
+        p
+        for p in pasos_publicos
+        if str(p.get("nombre") or "").strip()
+        and str(p.get("tipo_accion") or "") not in {"finalizar"}
+    ]
+    if len(utiles) < 2:
+        return None
+
+    lineas = ["El proceso de ingreso configurado es el siguiente:", ""]
+    for i, p in enumerate(utiles[:10], start=1):
+        nombre = str(p.get("nombre") or "").strip()
+        extra = str(p.get("texto_publico") or "").strip()
+        if extra and extra != nombre and not _parece_instruccion_interna(extra):
+            # Solo añadir si parece aclaración breve para el usuario.
+            if len(extra) <= 120 and ("?" in extra or "¿" in extra):
+                lineas.append(f"{i}. {nombre}")
+            else:
+                lineas.append(f"{i}. {nombre}")
+        else:
+            lineas.append(f"{i}. {nombre}")
+    lineas.append("")
+    lineas.append(
+        "La revisión final la realiza el equipo de la agencia."
+    )
+    return "\n".join(lineas).strip()
+
+
+def _resumen_publico_desde_pasos_publicos(
+    pasos_publicos: List[Dict[str, Any]],
+) -> Optional[str]:
+    """
+    Fuente 2: resumen narrativo seguro (sin enumerar pasos técnicos).
+    No afirma que los pasos condicionales siempre ocurren.
+    """
+    if not pasos_publicos:
+        return None
+
+    tipos = {
+        str(p.get("tipo_accion") or "").strip().lower() for p in pasos_publicos
+    }
+    base: List[str] = ["una orientación inicial"]
+    if tipos & {
+        "explicar_requisitos",
+        "hacer_pregunta",
+        "confirmar_interes",
+        "informar",
+    }:
+        base.append("la confirmación de algunos datos y requisitos")
+    if "enviar_enlace" in tipos:
+        base.append("completar la solicitud")
+
+    condicionales: List[str] = []
+    if tipos & {"agendar_live", "solicitar_live"}:
+        condicionales.append("realizar una prueba LIVE")
+    if tipos & {"solicitar_evidencias", "confirmar_evidencias"}:
+        condicionales.append("enviar evidencias")
+
+    # Evitar resumen vacío/trivial.
+    if len(base) <= 1 and not condicionales and len(pasos_publicos) < 2:
+        return None
+
+    if len(base) == 1:
+        nucleo = base[0]
+    elif len(base) == 2:
+        nucleo = f"{base[0]} y {base[1]}"
+    else:
+        nucleo = f"{', '.join(base[:-1])} y {base[-1]}"
+
+    texto = f"El proceso puede incluir {nucleo}"
+    if condicionales:
+        if len(condicionales) == 1:
+            texto += f" y, cuando corresponda, {condicionales[0]}"
+        else:
+            texto += (
+                " y, cuando corresponda, "
+                + " o ".join(condicionales)
+            )
+    texto += (
+        ". Finalmente, el equipo revisará la información para continuar contigo."
+    )
+    return texto
+
+
+def _faq_es_especifica_de_proceso(faq: Dict[str, Any]) -> bool:
+    blob = _normalizar_texto_salida(
+        " ".join(
+            [
+                str(faq.get("pregunta") or ""),
+                str(faq.get("intencion") or ""),
+                str(faq.get("categoria") or ""),
+                str(faq.get("codigo") or ""),
+                " ".join(
+                    str(x)
+                    for x in (faq.get("palabras_clave") or [])
+                    if x
+                ),
+            ]
+        )
+    )
+    return any(k in blob for k in _CLAVES_FAQ_PROCESO)
+
+
+def _parece_bloque_proceso_mal_cargado(faq: Dict[str, Any]) -> bool:
+    """Descarta textos de flujo/pasos pegados como FAQ (no FAQs reales)."""
+    pregunta = str(faq.get("pregunta") or "")
+    n = _normalizar_texto_salida(pregunta)
+    if "presentar la oportunidad" in n and "agendar" in n:
+        return True
+    if n.count("1.") + n.count("2.") + n.count("3.") >= 3 and len(pregunta) > 200:
+        return True
+    return False
+
+
+def _score_faq_proceso(texto_consulta: str, faq: Dict[str, Any]) -> int:
+    """Puntuación léxica simple solo para FAQs ya filtradas de proceso."""
+    consulta = _normalizar_texto_salida(texto_consulta)
+    blob = _normalizar_texto_salida(
+        " ".join(
+            [
+                str(faq.get("pregunta") or ""),
+                str(faq.get("respuesta_corta") or ""),
+                " ".join(
+                    str(x) for x in (faq.get("palabras_clave") or []) if x
+                ),
+            ]
+        )
+    )
+    score = 0
+    for clave in _CLAVES_FAQ_PROCESO:
+        if clave in consulta and clave in blob:
+            score += 8
+        elif clave in blob:
+            score += 3
+    # Tokens de la consulta presentes en la FAQ.
+    tokens = [t for t in consulta.split() if len(t) >= 4]
+    for tok in tokens:
+        if tok in blob:
+            score += 2
+    score += min(10, int(faq.get("prioridad") or 0) // 5)
+    return score
+
+
+def _faq_proceso_especifica(
+    contexto: ConversationalContext,
+    texto_consulta: str,
+) -> Optional[str]:
+    """
+    Fuente 3: solo FAQ realmente de proceso/ingreso.
+
+    No usa resolver_faq genérico: ese excluye FAQs con codigo proceso+ingreso
+    (para no mezclar bloques de flujo en Q&A libre). Aquí las seleccionamos
+    a propósito, con matching propio.
+    """
+    try:
+        import database_chatbot_conversacional as db_conv
+        from chatbot_faq_resolver import texto_respuesta_faq
+
+        faqs = (
+            db_conv.listar_faqs(
+                contexto.agencia_id,
+                chatbot_configuracion_id=int(
+                    contexto.chatbot_configuracion_id or 0
+                ),
+                solo_activos=True,
+            )
+            or []
+        )
+    except Exception:  # noqa: BLE001
+        return None
+
+    candidatas = [
+        f
+        for f in faqs
+        if _faq_es_especifica_de_proceso(f)
+        and not _parece_bloque_proceso_mal_cargado(f)
+    ]
+    if not candidatas:
+        return None
+
+    ranked = sorted(
+        ((_score_faq_proceso(texto_consulta, f), f) for f in candidatas),
+        key=lambda x: (-x[0], -int(x[1].get("prioridad") or 0)),
+    )
+    top_score, top_faq = ranked[0]
+    # Exigir señal mínima de proceso (no coger cualquier FAQ filtrada al azar).
+    if top_score < 8:
+        return None
+
+    resp = str(texto_respuesta_faq(top_faq) or "").strip()
+    if not resp or _parece_instruccion_interna(resp):
+        return None
+    return _sanitizar_respuesta_usuario(resp)
+
+
+def _resolver_consultar_proceso(
+    contexto: ConversationalContext,
+    texto_consulta: str,
+) -> str:
+    """
+    Prioridad exacta para consultar_proceso:
+    1) texto Proceso de ingreso (pasos públicos del flujo conversion_base)
+    2) resumen público del flujo activo
+    3) FAQ específica de proceso
+    4) sin conocimiento
+    """
+    # 1) Texto configurado (carga → flujo conversion_base / conversion).
+    flujo_cfg = _obtener_flujo_proceso_configurado(contexto)
+    pasos_cfg = _listar_pasos_flujo_seguro(
+        agencia_id=contexto.agencia_id,
+        flujo_id=(flujo_cfg or {}).get("id"),
+    )
+    publicos_cfg = _pasos_publicos_seguros(pasos_cfg)
+    texto_cfg = _texto_proceso_configurado(publicos_cfg)
+    if texto_cfg:
+        logger.info(
+            "[CHATBOT_PROCESO] fuente=proceso_ingreso_configurado "
+            "flujo_id=%s pasos_publicos=%s",
+            (flujo_cfg or {}).get("id"),
+            len(publicos_cfg),
+        )
+        return _sanitizar_respuesta_usuario(texto_cfg)
+
+    # 2) Resumen del flujo activo de la conversación.
+    flujo_activo = contexto.flujo or {}
+    flujo_activo_id = flujo_activo.get("id") or (
+        contexto.conversacion or {}
+    ).get("flujo_id")
+    pasos_act = _listar_pasos_flujo_seguro(
+        agencia_id=contexto.agencia_id,
+        flujo_id=int(flujo_activo_id) if flujo_activo_id else None,
+    )
+    publicos_act = _pasos_publicos_seguros(pasos_act)
+    resumen = _resumen_publico_desde_pasos_publicos(publicos_act)
+    if resumen:
+        logger.info(
+            "[CHATBOT_PROCESO] fuente=resumen_flujo_activo "
+            "flujo_id=%s pasos_publicos=%s",
+            flujo_activo_id,
+            len(publicos_act),
+        )
+        return _sanitizar_respuesta_usuario(resumen)
+
+    # 3) FAQ específica.
+    faq = _faq_proceso_especifica(contexto, texto_consulta)
+    if faq:
+        logger.info("[CHATBOT_PROCESO] fuente=faq_proceso")
+        return faq
+
+    # 4) Sin conocimiento (no inventar).
+    logger.info("[CHATBOT_PROCESO] fuente=sin_conocimiento")
+    return MENSAJE_SIN_CONOCIMIENTO_PROCESO
+
+
 def _construir_texto_informativo_inteligente(
     contexto: ConversationalContext,
     intencion: str,
     texto_consulta: str,
 ) -> str:
+    """Respuesta informativa para el inteligente: sin pies de menú ni submenús."""
+    if intencion == "proceso":
+        return _resolver_consultar_proceso(contexto, texto_consulta)
+
     from service_chatbot_informativo import (
         construir_respuesta_por_intencion_informativa,
         presentacion_desde_asistente,
@@ -1139,6 +1755,10 @@ def _construir_texto_informativo_inteligente(
     import database_chatbot_conversacional as db_conv
 
     presentacion = presentacion_desde_asistente(contexto.asistente)
+    # El inteligente NO hereda pies de submenú del informativo.
+    presentacion = dict(presentacion)
+    presentacion["agregar_pregunta_final"] = False
+
     texto, _req, _lista = construir_respuesta_por_intencion_informativa(
         intencion,
         agencia_id=contexto.agencia_id,
@@ -1147,7 +1767,139 @@ def _construir_texto_informativo_inteligente(
         texto_consulta=texto_consulta,
         db_conv=db_conv,
     )
-    return str(texto or "").strip()
+    return _sanitizar_respuesta_usuario(str(texto or "").strip())
+
+
+def _pendiente_desde_paso(
+    contexto: ConversationalContext,
+) -> Optional[Dict[str, Any]]:
+    """Construye pregunta_pendiente pública a partir del paso actual."""
+    paso = contexto.paso or {}
+    paso_id = (contexto.conversacion or {}).get("paso_actual_id") or paso.get("id")
+    texto = _texto_publico_paso(paso)
+    if not paso_id or not texto:
+        return None
+    return {
+        "paso_id": paso_id,
+        "campo": str(paso.get("codigo") or "paso_actual"),
+        "tipo": str(paso.get("tipo_accion") or "hacer_pregunta"),
+        "texto": texto,
+    }
+
+
+async def _resolver_siguiente_paso_pendiente(
+    *,
+    contexto: ConversationalContext,
+    prefijo: Optional[str] = None,
+    conversacion_id: Optional[int],
+    mensaje_entrante_id: Optional[int],
+    texto_usuario: str,
+    canal: str,
+    token: Optional[str],
+    phone_number_id: Optional[str],
+    destino: Optional[str],
+    enviar_callback: Optional[EnviarCallback],
+    dry_run: bool,
+    origen: str = "flujo",
+) -> Dict[str, Any]:
+    """
+    Garantiza continuidad: prefijo opcional + pregunta/acción clara del paso.
+    """
+    pendiente = _pendiente_desde_paso(contexto)
+    pregunta = str((pendiente or {}).get("texto") or "").strip()
+    if not pregunta:
+        pregunta = "¿Seguimos con el siguiente paso del proceso?"
+        pendiente = {
+            "paso_id": (contexto.conversacion or {}).get("paso_actual_id"),
+            "campo": "paso_actual",
+            "tipo": "hacer_pregunta",
+            "texto": pregunta,
+        }
+
+    pref = _sanitizar_respuesta_usuario(str(prefijo or "").strip())
+    if pref and pregunta not in pref:
+        respuesta = f"{pref}\n\n{pregunta}"
+    else:
+        respuesta = pregunta
+    respuesta = _sanitizar_respuesta_usuario(respuesta)
+
+    logger.info(
+        "[CHATBOT_FLUJO] conversacion_id=%s paso_actual_id=%s "
+        "tipo_accion=%s accion=ejecutar origen=%s",
+        conversacion_id,
+        (pendiente or {}).get("paso_id"),
+        (pendiente or {}).get("tipo"),
+        origen,
+    )
+
+    envio = await _enviar_respuesta(
+        canal=canal,
+        texto=respuesta,
+        enlaces=[],
+        token=token,
+        phone_number_id=phone_number_id,
+        destino=destino,
+        enviar_callback=enviar_callback,
+        dry_run=dry_run,
+    )
+
+    mensaje_saliente = None
+    if respuesta and not dry_run and conversacion_id:
+        mensaje_saliente = await _db(
+            "insertar_mensaje",
+            contexto.agencia_id,
+            conversacion_id,
+            canal=canal,
+            direccion="saliente",
+            remitente_tipo="chatbot",
+            tipo_mensaje="texto",
+            texto=respuesta,
+            estado_envio="enviado" if envio.get("enviado") else "error",
+            error_detalle=envio.get("error"),
+            procesado_por_ia=False,
+            metadata={
+                "continuar_flujo": True,
+                "origen": origen,
+                "paso_id": (pendiente or {}).get("paso_id"),
+                "modo_humano": False,
+            },
+            default=None,
+        )
+        mensaje_saliente = _normalizar_fila_mensaje(mensaje_saliente)
+
+    if pendiente:
+        await _guardar_pregunta_pendiente(contexto, pendiente, dry_run=dry_run)
+
+    await _actualizar_cierre_de_turno(
+        contexto,
+        respuesta=respuesta,
+        mensaje_usuario=texto_usuario,
+        acciones=[{"tipo": "continuar_flujo", "origen": origen}],
+        escalado=False,
+        cerrada=False,
+        dry_run=dry_run,
+    )
+
+    return {
+        "usado": True,
+        "motivo": None,
+        "conversacion_id": conversacion_id,
+        "mensaje_entrante_id": mensaje_entrante_id,
+        "mensaje_saliente_id": (_normalizar_fila_mensaje(mensaje_saliente) or {}).get(
+            "id"
+        ),
+        "respuesta": respuesta,
+        "modo": contexto.modo,
+        "acciones": [{"tipo": "continuar_flujo", "origen": origen}],
+        "enlaces": [],
+        "escalado": False,
+        "cerrada": False,
+        "enviado": envio.get("enviado"),
+        "error": envio.get("error"),
+        "pregunta_pendiente": pendiente,
+        "tipo_chatbot": "inteligente",
+        "modo_humano": False,
+    }
 
 
 async def _responder_info_y_retomar_si_aplica(
@@ -1208,13 +1960,14 @@ async def _responder_info_y_retomar_si_aplica(
             "texto": pregunta,
         }
 
-    if pregunta and pregunta not in info:
+    if pregunta and pregunta not in info and not _parece_instruccion_interna(pregunta):
         if pregunta.startswith("¿"):
             respuesta = f"{info}\n\nPara orientarte mejor, {pregunta}"
         else:
             respuesta = f"{info}\n\n{pregunta}"
     else:
         respuesta = info
+    respuesta = _sanitizar_respuesta_usuario(respuesta)
 
     envio = await _enviar_respuesta(
         canal=canal,
@@ -1303,26 +2056,32 @@ async def _intentar_interrupcion_informativa(
     la duda y retoma el punto pendiente una sola vez.
     """
     pendiente = _leer_pregunta_pendiente(contexto.conversacion)
+    if pendiente and _parece_instruccion_interna(str(pendiente.get("texto") or "")):
+        # Corregir pendientes corruptos con instrucciones internas.
+        pendiente = _pendiente_desde_paso(contexto) or pendiente
+        if pendiente and _parece_instruccion_interna(str(pendiente.get("texto") or "")):
+            publico = _texto_publico_paso(contexto.paso)
+            if publico:
+                pendiente = dict(pendiente)
+                pendiente["texto"] = publico
+
     if not pendiente:
-        paso = contexto.paso or {}
-        texto_paso = str(
-            paso.get("mensaje_usuario")
-            or paso.get("descripcion")
-            or paso.get("nombre")
-            or ""
-        ).strip()
-        if (contexto.conversacion or {}).get("paso_actual_id") and texto_paso:
-            pendiente = {
-                "paso_id": (contexto.conversacion or {}).get("paso_actual_id"),
-                "campo": paso.get("codigo") or "paso_actual",
-                "texto": texto_paso,
-            }
-        else:
+        pendiente = _pendiente_desde_paso(contexto)
+        if not pendiente:
             return None
 
     intencion = _detectar_intencion_interrupcion_informativa(texto_usuario)
     if not intencion or intencion not in INTERRUPCIONES_INFORMATIVAS:
         return None
+
+    # Interrupción informativa: no ejecuta acciones de conversión.
+    logger.info(
+        "[CHATBOT_FLUJO] conversacion_id=%s accion=interrupcion_informativa "
+        "paso_pendiente_id=%s intencion=%s",
+        conversacion_id,
+        pendiente.get("paso_id"),
+        intencion,
+    )
 
     info = _construir_texto_informativo_inteligente(
         contexto, intencion, texto_usuario
@@ -1331,13 +2090,20 @@ async def _intentar_interrupcion_informativa(
         return None
 
     pregunta = str(pendiente.get("texto") or "").strip()
-    if pregunta and pregunta not in info:
+    if _parece_instruccion_interna(pregunta):
+        pregunta = str(_texto_publico_paso(contexto.paso) or "").strip()
+        if pregunta:
+            pendiente = dict(pendiente)
+            pendiente["texto"] = pregunta
+
+    if pregunta and pregunta not in info and not _parece_instruccion_interna(pregunta):
         if pregunta.startswith("¿") or pregunta.endswith("?"):
             respuesta = f"{info}\n\nPara continuar, {pregunta}"
         else:
             respuesta = f"{info}\n\nPara continuar: {pregunta}"
     else:
         respuesta = info
+    respuesta = _sanitizar_respuesta_usuario(respuesta)
 
     envio = await _enviar_respuesta(
         canal=canal,
@@ -1367,7 +2133,10 @@ async def _intentar_interrupcion_informativa(
             metadata={
                 "interrupcion_informativa": True,
                 "intencion": intencion,
-                "pregunta_pendiente": pendiente,
+                "pregunta_pendiente": {
+                    "paso_id": pendiente.get("paso_id"),
+                    "campo": pendiente.get("campo"),
+                },
                 "modo_humano": False,
             },
             default=None,
@@ -1375,6 +2144,12 @@ async def _intentar_interrupcion_informativa(
         mensaje_saliente = _normalizar_fila_mensaje(mensaje_saliente)
 
     await _guardar_pregunta_pendiente(contexto, pendiente, dry_run=dry_run)
+
+    logger.info(
+        "[CHATBOT_FLUJO] conversacion_id=%s accion=retomar_paso paso_id=%s",
+        conversacion_id,
+        pendiente.get("paso_id"),
+    )
 
     await _actualizar_cierre_de_turno(
         contexto,
@@ -1429,12 +2204,6 @@ async def _aplicar_clasificacion_adaptativa(
             {k: v for k, v in resultado.campos_aspirante.items() if v is not None}
         )
 
-    if dry_run or not contexto.conversacion_id:
-        return {
-            "clasificacion": resultado.clasificacion.model_dump(),
-            "respuesta_directa": resultado.texto_respuesta_directa,
-        }
-
     pendiente = _leer_pregunta_pendiente(contexto.conversacion)
     if pendiente and pendiente.get("campo") == "nivel_experiencia":
         if (
@@ -1446,43 +2215,48 @@ async def _aplicar_clasificacion_adaptativa(
         ):
             await _limpiar_pregunta_pendiente(contexto, dry_run=dry_run)
 
-    if resultado.campos_conversacion:
-        await _db(
-            "actualizar_conversacion",
-            contexto.agencia_id,
-            contexto.conversacion_id,
-            resultado.campos_conversacion,
-        )
+    if not dry_run and contexto.conversacion_id:
+        if resultado.campos_conversacion:
+            await _db(
+                "actualizar_conversacion",
+                contexto.agencia_id,
+                contexto.conversacion_id,
+                resultado.campos_conversacion,
+            )
 
-    aspirante_id = contexto.aspirante_id
-    if resultado.persistir_nivel_estable and aspirante_id and resultado.campos_aspirante:
-        await _db(
-            "actualizar_nivel_aspirante_estable",
-            int(aspirante_id),
-            contexto.agencia_id,
-            nivel_experiencia=resultado.campos_aspirante.get("nivel_experiencia"),
-            nivel_experiencia_fuente=resultado.campos_aspirante.get(
-                "nivel_experiencia_fuente"
-            ),
-            nivel_experiencia_confianza=resultado.campos_aspirante.get(
-                "nivel_experiencia_confianza"
-            ),
-            nivel_experiencia_confirmado_at=resultado.campos_aspirante.get(
-                "nivel_experiencia_confirmado_at"
-            ),
-        )
+        aspirante_id = contexto.aspirante_id
+        if (
+            resultado.persistir_nivel_estable
+            and aspirante_id
+            and resultado.campos_aspirante
+        ):
+            await _db(
+                "actualizar_nivel_aspirante_estable",
+                int(aspirante_id),
+                contexto.agencia_id,
+                nivel_experiencia=resultado.campos_aspirante.get("nivel_experiencia"),
+                nivel_experiencia_fuente=resultado.campos_aspirante.get(
+                    "nivel_experiencia_fuente"
+                ),
+                nivel_experiencia_confianza=resultado.campos_aspirante.get(
+                    "nivel_experiencia_confianza"
+                ),
+                nivel_experiencia_confirmado_at=resultado.campos_aspirante.get(
+                    "nivel_experiencia_confirmado_at"
+                ),
+            )
 
-    if resultado.registrar_evento:
-        await _db(
-            "registrar_evento",
-            contexto.agencia_id,
-            contexto.conversacion_id,
-            tipo_evento="clasificacion",
-            nombre_evento="clasificacion_adaptativa",
-            origen="backend",
-            exitoso=True,
-            detalle=resultado.detalle_evento,
-        )
+        if resultado.registrar_evento:
+            await _db(
+                "registrar_evento",
+                contexto.agencia_id,
+                contexto.conversacion_id,
+                tipo_evento="clasificacion",
+                nombre_evento="clasificacion_adaptativa",
+                origen="backend",
+                exitoso=True,
+                detalle=resultado.detalle_evento,
+            )
 
     if getattr(resultado, "seleccionar_flujo", False):
         await _seleccionar_flujo_por_nivel_confirmado(
@@ -1510,7 +2284,7 @@ async def _seleccionar_flujo_por_nivel_confirmado(
     nivel_n = str(nivel or "").strip().lower()
     if nivel_n not in {"principiante", "experimentado"}:
         return
-    if dry_run or not contexto.conversacion_id or not contexto.chatbot_configuracion_id:
+    if not contexto.chatbot_configuracion_id:
         return
 
     flujo = await _db(
@@ -1545,23 +2319,23 @@ async def _seleccionar_flujo_por_nivel_confirmado(
         "paso_actual_id": (primer_paso or {}).get("id"),
         "estado_actual": "flujo_seleccionado",
     }
-    await _db(
-        "actualizar_conversacion",
-        contexto.agencia_id,
-        contexto.conversacion_id,
-        campos,
-    )
+    if not dry_run and contexto.conversacion_id:
+        await _db(
+            "actualizar_conversacion",
+            contexto.agencia_id,
+            contexto.conversacion_id,
+            campos,
+        )
     contexto.conversacion.update(campos)
     contexto.flujo = flujo
     contexto.paso = primer_paso
     logger.info(
-        "[CLASIFICACION] flujo_seleccionado conversacion_id=%s nivel=%s "
-        "flujo_id=%s paso_id=%s nivel_objetivo=%s",
+        "[CHATBOT_FLUJO] conversacion_id=%s nivel=%s flujo_id=%s "
+        "paso_actual_id=%s accion=flujo_seleccionado",
         contexto.conversacion_id,
         nivel_n,
         flujo_id,
         campos.get("paso_actual_id"),
-        flujo.get("nivel_objetivo"),
     )
 
 
@@ -2119,6 +2893,7 @@ async def _enviar_respuesta(
     enviar_callback: Optional[EnviarCallback],
     dry_run: bool,
 ) -> Dict[str, Any]:
+    texto = _sanitizar_respuesta_usuario(texto)
     if dry_run:
         return {
             "enviado": True,
@@ -2127,6 +2902,7 @@ async def _enviar_respuesta(
             "mensaje_externo_id": None,
             "status_code": None,
             "requiere_reintento": False,
+            "texto_sanitizado": texto,
         }
 
     if not texto:

@@ -37,15 +37,20 @@ NUMEROS_TEXTO = {
 DEFAULTS_PRESENTACION = {
     "mostrar_menu_inicial": True,
     "titulo_menu_inicial": "Puedo ayudarte con información sobre:",
+    "titulo_menu_retorno": "Menú",
     "texto_indicacion_menu": (
         "Escribe el número de una opción o pregúntame directamente lo que quieras saber."
+    ),
+    "texto_indicacion_menu_retorno": (
+        "Escribe un número o hazme directamente tu pregunta."
     ),
     "formato_respuestas_informativas": "lista",
     "max_elementos_respuesta": 15,
     "mostrar_titulo_respuesta": True,
     "agregar_pregunta_final": True,
     "repetir_menu_despues_respuesta": False,
-    "pie_volver_menu": "Escribe *menu* para volver al menú.",
+    "pie_volver_menu": "Puedes escribir *menu* cuando quieras ver las opciones.",
+    "mensaje_hola_de_nuevo": "¡Hola de nuevo! 👋 ¿En qué puedo ayudarte?",
     "mensaje_no_entendido": (
         "No entendí tu mensaje. Puedes escribir el número de una opción "
         "o preguntarme algo concreto sobre la agencia."
@@ -79,7 +84,7 @@ DEFAULTS_PRESENTACION = {
     ),
 }
 
-# Frases que solo piden remostrar el menú (sin buscar FAQ / IA).
+# Solo piden remostrar el menú (sin bienvenida).
 _COMANDOS_VOLVER_MENU = frozenset(
     {
         "menu",
@@ -93,12 +98,6 @@ _COMANDOS_VOLVER_MENU = frozenset(
         "atras",
         "atrás",
         "regresar",
-        "hola",
-        "buenas",
-        "hey",
-        "hi",
-        "hello",
-        "holi",
         "info",
     }
 )
@@ -110,11 +109,30 @@ _PATRONES_VOLVER_MENU = (
     "volver menu",
     "ver menu",
     "ver menú",
+    "ver opciones",
     "mostrar menu",
     "mostrar menú",
     "otra opcion",
     "otra opción",
     "otras opciones",
+)
+
+# Saludos puros (no equivalen automáticamente a menú de retorno).
+_COMANDOS_SALUDO = frozenset(
+    {
+        "hola",
+        "buenas",
+        "hey",
+        "hi",
+        "hello",
+        "holi",
+        "buenas tardes",
+        "buenas noches",
+        "buen dia",
+        "buen día",
+        "buenos dias",
+        "buenos días",
+    }
 )
 
 INTENCIONES_INFORMATIVAS_IA = frozenset(
@@ -140,13 +158,30 @@ def _normalizar(texto: str) -> str:
 
 
 def es_comando_volver_menu(texto: str) -> bool:
-    """True si el usuario solo pide remostrar el menú / elegir otra opción."""
+    """True si el usuario solo pide remostrar el menú (sin saludo)."""
     n = _normalizar(texto)
     if not n:
         return False
     if n in _COMANDOS_VOLVER_MENU:
         return True
     return any(p in n for p in _PATRONES_VOLVER_MENU)
+
+
+def es_comando_saludo(texto: str) -> bool:
+    """True si el mensaje es solo un saludo (hola / buenas / …)."""
+    n = _normalizar(texto)
+    if not n:
+        return False
+    if n in _COMANDOS_SALUDO:
+        return True
+    partes = n.split()
+    if len(partes) <= 3 and partes[0] in {"buenas", "buen", "buenos"}:
+        return True
+    return False
+
+
+def es_comando_menu_o_saludo(texto: str) -> bool:
+    return es_comando_volver_menu(texto) or es_comando_saludo(texto)
 
 
 def _pie_volver_menu(presentacion: Optional[Dict[str, Any]]) -> str:
@@ -257,6 +292,11 @@ def presentacion_desde_asistente(asistente: Optional[Dict[str, Any]]) -> Dict[st
     n_pie = _normalizar(pie)
     if pie and "escribe menu" in n_pie and "opciones otra vez" in n_pie:
         out["pie_volver_menu"] = DEFAULTS_PRESENTACION["pie_volver_menu"]
+    elif pie and n_pie in {
+        "escribe menu para volver al menu",
+        "escribe menu para volver al menu.",
+    }:
+        out["pie_volver_menu"] = DEFAULTS_PRESENTACION["pie_volver_menu"]
     elif not pie:
         out["pie_volver_menu"] = DEFAULTS_PRESENTACION["pie_volver_menu"]
     return out
@@ -343,13 +383,25 @@ def numerar_opciones_activas(opciones: List[Dict[str, Any]]) -> List[Dict[str, A
     return out
 
 
-def construir_texto_menu(
+def _lineas_opciones_menu(opciones: List[Dict[str, Any]]) -> List[str]:
+    """Única fuente de numeración visible 1..N para menú inicial y de retorno."""
+    lineas: List[str] = []
+    for op in numerar_opciones_activas(opciones):
+        titulo = _titulo_opcion_menu_corta(str(op.get("titulo") or "").strip())
+        if not titulo:
+            continue
+        lineas.append(_linea_lista_numerada(int(op["numero_visible"]), titulo))
+    return lineas
+
+
+def construir_menu_inicial(
     *,
     nombre_agencia: str,
     opciones: List[Dict[str, Any]],
     presentacion: Optional[Dict[str, Any]] = None,
     presentacion_inicial: Optional[str] = None,
 ) -> str:
+    """Bienvenida + opciones (solo primer contacto de la conversación)."""
     p = presentacion_desde_asistente(presentacion)
     encabezado = str(presentacion_inicial or "").strip()
     if not encabezado:
@@ -361,16 +413,59 @@ def construir_texto_menu(
         str(p.get("titulo_menu_inicial") or DEFAULTS_PRESENTACION["titulo_menu_inicial"]),
         "",
     ]
-    for op in numerar_opciones_activas(opciones):
-        titulo = _titulo_opcion_menu_corta(str(op.get("titulo") or "").strip())
-        if not titulo:
-            continue
-        lineas.append(_linea_lista_numerada(int(op["numero_visible"]), titulo))
+    lineas.extend(_lineas_opciones_menu(opciones))
     lineas.append("")
     lineas.append(
         str(p.get("texto_indicacion_menu") or DEFAULTS_PRESENTACION["texto_indicacion_menu"])
     )
     return "\n".join(lineas)
+
+
+def construir_menu_retorno(
+    *,
+    opciones: List[Dict[str, Any]],
+    presentacion: Optional[Dict[str, Any]] = None,
+    prefijo: Optional[str] = None,
+) -> str:
+    """Menú corto sin bienvenida (cuando el usuario pide menu/volver/opciones)."""
+    p = presentacion_desde_asistente(presentacion)
+    titulo = str(
+        prefijo
+        or p.get("titulo_menu_retorno")
+        or DEFAULTS_PRESENTACION["titulo_menu_retorno"]
+    ).strip() or "Menú"
+    lineas = [titulo, ""]
+    lineas.extend(_lineas_opciones_menu(opciones))
+    lineas.append("")
+    lineas.append(
+        str(
+            p.get("texto_indicacion_menu_retorno")
+            or DEFAULTS_PRESENTACION["texto_indicacion_menu_retorno"]
+        )
+    )
+    return "\n".join(lineas)
+
+
+def construir_texto_menu(
+    *,
+    nombre_agencia: str,
+    opciones: List[Dict[str, Any]],
+    presentacion: Optional[Dict[str, Any]] = None,
+    presentacion_inicial: Optional[str] = None,
+    incluir_bienvenida: bool = True,
+) -> str:
+    """
+    Compat: por defecto construye el menú inicial (con bienvenida).
+    Con incluir_bienvenida=False → menú de retorno.
+    """
+    if incluir_bienvenida:
+        return construir_menu_inicial(
+            nombre_agencia=nombre_agencia,
+            opciones=opciones,
+            presentacion=presentacion,
+            presentacion_inicial=presentacion_inicial,
+        )
+    return construir_menu_retorno(opciones=opciones, presentacion=presentacion)
 
 
 def extraer_numero_opcion(texto: str) -> Optional[int]:
@@ -1238,6 +1333,57 @@ def _set_pregunta_faq_pendiente(
     )
 
 
+def _marcar_menu_bienvenida_enviada(
+    *,
+    db_conv: Any,
+    agencia_id: int,
+    conversacion_id: Optional[int],
+    conversacion: Optional[Dict[str, Any]],
+    dry_run: bool,
+) -> None:
+    ctx = _contexto_conversacion(conversacion)
+    if ctx.get("menu_bienvenida_enviada"):
+        return
+    ctx["menu_bienvenida_enviada"] = True
+    _persistir_contexto_conversacion(
+        db_conv=db_conv,
+        agencia_id=agencia_id,
+        conversacion_id=conversacion_id,
+        conversacion=conversacion,
+        contexto=ctx,
+        dry_run=dry_run,
+    )
+
+
+def _bienvenida_menu_ya_enviada(
+    *,
+    ctx: Dict[str, Any],
+    db_conv: Any,
+    agencia_id: int,
+    conversacion_id: Optional[int],
+) -> bool:
+    """
+    True si esta conversación ya recibió la bienvenida/menú inicial.
+
+    Usa la bandera de contexto; si falta (conversaciones previas), infiere
+    por mensajes salientes ya existentes (sin nueva columna de BD).
+    """
+    if ctx.get("menu_bienvenida_enviada"):
+        return True
+    if not conversacion_id:
+        return False
+    try:
+        mensajes = db_conv.listar_mensajes(
+            agencia_id, int(conversacion_id), limit=20, orden="desc"
+        )
+    except Exception:
+        return False
+    for m in mensajes or []:
+        if str(m.get("direccion") or "").lower() == "saliente":
+            return True
+    return False
+
+
 def _resumir_frase(texto: str, *, max_len: int = 72) -> str:
     """Primera frase corta para listados numerados."""
     t = _limpiar_frase_requisito(texto)
@@ -1574,12 +1720,18 @@ async def procesar_mensaje_informativo(
         or (asistente or {}).get("nombre_asistente")
         or "la agencia"
     )
-    texto_menu = construir_texto_menu(
+    texto_menu_inicial = construir_menu_inicial(
         nombre_agencia=nombre_agencia,
         opciones=opciones,
         presentacion=presentacion,
         presentacion_inicial=(asistente or {}).get("presentacion_inicial"),
     )
+    texto_menu_retorno = construir_menu_retorno(
+        opciones=opciones,
+        presentacion=presentacion,
+    )
+    # Por defecto el menú corto: no reinyectar bienvenida en pies / repeticiones.
+    texto_menu = texto_menu_retorno
 
     # Anti-duplicado: Meta puede reenviar el mismo webhook si tardamos.
     if mensaje_externo_id and not dry_run:
@@ -1677,7 +1829,7 @@ async def procesar_mensaje_informativo(
             "enlaces": [],
         }
 
-    # Menú inicial / volver al menú (menu, volver, menu anterior, otra opción…)
+    # Menú inicial / volver al menú (menu, volver, opciones, hola…)
     texto_in = str(texto or "").strip()
     mostrar_menu = bool(presentacion.get("mostrar_menu_inicial", True))
     ctx_conv = _contexto_conversacion(conversacion)
@@ -1687,7 +1839,36 @@ async def procesar_mensaje_informativo(
     lista_detalle_a_guardar: Optional[Dict[str, Any]] = None
     limpiar_lista_detalle = False
 
-    if (not texto_in or es_comando_volver_menu(texto_in)) and mostrar_menu and opciones:
+    pide_menu = (not texto_in) or es_comando_menu_o_saludo(texto_in)
+    if pide_menu and mostrar_menu and opciones:
+        bienvenida_ya = _bienvenida_menu_ya_enviada(
+            ctx=ctx_conv,
+            db_conv=db_conv,
+            agencia_id=agencia_id,
+            conversacion_id=conversacion_id,
+        )
+        es_saludo = bool(texto_in) and es_comando_saludo(texto_in)
+        es_volver = bool(texto_in) and es_comando_volver_menu(texto_in)
+
+        if not bienvenida_ya:
+            texto_a_enviar = texto_menu_inicial
+            tipo_menu = "initial"
+            origen_menu = "primer_contacto" if not texto_in else (
+                "saludo" if es_saludo else "menu"
+            )
+        elif es_saludo and not es_volver:
+            saludo_corto = str(
+                presentacion.get("mensaje_hola_de_nuevo")
+                or DEFAULTS_PRESENTACION["mensaje_hola_de_nuevo"]
+            ).strip()
+            texto_a_enviar = f"{saludo_corto}\n\n{texto_menu_retorno}"
+            tipo_menu = "return"
+            origen_menu = "saludo"
+        else:
+            texto_a_enviar = texto_menu_retorno
+            tipo_menu = "return"
+            origen_menu = "menu" if (es_volver or not texto_in) else "saludo"
+
         limpiar_lista_detalle = True
         _set_lista_detalle_pendiente(
             db_conv=db_conv,
@@ -1709,27 +1890,38 @@ async def procesar_mensaje_informativo(
             agencia_id=agencia_id,
             conversacion_id=conversacion_id,
             canal=canal,
-            texto=texto_menu,
+            texto=texto_a_enviar,
             dry_run=dry_run,
             enviar_callback=enviar_callback,
             token=token,
             phone_number_id=phone_number_id,
             destino=destino,
-            motivo_fallback="menu_inicial",
+            motivo_fallback=f"menu_{tipo_menu}",
             mensaje_externo_id=mensaje_externo_id,
         )
+        if tipo_menu == "initial":
+            _marcar_menu_bienvenida_enviada(
+                db_conv=db_conv,
+                agencia_id=agencia_id,
+                conversacion_id=conversacion_id,
+                conversacion=conversacion,
+                dry_run=dry_run,
+            )
         logger.info(
-            "[CHATBOT_MENU] conversacion_id=%s entrada=menu opcion=menu "
-            "intencion=menu respuesta_enviada=%s",
+            "[CHATBOT_MENU] tipo=%s origen=%s conversacion_id=%s "
+            "respuesta_enviada=%s",
+            tipo_menu,
+            origen_menu,
             conversacion_id,
             bool(envio.get("enviado") or dry_run),
         )
         return {
             "usado": True,
-            "respuesta": texto_menu,
+            "respuesta": texto_a_enviar,
             "respuesta_enviada": bool(envio.get("enviado") is True) or dry_run,
             "enlaces": [],
             "menu": True,
+            "menu_tipo": tipo_menu,
         }
 
     # Compat: si quedó pendiente de «Otras preguntas», tratar como consulta FAQ libre.
