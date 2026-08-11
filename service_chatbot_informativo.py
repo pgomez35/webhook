@@ -2151,10 +2151,10 @@ def _score_faq_texto(consulta_n: str, faq: Dict[str, Any]) -> int:
                     if tp in usados:
                         continue
                     if _tokens_compatibles(tc, tp):
-                        # Términos largos (monetizar/monetizacion) pesan más.
+                        # Una sola palabra clave fuerte (monetizar, diamante…) basta.
                         if tc == tp:
-                            score += 8
-                        elif min(len(tc), len(tp)) >= 7:
+                            score += 12 if len(tc) >= 6 else 8
+                        elif min(len(tc), len(tp)) >= 6:
                             score += 10
                         else:
                             score += 5
@@ -2165,6 +2165,12 @@ def _score_faq_texto(consulta_n: str, faq: Dict[str, Any]) -> int:
                 score += 6
             if len(usados) >= 3:
                 score += 4
+
+        # «qué es X / qué significa X» refuerza la consulta definitoria.
+        if consulta_n.startswith(
+            ("que es ", "que son ", "que significa ", "que quiere decir ")
+        ):
+            score += 2
 
     claves = faq.get("palabras_clave") or []
     if isinstance(claves, str):
@@ -2211,8 +2217,8 @@ def _buscar_faq(
             or _faq_coincide_claves(faq, _aliases_intencion_faq(intencion_n))
         ):
             score += 3
-        # Umbral: evita devolver FAQs apenas relacionadas.
-        if score >= 10:
+        # Umbral bajo: una palabra clave clara (monetizar) ya debe abrir la FAQ.
+        if score >= 8:
             mejores.append((score, faq))
     if not mejores:
         if intencion_n:
