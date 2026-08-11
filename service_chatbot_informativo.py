@@ -69,8 +69,8 @@ DEFAULTS_PRESENTACION = {
     ),
     "mensaje_faq_no_encontrada": (
         "No encontré una respuesta confirmada para esa pregunta. "
-        "Puedes reformularla, escribir *menu* para ver las opciones "
-        "o *asesor* para hablar con una persona del equipo."
+        "Puedes reformularla con otras palabras, escribir *menu* para ver "
+        "las opciones o *asesor* para hablar con una persona del equipo."
     ),
     "mensaje_opcion_no_valida": (
         "Esa no es una opción válida del menú.\n\n"
@@ -1739,14 +1739,6 @@ async def procesar_mensaje_informativo(
     if ctx_conv.get("pregunta_faq_pendiente") and texto_in:
         op_menu, modo_menu = resolver_opcion_menu(texto_in, opciones)
         if not (modo_menu in {"numero", "texto"} and op_menu):
-            _set_pregunta_faq_pendiente(
-                db_conv=db_conv,
-                agencia_id=agencia_id,
-                conversacion_id=conversacion_id,
-                conversacion=conversacion,
-                activa=False,
-                dry_run=dry_run,
-            )
             faqs_pend: List[Dict[str, Any]] = []
             try:
                 faqs_pend = db_conv.listar_faqs(
@@ -1757,7 +1749,17 @@ async def procesar_mensaje_informativo(
             except Exception:
                 faqs_pend = []
             respuesta = _buscar_faq(faqs_pend, None, texto_in)
-            if not respuesta:
+            if respuesta:
+                _set_pregunta_faq_pendiente(
+                    db_conv=db_conv,
+                    agencia_id=agencia_id,
+                    conversacion_id=conversacion_id,
+                    conversacion=conversacion,
+                    activa=False,
+                    dry_run=dry_run,
+                )
+            else:
+                # Mantener el modo para que puedan reformular sin volver a elegir 5.
                 respuesta = str(
                     presentacion.get("mensaje_faq_no_encontrada")
                     or DEFAULTS_PRESENTACION["mensaje_faq_no_encontrada"]
@@ -1778,7 +1780,7 @@ async def procesar_mensaje_informativo(
             )
             return {
                 "usado": True,
-                "motivo": None,
+                "motivo": None if respuesta else "faq_no_encontrada",
                 "respuesta": respuesta,
                 "respuesta_enviada": bool(envio.get("enviado") is True) or dry_run,
                 "requiere_asesor": False,
@@ -2101,55 +2103,127 @@ async def procesar_mensaje_informativo(
     }
 
 
+def _limpiar_consulta_faq(texto: str) -> str:
+    """Quita prefijos tipo «Pregunta:» que el usuario a veces pega tal cual."""
+    n = _normalizar(texto)
+    n = re.sub(r"^(pregunta|preguntas|q)\s+", "", n)
+    return n.strip()
+
+
+def _tokens_significativos_faq(texto_n: str) -> List[str]:
+    return [
+        t
+        for t in str(texto_n or "").split()
+        if len(t) > 3 and t not in _STOPWORDS_MENU
+    ]
+
+
+def _tokens_compatibles(a: str, b: str) -> bool:
+    """True si comparten raíz (monetizar / monetizacion, diamante / diamantes)."""
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    if len(a) >= 5 and len(b) >= 5 and (a.startswith(b[:5]) or b.startswith(a[:5])):
+        return True
+    return False
+
+
+def _score_faq_texto(consulta_n: str, faq: Dict[str, Any]) -> int:
+    """Puntúa qué tan bien la consulta libre coincide con una FAQ."""
+    pregunta = _limpiar_consulta_faq(str(faq.get("pregunta") or ""))
+    if not pregunta and not (faq.get("palabras_clave") or []):
+        return 0
+
+    score = 0
+    if pregunta:
+        if pregunta == consulta_n:
+            score += 40
+        elif pregunta in consulta_n or consulta_n in pregunta:
+            score += 24
+
+        toks_c = _tokens_significativos_faq(consulta_n)
+        toks_p = _tokens_significativos_faq(pregunta)
+        if toks_c and toks_p:
+            usados = set()
+            for tc in toks_c:
+                for tp in toks_p:
+                    if tp in usados:
+                        continue
+                    if _tokens_compatibles(tc, tp):
+                        # Términos largos (monetizar/monetizacion) pesan más.
+                        if tc == tp:
+                            score += 8
+                        elif min(len(tc), len(tp)) >= 7:
+                            score += 10
+                        else:
+                            score += 5
+                        usados.add(tp)
+                        break
+            # Cobertura: varios tokens de la FAQ aparecen en la consulta
+            if len(usados) >= 2:
+                score += 6
+            if len(usados) >= 3:
+                score += 4
+
+    claves = faq.get("palabras_clave") or []
+    if isinstance(claves, str):
+        claves = [c.strip() for c in claves.split(",") if c.strip()]
+    for c in claves:
+        cn = _normalizar(str(c))
+        if not cn:
+            continue
+        if cn in consulta_n:
+            score += 6 if len(cn) >= 5 else 3
+        else:
+            for tc in _tokens_significativos_faq(consulta_n):
+                if _tokens_compatibles(tc, cn):
+                    score += 4
+                    break
+
+    return score
+
+
 def _buscar_faq(
     faqs: List[Dict[str, Any]],
     intencion: Optional[str],
     texto: str,
 ) -> str:
-    n = _normalizar(texto)
+    consulta_n = _limpiar_consulta_faq(texto)
+    if not consulta_n:
+        return ""
     intencion_n = _normalizar(intencion or "")
     mejores: List[Tuple[int, Dict[str, Any]]] = []
     for faq in faqs:
         if not _vigente(faq):
             continue
-        score = 0
+        score = _score_faq_texto(consulta_n, faq)
         fi = _normalizar(str(faq.get("intencion") or ""))
         if intencion_n and fi == intencion_n:
             score += 5
-        # Alias faq_proceso / faq_agencia, etc.
         if intencion_n and _faq_coincide_claves(
             faq, _aliases_intencion_faq(intencion_n)
         ):
             score += 5
-        pregunta = _normalizar(str(faq.get("pregunta") or ""))
-        if pregunta and (pregunta in n or n in pregunta):
-            score += 4
-        claves = faq.get("palabras_clave") or []
-        if isinstance(claves, str):
-            claves = [c.strip() for c in claves.split(",") if c.strip()]
-        for c in claves:
-            cn = _normalizar(str(c))
-            if cn and cn in n:
-                score += 2
         categoria = _normalizar(str(faq.get("categoria") or ""))
         if intencion_n and categoria and (
             categoria == intencion_n
             or _faq_coincide_claves(faq, _aliases_intencion_faq(intencion_n))
         ):
             score += 3
-        if score:
+        # Umbral: evita devolver FAQs apenas relacionadas.
+        if score >= 10:
             mejores.append((score, faq))
     if not mejores:
-        # Si hay intención, tomar FAQ de esa intención (o alias faq_proceso…)
         if intencion_n:
             for faq in _faqs_por_intencion(faqs, intencion_n):
-                texto = str(
+                texto_r = str(
                     faq.get("respuesta_completa")
                     or faq.get("respuesta_corta")
                     or ""
                 ).strip()
-                if texto:
-                    return texto
+                if texto_r:
+                    return texto_r
         return ""
     mejores.sort(key=lambda x: (-x[0], -int((x[1].get("prioridad") or 0))))
     faq = mejores[0][1]

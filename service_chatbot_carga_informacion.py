@@ -837,6 +837,17 @@ def guardar_informacion_organizada(
                 "categoria": str(item.get("categoria") or "general")[:100],
                 "prioridad": max(0, 100 - i),
             }
+            # Palabras clave derivadas de la pregunta (mejora Otras preguntas).
+            if not item.get("palabras_clave"):
+                toks = [
+                    t
+                    for t in _norm_nombre(pregunta).split()
+                    if len(t) > 3
+                ][:8]
+                if toks:
+                    campos["palabras_clave"] = toks
+            elif item.get("palabras_clave") is not None:
+                campos["palabras_clave"] = item.get("palabras_clave")
             item_id = item.get("id")
             hit = existentes_faq.get(int(item_id)) if item_id else por_preg.get(
                 _norm_nombre(pregunta)
