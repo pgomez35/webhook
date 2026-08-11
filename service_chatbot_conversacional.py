@@ -448,18 +448,44 @@ async def procesar_mensaje_conversacional(
 
     await _persistir_modo(contexto, dry_run=dry_run)
 
-    interrupcion = await _intentar_interrupcion_informativa(
-        contexto=contexto,
-        conversacion_id=conversacion_id,
-        mensaje_entrante_id=mensaje_entrante_id,
-        texto_usuario=texto,
-        canal=canal,
-        token=token,
-        phone_number_id=phone_number_id,
-        destino=wa_id or usuario_externo_id,
-        enviar_callback=enviar_callback,
-        dry_run=dry_run,
+    # Prioridad: respuesta contra pregunta_pendiente (no cambiar de tema).
+    interpretacion_pend = _interpretar_respuesta_a_pregunta_pendiente(
+        contexto, texto
     )
+    if interpretacion_pend and interpretacion_pend.get("tipo") == "aclarar_pendiente":
+        return await _responder_aclaracion_pendiente(
+            contexto=contexto,
+            interpretacion=interpretacion_pend,
+            conversacion_id=conversacion_id,
+            mensaje_entrante_id=mensaje_entrante_id,
+            texto_usuario=texto,
+            canal=canal,
+            token=token,
+            phone_number_id=phone_number_id,
+            destino=wa_id or usuario_externo_id,
+            enviar_callback=enviar_callback,
+            dry_run=dry_run,
+        )
+    # Si es respuesta a la pendiente (sí/no/dato), no la trates como
+    # interrupción informativa: deja que el flujo/agente la procese.
+    permitir_interrupcion = True
+    if interpretacion_pend and interpretacion_pend.get("tipo") == "respuesta_pendiente":
+        permitir_interrupcion = False
+
+    interrupcion = None
+    if permitir_interrupcion:
+        interrupcion = await _intentar_interrupcion_informativa(
+            contexto=contexto,
+            conversacion_id=conversacion_id,
+            mensaje_entrante_id=mensaje_entrante_id,
+            texto_usuario=texto,
+            canal=canal,
+            token=token,
+            phone_number_id=phone_number_id,
+            destino=wa_id or usuario_externo_id,
+            enviar_callback=enviar_callback,
+            dry_run=dry_run,
+        )
     if interrupcion:
         return interrupcion
 
@@ -503,14 +529,124 @@ async def procesar_mensaje_conversacional(
         if respuesta_directa:
             pendiente_guardar = None
             if accion in {"preguntar_nivel", "aclarar_nivel"}:
+                from chatbot_conversacional_clasificacion import (
+                    TEXTO_ACLARACION_NIVEL,
+                    inferir_nivel_desde_texto,
+                )
+
+                ctx_loop = _contexto_conversacion_dict(contexto.conversacion)
+                intentos = int(ctx_loop.get("intentos_pregunta_nivel") or 0)
+                pendiente_prev = _leer_pregunta_pendiente(contexto.conversacion)
+                if (
+                    pendiente_prev
+                    and str(pendiente_prev.get("campo") or "") == "nivel_experiencia"
+                    and intentos >= 1
+                ):
+                    # Loop guard: no repetir la misma pregunta indefinidamente.
+                    nivel_g, conf_g, decl_g, _ev = inferir_nivel_desde_texto(
+                        texto,
+                        pregunta_nivel_pendiente=True,
+                        usar_ia=True,
+                    )
+                    if nivel_g == "desconocido":
+                        # Salvamento: señales débiles tras reintento.
+                        n_txt = _normalizar_texto_salida(texto)
+                        if any(
+                            x in n_txt
+                            for x in (
+                                "no",
+                                "nunca",
+                                "cero",
+                                "nuev",
+                                "sin exp",
+                                "princip",
+                            )
+                        ):
+                            nivel_g, conf_g, decl_g = "principiante", 0.9, True
+                        elif any(
+                            x in n_txt
+                            for x in (
+                                "si",
+                                "hago",
+                                "realizo",
+                                "experiencia",
+                                "ano",
+                                "mes",
+                                "transmit",
+                            )
+                        ):
+                            nivel_g, conf_g, decl_g = "experimentado", 0.9, True
+
+                    if nivel_g in {"principiante", "experimentado"} and decl_g:
+                        logger.warning(
+                            "[CHATBOT_LOOP_GUARD] conversacion_id=%s "
+                            "paso_id=%s motivo=pregunta_ya_resuelta nivel=%s",
+                            conversacion_id,
+                            (pendiente_prev or {}).get("paso_id"),
+                            nivel_g,
+                        )
+                        # Forzar orientación + flujo sin repreguntar.
+                        contexto.conversacion["nivel_experiencia"] = nivel_g
+                        contexto.conversacion["nivel_experiencia_confirmado"] = True
+                        contexto.conversacion["nivel_experiencia_confianza"] = conf_g
+                        contexto.conversacion["nivel_experiencia_fuente"] = "declarada"
+                        await _limpiar_pregunta_pendiente(contexto, dry_run=dry_run)
+                        await _seleccionar_flujo_por_nivel_confirmado(
+                            contexto, nivel=nivel_g, dry_run=dry_run
+                        )
+                        prefijo = (
+                            str(
+                                (contexto.asistente or {}).get(
+                                    "texto_inicio_principiante"
+                                    if nivel_g == "principiante"
+                                    else "texto_inicio_experimentado"
+                                )
+                                or ""
+                            ).strip()
+                            or (
+                                "Perfecto. Como estás comenzando, te oriento paso a paso."
+                                if nivel_g == "principiante"
+                                else (
+                                    "Gracias. Como ya tienes experiencia con LIVE, "
+                                    "te guío con el proceso directo de la agencia."
+                                )
+                            )
+                        )
+                        return await _resolver_siguiente_paso_pendiente(
+                            contexto=contexto,
+                            prefijo=prefijo,
+                            conversacion_id=conversacion_id,
+                            mensaje_entrante_id=mensaje_entrante_id,
+                            texto_usuario=texto,
+                            canal=canal,
+                            token=token,
+                            phone_number_id=phone_number_id,
+                            destino=wa_id or usuario_externo_id,
+                            enviar_callback=enviar_callback,
+                            dry_run=dry_run,
+                            origen="loop_guard_clasificacion",
+                        )
+
                 pendiente_guardar = {
                     "paso_id": contexto.conversacion.get("paso_actual_id"),
                     "campo": "nivel_experiencia",
                     "texto": str(
                         (contexto.asistente or {}).get("pregunta_clasificacion_nivel")
+                        or TEXTO_ACLARACION_NIVEL
                         or "¿Ya has realizado transmisiones LIVE?"
                     ).strip(),
                 }
+                # Contador anti-bucle en contexto JSON existente.
+                ctx_loop["intentos_pregunta_nivel"] = intentos + 1
+                ctx_loop["pregunta_pendiente"] = pendiente_guardar
+                contexto.conversacion["contexto"] = ctx_loop
+                if not dry_run and conversacion_id:
+                    await _db(
+                        "actualizar_conversacion",
+                        contexto.agencia_id,
+                        conversacion_id,
+                        {"contexto": ctx_loop},
+                    )
                 return await _responder_presentacion_literal(
                     contexto=contexto,
                     presentacion=_sanitizar_respuesta_usuario(respuesta_directa),
@@ -1203,27 +1339,31 @@ def _sanitizar_respuesta_usuario(texto: str) -> str:
     return "\n".join(lineas_ok).strip()
 
 
-def _texto_publico_paso(paso: Optional[Dict[str, Any]]) -> Optional[str]:
+def _texto_publico_paso(
+    paso: Optional[Dict[str, Any]],
+    *,
+    contexto: Optional[ConversationalContext] = None,
+) -> Optional[str]:
     """
     Texto visible para el usuario a partir del paso.
-    NUNCA usa mensaje_instrucciones ni configuración interna.
+    NUNCA usa mensaje_instrucciones ni nombres internos tipo
+    «Continuemos con: Presentar la oportunidad… ¿Seguimos?».
     """
     if not isinstance(paso, dict) or not paso:
         return None
 
-    # Campos explícitamente públicos (si existen en datos futuros / custom).
+    # Campos explícitamente públicos.
     for clave in ("mensaje_usuario", "pregunta_usuario", "texto_publico"):
         valor = str(paso.get(clave) or "").strip()
         if valor and not _parece_instruccion_interna(valor):
             return valor
 
-    # descripcion solo si parece mensaje al usuario (pregunta / texto natural).
     descripcion = str(paso.get("descripcion") or "").strip()
     if descripcion and not _parece_instruccion_interna(descripcion):
-        if "?" in descripcion or "¿" in descripcion or len(descripcion) < 160:
-            # Evitar descripciones largas tipo instructivo.
-            if not _parece_instruccion_interna(descripcion):
-                return descripcion
+        if "?" in descripcion or "¿" in descripcion:
+            return descripcion
+        if len(descripcion) <= 220 and not _parece_nombre_paso_interno(descripcion):
+            return descripcion
 
     nombre = str(paso.get("nombre") or "").strip()
     if nombre and ("?" in nombre or nombre.startswith("¿")):
@@ -1243,31 +1383,201 @@ def _texto_publico_paso(paso: Optional[Dict[str, Any]]) -> Optional[str]:
     if tipo == "confirmar_interes":
         return "¿Te gustaría continuar con el proceso de ingreso a la agencia?"
     if tipo == "hacer_pregunta":
-        if nombre:
-            return f"Para continuar, ¿me confirmas lo relacionado con «{nombre}»?"
+        if nombre and not _parece_nombre_paso_interno(nombre):
+            if "?" in nombre or "¿" in nombre:
+                return nombre
+            return f"Para continuar, ¿me confirmas: {nombre}?"
         return "Para continuar, ¿me confirmas ese dato?"
-    if tipo == "explicar_requisitos":
-        return "¿Quieres que te comparta los requisitos para continuar?"
-    if tipo == "explicar_beneficios":
-        return "¿Te cuento los beneficios de la agencia?"
-    if tipo == "explicar_bonos":
-        return "¿Quieres conocer los bonos e incentivos vigentes?"
     if tipo == "enviar_enlace":
-        return "Cuando quieras, te envío el enlace para continuar tu solicitud."
+        return (
+            "Por tu perfil podemos avanzar con la solicitud. "
+            "Te compartiré el enlace para continuar."
+        )
     if tipo in {"agendar_live", "solicitar_live"}:
         return "Cuando estés listo, te indico cómo continuar con la prueba LIVE."
     if tipo == "solicitar_evidencias":
         return "Cuando corresponda, te pediré las evidencias necesarias."
+    if tipo == "confirmar_evidencias":
+        return "Cuando envíes las evidencias, las revisaremos para continuar."
     if tipo == "transferir_humano":
         return (
             "Si prefieres, puedo dejar tu caso marcado para que un asesor "
             "del equipo lo revise."
         )
-    if tipo == "informar" and nombre:
-        return f"Continuemos con: {nombre}. ¿Seguimos?"
-    if nombre:
-        return f"Siguiente paso: {nombre}. ¿Continuamos?"
-    return "¿Seguimos con el siguiente paso del proceso?"
+    if tipo == "esperar_respuesta":
+        return "Cuando puedas, respóndeme para continuar."
+    # informar / explicar_*: no pedir «¿seguimos?» ni mostrar el nombre interno.
+    if tipo in {
+        "informar",
+        "explicar_requisitos",
+        "explicar_beneficios",
+        "explicar_bonos",
+    }:
+        return None
+    return None
+
+
+def _parece_nombre_paso_interno(texto: str) -> bool:
+    n = _normalizar_texto_salida(texto)
+    if not n:
+        return True
+    # Títulos de paso típicos (infinitivo / gerundio de acción interna).
+    if re.match(
+        r"^(presentar|confirmar|explicar|solicitar|enviar|agendar|"
+        r"transferir|clasificar|orientar|registrar|ejecutar)\b",
+        n,
+    ):
+        return True
+    if "oportunidad de la campana" in n:
+        return True
+    return False
+
+
+# Pasos que se ejecutan y avanzan sin esperar al usuario.
+_TIPOS_PASO_AUTO = frozenset(
+    {
+        "informar",
+        "explicar_requisitos",
+        "explicar_beneficios",
+        "explicar_bonos",
+    }
+)
+# Pasos que requieren respuesta real del usuario.
+_TIPOS_PASO_ESPERAN_USUARIO = frozenset(
+    {
+        "hacer_pregunta",
+        "confirmar_interes",
+        "solicitar_evidencias",
+        "confirmar_evidencias",
+        "esperar_respuesta",
+        "agendar_live",
+        "solicitar_live",
+    }
+)
+
+
+def _contenido_ejecucion_paso_auto(
+    contexto: ConversationalContext,
+    paso: Dict[str, Any],
+) -> Optional[str]:
+    """
+    Contenido público al ejecutar un paso informativo.
+    Usa datos configurados (requisitos/beneficios/campaña/texto público).
+    Nunca expone mensaje_instrucciones ni el nombre interno del paso.
+    """
+    tipo = str(paso.get("tipo_accion") or "").strip().lower()
+
+    for clave in ("mensaje_usuario", "texto_publico", "pregunta_usuario"):
+        valor = str(paso.get(clave) or "").strip()
+        if valor and not _parece_instruccion_interna(valor):
+            return valor
+
+    descripcion = str(paso.get("descripcion") or "").strip()
+    if (
+        descripcion
+        and not _parece_instruccion_interna(descripcion)
+        and not _parece_nombre_paso_interno(descripcion)
+    ):
+        return descripcion
+
+    if tipo == "explicar_requisitos":
+        return _construir_texto_informativo_inteligente(
+            contexto, "requisitos", "requisitos"
+        ) or None
+    if tipo == "explicar_beneficios":
+        return _construir_texto_informativo_inteligente(
+            contexto, "beneficios", "beneficios"
+        ) or None
+    if tipo == "explicar_bonos":
+        return _construir_texto_informativo_inteligente(
+            contexto, "bonos", "bonos"
+        ) or None
+
+    if tipo == "informar":
+        campania = contexto.campania or {}
+        for clave in (
+            "mensaje_bienvenida",
+            "descripcion_publica",
+            "descripcion",
+            "nombre",
+        ):
+            valor = str(campania.get(clave) or "").strip()
+            if (
+                valor
+                and not _parece_instruccion_interna(valor)
+                and not _parece_nombre_paso_interno(valor)
+            ):
+                if clave == "nombre":
+                    return (
+                        f"Esta campaña ({valor}) te ofrece una oportunidad "
+                        "para avanzar con la agencia."
+                    )
+                return valor
+        asistente = contexto.asistente or {}
+        intro = str(asistente.get("texto_presentacion_oportunidad") or "").strip()
+        if intro and not _parece_instruccion_interna(intro):
+            return intro
+        # Sin contenido público: no inventar ni mostrar el nombre del paso.
+        return None
+
+    return None
+
+
+async def _avanzar_paso_flujo(
+    contexto: ConversationalContext,
+    *,
+    dry_run: bool,
+) -> Optional[Dict[str, Any]]:
+    """Avanza al siguiente paso activo del flujo actual. None si no hay más."""
+    flujo = contexto.flujo or {}
+    flujo_id = flujo.get("id") or (contexto.conversacion or {}).get("flujo_id")
+    if not flujo_id:
+        return None
+    pasos = (
+        await _db(
+            "listar_flujo_pasos",
+            contexto.agencia_id,
+            int(flujo_id),
+            solo_activos=True,
+            default=[],
+        )
+        or []
+    )
+    pasos_ord = sorted(
+        [p for p in pasos if p],
+        key=lambda p: (int(p.get("orden") or 0), int(p.get("id") or 0)),
+    )
+    actual_id = (contexto.conversacion or {}).get("paso_actual_id") or (
+        contexto.paso or {}
+    ).get("id")
+    siguiente = None
+    encontrado = False
+    for p in pasos_ord:
+        if encontrado:
+            siguiente = p
+            break
+        if int(p.get("id") or 0) == int(actual_id or 0):
+            encontrado = True
+    if not encontrado and pasos_ord:
+        # Paso actual no listado: tomar el primero pendiente por orden.
+        siguiente = pasos_ord[0]
+    if not siguiente:
+        return None
+
+    campos = {
+        "paso_actual_id": siguiente.get("id"),
+        "estado_actual": "paso_avanzado",
+    }
+    if not dry_run and contexto.conversacion_id:
+        await _db(
+            "actualizar_conversacion",
+            contexto.agencia_id,
+            contexto.conversacion_id,
+            campos,
+        )
+    contexto.conversacion.update(campos)
+    contexto.paso = siguiente
+    return siguiente
 
 
 def _contexto_conversacion_dict(conversacion: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -1331,6 +1641,152 @@ async def _limpiar_pregunta_pendiente(
         contexto.conversacion_id,
         {"contexto": ctx},
     )
+
+
+def _interpretar_respuesta_a_pregunta_pendiente(
+    contexto: ConversationalContext,
+    texto_usuario: str,
+) -> Optional[Dict[str, Any]]:
+    """
+    Prioridad: interpretar la respuesta contra pregunta_pendiente
+    ANTES de tratar el texto como nueva intención informativa.
+    """
+    pendiente = _leer_pregunta_pendiente(contexto.conversacion)
+    if not pendiente:
+        return None
+
+    campo = str(pendiente.get("campo") or "").lower()
+    # La clasificación de nivel se resuelve en clasificar_mensaje.
+    if campo in {"nivel_experiencia", "experiencia", "clasificacion_nivel"}:
+        return None
+
+    n = _normalizar_texto_salida(texto_usuario)
+    if not n:
+        return None
+
+    preg = _normalizar_texto_salida(str(pendiente.get("texto") or ""))
+    tipo = str(pendiente.get("tipo") or "").lower()
+
+    ambiguos = {
+        "mas o menos",
+        "más o menos",
+        "masomenos",
+        "regular",
+        "no se",
+        "nose",
+        "no sé",
+        "depende",
+        "algunas",
+        "algunos",
+        "a veces",
+        "masomenos",
+    }
+    if n in ambiguos or n in {"mas o menos", "más o menos"}:
+        if (
+            "requisito" in preg
+            or "cumple" in preg
+            or "cumple" in campo
+            or "requisito" in campo
+            or tipo in {"hacer_pregunta", "confirmar_interes"}
+        ):
+            return {
+                "tipo": "aclarar_pendiente",
+                "respuesta": (
+                    "Claro. ¿Cuál de estos requisitos no cumples o no tienes claro?"
+                    if "requisito" in preg or "requisito" in campo or "cumple" in preg
+                    else (
+                        "No hay problema. ¿Puedes precisarme un poco más "
+                        "para continuar con lo que te pregunté?"
+                    )
+                ),
+                "pendiente": pendiente,
+            }
+
+    # Respuestas cortas afirmativas/negativas a la pregunta pendiente:
+    # no tratarlas como interrupción informativa.
+    if n in {"si", "sip", "claro", "ok", "okay", "vale", "de acuerdo", "no", "nop"}:
+        return {"tipo": "respuesta_pendiente", "pendiente": pendiente}
+
+    # Si parece pregunta informativa explícita, dejar que la interrupción actúe.
+    if "?" in str(texto_usuario or "") or "¿" in str(texto_usuario or ""):
+        return None
+
+    # Texto afirmativo/negativo largo sin marcadores de tema informativo:
+    # pertenece a la pregunta pendiente.
+    if not any(
+        k in n
+        for k in (
+            "requisito",
+            "beneficio",
+            "bono",
+            "proceso",
+            "agencia",
+            "como funciona",
+        )
+    ):
+        return {"tipo": "respuesta_pendiente", "pendiente": pendiente}
+
+    return None
+
+
+async def _responder_aclaracion_pendiente(
+    *,
+    contexto: ConversationalContext,
+    interpretacion: Dict[str, Any],
+    conversacion_id: Optional[int],
+    mensaje_entrante_id: Optional[int],
+    texto_usuario: str,
+    canal: str,
+    token: Optional[str],
+    phone_number_id: Optional[str],
+    destino: Optional[str],
+    enviar_callback: Optional[EnviarCallback],
+    dry_run: bool,
+) -> Dict[str, Any]:
+    pendiente = interpretacion.get("pendiente") or _leer_pregunta_pendiente(
+        contexto.conversacion
+    )
+    respuesta = _sanitizar_respuesta_usuario(
+        str(interpretacion.get("respuesta") or "").strip()
+    )
+    envio = await _enviar_respuesta(
+        canal=canal,
+        texto=respuesta,
+        enlaces=[],
+        token=token,
+        phone_number_id=phone_number_id,
+        destino=destino,
+        enviar_callback=enviar_callback,
+        dry_run=dry_run,
+    )
+    if pendiente:
+        await _guardar_pregunta_pendiente(contexto, pendiente, dry_run=dry_run)
+    await _actualizar_cierre_de_turno(
+        contexto,
+        respuesta=respuesta,
+        mensaje_usuario=texto_usuario,
+        acciones=[{"tipo": "aclarar_pregunta_pendiente"}],
+        escalado=False,
+        cerrada=False,
+        dry_run=dry_run,
+    )
+    return {
+        "usado": True,
+        "motivo": None,
+        "conversacion_id": conversacion_id,
+        "mensaje_entrante_id": mensaje_entrante_id,
+        "respuesta": respuesta,
+        "modo": contexto.modo,
+        "acciones": [{"tipo": "aclarar_pregunta_pendiente"}],
+        "enlaces": [],
+        "escalado": False,
+        "cerrada": False,
+        "enviado": envio.get("enviado"),
+        "error": envio.get("error"),
+        "pregunta_pendiente": pendiente,
+        "tipo_chatbot": "inteligente",
+        "modo_humano": False,
+    }
 
 
 def _detectar_intencion_interrupcion_informativa(texto: str) -> Optional[str]:
@@ -1776,13 +2232,17 @@ def _pendiente_desde_paso(
     """Construye pregunta_pendiente pública a partir del paso actual."""
     paso = contexto.paso or {}
     paso_id = (contexto.conversacion or {}).get("paso_actual_id") or paso.get("id")
-    texto = _texto_publico_paso(paso)
+    tipo = str(paso.get("tipo_accion") or "").strip().lower()
+    # Pasos auto no generan pregunta pendiente.
+    if tipo in _TIPOS_PASO_AUTO:
+        return None
+    texto = _texto_publico_paso(paso, contexto=contexto)
     if not paso_id or not texto:
         return None
     return {
         "paso_id": paso_id,
         "campo": str(paso.get("codigo") or "paso_actual"),
-        "tipo": str(paso.get("tipo_accion") or "hacer_pregunta"),
+        "tipo": tipo or "hacer_pregunta",
         "texto": texto,
     }
 
@@ -1803,34 +2263,111 @@ async def _resolver_siguiente_paso_pendiente(
     origen: str = "flujo",
 ) -> Dict[str, Any]:
     """
-    Garantiza continuidad: prefijo opcional + pregunta/acción clara del paso.
+    Continuidad proactiva:
+    - ejecuta pasos informativos automáticamente;
+    - avanza hasta un paso que realmente necesite respuesta del usuario;
+    - nunca muestra «Continuemos con: [nombre interno]. ¿Seguimos?».
     """
-    pendiente = _pendiente_desde_paso(contexto)
-    pregunta = str((pendiente or {}).get("texto") or "").strip()
-    if not pregunta:
-        pregunta = "¿Seguimos con el siguiente paso del proceso?"
+    bloques: List[str] = []
+    pref = _sanitizar_respuesta_usuario(str(prefijo or "").strip())
+    if pref:
+        bloques.append(pref)
+
+    pendiente: Optional[Dict[str, Any]] = None
+    max_hops = 10
+
+    for _ in range(max_hops):
+        paso = contexto.paso or {}
+        if not paso:
+            break
+        tipo = str(paso.get("tipo_accion") or "").strip().lower()
+        paso_id = paso.get("id") or (contexto.conversacion or {}).get(
+            "paso_actual_id"
+        )
+
+        if tipo in _TIPOS_PASO_AUTO:
+            contenido = _contenido_ejecucion_paso_auto(contexto, paso)
+            if contenido:
+                limpio = _sanitizar_respuesta_usuario(contenido)
+                if limpio and limpio not in bloques:
+                    bloques.append(limpio)
+            logger.info(
+                "[CHATBOT_FLUJO] conversacion_id=%s paso_id=%s "
+                "tipo_accion=%s accion=ejecutado_auto origen=%s",
+                conversacion_id,
+                paso_id,
+                tipo,
+                origen,
+            )
+            siguiente = await _avanzar_paso_flujo(contexto, dry_run=dry_run)
+            if not siguiente:
+                break
+            continue
+
+        # Paso que espera usuario o acción con instrucción clara.
+        texto_paso = _texto_publico_paso(paso, contexto=contexto)
+        if not texto_paso and tipo in {"enviar_enlace", "transferir_humano", "finalizar"}:
+            texto_paso = _texto_publico_paso(
+                {**paso, "tipo_accion": tipo}, contexto=contexto
+            )
+        if not texto_paso:
+            # Sin texto público usable: intentar avanzar en lugar de inventar.
+            logger.info(
+                "[CHATBOT_FLUJO] conversacion_id=%s paso_id=%s "
+                "tipo_accion=%s accion=omitido_sin_texto_publico origen=%s",
+                conversacion_id,
+                paso_id,
+                tipo,
+                origen,
+            )
+            siguiente = await _avanzar_paso_flujo(contexto, dry_run=dry_run)
+            if not siguiente:
+                break
+            continue
+
+        logger.info(
+            "[CHATBOT_FLUJO] conversacion_id=%s paso_id=%s "
+            "tipo_accion=%s accion=esperando_usuario origen=%s",
+            conversacion_id,
+            paso_id,
+            tipo,
+            origen,
+        )
+        if texto_paso not in bloques:
+            bloques.append(_sanitizar_respuesta_usuario(texto_paso))
         pendiente = {
+            "paso_id": paso_id,
+            "campo": str(paso.get("codigo") or "paso_actual"),
+            "tipo": tipo or "hacer_pregunta",
+            "texto": texto_paso,
+        }
+        break
+
+    respuesta = _sanitizar_respuesta_usuario("\n\n".join(b for b in bloques if b))
+    if not respuesta:
+        respuesta = (
+            "Continuemos. ¿Me confirmas el siguiente dato para avanzar?"
+        )
+        pendiente = pendiente or {
             "paso_id": (contexto.conversacion or {}).get("paso_actual_id"),
             "campo": "paso_actual",
             "tipo": "hacer_pregunta",
-            "texto": pregunta,
+            "texto": respuesta,
         }
 
-    pref = _sanitizar_respuesta_usuario(str(prefijo or "").strip())
-    if pref and pregunta not in pref:
-        respuesta = f"{pref}\n\n{pregunta}"
-    else:
-        respuesta = pregunta
-    respuesta = _sanitizar_respuesta_usuario(respuesta)
-
-    logger.info(
-        "[CHATBOT_FLUJO] conversacion_id=%s paso_actual_id=%s "
-        "tipo_accion=%s accion=ejecutar origen=%s",
-        conversacion_id,
-        (pendiente or {}).get("paso_id"),
-        (pendiente or {}).get("tipo"),
-        origen,
-    )
+    # Guardia: nunca filtrar a nombres internos residuales.
+    if _parece_nombre_paso_interno(respuesta) or "continuemos con:" in _normalizar_texto_salida(
+        respuesta
+    ):
+        logger.warning(
+            "[CHATBOT_SEGURIDAD_SALIDA] motivo=nombre_paso_interno_en_respuesta"
+        )
+        respuesta = pref or (
+            "Perfecto. Antes de continuar, ¿eres mayor de 18 años?"
+            if (contexto.paso or {}).get("tipo_accion") == "hacer_pregunta"
+            else "Perfecto, sigamos con el siguiente dato."
+        )
+        respuesta = _sanitizar_respuesta_usuario(respuesta)
 
     envio = await _enviar_respuesta(
         canal=canal,
@@ -1869,6 +2406,8 @@ async def _resolver_siguiente_paso_pendiente(
 
     if pendiente:
         await _guardar_pregunta_pendiente(contexto, pendiente, dry_run=dry_run)
+    else:
+        await _limpiar_pregunta_pendiente(contexto, dry_run=dry_run)
 
     await _actualizar_cierre_de_turno(
         contexto,
@@ -2214,6 +2753,17 @@ async def _aplicar_clasificacion_adaptativa(
             )
         ):
             await _limpiar_pregunta_pendiente(contexto, dry_run=dry_run)
+            ctx_ok = _contexto_conversacion_dict(contexto.conversacion)
+            if "intentos_pregunta_nivel" in ctx_ok:
+                ctx_ok.pop("intentos_pregunta_nivel", None)
+                contexto.conversacion["contexto"] = ctx_ok
+                if not dry_run and contexto.conversacion_id:
+                    await _db(
+                        "actualizar_conversacion",
+                        contexto.agencia_id,
+                        contexto.conversacion_id,
+                        {"contexto": ctx_ok},
+                    )
 
     if not dry_run and contexto.conversacion_id:
         if resultado.campos_conversacion:

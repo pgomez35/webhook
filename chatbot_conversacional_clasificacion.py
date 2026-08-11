@@ -25,39 +25,100 @@ FUENTES_ESTABLES = frozenset(
 )
 FUENTES_BLOQUEANTES = frozenset({"manual"})
 
-_PATRONES_EXPERIMENTADO = (
-    r"\bya hago\b",
-    r"\bya hago live",
-    r"\bya hago lives\b",
-    r"\bya realizo\b",
-    r"\bhago lives?\b",
-    r"\bhago transmisiones\b",
-    r"\btengo experiencia\b",
-    r"\bhago live desde\b",
-    r"\bhago live hace\b",
-    r"\bhago lives hace\b",
-    r"\bdesde hace\b.*\blive",
-    r"\blive hace\b",
-    r"\bsoy bueno\b",
-    r"\bya transmit",
+# Ortografía / typos frecuentes en mensajes de WhatsApp.
+_CORRECCIONES_ORTOGRAFIA = (
+    (r"\bdsde\b", "desde"),
+    (r"\bdesd\b", "desde"),
+    (r"\bceroo\b", "cero"),
+    (r"\blvies\b", "lives"),
+    (r"\btrasmision(?:es)?\b", "transmision"),
+    (r"\btrasmisi(?:on|ones)\b", "transmision"),
 )
-_PATRONES_PRINCIPIANTE = (
-    r"\bnunca he hecho\b",
-    r"\bnunca he hecho live",
-    r"\bnunca he hecho lives\b",
-    r"\bnunca hice\b",
-    r"\bno he hecho live",
-    r"\bno he hecho lives\b",
-    r"\bno tengo experiencia\b",
-    r"\bsin experiencia\b",
-    r"\bno s[eé] c[oó]mo\b",
-    r"\bsoy nuevo\b",
-    r"\bsoy nueva\b",
+
+# Negación / sin experiencia: PRIORIDAD sobre cualquier token "realizo/hago".
+_PATRONES_PRINCIPIANTE_NEGACION = (
+    r"\bno\s+he\s+(hecho|realizado|iniciado|empezado)\b",
+    r"\bno\s+he\s+(hecho|realizado)\b.*\b(live|lives|transmisi)",
+    r"\bno\s+he\s+(hecho|realizado)\b.*\blives?\b",
+    r"\bnunca\s+he\s+(hecho|realizado|iniciado|transmit)",
+    r"\bnunca\s+(hice|realice|realic[eé]|transmit)",
+    r"\bnunca\b.*\b(live|lives|transmisi)",
+    r"\bno\s+tengo\s+(ninguna\s+)?(clase\s+de\s+)?experiencia",
+    r"\bninguna\s+(clase\s+de\s+)?experiencia",
+    r"\bsin\s+(ninguna\s+)?experiencia",
+    r"\bno\s+tengo\s+ninguna",
+    r"\bno\s+realizo\b",
+    r"\bno\s+hago\s+(live|lives|transmisi)",
+    r"\bno\s+transmit",
+    r"\btodavia\s+no\b",
+    r"\baun\s+no\b",
+    r"\bni\s+(he\s+)?realizado\b",
+    r"\bni\s+(he\s+)?hecho\b.*\b(live|lives|transmisi)",
+)
+
+_PATRONES_PRINCIPIANTE_INICIO = (
+    r"\b(comenzar|empezar|iniciar|arran?car)\s+desde\s+cero\b",
+    r"\bquiero\s+(comenzar|empezar|iniciar)\s+desde\s+cero\b",
+    r"\bquiero\s+(comenzar|empezar|iniciar)\b",
+    r"\bdesde\s+cero\b",
+    r"\bsoy\s+nuev[oa]\b",
     r"\bprincipiante\b",
-    r"\bempezar desde cero\b",
-    r"\bquiero aprender\b",
-    r"\bnunca transmit",
-    r"\bno s[eé] hacer live",
+    r"\bquiero\s+aprender\b",
+    r"\bno\s+s[eé]\s+(hacer|como\s+hacer)\s+live",
+    r"\bno\s+s[eé]\s+c[oó]mo\b",
+)
+
+# Experiencia afirmativa (solo si NO hubo negación previa).
+_PATRONES_EXPERIMENTADO = (
+    r"\bya\s+(hago|realizo|transmito|transmitiendo)\b",
+    r"\bya\s+hago\s+lives?\b",
+    r"\bya\s+realizo\s+transmisi",
+    r"\bhago\s+lives?\b",
+    r"\bhago\s+transmisi",
+    r"\brealizo\s+transmisi",
+    r"\btengo\s+experiencia\b",
+    r"\bhago\s+live\s+(desde|hace)\b",
+    r"\bllevo\s+.+\s+(mes|meses|ano|anos|semana|semanas)\b",
+    r"\bdesde\s+hace\b",
+    r"\btransmito\s+(actualmente|ahora|ya|hace|desde)\b",
+    r"\bya\s+soy\s+creador\b",
+    r"\bsoy\s+creador\s+live\b",
+    r"\bya\s+transmit",
+    r"\bexperiencia\s+con\s+live\b",
+)
+
+_PATRONES_RESPUESTA_CORTA_PRINCIPIANTE = frozenset(
+    {
+        "no",
+        "nop",
+        "nel",
+        "nao",
+        "nunca",
+        "para nada",
+        "negativo",
+        "desde cero",
+        "cero",
+    }
+)
+_PATRONES_RESPUESTA_CORTA_EXPERIMENTADO = frozenset(
+    {
+        "si",
+        "sip",
+        "sep",
+        "claro",
+        "afirmativo",
+        "exacto",
+        "asi es",
+        "asi mismo",
+    }
+)
+_PATRONES_YA_RESPONDIDO_NEGATIVO = (
+    r"\bya\s+(te\s+)?dije\s+que\s+no\b",
+    r"\bte\s+dije\s+que\s+no\b",
+    r"\bya\s+(te\s+)?lo\s+dije\b",
+    r"\bcomo\s+(ya\s+)?dije\b",
+    r"\bya\s+respondi\b",
+    r"\blo\s+mismo\b",
 )
 _PATRONES_BONOS = (r"\bbono", r"\bincentivo", r"\bbienvenida")
 _PATRONES_REQUISITOS = (r"\brequisito", r"\bqu[eé] piden\b", r"\bnecesito para")
@@ -115,11 +176,118 @@ def _normalizar(texto: str) -> str:
     valor = unicodedata.normalize("NFD", valor)
     valor = "".join(ch for ch in valor if unicodedata.category(ch) != "Mn")
     valor = re.sub(r"[^\w\s]", " ", valor, flags=re.UNICODE)
-    return re.sub(r"\s+", " ", valor).strip()
+    valor = re.sub(r"\s+", " ", valor).strip()
+    for patron, repl in _CORRECCIONES_ORTOGRAFIA:
+        valor = re.sub(patron, repl, valor)
+    return valor
 
 
 def _coincide(texto: str, patrones: Tuple[str, ...]) -> bool:
     return any(re.search(p, texto) for p in patrones)
+
+
+def _pregunta_nivel_pendiente(conversacion: Optional[Dict[str, Any]]) -> bool:
+    conv = conversacion or {}
+    ctx = conv.get("contexto") or {}
+    if isinstance(ctx, str):
+        try:
+            import json
+
+            ctx = json.loads(ctx)
+        except Exception:  # noqa: BLE001
+            ctx = {}
+    if not isinstance(ctx, dict):
+        return False
+    pendiente = ctx.get("pregunta_pendiente") or {}
+    if not isinstance(pendiente, dict):
+        return False
+    campo = str(pendiente.get("campo") or "").lower()
+    return campo in {"nivel_experiencia", "experiencia", "clasificacion_nivel"}
+
+
+def _nivel_desde_respuesta_corta(n: str) -> Optional[str]:
+    if not n:
+        return None
+    if _coincide(n, _PATRONES_YA_RESPONDIDO_NEGATIVO):
+        return "principiante"
+    if n in _PATRONES_RESPUESTA_CORTA_PRINCIPIANTE:
+        return "principiante"
+    if n in _PATRONES_RESPUESTA_CORTA_EXPERIMENTADO:
+        return "experimentado"
+    return None
+
+
+def _es_principiante_deterministico(n: str) -> Tuple[bool, str]:
+    if n in {"nunca", "principiante", "desde cero", "cero"}:
+        return True, "deterministico_inicio"
+    if _coincide(n, _PATRONES_PRINCIPIANTE_NEGACION):
+        return True, "deterministico_negacion"
+    if _coincide(n, _PATRONES_PRINCIPIANTE_INICIO):
+        return True, "deterministico_inicio"
+    # “ninguna … lives/experiencia” sin verbos exactos.
+    if "ninguna" in n and (
+        "experiencia" in n or "live" in n or "transmisi" in n
+    ):
+        return True, "deterministico_negacion"
+    return False, ""
+
+
+def _es_experimentado_deterministico(n: str) -> Tuple[bool, str]:
+    # Seguridad: si hay negación clara, nunca experimentado.
+    if _coincide(n, _PATRONES_PRINCIPIANTE_NEGACION):
+        return False, ""
+    if re.search(r"\bno\s+(tengo|he|hago|realizo|transmit)", n):
+        return False, ""
+    if _coincide(n, _PATRONES_EXPERIMENTADO):
+        return True, "deterministico_experiencia"
+    return False, ""
+
+
+def _clasificar_nivel_con_ia(texto: str) -> Optional[Tuple[str, float, str]]:
+    """Fallback semántico: solo nivel + confianza. No genera respuesta."""
+    import json
+    import os
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key or not str(api_key).strip():
+        return None
+    system = (
+        "Clasifica la experiencia en transmisiones LIVE / TikTok LIVE del usuario. "
+        "Responde SOLO JSON: "
+        '{"nivel":"principiante|experimentado|desconocido","confianza":0.0-1.0}. '
+        "principiante = sin experiencia o quiere comenzar desde cero. "
+        "experimentado = ya transmite o tiene experiencia real. "
+        "desconocido = ambiguo. No inventes. No escribas nada más."
+    )
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=str(api_key).strip())
+        resp = client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            temperature=0,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": str(texto or "")[:500]},
+            ],
+            max_tokens=60,
+        )
+        data = json.loads((resp.choices[0].message.content or "{}").strip() or "{}")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[CHATBOT_CLASIFICACION] fallback_ia_error=%s", exc)
+        return None
+    nivel = str(data.get("nivel") or "desconocido").strip().lower()
+    if nivel not in {"principiante", "experimentado", "desconocido"}:
+        nivel = "desconocido"
+    try:
+        conf = float(data.get("confianza") or 0.0)
+    except (TypeError, ValueError):
+        conf = 0.0
+    conf = max(0.0, min(1.0, conf))
+    if nivel == "desconocido" or conf < 0.80:
+        return None
+    return nivel, conf, "ia_semantica"
 
 
 def es_saludo_o_info_corta(texto: str) -> bool:
@@ -256,15 +424,70 @@ def inferir_intencion(texto: str) -> Tuple[str, float]:
     return "desconocida", 0.35
 
 
-def inferir_nivel_desde_texto(texto: str) -> Tuple[str, float, bool, Optional[str]]:
-    """Retorna (nivel, confianza, declarado_explicitamente, evidencia_breve)."""
+def inferir_nivel_desde_texto(
+    texto: str,
+    *,
+    pregunta_nivel_pendiente: bool = False,
+    usar_ia: bool = True,
+) -> Tuple[str, float, bool, Optional[str]]:
+    """
+    Retorna (nivel, confianza, declarado_explicitamente, evidencia_breve).
+
+    Orden:
+    1) respuesta corta a pregunta de nivel pendiente (sí/no / ya dije que no)
+    2) principiante por NEGACIÓN o inicio desde cero (prioridad)
+    3) experimentado afirmativo
+    4) fallback IA semántico (solo nivel)
+    """
     n = _normalizar(texto)
-    if es_texto_ambiguo_nivel(texto):
+    if not n:
         return "desconocido", 0.1, False, None
-    if _coincide(n, _PATRONES_PRINCIPIANTE):
-        return "principiante", 0.93, True, n[:180] or None
-    if _coincide(n, _PATRONES_EXPERIMENTADO):
-        return "experimentado", 0.92, True, n[:180] or None
+
+    # Ambiguos sueltos solo si NO estamos contestando la pregunta de nivel.
+    if not pregunta_nivel_pendiente and es_texto_ambiguo_nivel(texto):
+        return "desconocido", 0.1, False, None
+
+    if pregunta_nivel_pendiente:
+        corto = _nivel_desde_respuesta_corta(n)
+        if corto:
+            logger.info(
+                "[CHATBOT_CLASIFICACION] texto=%s nivel=%s metodo=respuesta_corta_pendiente confianza=1.0",
+                n[:120],
+                corto,
+            )
+            return corto, 1.0, True, n[:180]
+
+    ok_p, metodo_p = _es_principiante_deterministico(n)
+    if ok_p:
+        logger.info(
+            "[CHATBOT_CLASIFICACION] texto=%s nivel=principiante metodo=%s confianza=1.0",
+            n[:120],
+            metodo_p,
+        )
+        return "principiante", 1.0, True, n[:180]
+
+    ok_e, metodo_e = _es_experimentado_deterministico(n)
+    if ok_e:
+        logger.info(
+            "[CHATBOT_CLASIFICACION] texto=%s nivel=experimentado metodo=%s confianza=0.95",
+            n[:120],
+            metodo_e,
+        )
+        return "experimentado", 0.95, True, n[:180]
+
+    if usar_ia and not es_texto_ambiguo_nivel(texto):
+        ia = _clasificar_nivel_con_ia(texto)
+        if ia:
+            nivel_ia, conf_ia, metodo_ia = ia
+            logger.info(
+                "[CHATBOT_CLASIFICACION] texto=%s nivel=%s metodo=%s confianza=%.2f",
+                n[:120],
+                nivel_ia,
+                metodo_ia,
+                conf_ia,
+            )
+            return nivel_ia, conf_ia, True, n[:180]
+
     return "desconocido", 0.2, False, None
 
 
@@ -370,9 +593,18 @@ def clasificar_mensaje(
     conf_asp = _float_safe(aspirante.get("nivel_experiencia_confianza"), 0.0)
     confirmado_asp = bool(aspirante.get("nivel_experiencia_confirmado_at"))
 
-    nivel_txt, conf_txt, declarado, evidencia = inferir_nivel_desde_texto(texto)
+    pendiente_nivel = _pregunta_nivel_pendiente(conversacion)
+    nivel_txt, conf_txt, declarado, evidencia = inferir_nivel_desde_texto(
+        texto,
+        pregunta_nivel_pendiente=pendiente_nivel,
+        usar_ia=True,
+    )
     intencion, conf_int = inferir_intencion(texto)
-    ambiguo = es_texto_ambiguo_nivel(texto)
+    ambiguo = es_texto_ambiguo_nivel(texto) and not pendiente_nivel
+    # Si hay pregunta de nivel pendiente, "sí/no" ya no son ambiguos sueltos.
+    if pendiente_nivel and _nivel_desde_respuesta_corta(_normalizar(texto)):
+        ambiguo = False
+
 
     # --- Prioridad de nivel ---
     nivel = "desconocido"
