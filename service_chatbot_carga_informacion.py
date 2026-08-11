@@ -265,6 +265,67 @@ def _parse_beneficios(texto: str, tipo: str = "beneficio") -> List[Dict[str, Any
     return items
 
 
+def _inferir_meta_faq(pregunta: str) -> Dict[str, Any]:
+    """Heurística ligera de categoria/intencion/keywords para carga masiva."""
+    n = _norm_nombre(pregunta)
+    meta: Dict[str, Any] = {"categoria": "general", "intencion": None}
+    if any(x in n for x in ("monetiz", "ganar dinero", "ingresos", "ganancia")):
+        meta.update(
+            {
+                "categoria": "monetizacion",
+                "intencion": "como_monetizar",
+                "palabras_clave": [
+                    "monetizar",
+                    "monetizacion",
+                    "ganar dinero",
+                    "ingresos",
+                    "ganancias",
+                ],
+            }
+        )
+    elif any(x in n for x in ("regalo", "gift")):
+        meta.update(
+            {
+                "categoria": "monetizacion",
+                "intencion": "que_son_regalos",
+                "palabras_clave": ["regalos", "regalo", "gifts", "gift"],
+            }
+        )
+    elif "diamant" in n or "diamond" in n:
+        meta.update(
+            {
+                "categoria": "monetizacion",
+                "intencion": "que_son_diamantes",
+                "palabras_clave": ["diamantes", "diamante"],
+            }
+        )
+    elif any(x in n for x in ("iniciar live", "no puedo", "no deja", "error live")):
+        meta.update(
+            {
+                "categoria": "soporte",
+                "intencion": "problema_iniciar_live",
+                "palabras_clave": ["iniciar", "live", "error", "bloqueo"],
+            }
+        )
+    elif any(x in n for x in ("cobra", "cobran", "costo", "gratis")):
+        meta.update(
+            {
+                "categoria": "agencia",
+                "intencion": "cobro_agencia",
+                "palabras_clave": ["cobra", "cobran", "costo", "gratis"],
+            }
+        )
+    elif "experiencia" in n:
+        meta.update(
+            {
+                "categoria": "requisitos",
+                "intencion": "experiencia",
+                "palabras_clave": ["experiencia", "principiante"],
+            }
+        )
+    return meta
+
+
 def _parse_faq(texto: str) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     raw = (texto or "").strip()
@@ -283,13 +344,12 @@ def _parse_faq(texto: str) -> List[Dict[str, Any]]:
             pregunta = pm.group(1).splitlines()[0].strip()
             respuesta = rm.group(1).strip()
             if pregunta and respuesta:
-                items.append(
-                    {
-                        "pregunta": pregunta[:2000],
-                        "respuesta": respuesta[:8000],
-                        "categoria": "general",
-                    }
-                )
+                item = {
+                    "pregunta": pregunta[:2000],
+                    "respuesta": respuesta[:8000],
+                }
+                item.update(_inferir_meta_faq(pregunta))
+                items.append(item)
     if items:
         return items
 
@@ -300,13 +360,12 @@ def _parse_faq(texto: str) -> List[Dict[str, Any]]:
             pregunta = (preg + "?").strip()
             respuesta = resp.strip()
             if pregunta and respuesta:
-                items.append(
-                    {
-                        "pregunta": pregunta[:2000],
-                        "respuesta": respuesta[:8000],
-                        "categoria": "general",
-                    }
-                )
+                item = {
+                    "pregunta": pregunta[:2000],
+                    "respuesta": respuesta[:8000],
+                }
+                item.update(_inferir_meta_faq(pregunta))
+                items.append(item)
     return items
 
 
@@ -456,7 +515,12 @@ def _analizar_con_openai(payload: Dict[str, Any], base: Dict[str, Any]) -> Dict[
             "Organizas información de una agencia para un chatbot de captación. "
             "NO inventes montos, bonos, requisitos ni enlaces. "
             "Si falta un dato, omítelo. Conserva cifras y condiciones. "
-            "Separa beneficios de bonos. Responde SOLO JSON válido con las claves: "
+            "Separa beneficios de bonos. "
+            "En faq: cada ítem debe ser una pregunta real de aspirantes con su "
+            "respuesta; incluye categoria, intencion y palabras_clave relevantes "
+            "(sin mezclar temas distintos, p. ej. monetizar ≠ no poder iniciar LIVE). "
+            "NO conviertas el proceso de ingreso en FAQs. "
+            "Responde SOLO JSON válido con las claves: "
             "requisitos, beneficios, bonos, faq, proceso_ingreso, recursos, "
             "contacto_humano, advertencias."
         )
@@ -831,18 +895,37 @@ def guardar_informacion_organizada(
                 continue
             campos = {
                 "pregunta": pregunta[:2000],
-                "respuesta_corta": respuesta[:300],
-                "respuesta_completa": respuesta[:8000],
+                "respuesta_corta": str(
+                    item.get("respuesta_corta") or respuesta
+                )[:300],
+                "respuesta_completa": str(
+                    item.get("respuesta_completa") or respuesta
+                )[:8000],
                 "activo": True,
                 "categoria": str(item.get("categoria") or "general")[:100],
                 "prioridad": max(0, 100 - i),
             }
-            # Palabras clave derivadas de la pregunta (mejora Otras preguntas).
+            if item.get("intencion"):
+                campos["intencion"] = str(item.get("intencion"))[:100]
+            # Palabras clave derivadas (sin stopwords / ruido).
             if not item.get("palabras_clave"):
+                stop = {
+                    "como",
+                    "puedo",
+                    "puede",
+                    "que",
+                    "cual",
+                    "para",
+                    "hacer",
+                    "haciendo",
+                    "live",
+                    "lives",
+                    "tiktok",
+                }
                 toks = [
                     t
                     for t in _norm_nombre(pregunta).split()
-                    if len(t) > 3
+                    if len(t) > 3 and t not in stop
                 ][:8]
                 if toks:
                     campos["palabras_clave"] = toks

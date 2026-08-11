@@ -38,7 +38,7 @@ DEFAULTS_PRESENTACION = {
     "mostrar_menu_inicial": True,
     "titulo_menu_inicial": "Puedo ayudarte con información sobre:",
     "texto_indicacion_menu": (
-        "Escribe el número de la opción o cuéntame qué deseas saber."
+        "Escribe el número de una opción o pregúntame directamente lo que quieras saber."
     ),
     "formato_respuestas_informativas": "lista",
     "max_elementos_respuesta": 15,
@@ -48,12 +48,12 @@ DEFAULTS_PRESENTACION = {
     "pie_volver_menu": "Escribe *menu* para volver al menú.",
     "mensaje_no_entendido": (
         "No entendí tu mensaje. Puedes escribir el número de una opción "
-        "o contarme qué deseas saber."
+        "o preguntarme algo concreto sobre la agencia."
     ),
     "mensaje_sin_informacion": (
-        "No tengo esa información confirmada en este momento. "
-        "Dejé tu consulta pendiente para revisión y puedo seguir ayudándote "
-        "con otras preguntas."
+        "No tengo información confirmada sobre ese tema. "
+        "Puedes preguntarme otra cosa o escribir *asesor* si quieres "
+        "que el equipo lo revise contigo."
     ),
     "mensaje_escalamiento_sin_bloqueo": (
         "Dejé tu consulta marcada para que un asesor la revise. "
@@ -68,14 +68,14 @@ DEFAULTS_PRESENTACION = {
         "Escríbeme tu pregunta y te respondo con la información disponible."
     ),
     "mensaje_faq_no_encontrada": (
-        "No encontré una respuesta confirmada para esa pregunta. "
-        "Puedes reformularla con otras palabras, escribir *menu* para ver "
-        "las opciones o *asesor* para hablar con una persona del equipo."
+        "No tengo información confirmada sobre ese tema. "
+        "Puedes preguntarme otra cosa o escribir *asesor* si quieres "
+        "que el equipo lo revise contigo."
     ),
     "mensaje_opcion_no_valida": (
         "Esa no es una opción válida del menú.\n\n"
         "Escribe el *número* de una opción, *menu* para verlas otra vez "
-        "u *Otras preguntas* para consultar algo que no esté en la lista."
+        "o pregúntame directamente lo que quieras saber."
     ),
 }
 
@@ -1540,36 +1540,34 @@ async def procesar_mensaje_informativo(
     except Exception as exc:  # noqa: BLE001
         logger.warning("[CHATBOT_MENU] no se pudo listar menú: %s", exc)
 
-    # Completar «Otras preguntas» en menús ya existentes (idempotente).
+    # Sembrar menú vacío o desactivar «Otras preguntas» históricas.
     if not dry_run:
-        codigos_menu = {
-            str(o.get("codigo") or "").strip().lower()
-            for o in (opciones or [])
-            if o.get("codigo")
-        }
-        if "otras_preguntas" not in codigos_menu:
-            try:
-                seed = db_conv.asegurar_menu_informativo_base(
+        try:
+            seed = db_conv.asegurar_menu_informativo_base(
+                agencia_id,
+                chatbot_configuracion_id,
+            )
+            if (
+                not opciones
+                or int(seed.get("insertadas") or 0) > 0
+                or int(seed.get("desactivadas") or 0) > 0
+            ):
+                opciones = db_conv.listar_menu_informativo(
                     agencia_id,
-                    chatbot_configuracion_id,
+                    chatbot_configuracion_id=chatbot_configuracion_id,
+                    solo_activas=True,
                 )
-                if (
-                    not opciones
-                    or int(seed.get("insertadas") or 0) > 0
-                    or int(seed.get("reactivadas") or 0) > 0
-                ):
-                    opciones = db_conv.listar_menu_informativo(
-                        agencia_id,
-                        chatbot_configuracion_id=chatbot_configuracion_id,
-                        solo_activas=True,
-                    )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "[CHATBOT_MENU] no se pudo sembrar/completar menú: %s", exc
-                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[CHATBOT_MENU] no se pudo sembrar/actualizar menú: %s", exc
+            )
 
-    # Si la BD rechazó el insert (p. ej. constraint viejo), igual mostramos la opción.
-    opciones = garantizar_opcion_otras_preguntas(opciones)
+    # FAQ es conocimiento interno: no inyectar «Otras preguntas» en el menú.
+    opciones = [
+        o
+        for o in (opciones or [])
+        if _normalizar(str(o.get("codigo") or "")) != "otras_preguntas"
+    ]
     opciones = ordenar_opciones_menu(opciones)
     nombre_agencia = str(
         (agencia or {}).get("nombre")
@@ -1734,62 +1732,37 @@ async def procesar_mensaje_informativo(
             "menu": True,
         }
 
-    # Tras "Otras preguntas": la siguiente entrada se consulta en FAQ
-    # (salvo que elijan otra opción del menú).
+    # Compat: si quedó pendiente de «Otras preguntas», tratar como consulta FAQ libre.
     if ctx_conv.get("pregunta_faq_pendiente") and texto_in:
         op_menu, modo_menu = resolver_opcion_menu(texto_in, opciones)
         if not (modo_menu in {"numero", "texto"} and op_menu):
-            faqs_pend: List[Dict[str, Any]] = []
-            try:
-                faqs_pend = db_conv.listar_faqs(
-                    agencia_id,
-                    chatbot_configuracion_id=chatbot_configuracion_id,
-                    solo_activos=True,
-                ) or []
-            except Exception:
-                faqs_pend = []
-            respuesta = _buscar_faq(faqs_pend, None, texto_in)
-            if respuesta:
-                _set_pregunta_faq_pendiente(
-                    db_conv=db_conv,
-                    agencia_id=agencia_id,
-                    conversacion_id=conversacion_id,
-                    conversacion=conversacion,
-                    activa=False,
-                    dry_run=dry_run,
-                )
-            else:
-                # Mantener el modo para que puedan reformular sin volver a elegir 5.
-                respuesta = str(
-                    presentacion.get("mensaje_faq_no_encontrada")
-                    or DEFAULTS_PRESENTACION["mensaje_faq_no_encontrada"]
-                )
-            respuesta = _con_pie_menu(respuesta, presentacion)
-            envio = await garantizar_respuesta_saliente(
+            r_faq = await _responder_conocimiento_faq(
+                texto_in,
                 agencia_id=agencia_id,
+                chatbot_configuracion_id=chatbot_configuracion_id,
+                presentacion=presentacion,
+                db_conv=db_conv,
+                db_cap=db_cap,
                 conversacion_id=conversacion_id,
+                conversacion=conversacion,
                 canal=canal,
-                texto=respuesta,
                 dry_run=dry_run,
                 enviar_callback=enviar_callback,
                 token=token,
                 phone_number_id=phone_number_id,
                 destino=destino,
-                motivo_fallback="faq_otras_preguntas",
                 mensaje_externo_id=mensaje_externo_id,
+                aspirante_id=aspirante_id,
             )
-            return {
-                "usado": True,
-                "motivo": None if respuesta else "faq_no_encontrada",
-                "respuesta": respuesta,
-                "respuesta_enviada": bool(envio.get("enviado") is True) or dry_run,
-                "requiere_asesor": False,
-                "modo_humano": False,
-                "enlaces": [],
-                "intencion": "faq",
-                "faq": True,
-                "otras_preguntas": True,
-            }
+            _set_pregunta_faq_pendiente(
+                db_conv=db_conv,
+                agencia_id=agencia_id,
+                conversacion_id=conversacion_id,
+                conversacion=conversacion,
+                activa=False,
+                dry_run=dry_run,
+            )
+            return r_faq
         _set_pregunta_faq_pendiente(
             db_conv=db_conv,
             agencia_id=agencia_id,
@@ -1874,20 +1847,45 @@ async def procesar_mensaje_informativo(
                 "intencion": str(lista_detalle.get("tipo") or "detalle"),
             }
 
-    # Fuera de «Otras preguntas», no contestamos consultas libres ni con IA:
-    # el menú es numerado; las preguntas van por esa opción.
+    # Pregunta libre en cualquier momento → conocimiento FAQ (sin pasar por menú).
+    if texto_in and (
+        _parece_pregunta_libre(texto_in)
+        or (resolver_opcion_menu(texto_in, opciones)[1] == "ninguna")
+    ):
+        op_previa, modo_previo = resolver_opcion_menu(texto_in, opciones)
+        # Si es selección clara de menú (número/título corto), no forzar FAQ.
+        if not (modo_previo in {"numero", "texto"} and op_previa):
+            return await _responder_conocimiento_faq(
+                texto_in,
+                agencia_id=agencia_id,
+                chatbot_configuracion_id=chatbot_configuracion_id,
+                presentacion=presentacion,
+                db_conv=db_conv,
+                db_cap=db_cap,
+                conversacion_id=conversacion_id,
+                conversacion=conversacion,
+                canal=canal,
+                dry_run=dry_run,
+                enviar_callback=enviar_callback,
+                token=token,
+                phone_number_id=phone_number_id,
+                destino=destino,
+                mensaje_externo_id=mensaje_externo_id,
+                aspirante_id=aspirante_id,
+                texto_menu=texto_menu,
+            )
+
     opcion, modo = resolver_opcion_menu(texto_in, opciones)
     requiere_asesor = False
     respuesta = ""
     intencion = "desconocida"
 
-    if modo == "invalido" or (modo == "ninguna" and texto_in):
+    if modo == "invalido":
         respuesta = str(
             presentacion.get("mensaje_opcion_no_valida")
             or DEFAULTS_PRESENTACION["mensaje_opcion_no_valida"]
         )
         intencion = "menu"
-        modo = "invalido" if modo != "invalido" else modo
         limpiar_lista_detalle = True
     elif opcion:
         intencion = str(opcion.get("intencion") or opcion.get("codigo") or "info")
@@ -1920,16 +1918,38 @@ async def procesar_mensaje_informativo(
                 chatbot_configuracion_id=chatbot_configuracion_id,
                 solo_activos=True,
             )
-            items = preparar_items_beneficios(
-                bens or [],
-                tipos=("beneficio", "capacitacion", "acompanamiento", "otro"),
-                max_elementos=int(presentacion.get("max_elementos_respuesta") or 15),
-            )
+            codigo_op = _normalizar(str(opcion.get("codigo") or ""))
+            # Opción unificada «Beneficios y bonos» (menú mínimo).
+            if codigo_op in {
+                "beneficios_bonos",
+                "beneficios_y_bonos",
+                "beneficios_bonos_monetizacion",
+            }:
+                items = preparar_items_beneficios(
+                    bens or [],
+                    tipos=(
+                        "beneficio",
+                        "capacitacion",
+                        "acompanamiento",
+                        "otro",
+                        "bono",
+                        "incentivo",
+                    ),
+                    max_elementos=int(presentacion.get("max_elementos_respuesta") or 15),
+                )
+                titulo_ben = "Beneficios y bonos"
+            else:
+                items = preparar_items_beneficios(
+                    bens or [],
+                    tipos=("beneficio", "capacitacion", "acompanamiento", "otro"),
+                    max_elementos=int(presentacion.get("max_elementos_respuesta") or 15),
+                )
+                titulo_ben = "Beneficios de pertenecer a la agencia"
             respuesta, lista_detalle_a_guardar, _det = construir_respuesta_lista_o_detalle(
                 texto_in,
                 items,
                 tipo="beneficios",
-                titulo="Beneficios de pertenecer a la agencia",
+                titulo=titulo_ben,
                 introduccion="Esto es lo que ofrece la agencia:",
                 presentacion=presentacion,
             )
@@ -1958,11 +1978,31 @@ async def procesar_mensaje_informativo(
         elif tipo_fuente in {"pregunta_libre", "otras_preguntas"} or _normalizar(
             str(opcion.get("codigo") or "")
         ) == "otras_preguntas":
-            respuesta = str(
-                presentacion.get("mensaje_pedir_otra_pregunta")
-                or opcion.get("respuesta_personalizada")
-                or DEFAULTS_PRESENTACION["mensaje_pedir_otra_pregunta"]
-            ).strip()
+            # Legacy: no pedir paso intermedio; si ya trae pregunta, resolver.
+            if _parece_pregunta_libre(texto_in):
+                return await _responder_conocimiento_faq(
+                    texto_in,
+                    agencia_id=agencia_id,
+                    chatbot_configuracion_id=chatbot_configuracion_id,
+                    presentacion=presentacion,
+                    db_conv=db_conv,
+                    db_cap=db_cap,
+                    conversacion_id=conversacion_id,
+                    conversacion=conversacion,
+                    canal=canal,
+                    dry_run=dry_run,
+                    enviar_callback=enviar_callback,
+                    token=token,
+                    phone_number_id=phone_number_id,
+                    destino=destino,
+                    mensaje_externo_id=mensaje_externo_id,
+                    aspirante_id=aspirante_id,
+                    texto_menu=texto_menu,
+                )
+            respuesta = (
+                "Puedes preguntarme directamente lo que quieras saber "
+                "(por ejemplo: ¿cómo monetizo? o ¿qué son los regalos?)."
+            )
             limpiar_lista_detalle = True
             lista_detalle_a_guardar = None
             _set_pregunta_faq_pendiente(
@@ -1970,7 +2010,7 @@ async def procesar_mensaje_informativo(
                 agencia_id=agencia_id,
                 conversacion_id=conversacion_id,
                 conversacion=conversacion,
-                activa=True,
+                activa=False,
                 dry_run=dry_run,
             )
         elif tipo_fuente == "asesor":
@@ -2190,50 +2230,199 @@ def _score_faq_texto(consulta_n: str, faq: Dict[str, Any]) -> int:
     return score
 
 
+async def _responder_conocimiento_faq(
+    texto_in: str,
+    *,
+    agencia_id: int,
+    chatbot_configuracion_id: int,
+    presentacion: Dict[str, Any],
+    db_conv: Any,
+    db_cap: Any,
+    conversacion_id: Optional[int],
+    conversacion: Optional[Dict[str, Any]],
+    canal: str,
+    dry_run: bool,
+    enviar_callback,
+    token: Optional[str],
+    phone_number_id: Optional[str],
+    destino: Optional[str],
+    mensaje_externo_id: Optional[str],
+    aspirante_id: Optional[int] = None,
+    texto_menu: str = "",
+) -> Dict[str, Any]:
+    """
+    Resuelve pregunta libre: categorías estructuradas → FAQ (léxico/IA).
+    No inventa contenido ni navega web.
+    """
+    from service_chatbot_respuesta_obligatoria import garantizar_respuesta_saliente
+    import chatbot_faq_resolver as faq_res
+
+    # A) Categorías estructuradas (requisitos / beneficios / bonos)
+    cat = faq_res.detectar_categoria_estructurada(texto_in)
+    lista_detalle_a_guardar = None
+    requiere_asesor = False
+    if cat == "requisitos":
+        reqs = db_conv.listar_requisitos(
+            agencia_id,
+            chatbot_configuracion_id=chatbot_configuracion_id,
+            solo_activos=True,
+        )
+        reqs = sorted(reqs or [], key=lambda r: int(r.get("orden") or 0))
+        items = preparar_items_requisitos(
+            reqs,
+            max_elementos=int(presentacion.get("max_elementos_respuesta") or 15),
+        )
+        respuesta, lista_detalle_a_guardar, _det = construir_respuesta_lista_o_detalle(
+            texto_in,
+            items,
+            tipo="requisitos",
+            titulo="Requisitos para ser creador LIVE",
+            introduccion="Para formar parte de la agencia necesitas:",
+            presentacion=presentacion,
+        )
+        intencion = "requisitos"
+        metodo = "estructurado"
+        resultado = "encontrada"
+    elif cat in {"beneficios", "bonos"}:
+        bens = db_conv.listar_beneficios(
+            agencia_id,
+            chatbot_configuracion_id=chatbot_configuracion_id,
+            solo_activos=True,
+        )
+        tipos = (
+            ("bono", "incentivo")
+            if cat == "bonos"
+            else ("beneficio", "capacitacion", "acompanamiento", "otro")
+        )
+        items = preparar_items_beneficios(
+            bens or [],
+            tipos=tipos,
+            max_elementos=int(presentacion.get("max_elementos_respuesta") or 15),
+        )
+        titulo = "Bonos e incentivos" if cat == "bonos" else "Beneficios de la agencia"
+        respuesta, lista_detalle_a_guardar, _det = construir_respuesta_lista_o_detalle(
+            texto_in,
+            items,
+            tipo=cat,
+            titulo=titulo,
+            introduccion="Esto es lo que ofrece la agencia:",
+            presentacion=presentacion,
+        )
+        intencion = cat
+        metodo = "estructurado"
+        resultado = "encontrada"
+    else:
+        faqs: List[Dict[str, Any]] = []
+        try:
+            faqs = (
+                db_conv.listar_faqs(
+                    agencia_id,
+                    chatbot_configuracion_id=chatbot_configuracion_id,
+                    solo_activos=True,
+                )
+                or []
+            )
+        except Exception:
+            faqs = []
+        resolucion = faq_res.resolver_faq(texto_in, faqs, usar_ia=True)
+        resultado = resolucion.get("resultado") or faq_res.RESULTADO_SIN_CONOCIMIENTO
+        metodo = resolucion.get("metodo")
+        intencion = "faq"
+        if resultado == faq_res.RESULTADO_ENCONTRADA and resolucion.get("respuesta"):
+            respuesta = str(resolucion["respuesta"])
+            requiere_asesor = bool(resolucion.get("requiere_humano"))
+        elif resultado == faq_res.RESULTADO_NO_ENTENDIDO:
+            respuesta = str(
+                presentacion.get("mensaje_no_entendido")
+                or DEFAULTS_PRESENTACION["mensaje_no_entendido"]
+            )
+        else:
+            respuesta = str(
+                presentacion.get("mensaje_faq_no_encontrada")
+                or presentacion.get("mensaje_sin_informacion")
+                or DEFAULTS_PRESENTACION["mensaje_faq_no_encontrada"]
+            )
+
+    if lista_detalle_a_guardar is not None:
+        _set_lista_detalle_pendiente(
+            db_conv=db_conv,
+            agencia_id=agencia_id,
+            conversacion_id=conversacion_id,
+            conversacion=conversacion,
+            lista=lista_detalle_a_guardar,
+            dry_run=dry_run,
+        )
+
+    if requiere_asesor and aspirante_id and not dry_run:
+        try:
+            db_cap.actualizar_aspirante_admin(
+                agencia_id, int(aspirante_id), requiere_asesor=True
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[CHATBOT_FAQ] no se pudo marcar requiere_asesor: %s", exc)
+
+    respuesta = _con_pie_menu(str(respuesta or "").strip(), presentacion)
+    envio = await garantizar_respuesta_saliente(
+        agencia_id=agencia_id,
+        conversacion_id=conversacion_id,
+        canal=canal,
+        texto=respuesta,
+        dry_run=dry_run,
+        enviar_callback=enviar_callback,
+        token=token,
+        phone_number_id=phone_number_id,
+        destino=destino,
+        motivo_fallback=f"faq_{resultado}",
+        mensaje_externo_id=mensaje_externo_id,
+    )
+    logger.info(
+        "[CHATBOT_FAQ] agencia_id=%s configuracion_id=%s conversacion_id=%s "
+        "resultado=%s metodo=%s respuesta_enviada=%s",
+        agencia_id,
+        chatbot_configuracion_id,
+        conversacion_id,
+        resultado,
+        metodo,
+        bool(envio.get("enviado") or dry_run),
+    )
+    return {
+        "usado": True,
+        "motivo": resultado,
+        "respuesta": respuesta,
+        "respuesta_enviada": bool(envio.get("enviado") is True) or dry_run,
+        "requiere_asesor": requiere_asesor,
+        "modo_humano": False,
+        "enlaces": [],
+        "intencion": intencion,
+        "faq": resultado == "encontrada" and cat is None,
+        "resultado_faq": resultado,
+    }
+
+
 def _buscar_faq(
     faqs: List[Dict[str, Any]],
     intencion: Optional[str],
     texto: str,
 ) -> str:
-    consulta_n = _limpiar_consulta_faq(texto)
-    if not consulta_n:
-        return ""
-    intencion_n = _normalizar(intencion or "")
-    mejores: List[Tuple[int, Dict[str, Any]]] = []
-    for faq in faqs:
-        if not _vigente(faq):
-            continue
-        score = _score_faq_texto(consulta_n, faq)
-        fi = _normalizar(str(faq.get("intencion") or ""))
-        if intencion_n and fi == intencion_n:
-            score += 5
-        if intencion_n and _faq_coincide_claves(
-            faq, _aliases_intencion_faq(intencion_n)
-        ):
-            score += 5
-        categoria = _normalizar(str(faq.get("categoria") or ""))
-        if intencion_n and categoria and (
-            categoria == intencion_n
-            or _faq_coincide_claves(faq, _aliases_intencion_faq(intencion_n))
-        ):
-            score += 3
-        # Umbral bajo: una palabra clave clara (monetizar) ya debe abrir la FAQ.
-        if score >= 8:
-            mejores.append((score, faq))
-    if not mejores:
-        if intencion_n:
-            for faq in _faqs_por_intencion(faqs, intencion_n):
-                texto_r = str(
-                    faq.get("respuesta_completa")
-                    or faq.get("respuesta_corta")
-                    or ""
-                ).strip()
-                if texto_r:
-                    return texto_r
-        return ""
-    mejores.sort(key=lambda x: (-x[0], -int((x[1].get("prioridad") or 0))))
-    faq = mejores[0][1]
-    return str(faq.get("respuesta_completa") or faq.get("respuesta_corta") or "").strip()
+    """Compat: usa el resolver nuevo (léxico; sin IA para llamadas síncronas de menú)."""
+    import chatbot_faq_resolver as faq_res
+
+    # Si hay intención de menú, priorizar FAQs de esa intención primero.
+    if intencion:
+        filtradas = [
+            f
+            for f in (faqs or [])
+            if faq_res.normalizar(str(f.get("intencion") or ""))
+            == faq_res.normalizar(str(intencion))
+            or faq_res.normalizar(str(f.get("categoria") or ""))
+            == faq_res.normalizar(str(intencion))
+        ]
+        if filtradas:
+            r = faq_res.resolver_faq(texto, filtradas, usar_ia=False)
+            if r.get("respuesta"):
+                return str(r["respuesta"])
+    r = faq_res.resolver_faq(texto, faqs or [], usar_ia=False)
+    return str(r.get("respuesta") or "")
 
 
 def _aliases_intencion_faq(intencion: Optional[str], *, codigo_opcion: str = "") -> frozenset:

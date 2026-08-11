@@ -594,6 +594,10 @@ class PropuestaItemFaq(_Entrada):
     pregunta: str = Field(..., max_length=2000)
     respuesta: str = Field(..., max_length=8000)
     categoria: Optional[str] = "general"
+    intencion: Optional[str] = Field(None, max_length=100)
+    palabras_clave: Optional[List[str]] = None
+    respuesta_corta: Optional[str] = Field(None, max_length=500)
+    respuesta_completa: Optional[str] = Field(None, max_length=8000)
 
 
 class PropuestaItemPaso(_Entrada):

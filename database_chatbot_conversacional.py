@@ -1365,6 +1365,7 @@ def importar_faqs_desde_json(
 # Menú informativo
 # ---------------------------------------------------------------------------
 
+# Menú mínimo: FAQ es conocimiento interno (pregunta libre), no opción aparte.
 OPCIONES_MENU_INFORMATIVO_DEFECTO: Tuple[Dict[str, Any], ...] = (
     {
         "numero": 1,
@@ -1379,9 +1380,9 @@ OPCIONES_MENU_INFORMATIVO_DEFECTO: Tuple[Dict[str, Any], ...] = (
     },
     {
         "numero": 2,
-        "codigo": "beneficios",
-        "titulo": "Beneficios de la agencia",
-        "descripcion": "Ventajas de pertenecer a la agencia.",
+        "codigo": "beneficios_bonos",
+        "titulo": "Beneficios y bonos",
+        "descripcion": "Ventajas, bonos e incentivos de la agencia.",
         "intencion": "beneficios",
         "tipo_fuente": "beneficios",
         "requiere_asesor": False,
@@ -1390,59 +1391,24 @@ OPCIONES_MENU_INFORMATIVO_DEFECTO: Tuple[Dict[str, Any], ...] = (
     },
     {
         "numero": 3,
-        "codigo": "bonos_monetizacion",
-        "titulo": "Bonos e incentivos de monetización",
-        "descripcion": "Bonos, incentivos y apoyos vigentes.",
-        "intencion": "bonos",
-        "tipo_fuente": "bonos",
-        "requiere_asesor": False,
-        "orden": 3,
-        "activo": True,
-    },
-    {
-        "numero": 4,
         "codigo": "como_funciona",
         "titulo": "Cómo funciona la agencia",
         "descripcion": "Funcionamiento general y acompañamiento.",
         "intencion": "agencia",
         "tipo_fuente": "faq",
         "requiere_asesor": False,
-        "orden": 4,
+        "orden": 3,
         "activo": True,
     },
     {
-        "numero": 5,
-        "codigo": "continuar_proceso",
-        "titulo": "Continuar con el proceso",
-        "descripcion": "Pasos para avanzar en tu solicitud.",
-        "intencion": "proceso",
-        "tipo_fuente": "faq",
-        "requiere_asesor": False,
-        "orden": 5,
-        "activo": True,
-    },
-    {
-        "numero": 6,
-        "codigo": "otras_preguntas",
-        "titulo": "Otras preguntas",
-        "descripcion": "Haz una pregunta que no esté en el menú.",
-        "intencion": "faq",
-        # Debe ser un valor permitido por chk_menu_informativo_fuente en BD
-        # (requisitos|beneficios|bonos|faq|texto|asesor). El motor usa el código.
-        "tipo_fuente": "faq",
-        "requiere_asesor": False,
-        "orden": 6,
-        "activo": True,
-    },
-    {
-        "numero": 7,
+        "numero": 4,
         "codigo": "asesor",
         "titulo": "Hablar con un asesor",
         "descripcion": "Solicitar contacto de una persona del equipo.",
         "intencion": "asesor",
         "tipo_fuente": "asesor",
         "requiere_asesor": True,
-        "orden": 7,
+        "orden": 4,
         "activo": True,
     },
 )
@@ -1457,8 +1423,8 @@ def asegurar_menu_informativo_base(
     """
     Inserta las opciones base del menú informativo si la config no tiene ninguna.
 
-    Si ya hay opciones, solo agrega las faltantes por código (p. ej. otras_preguntas)
-    sin tocar las existentes.
+    Si ya hay opciones, solo desactiva «Otras preguntas» históricas (compatibilidad)
+    sin tocar el resto de la configuración del cliente.
     """
     with _cursor(cur) as c:
         _exige_configuracion(agencia_id, int(chatbot_configuracion_id), cur=c)
@@ -1487,97 +1453,26 @@ def asegurar_menu_informativo_base(
                 "opciones": creadas,
             }
 
-        codigos = {
-            str(o.get("codigo") or "").strip().lower()
-            for o in existentes
-            if o.get("codigo")
-        }
-        max_orden = max((int(o.get("orden") or 0) for o in existentes), default=0)
-        max_numero = max((int(o.get("numero") or 0) for o in existentes), default=0)
-
-        # Si «Otras preguntas» existe pero está inactiva, reactivarla.
-        reactivadas = 0
+        # Compatibilidad: ocultar «Otras preguntas» del menú (FAQ es conocimiento interno).
+        desactivadas = 0
         for o in existentes:
             if (
                 str(o.get("codigo") or "").strip().lower() == "otras_preguntas"
-                and o.get("activo") is False
+                and o.get("activo") is not False
                 and o.get("id")
             ):
                 actualizar_menu_informativo(
-                    agencia_id, int(o["id"]), {"activo": True}, cur=c
+                    agencia_id, int(o["id"]), {"activo": False}, cur=c
                 )
-                reactivadas += 1
+                desactivadas += 1
 
-        # Solo completar opciones nuevas de la plantilla (no reinsertar borradas a propósito
-        # salvo otras_preguntas, que es el atajo de FAQ).
-        completar = [
-            p
-            for p in OPCIONES_MENU_INFORMATIVO_DEFECTO
-            if str(p.get("codigo") or "").strip().lower() == "otras_preguntas"
-            and "otras_preguntas" not in codigos
-        ]
-        creadas: List[Dict[str, Any]] = []
-        asesor = next(
-            (
-                o
-                for o in existentes
-                if str(o.get("codigo") or "").strip().lower() == "asesor"
-                and o.get("id")
-            ),
-            None,
-        )
-        for plantilla in completar:
-            campos = dict(plantilla)
-            campos["chatbot_configuracion_id"] = int(chatbot_configuracion_id)
-            campos["activo"] = True
-            # BD: chk_menu_informativo_fuente no admite pregunta_libre.
-            if str(campos.get("codigo") or "").strip().lower() == "otras_preguntas":
-                campos["tipo_fuente"] = "faq"
-                campos["intencion"] = str(campos.get("intencion") or "faq")
-            try:
-                if asesor:
-                    # Insertar justo antes de «Hablar con un asesor».
-                    num_asesor = int(asesor.get("numero") or (max_numero + 1))
-                    ord_asesor = int(asesor.get("orden") or (max_orden + 1))
-                    temp = max(max_numero, max_orden, num_asesor, ord_asesor) + 10
-                    actualizar_menu_informativo(
-                        agencia_id,
-                        int(asesor["id"]),
-                        {"numero": temp, "orden": temp},
-                        cur=c,
-                    )
-                    campos["numero"] = num_asesor
-                    campos["orden"] = ord_asesor
-                    creadas.append(crear_menu_informativo(agencia_id, campos, cur=c))
-                    actualizar_menu_informativo(
-                        agencia_id,
-                        int(asesor["id"]),
-                        {"numero": num_asesor + 1, "orden": ord_asesor + 1},
-                        cur=c,
-                    )
-                else:
-                    max_orden += 1
-                    max_numero += 1
-                    campos["orden"] = max_orden
-                    campos["numero"] = max_numero
-                    creadas.append(crear_menu_informativo(agencia_id, campos, cur=c))
-            except Exception as exc:  # noqa: BLE001
-                logger.exception(
-                    "[CHATBOT_MENU] no se pudo insertar otras_preguntas "
-                    "agencia_id=%s config_id=%s: %s",
-                    agencia_id,
-                    chatbot_configuracion_id,
-                    exc,
-                )
-
-        if creadas or reactivadas:
+        if desactivadas:
             logger.info(
-                "[CHATBOT_MENU] completar agencia_id=%s config_id=%s "
-                "insertadas=%s reactivadas=%s",
+                "[CHATBOT_MENU] desactivar otras_preguntas agencia_id=%s "
+                "config_id=%s desactivadas=%s",
                 agencia_id,
                 chatbot_configuracion_id,
-                len(creadas),
-                reactivadas,
+                desactivadas,
             )
             existentes = listar_menu_informativo(
                 agencia_id,
@@ -1587,8 +1482,8 @@ def asegurar_menu_informativo_base(
             )
 
         return {
-            "insertadas": len(creadas),
-            "reactivadas": reactivadas,
+            "insertadas": 0,
+            "desactivadas": desactivadas,
             "total": len(existentes),
             "opciones": existentes,
         }
