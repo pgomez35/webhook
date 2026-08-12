@@ -7,8 +7,8 @@ Contrato de decisión:
   → procesar_mensaje_informativo
 
   tipo_chatbot = inteligente
-  → V2 (default): procesar_mensaje_inteligente_v2
-     rollback interno: CHATBOT_INTELIGENTE_V2=0 → legacy conversacional
+  → conversion (default): GPT conversa + action gate
+     rollback técnico: CHATBOT_INTELIGENTE_MOTOR=v2|legacy
 
 Entry point único conceptual para WhatsApp, simulador y futuros canales.
 """
@@ -120,29 +120,39 @@ async def procesar_mensaje_segun_tipo_chatbot(
         )
 
     # --- inteligente ---
-    from chatbot_inteligente_v2_core import v2_enabled
+    from chatbot_conversion_flags import motor_inteligente
 
-    if v2_enabled():
+    motor = motor_inteligente()
+    kwargs_inteligente = dict(
+        agencia_id=agencia_id,
+        texto=texto or "",
+        usuario_externo_id=str(usuario_externo_id or wa_id or ""),
+        chatbot_configuracion_id=int(chatbot_configuracion_id),
+        canal=canal,
+        cuenta_externa_id=cuenta_externa_id or phone_number_id,
+        telefono=telefono or wa_id,
+        nombre_contacto=nombre_contacto,
+        mensaje_externo_id=mensaje_externo_id,
+        aspirante_id=aspirante_id,
+        campania_id=campania_id,
+        token=token,
+        phone_number_id=phone_number_id,
+        wa_id=wa_id,
+        enviar_callback=enviar_callback,
+        dry_run=dry_run,
+    )
+
+    if motor == "conversion":
+        from service_chatbot_conversion import procesar_mensaje_conversion
+
+        resultado = await procesar_mensaje_conversion(**kwargs_inteligente)
+        resultado = dict(resultado or {})
+        resultado.setdefault("tipo_chatbot", TIPO_INTELIGENTE)
+        resultado.setdefault("motor", "conversion")
+    elif motor == "v2":
         from service_chatbot_inteligente_v2 import procesar_mensaje_inteligente_v2
 
-        resultado = await procesar_mensaje_inteligente_v2(
-            agencia_id=agencia_id,
-            texto=texto or "",
-            usuario_externo_id=str(usuario_externo_id or wa_id or ""),
-            chatbot_configuracion_id=int(chatbot_configuracion_id),
-            canal=canal,
-            cuenta_externa_id=cuenta_externa_id or phone_number_id,
-            telefono=telefono or wa_id,
-            nombre_contacto=nombre_contacto,
-            mensaje_externo_id=mensaje_externo_id,
-            aspirante_id=aspirante_id,
-            campania_id=campania_id,
-            token=token,
-            phone_number_id=phone_number_id,
-            wa_id=wa_id,
-            enviar_callback=enviar_callback,
-            dry_run=dry_run,
-        )
+        resultado = await procesar_mensaje_inteligente_v2(**kwargs_inteligente)
         resultado = dict(resultado or {})
         resultado.setdefault("tipo_chatbot", TIPO_INTELIGENTE)
         resultado.setdefault("motor", "inteligente_v2")
@@ -150,23 +160,8 @@ async def procesar_mensaje_segun_tipo_chatbot(
         from service_chatbot_conversacional import procesar_mensaje_conversacional
 
         resultado = await procesar_mensaje_conversacional(
-            agencia_id=agencia_id,
-            texto=texto or "",
-            usuario_externo_id=str(usuario_externo_id or wa_id or ""),
-            chatbot_configuracion_id=int(chatbot_configuracion_id),
-            canal=canal,
-            cuenta_externa_id=cuenta_externa_id or phone_number_id,
-            telefono=telefono or wa_id,
-            nombre_contacto=nombre_contacto,
-            mensaje_externo_id=mensaje_externo_id,
+            **kwargs_inteligente,
             tipo_mensaje=tipo_mensaje,
-            aspirante_id=aspirante_id,
-            campania_id=campania_id,
-            token=token,
-            phone_number_id=phone_number_id,
-            wa_id=wa_id,
-            enviar_callback=enviar_callback,
-            dry_run=dry_run,
         )
         resultado = dict(resultado or {})
         resultado.setdefault("tipo_chatbot", TIPO_INTELIGENTE)

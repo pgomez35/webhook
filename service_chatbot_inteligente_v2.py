@@ -193,34 +193,31 @@ async def procesar_mensaje_inteligente_v2(
             conversacion_id,
             canal=canal,
             direccion="entrante",
-            remitente_tipo="usuario",
+            remitente_tipo="aspirante",
             tipo_mensaje="texto",
             texto=texto or "",
             mensaje_externo_id=mensaje_externo_id,
             default=None,
         )
 
-    # Catálogos
+    # Catálogos (firmas reales: sin `limite=` incompatible)
     requisitos = await _db(
         "listar_requisitos",
         agencia_id,
-        chatbot_configuracion_id,
-        limite=30,
+        chatbot_configuracion_id=chatbot_configuracion_id,
         default=[],
     ) or []
     beneficios = await _db(
         "listar_beneficios_vigentes",
         agencia_id,
         chatbot_configuracion_id,
-        campania_id=campania_id,
-        limite=20,
+        campania_id,
         default=[],
     ) or []
     faqs = await _db(
         "listar_faq",
         agencia_id,
-        chatbot_configuracion_id,
-        limite=30,
+        chatbot_configuracion_id=chatbot_configuracion_id,
         default=[],
     ) or []
 
@@ -354,7 +351,7 @@ async def procesar_mensaje_inteligente_v2(
             conversacion_id,
             canal=canal,
             direccion="saliente",
-            remitente_tipo="bot",
+            remitente_tipo="chatbot",
             tipo_mensaje="texto",
             texto=respuesta,
             default=None,
