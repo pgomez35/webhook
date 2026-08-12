@@ -34,6 +34,12 @@ from chatbot_conversion_core import (
     sanitizar_respuesta_publica,
     schema_salida_conversion,
 )
+from chatbot_conversion_atajos_numericos import (
+    escribir_mapa_atajos,
+    mapa_menu_inicial,
+    resolver_atajo_numerico,
+    texto_bienvenida_con_atajos,
+)
 from chatbot_conversion_flags import (
     HERRAMIENTAS_EXTERNAS_CONVERSION,
     conversion_tools_externas_habilitadas,
@@ -41,6 +47,38 @@ from chatbot_conversion_flags import (
 from chatbot_envio_whatsapp import fijar_conversacion_id_envio
 
 logger = logging.getLogger("uvicorn.error")
+
+
+def _nombre_agencia_atajos(contexto: ConversationalContext) -> str:
+    agencia = contexto.agencia or {}
+    asistente = contexto.asistente or {}
+    return (
+        str(agencia.get("nombre") or "").strip()
+        or str(agencia.get("nombre_comercial") or "").strip()
+        or str(asistente.get("nombre_asistente") or "").strip()
+        or "la agencia"
+    )
+
+
+def _es_primer_contacto_conversion(
+    *,
+    mensajes: Optional[List[Dict[str, Any]]],
+    mensaje_actual_id: Optional[int],
+    texto: str,
+) -> bool:
+    """Misma idea que presentacion_literal, sin depender de presentacion_inicial."""
+    from service_chatbot_conversacional import es_saludo_inicial
+
+    previos: List[Dict[str, Any]] = []
+    for item in mensajes or []:
+        if not isinstance(item, dict):
+            continue
+        if mensaje_actual_id is not None and item.get("id") == mensaje_actual_id:
+            continue
+        previos.append(item)
+    if any(str(m.get("direccion") or "").lower() == "saliente" for m in previos):
+        return False
+    return bool(es_saludo_inicial(texto) or not previos)
 
 MENSAJE_RESPALDO = (
     "Estoy teniendo un problema técnico para responderte en este momento. "
@@ -388,24 +426,41 @@ async def procesar_mensaje_conversion(
             detalle=str(exc),
         )
 
-    # Presentación literal en primer contacto (como conversion antiguo).
-    from service_chatbot_conversacional import resolver_presentacion_literal
+    # Bienvenida con atajos numéricos (primer contacto).
+    from service_chatbot_conversacional import (
+        preservar_formato_whatsapp,
+        resolver_presentacion_literal,
+    )
 
-    presentacion = resolver_presentacion_literal(
+    presentacion_cfg = resolver_presentacion_literal(
         asistente=contexto.asistente,
         mensajes=contexto.mensajes,
         texto_usuario=texto,
         mensaje_actual_id=mensaje_entrante_id,
     )
-    if presentacion and salida_ia_inyectada is None:
-        from service_chatbot_conversacional import preservar_formato_whatsapp
+    debe_bienvenida = salida_ia_inyectada is None and (
+        bool(presentacion_cfg)
+        or _es_primer_contacto_conversion(
+            mensajes=contexto.mensajes,
+            mensaje_actual_id=mensaje_entrante_id,
+            texto=texto or "",
+        )
+    )
 
-        # Literal: conservar párrafos; no aplanar a un solo bloque.
+    if debe_bienvenida:
+        presentacion = texto_bienvenida_con_atajos(_nombre_agencia_atajos(contexto))
         presentacion = preservar_formato_whatsapp(presentacion)
         presentacion = sanitizar_respuesta_publica(presentacion)
         presentacion = preservar_formato_whatsapp(presentacion)
+        ctx_mapa = escribir_mapa_atajos(contexto.conversacion, mapa_menu_inicial())
+        if conversacion_id and not dry_run:
+            await _persistir_campos(
+                agencia_id=agencia_id,
+                conversacion_id=int(conversacion_id),
+                campos={"contexto": ctx_mapa},
+            )
         logger.info(
-            "[CHATBOT_CONVERSION_PRESENTACION] chars=%s saltos=%s",
+            "[CHATBOT_CONVERSION_PRESENTACION] chars=%s saltos=%s atajos=1",
             len(presentacion or ""),
             (presentacion or "").count("\n"),
         )
@@ -432,7 +487,7 @@ async def procesar_mensaje_conversion(
                 estado_envio="enviado" if envio.get("enviado") is True else "error",
                 error_detalle=envio.get("error"),
                 procesado_por_ia=False,
-                metadata={"origen": "presentacion_inicial"},
+                metadata={"origen": "presentacion_inicial_atajos"},
                 default=None,
             )
         return {
@@ -446,6 +501,76 @@ async def procesar_mensaje_conversion(
             "respuesta_enviada": bool(envio.get("enviado") is True) or dry_run,
             "error": envio.get("error"),
         }
+
+    # Atajos numéricos contextuales (antes de la IA).
+    atajo = resolver_atajo_numerico(
+        texto or "",
+        conversacion=contexto.conversacion,
+        requisitos=contexto.requisitos,
+        beneficios=contexto.beneficios,
+    )
+    if atajo and atajo.respuesta and salida_ia_inyectada is None:
+        from service_chatbot_conversacional import preservar_formato_whatsapp
+
+        respuesta_atajo = preservar_formato_whatsapp(atajo.respuesta)
+        respuesta_atajo = sanitizar_respuesta_publica(respuesta_atajo)
+        respuesta_atajo = preservar_formato_whatsapp(respuesta_atajo)
+        if atajo.limpiar_mapa:
+            ctx_mapa = escribir_mapa_atajos(contexto.conversacion, None)
+        elif atajo.mapa_nuevo is not None:
+            ctx_mapa = escribir_mapa_atajos(
+                contexto.conversacion, atajo.mapa_nuevo
+            )
+        else:
+            ctx_mapa = contexto.conversacion.get("contexto") or {}
+        if conversacion_id and not dry_run and (
+            atajo.limpiar_mapa or atajo.mapa_nuevo is not None
+        ):
+            await _persistir_campos(
+                agencia_id=agencia_id,
+                conversacion_id=int(conversacion_id),
+                campos={"contexto": ctx_mapa},
+            )
+        envio = await _enviar(
+            texto=respuesta_atajo,
+            canal=canal,
+            token=token,
+            phone_number_id=phone_number_id,
+            destino=wa_id or usuario_externo_id,
+            enviar_callback=enviar_callback,
+            dry_run=dry_run,
+            conversacion_id=conversacion_id,
+        )
+        if conversacion_id and respuesta_atajo and not dry_run:
+            await _db(
+                "insertar_mensaje",
+                agencia_id,
+                conversacion_id,
+                canal=canal,
+                direccion="saliente",
+                remitente_tipo="chatbot",
+                tipo_mensaje="texto",
+                texto=respuesta_atajo,
+                estado_envio="enviado" if envio.get("enviado") is True else "error",
+                error_detalle=envio.get("error"),
+                procesado_por_ia=False,
+                metadata={"origen": atajo.motivo},
+                default=None,
+            )
+        return {
+            "usado": True,
+            "motivo": atajo.motivo,
+            "motor": "conversion",
+            "conversacion_id": conversacion_id,
+            "mensaje_entrante_id": mensaje_entrante_id,
+            "respuesta": respuesta_atajo,
+            "enviado": envio.get("enviado"),
+            "respuesta_enviada": bool(envio.get("enviado") is True) or dry_run,
+            "error": envio.get("error"),
+        }
+    if atajo and atajo.texto_para_ia:
+        texto = atajo.texto_para_ia
+        logger.info("[CHATBOT_ATAJO] reescritura_continuar texto=%s", (texto or "")[:120])
 
     perfil = leer_perfil(contexto.conversacion, contexto.aspirante)
     logger.info(

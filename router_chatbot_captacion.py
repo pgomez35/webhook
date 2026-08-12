@@ -461,7 +461,7 @@ def patch_tipo_chatbot(
     agencia: dict = Depends(obtener_agencia_chatbot_actual),
 ):
     """
-    Selector visible: informativo | inteligente.
+    Selector visible: tradicional | informativo | inteligente.
 
     Sincroniza flags legacy. No modifica ``asistente_configuracion.activo``.
     """

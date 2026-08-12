@@ -149,11 +149,26 @@ def resolver_modo(
 
     # --- tipo_chatbot explícito prevalece ---
     try:
-        from chatbot_tipo import TIPO_INFORMATIVO, TIPO_INTELIGENTE, normalizar_tipo_chatbot
+        from chatbot_tipo import (
+            TIPO_INFORMATIVO,
+            TIPO_INTELIGENTE,
+            TIPO_TRADICIONAL,
+            normalizar_tipo_chatbot,
+        )
 
         tipo_explicito = normalizar_tipo_chatbot((configuracion or {}).get("tipo_chatbot"))
     except Exception:
         tipo_explicito = None
+
+    if tipo_explicito == TIPO_TRADICIONAL:
+        # El motor clásico no usa este resolver; si llega, no forzar conversión.
+        return ResolucionModo(
+            modo=MODO_INFORMATIVO,
+            origen=ORIGEN_TIPO_CHATBOT,
+            campania_id=campania_id,
+            ajustado=False,
+            motivo_ajuste="tradicional_sin_stack_conversacional",
+        )
 
     if tipo_explicito == TIPO_INTELIGENTE:
         # Conversación + clasificación + flujo; la campaña no lo degrada a menú.

@@ -1,9 +1,12 @@
 """
-Selección de motor chatbot (informativo | inteligente | clásico legacy).
+Selección de motor chatbot (tradicional | informativo | inteligente).
 
 Fuente principal: chatbot_configuracion.tipo_chatbot.
 
 Decisión central (contrato):
+
+  tipo_chatbot = tradicional
+  → captación clásica (guion fijo + FAQ rígida)
 
   tipo_chatbot = informativo
   → menú + información + consultas libres
@@ -28,6 +31,7 @@ import database_chatbot_captacion as db_captacion
 from chatbot_tipo import (
     TIPO_INFORMATIVO,
     TIPO_INTELIGENTE,
+    TIPO_TRADICIONAL,
     enriquecer_config_con_tipo,
     resolver_tipo_chatbot,
 )
@@ -102,8 +106,8 @@ def resolver_motor_conversacional(
     Decide el motor antes de procesar el mensaje.
 
     Retorna claves:
-    - tipo_chatbot: informativo | inteligente
-    - motor_seleccionado: informativo | inteligente | clasico
+    - tipo_chatbot: tradicional | informativo | inteligente
+    - motor_seleccionado: clasico | informativo | inteligente
     - usar_conversacional: True si usa el stack conversacional (inteligente)
     - usar_informativo: True si usa el menú informativo
     """
@@ -171,6 +175,26 @@ def resolver_motor_conversacional(
         decision["asistente_activo"] = bool(asistente.get("activo"))
 
     # --- Contrato: tipo_chatbot manda ---
+    if tipo == TIPO_TRADICIONAL:
+        decision["usar_informativo"] = False
+        decision["usar_conversacional"] = False
+        decision["motor_seleccionado"] = "clasico"
+        decision["usar_asistente_conversacional"] = False
+        decision["usar_rutas_adaptativas"] = False
+        decision["motivo"] = "tipo_chatbot_tradicional"
+        _log_router_motor(
+            agencia_id=agencia_id,
+            chatbot_configuracion_id=int(chatbot_configuracion_id),
+            tipo_chatbot=tipo,
+            usar_asistente_conversacional=False,
+            usar_rutas_adaptativas=False,
+            asistente_id=decision["asistente_id"],
+            asistente_activo=decision["asistente_activo"],
+            motor_seleccionado="clasico",
+            motivo=decision["motivo"],
+        )
+        return decision
+
     if tipo == TIPO_INFORMATIVO:
         decision["usar_informativo"] = True
         decision["usar_conversacional"] = False

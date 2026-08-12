@@ -1,5 +1,6 @@
 """
-Resolución del tipo de chatbot visible (informativo | inteligente).
+Resolución del tipo de chatbot visible
+(tradicional | informativo | inteligente).
 
 Fuente principal: chatbot_configuracion.tipo_chatbot.
 Compatibilidad: flags usar_asistente_conversacional / usar_rutas_adaptativas
@@ -9,9 +10,20 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional, Tuple
 
-TIPOS_CHATBOT = frozenset({"informativo", "inteligente"})
+TIPOS_CHATBOT = frozenset({"tradicional", "informativo", "inteligente"})
+TIPO_TRADICIONAL = "tradicional"
 TIPO_INFORMATIVO = "informativo"
 TIPO_INTELIGENTE = "inteligente"
+
+_ALIAS_TIPO = {
+    "clasico": TIPO_TRADICIONAL,
+    "clásico": TIPO_TRADICIONAL,
+    "classic": TIPO_TRADICIONAL,
+    "captacion": TIPO_TRADICIONAL,
+    "captación": TIPO_TRADICIONAL,
+    "conversion": TIPO_INTELIGENTE,
+    "conversacional": TIPO_INTELIGENTE,
+}
 
 PUBLICO_DETECTAR = "detectar"
 PUBLICO_PRINCIPIANTES = "principiantes"
@@ -24,26 +36,30 @@ def normalizar_tipo_chatbot(valor: Any) -> Optional[str]:
     texto = str(valor).strip().lower()
     if texto in TIPOS_CHATBOT:
         return texto
-    return None
+    return _ALIAS_TIPO.get(texto)
 
 
 def flags_desde_tipo(tipo: str) -> Tuple[bool, bool]:
     """
     Sync transitorio de flags en chatbot_configuracion.
+    tradicional → asistente=false, rutas=false
     informativo → asistente=true, rutas=false
     inteligente → asistente=true, rutas=true
     """
     tipo_n = normalizar_tipo_chatbot(tipo) or TIPO_INFORMATIVO
     if tipo_n == TIPO_INTELIGENTE:
         return True, True
-    return True, False
+    if tipo_n == TIPO_INFORMATIVO:
+        return True, False
+    return False, False
 
 
 def modos_asistente_desde_tipo(tipo: str) -> Dict[str, Any]:
     """
     Sync interno de modos en asistente_configuracion (no visibles a la agencia).
 
-    Al elegir un tipo, el backend también deja activo=true si el asistente existe.
+    Al elegir informativo/inteligente, el backend deja activo=true si el
+    asistente existe. En tradicional no se usa el stack conversacional.
     """
     tipo_n = normalizar_tipo_chatbot(tipo) or TIPO_INFORMATIVO
     if tipo_n == TIPO_INTELIGENTE:
@@ -52,8 +68,14 @@ def modos_asistente_desde_tipo(tipo: str) -> Dict[str, Any]:
             "modo_conversion_activo": True,
             "modo_predeterminado": "conversion",
         }
+    if tipo_n == TIPO_INFORMATIVO:
+        return {
+            "modo_informativo_activo": True,
+            "modo_conversion_activo": False,
+            "modo_predeterminado": "informativo",
+        }
     return {
-        "modo_informativo_activo": True,
+        "modo_informativo_activo": False,
         "modo_conversion_activo": False,
         "modo_predeterminado": "informativo",
     }
@@ -78,7 +100,7 @@ def tipo_desde_flags(
 ) -> str:
     """Fallback de lectura cuando tipo_chatbot aún no está poblado."""
     if not usar_asistente_conversacional:
-        return TIPO_INFORMATIVO
+        return TIPO_TRADICIONAL
     if usar_rutas_adaptativas:
         return TIPO_INTELIGENTE
     return TIPO_INFORMATIVO

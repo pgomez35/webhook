@@ -746,8 +746,10 @@ def crear_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str, Any]
     es_predeterminada = bool(data.get("es_predeterminada"))
     nombre = str(data.get("nombre") or "").strip()[:120]
     texto_opcion = str(data.get("texto_opcion") or "").strip()[:40]
-    tipo_chatbot = str(data.get("tipo_chatbot") or "informativo").strip().lower()[:20]
-    if tipo_chatbot not in {"informativo", "inteligente"}:
+    from chatbot_tipo import TIPOS_CHATBOT, normalizar_tipo_chatbot
+
+    tipo_chatbot = normalizar_tipo_chatbot(data.get("tipo_chatbot")) or "informativo"
+    if tipo_chatbot not in TIPOS_CHATBOT:
         tipo_chatbot = "informativo"
     if not codigo:
         raise ValueError("codigo es obligatorio")
@@ -922,8 +924,10 @@ def actualizar_configuracion(
         "mensaje_error = %s",
         "updated_at = CURRENT_TIMESTAMP",
     ]
-    tipo_chatbot = str(data.get("tipo_chatbot") or "informativo").strip().lower()[:20]
-    if tipo_chatbot not in {"informativo", "inteligente"}:
+    from chatbot_tipo import TIPOS_CHATBOT, normalizar_tipo_chatbot
+
+    tipo_chatbot = normalizar_tipo_chatbot(data.get("tipo_chatbot")) or "informativo"
+    if tipo_chatbot not in TIPOS_CHATBOT:
         tipo_chatbot = "informativo"
     params: List[Any] = [
         data["activo"],
@@ -1225,15 +1229,24 @@ def set_tipo_chatbot(
     Persiste tipo_chatbot y sincroniza flags internos en una transacción.
 
     Al elegir informativo o inteligente, si existe asistente_configuracion
-    asociada, queda activo=true (la agencia no administra ese interruptor).
+    asociada, queda activo=true. En tradicional el asistente queda inactivo
+    (motor clásico de captación).
     """
-    from chatbot_tipo import modos_asistente_desde_tipo, normalizar_tipo_chatbot, sync_completo_desde_tipo
+    from chatbot_tipo import (
+        TIPO_TRADICIONAL,
+        modos_asistente_desde_tipo,
+        normalizar_tipo_chatbot,
+        sync_completo_desde_tipo,
+    )
 
     tipo = normalizar_tipo_chatbot(tipo_chatbot)
     if not tipo:
-        raise ValueError("tipo_chatbot debe ser 'informativo' o 'inteligente'")
+        raise ValueError(
+            "tipo_chatbot debe ser 'tradicional', 'informativo' o 'inteligente'"
+        )
     sync = sync_completo_desde_tipo(tipo)
     modos = modos_asistente_desde_tipo(tipo)
+    asistente_activo = tipo != TIPO_TRADICIONAL
     with get_connection_chatbot_context() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
@@ -1258,11 +1271,11 @@ def set_tipo_chatbot(
             if not row:
                 raise ValueError("Configuración no encontrada")
 
-            # Sync modos internos + activar asistente si existe (sin crear uno nuevo)
+            # Sync modos internos; activar solo si no es tradicional
             cur.execute(
                 """
                 UPDATE chatbot.asistente_configuracion
-                SET activo = TRUE,
+                SET activo = %s,
                     modo_informativo_activo = %s,
                     modo_conversion_activo = %s,
                     modo_predeterminado = %s,
@@ -1271,6 +1284,7 @@ def set_tipo_chatbot(
                 RETURNING id
                 """,
                 (
+                    asistente_activo,
                     modos["modo_informativo_activo"],
                     modos["modo_conversion_activo"],
                     modos["modo_predeterminado"],

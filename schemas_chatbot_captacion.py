@@ -523,7 +523,7 @@ class ChatbotConfiguracionUsarRutasAdaptativasIn(BaseModel):
 
 
 class ChatbotConfiguracionTipoIn(BaseModel):
-    """Selector visible: informativo | inteligente."""
+    """Selector visible: tradicional | informativo | inteligente."""
 
     model_config = {"extra": "forbid"}
 
@@ -532,9 +532,13 @@ class ChatbotConfiguracionTipoIn(BaseModel):
     @field_validator("tipo_chatbot")
     @classmethod
     def validar_tipo(cls, v: str) -> str:
-        valor = str(v or "").strip().lower()
-        if valor not in {"informativo", "inteligente"}:
-            raise ValueError("tipo_chatbot debe ser 'informativo' o 'inteligente'")
+        from chatbot_tipo import TIPOS_CHATBOT, normalizar_tipo_chatbot
+
+        valor = normalizar_tipo_chatbot(v)
+        if valor not in TIPOS_CHATBOT:
+            raise ValueError(
+                "tipo_chatbot debe ser 'tradicional', 'informativo' o 'inteligente'"
+            )
         return valor
 
 

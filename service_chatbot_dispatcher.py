@@ -3,6 +3,9 @@ Dispatcher central: decide el motor según chatbot_configuracion.tipo_chatbot.
 
 Contrato de decisión:
 
+  tipo_chatbot = tradicional
+  → no usa este dispatcher; captación clásica continúa
+
   tipo_chatbot = informativo
   → procesar_mensaje_informativo
 
@@ -17,7 +20,12 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Dict, Optional
 
-from chatbot_tipo import TIPO_INFORMATIVO, TIPO_INTELIGENTE, resolver_tipo_chatbot
+from chatbot_tipo import (
+    TIPO_INFORMATIVO,
+    TIPO_INTELIGENTE,
+    TIPO_TRADICIONAL,
+    resolver_tipo_chatbot,
+)
 from service_chatbot_motor import resolver_motor_conversacional
 
 logger = logging.getLogger("uvicorn.error")
@@ -71,6 +79,15 @@ async def procesar_mensaje_segun_tipo_chatbot(
         f"chatbot_configuracion_id={chatbot_configuracion_id} "
         f"tipo_chatbot={tipo} canal={canal} conversacion_id={conversacion_id}"
     )
+
+    if tipo == TIPO_TRADICIONAL:
+        return {
+            "usado": False,
+            "motivo": "tipo_tradicional_clasico",
+            "motor": "clasico",
+            "tipo_chatbot": TIPO_TRADICIONAL,
+            "conversacion_id": conversacion_id,
+        }
 
     # --- informativo: menú + info + consultas libres ---
     if tipo == TIPO_INFORMATIVO:
