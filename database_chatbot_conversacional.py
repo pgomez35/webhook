@@ -791,36 +791,85 @@ def _exige_configuracion(agencia_id: int, chatbot_configuracion_id: int, *, cur=
 
 def _normalizar_campos_presentacion(campos: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Alias de escritura:
-    - presentacion_inicial → también presentacion_informativo (si no viene explícita)
-    - si solo llega informativo y no inicial, sincroniza inicial para legacy
+    No mezcla presentaciones entre sí.
+
+    Cada campo se escribe solo si viene en el payload:
+    - presentacion_informativo
+    - presentacion_inteligente
+    - presentacion_inicial (legacy; no propaga a los otros)
     """
-    datos = dict(campos or {})
-    if "presentacion_inicial" in datos and "presentacion_informativo" not in datos:
-        datos["presentacion_informativo"] = datos.get("presentacion_inicial")
-    if "presentacion_informativo" in datos and "presentacion_inicial" not in datos:
-        datos["presentacion_inicial"] = datos.get("presentacion_informativo")
-    return datos
+    return dict(campos or {})
 
 
 def _enriquecer_asistente_presentaciones(
     fila: Optional[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
-    """Lectura: rellena faltantes desde presentacion_inicial legacy."""
+    """
+    Devuelve la fila tal cual (sin copiar valores entre columnas).
+
+    El fallback ``campo_especifico ?? presentacion_inicial`` ocurre solo en
+    ejecución (helpers de texto), no en GET/admin.
+    """
     if not fila:
         return fila
-    out = dict(fila)
-    legacy = str(out.get("presentacion_inicial") or "").strip() or None
-    info = str(out.get("presentacion_informativo") or "").strip() or None
-    intel = str(out.get("presentacion_inteligente") or "").strip() or None
-    if not info and legacy:
-        out["presentacion_informativo"] = legacy
-        info = legacy
-    if not intel and legacy:
-        out["presentacion_inteligente"] = legacy
-    if not legacy and info:
-        out["presentacion_inicial"] = info
-    return out
+    return dict(fila)
+
+def leer_presentaciones_raw(
+    agencia_id: int,
+    chatbot_configuracion_id: int,
+    *,
+    cur=None,
+) -> Dict[str, Any]:
+    """
+    Lectura cruda de columnas de presentación (sin enriquecer alias).
+    Uso temporal de auditoría: ver qué hay realmente en BD tras un UPDATE.
+    """
+    with _cursor(cur) as c:
+        # Detectar columnas presentes en el catálogo.
+        c.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'chatbot'
+              AND table_name = 'asistente_configuracion'
+              AND column_name IN (
+                'presentacion_inicial',
+                'presentacion_informativo',
+                'presentacion_inteligente'
+              )
+            """
+        )
+        cols = {str(r["column_name"]) for r in (c.fetchall() or [])}
+        select_cols = ["id", "agencia_id", "chatbot_configuracion_id"]
+        for col in (
+            "presentacion_inicial",
+            "presentacion_informativo",
+            "presentacion_inteligente",
+        ):
+            if col in cols:
+                select_cols.append(col)
+        c.execute(
+            f"""
+            SELECT {', '.join(select_cols)}
+            FROM chatbot.asistente_configuracion
+            WHERE agencia_id = %s AND chatbot_configuracion_id = %s
+            LIMIT 1
+            """,
+            (agencia_id, chatbot_configuracion_id),
+        )
+        row = _fila(c.fetchone()) or {}
+        return {
+            "asistente_id": row.get("id"),
+            "columnas_presentacion_en_bd": sorted(cols),
+            "presentacion_inicial": row.get("presentacion_inicial"),
+            "presentacion_informativo": row.get("presentacion_informativo")
+            if "presentacion_informativo" in cols
+            else "__COLUMNA_AUSENTE__",
+            "presentacion_inteligente": row.get("presentacion_inteligente")
+            if "presentacion_inteligente" in cols
+            else "__COLUMNA_AUSENTE__",
+            "keys_fila": sorted(row.keys()),
+        }
 
 
 def obtener_asistente_por_config(
@@ -862,6 +911,30 @@ def asistente_activo_para_config(
         return bool(row and row.get("activo"))
 
 
+_COLUMNAS_PRESENTACION_NUEVAS = (
+    "presentacion_informativo",
+    "presentacion_inteligente",
+)
+
+
+def _sin_columnas_presentacion_nuevas(datos: Dict[str, Any]) -> Dict[str, Any]:
+    """Fallback si aún no corrieron el script chatbot_presentaciones_por_tipo.sql."""
+    out = {
+        k: v for k, v in datos.items() if k not in _COLUMNAS_PRESENTACION_NUEVAS
+    }
+    # Mantener legacy alineado con informativo si venía en el payload.
+    if "presentacion_inicial" not in out:
+        info = datos.get("presentacion_informativo")
+        if info is not None:
+            out["presentacion_inicial"] = info
+    return out
+
+
+def _es_error_columna_presentacion(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return any(col in msg for col in _COLUMNAS_PRESENTACION_NUEVAS)
+
+
 def upsert_asistente(
     agencia_id: int,
     chatbot_configuracion_id: int,
@@ -880,29 +953,43 @@ def upsert_asistente(
         _normalizar_campos_presentacion(campos), COLUMNAS_ASISTENTE
     )
 
-    with _cursor(cur) as c:
-        _exige_configuracion(agencia_id, chatbot_configuracion_id, cur=c)
+    def _ejecutar(payload: Dict[str, Any]):
+        with _cursor(cur) as c:
+            _exige_configuracion(agencia_id, chatbot_configuracion_id, cur=c)
 
-        columnas = ["agencia_id", "chatbot_configuracion_id"] + list(datos.keys())
-        valores: List[Any] = [agencia_id, chatbot_configuracion_id] + [
-            _preparar_valor(col, datos[col]) for col in datos
-        ]
-        placeholders = ", ".join(["%s"] * len(columnas))
-        sets = [f"{col} = EXCLUDED.{col}" for col in datos]
-        sets.append("updated_at = CURRENT_TIMESTAMP")
+            columnas = ["agencia_id", "chatbot_configuracion_id"] + list(payload.keys())
+            valores: List[Any] = [agencia_id, chatbot_configuracion_id] + [
+                _preparar_valor(col, payload[col]) for col in payload
+            ]
+            placeholders = ", ".join(["%s"] * len(columnas))
+            sets = [f"{col} = EXCLUDED.{col}" for col in payload]
+            sets.append("updated_at = CURRENT_TIMESTAMP")
 
-        c.execute(
-            f"""
-            INSERT INTO chatbot.asistente_configuracion ({', '.join(columnas)})
-            VALUES ({placeholders})
-            ON CONFLICT (chatbot_configuracion_id) DO UPDATE
-                SET {', '.join(sets)}
-            WHERE asistente_configuracion.agencia_id = %s
-            RETURNING *
-            """,
-            valores + [agencia_id],
+            c.execute(
+                f"""
+                INSERT INTO chatbot.asistente_configuracion ({', '.join(columnas)})
+                VALUES ({placeholders})
+                ON CONFLICT (chatbot_configuracion_id) DO UPDATE
+                    SET {', '.join(sets)}
+                WHERE asistente_configuracion.agencia_id = %s
+                RETURNING *
+                """,
+                valores + [agencia_id],
+            )
+            return c.fetchone()
+
+    try:
+        row = _ejecutar(datos)
+    except Exception as exc:
+        if not _es_error_columna_presentacion(exc):
+            raise
+        logger.warning(
+            "[CONVERSACIONAL] columnas de presentación por tipo ausentes; "
+            "guardando solo presentacion_inicial. Ejecuta "
+            "scripts/chatbot_presentaciones_por_tipo.sql. error=%s",
+            exc,
         )
-        row = c.fetchone()
+        row = _ejecutar(_sin_columnas_presentacion_nuevas(datos))
 
     if not row:
         raise ErrorDatosConversacional(
@@ -923,14 +1010,33 @@ def actualizar_asistente(
     *,
     cur=None,
 ) -> Optional[Dict[str, Any]]:
-    out = _actualizar_registro(
-        "asistente",
-        agencia_id,
-        asistente_id,
-        _normalizar_campos_presentacion(campos),
-        COLUMNAS_ASISTENTE,
-        cur=cur,
-    )
+    normalizados = _normalizar_campos_presentacion(campos)
+    try:
+        out = _actualizar_registro(
+            "asistente",
+            agencia_id,
+            asistente_id,
+            normalizados,
+            COLUMNAS_ASISTENTE,
+            cur=cur,
+        )
+    except Exception as exc:
+        if not _es_error_columna_presentacion(exc):
+            raise
+        logger.warning(
+            "[CONVERSACIONAL] columnas de presentación por tipo ausentes; "
+            "actualizando solo presentacion_inicial. Ejecuta "
+            "scripts/chatbot_presentaciones_por_tipo.sql. error=%s",
+            exc,
+        )
+        out = _actualizar_registro(
+            "asistente",
+            agencia_id,
+            asistente_id,
+            _sin_columnas_presentacion_nuevas(normalizados),
+            COLUMNAS_ASISTENTE,
+            cur=cur,
+        )
     return _enriquecer_asistente_presentaciones(out)
 
 

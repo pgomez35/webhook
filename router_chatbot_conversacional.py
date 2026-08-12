@@ -246,10 +246,40 @@ def get_asistente(
     agencia: dict = Depends(obtener_agencia_chatbot_actual),
 ):
     cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
-    return _o_404(
+    asistente = _o_404(
         db.obtener_asistente_por_config(_agencia_id(agencia), cfg_id),
         "Asistente",
     )
+    try:
+        import service_chatbot_carga_informacion as svc_carga
+
+        raw = db.leer_presentaciones_raw(_agencia_id(agencia), cfg_id)
+        svc_carga._log_presentacion_get(
+            agencia_id=_agencia_id(agencia),
+            config_id=cfg_id,
+            fuente="GET_/asistente",
+            asistente=asistente,
+        )
+        logger.info(
+            "[CARGA_INFO_PRESENTACION_GET] fuente=GET_/asistente_raw "
+            "agencia_id=%s config_id=%s columnas_bd=%s "
+            "raw_inicial_chars=%s raw_informativo_chars=%s "
+            "raw_inicial_inicio=%r raw_informativo_inicio=%r",
+            agencia["id"],
+            cfg_id,
+            raw.get("columnas_presentacion_en_bd"),
+            len(str(raw.get("presentacion_inicial") or "")),
+            len(str(raw.get("presentacion_informativo") or ""))
+            if raw.get("presentacion_informativo") != "__COLUMNA_AUSENTE__"
+            else -1,
+            svc_carga._inicio_texto(raw.get("presentacion_inicial")),
+            svc_carga._inicio_texto(raw.get("presentacion_informativo"))
+            if raw.get("presentacion_informativo") != "__COLUMNA_AUSENTE__"
+            else "__COLUMNA_AUSENTE__",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[CARGA_INFO_PRESENTACION_GET] asistente audit falló: %s", exc)
+    return asistente
 
 
 @router.put("/configuraciones/{chatbot_configuracion_id}/asistente")
@@ -596,11 +626,16 @@ def put_carga_informacion_general(
             cfg_id,
             {
                 "nombre_asistente": campos.get("nombre_asistente"),
+                "descripcion_agencia": campos.get("descripcion_agencia"),
                 "presentacion_inicial": campos.get("presentacion_inicial"),
                 "presentacion_informativo": campos.get("presentacion_informativo"),
                 "presentacion_inteligente": campos.get("presentacion_inteligente"),
                 "tono": campos.get("tono"),
+                "formato_respuestas_informativas": campos.get(
+                    "formato_respuestas_informativas"
+                ),
             },
+            origen="PUT_/carga-informacion/general",
         )
     except Exception as e:
         from chatbot_conversacional_exceptions import ConversacionalError

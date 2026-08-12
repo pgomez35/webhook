@@ -560,10 +560,14 @@ class PublicarAsistenteIn(_Entrada):
 
 class AnalizarInformacionIn(_Entrada):
     nombre_asistente: Optional[str] = Field(None, max_length=120)
+    descripcion_agencia: Optional[str] = Field(None, max_length=4000)
     presentacion_inicial: Optional[str] = Field(None, max_length=4000)
     presentacion_informativo: Optional[str] = Field(None, max_length=4000)
     presentacion_inteligente: Optional[str] = Field(None, max_length=4000)
     tono: Optional[Literal["profesional", "cercano", "juvenil"]] = "cercano"
+    formato_respuestas_informativas: Optional[
+        Literal["lista", "texto_breve", "automatico"]
+    ] = None
     requisitos_texto: Optional[str] = Field(None, max_length=20000)
     beneficios_texto: Optional[str] = Field(None, max_length=20000)
     bonos_texto: Optional[str] = Field(None, max_length=20000)

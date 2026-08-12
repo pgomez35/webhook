@@ -1725,6 +1725,7 @@ async def procesar_mensaje_informativo(
         opciones=opciones,
         presentacion=presentacion,
         presentacion_inicial=(
+            # Ejecución: campo propio con fallback legacy (sin mezclar en BD).
             (asistente or {}).get("presentacion_informativo")
             or (asistente or {}).get("presentacion_inicial")
         ),

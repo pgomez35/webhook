@@ -453,26 +453,48 @@ def obtener_textos_carga(
         if tono not in {"profesional", "cercano", "juvenil"}:
             tono = "cercano"
 
+        general = {
+            "nombre_asistente": asistente.get("nombre_asistente") or "",
+            "presentacion_inicial": asistente.get("presentacion_inicial") or "",
+            "presentacion_informativo": asistente.get("presentacion_informativo") or "",
+            "presentacion_inteligente": asistente.get("presentacion_inteligente") or "",
+            "tono": tono,
+        }
+        _log_presentacion_get(
+            agencia_id=agencia_id,
+            config_id=chatbot_configuracion_id,
+            fuente="obtener_textos_carga",
+            asistente=asistente,
+            general=general,
+        )
+        try:
+            raw = db.leer_presentaciones_raw(
+                agencia_id, chatbot_configuracion_id, cur=c
+            )
+            logger.info(
+                "[CARGA_INFO_PRESENTACION_GET] fuente=obtener_textos_carga_raw "
+                "agencia_id=%s config_id=%s columnas_bd=%s "
+                "raw_inicial_chars=%s raw_informativo_chars=%s "
+                "raw_inicial_inicio=%r raw_informativo_inicio=%r",
+                agencia_id,
+                chatbot_configuracion_id,
+                raw.get("columnas_presentacion_en_bd"),
+                len(str(raw.get("presentacion_inicial") or "")),
+                len(str(raw.get("presentacion_informativo") or ""))
+                if raw.get("presentacion_informativo") != "__COLUMNA_AUSENTE__"
+                else -1,
+                _inicio_texto(raw.get("presentacion_inicial")),
+                _inicio_texto(raw.get("presentacion_informativo"))
+                if raw.get("presentacion_informativo") != "__COLUMNA_AUSENTE__"
+                else "__COLUMNA_AUSENTE__",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[CARGA_INFO_PRESENTACION_GET] raw falló: %s", exc
+            )
+
         return {
-            "general": {
-                "nombre_asistente": asistente.get("nombre_asistente") or "",
-                "presentacion_inicial": (
-                    asistente.get("presentacion_informativo")
-                    or asistente.get("presentacion_inicial")
-                    or ""
-                ),
-                "presentacion_informativo": (
-                    asistente.get("presentacion_informativo")
-                    or asistente.get("presentacion_inicial")
-                    or ""
-                ),
-                "presentacion_inteligente": (
-                    asistente.get("presentacion_inteligente")
-                    or asistente.get("presentacion_inicial")
-                    or ""
-                ),
-                "tono": tono,
-            },
+            "general": general,
             "requisitos_texto": "\n".join(req_txt),
             "beneficios_texto": "\n".join(ben_txt),
             "bonos_texto": "\n".join(bon_txt),
@@ -813,15 +835,9 @@ def _analizar_heuristico(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "general": {
             "nombre_asistente": str(payload.get("nombre_asistente") or "").strip(),
-            "presentacion_inicial": str(
-                payload.get("presentacion_informativo")
-                or payload.get("presentacion_inicial")
-                or ""
-            ).strip(),
+            "presentacion_inicial": str(payload.get("presentacion_inicial") or "").strip(),
             "presentacion_informativo": str(
-                payload.get("presentacion_informativo")
-                or payload.get("presentacion_inicial")
-                or ""
+                payload.get("presentacion_informativo") or ""
             ).strip(),
             "presentacion_inteligente": str(
                 payload.get("presentacion_inteligente") or ""
@@ -1040,10 +1056,112 @@ def _anotar_ids_existentes(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Persistencia datos generales (bienvenida / tono)
+# ---------------------------------------------------------------------------
+
+
+def _inicio_texto(valor: Any, n: int = 80) -> str:
+    t = str(valor or "")
+    if not t:
+        return ""
+    return t[:n].replace("\n", "\\n")
+
+
+def _log_presentacion_save(
+    *,
+    agencia_id: int,
+    config_id: int,
+    campos_escritos: Dict[str, Any],
+    raw_post: Dict[str, Any],
+    origen: str,
+) -> None:
+    for campo in (
+        "presentacion_inicial",
+        "presentacion_informativo",
+        "presentacion_inteligente",
+    ):
+        if campo not in campos_escritos:
+            continue
+        val = campos_escritos.get(campo)
+        logger.info(
+            "[CARGA_INFO_PRESENTACION_SAVE] origen=%s agencia_id=%s config_id=%s "
+            "campo=%s chars=%s valor_inicio=%r",
+            origen,
+            agencia_id,
+            config_id,
+            campo,
+            len(str(val or "")),
+            _inicio_texto(val),
+        )
+    logger.info(
+        "[CARGA_INFO_PRESENTACION_SAVE] origen=%s agencia_id=%s config_id=%s "
+        "asistente_id=%s columnas_bd=%s "
+        "raw_inicial_chars=%s raw_informativo_chars=%s raw_inteligente_chars=%s "
+        "raw_inicial_inicio=%r raw_informativo_inicio=%r raw_inteligente=%r",
+        origen,
+        agencia_id,
+        config_id,
+        raw_post.get("asistente_id"),
+        raw_post.get("columnas_presentacion_en_bd"),
+        len(str(raw_post.get("presentacion_inicial") or "")),
+        len(str(raw_post.get("presentacion_informativo") or ""))
+        if raw_post.get("presentacion_informativo") != "__COLUMNA_AUSENTE__"
+        else -1,
+        len(str(raw_post.get("presentacion_inteligente") or ""))
+        if raw_post.get("presentacion_inteligente") != "__COLUMNA_AUSENTE__"
+        else -1,
+        _inicio_texto(raw_post.get("presentacion_inicial")),
+        _inicio_texto(raw_post.get("presentacion_informativo"))
+        if raw_post.get("presentacion_informativo") != "__COLUMNA_AUSENTE__"
+        else "__COLUMNA_AUSENTE__",
+        _inicio_texto(raw_post.get("presentacion_inteligente"))
+        if raw_post.get("presentacion_inteligente") != "__COLUMNA_AUSENTE__"
+        else "__COLUMNA_AUSENTE__",
+    )
+
+
+def _log_presentacion_get(
+    *,
+    agencia_id: int,
+    config_id: int,
+    fuente: str,
+    asistente: Optional[Dict[str, Any]],
+    general: Optional[Dict[str, Any]] = None,
+) -> None:
+    a = asistente or {}
+    g = general or {}
+    pi = a.get("presentacion_inicial")
+    pf = a.get("presentacion_informativo")
+    pt = a.get("presentacion_inteligente")
+    logger.info(
+        "[CARGA_INFO_PRESENTACION_GET] fuente=%s agencia_id=%s config_id=%s "
+        "asistente_id=%s presentacion_inicial_chars=%s "
+        "presentacion_informativo_chars=%s presentacion_inteligente_chars=%s "
+        "presentacion_inicial_inicio=%r presentacion_informativo_inicio=%r "
+        "general_informativo_chars=%s general_inicial_chars=%s "
+        "general_informativo_inicio=%r",
+        fuente,
+        agencia_id,
+        config_id,
+        a.get("id"),
+        len(str(pi or "")),
+        len(str(pf or "")),
+        len(str(pt or "")),
+        _inicio_texto(pi),
+        _inicio_texto(pf),
+        len(str(g.get("presentacion_informativo") or "")),
+        len(str(g.get("presentacion_inicial") or "")),
+        _inicio_texto(g.get("presentacion_informativo") or g.get("presentacion_inicial")),
+    )
+
+
 def persistir_datos_generales_asistente(
     agencia_id: int,
     chatbot_configuracion_id: int,
     general: Optional[Dict[str, Any]],
+    *,
+    origen: str = "persistir_datos_generales",
 ) -> Dict[str, Any]:
     """
     Guarda nombre / presentaciones / tono en transacción propia.
@@ -1056,26 +1174,54 @@ def persistir_datos_generales_asistente(
     if general.get("nombre_asistente"):
         campos_a["nombre_asistente"] = str(general["nombre_asistente"]).strip()[:120]
 
-    def _tomar_presentacion(*claves: str) -> Optional[str]:
-        for clave in claves:
-            if clave not in general:
-                continue
-            nueva = str(general.get(clave) or "").strip()
-            if nueva:
-                return nueva[:4000]
-        return None
+    def _tomar_si_enviada(clave: str) -> Optional[str]:
+        """Solo el campo pedido; no usa otros como alias de escritura."""
+        if clave not in general:
+            return None
+        nueva = str(general.get(clave) or "").strip()
+        return nueva[:4000] if nueva else None
 
-    # Alias legacy: presentacion_inicial → informativo
-    info = _tomar_presentacion("presentacion_informativo", "presentacion_inicial")
+    # Independientes: no copiar un valor sobre los otros.
+    info = _tomar_si_enviada("presentacion_informativo")
     if info:
         campos_a["presentacion_informativo"] = info
-        campos_a["presentacion_inicial"] = info
-    intel = _tomar_presentacion("presentacion_inteligente")
+    intel = _tomar_si_enviada("presentacion_inteligente")
     if intel:
         campos_a["presentacion_inteligente"] = intel
+    legacy = _tomar_si_enviada("presentacion_inicial")
+    if legacy:
+        campos_a["presentacion_inicial"] = legacy
+
+    if "descripcion_agencia" in general:
+        desc = str(general.get("descripcion_agencia") or "").strip()
+        if desc:
+            campos_a["descripcion_agencia"] = desc[:4000]
+
+    if general.get("formato_respuestas_informativas") in {
+        "lista",
+        "texto_breve",
+        "automatico",
+    }:
+        campos_a["formato_respuestas_informativas"] = general[
+            "formato_respuestas_informativas"
+        ]
 
     if general.get("tono") in {"profesional", "cercano", "juvenil"}:
         campos_a["tono"] = general["tono"]
+
+    logger.info(
+        "[CARGA_INFO_PRESENTACION_SAVE] origen=%s fase=entrada agencia_id=%s "
+        "config_id=%s keys_general=%s info_chars=%s intel_chars=%s legacy_chars=%s "
+        "campos_a=%s",
+        origen,
+        agencia_id,
+        chatbot_configuracion_id,
+        sorted(general.keys()),
+        len(info or ""),
+        len(intel or ""),
+        len(legacy or ""),
+        sorted(campos_a.keys()),
+    )
 
     def _chars(asistente_row: Optional[Dict[str, Any]]) -> int:
         a = asistente_row or {}
@@ -1087,11 +1233,20 @@ def persistir_datos_generales_asistente(
 
     if not campos_a:
         asistente = db.obtener_asistente_por_config(agencia_id, chatbot_configuracion_id)
+        raw = db.leer_presentaciones_raw(agencia_id, chatbot_configuracion_id)
+        _log_presentacion_save(
+            agencia_id=agencia_id,
+            config_id=chatbot_configuracion_id,
+            campos_escritos={},
+            raw_post=raw,
+            origen=f"{origen}:sin_cambios",
+        )
         return {
             "ok": True,
             "asistente": asistente,
             "actualizado": False,
             "presentacion_chars": _chars(asistente),
+            "raw_presentacion": raw,
         }
 
     asistente = db.obtener_asistente_por_config(agencia_id, chatbot_configuracion_id)
@@ -1117,6 +1272,24 @@ def persistir_datos_generales_asistente(
             agencia_id, chatbot_configuracion_id, campos_a
         )
 
+    # Relectura en conexión nueva (post-commit) para validar persistencia real.
+    raw = db.leer_presentaciones_raw(agencia_id, chatbot_configuracion_id)
+    _log_presentacion_save(
+        agencia_id=agencia_id,
+        config_id=chatbot_configuracion_id,
+        campos_escritos={
+            k: campos_a[k]
+            for k in (
+                "presentacion_inicial",
+                "presentacion_informativo",
+                "presentacion_inteligente",
+            )
+            if k in campos_a
+        },
+        raw_post=raw,
+        origen=origen,
+    )
+
     logger.info(
         "[CARGA_INFO] generales agencia_id=%s config_id=%s "
         "presentacion_chars=%s campos=%s",
@@ -1130,6 +1303,7 @@ def persistir_datos_generales_asistente(
         "asistente": actualizado,
         "actualizado": True,
         "presentacion_chars": _chars(actualizado),
+        "raw_presentacion": raw,
     }
 
 
@@ -1147,8 +1321,25 @@ def guardar_informacion_organizada(
 
     # 1) Bienvenida / tono / nombre: commit independiente (no se revierte
     #    si falla después el guardado de requisitos/flujo/enlaces).
+    logger.info(
+        "[CARGA_INFO_PRESENTACION_SAVE] origen=guardar_informacion_organizada "
+        "fase=antes_persistir agencia_id=%s config_id=%s general_keys=%s "
+        "general_info_chars=%s general_inicial_chars=%s general_info_inicio=%r",
+        agencia_id,
+        chatbot_configuracion_id,
+        sorted(general.keys()),
+        len(str(general.get("presentacion_informativo") or "")),
+        len(str(general.get("presentacion_inicial") or "")),
+        _inicio_texto(
+            general.get("presentacion_informativo")
+            or general.get("presentacion_inicial")
+        ),
+    )
     resumen_general = persistir_datos_generales_asistente(
-        agencia_id, chatbot_configuracion_id, general
+        agencia_id,
+        chatbot_configuracion_id,
+        general,
+        origen="guardar_informacion_organizada",
     )
 
     with db._cursor(cur) as c:
@@ -1765,11 +1956,9 @@ def importar_excel_a_propuesta(
     if general_rows:
         g = general_rows[0]
         general["nombre_asistente"] = _celda(g, "nombre_asistente")
-        info = _celda(g, "presentacion_informativo") or _celda(g, "presentacion_inicial")
-        intel = _celda(g, "presentacion_inteligente") or _celda(g, "presentacion_inicial")
-        general["presentacion_informativo"] = info
-        general["presentacion_inteligente"] = intel
-        general["presentacion_inicial"] = info
+        general["presentacion_inicial"] = _celda(g, "presentacion_inicial")
+        general["presentacion_informativo"] = _celda(g, "presentacion_informativo")
+        general["presentacion_inteligente"] = _celda(g, "presentacion_inteligente")
         tono = _celda(g, "tono").lower() or "cercano"
         general["tono"] = tono if tono in {"profesional", "cercano", "juvenil"} else "cercano"
 
