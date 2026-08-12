@@ -23,6 +23,16 @@ logger = logging.getLogger("uvicorn.error")
 CODIGO_FLUJO_CONVERSION = "conversion_base"
 CODIGO_RECURSO_SOLICITUD = "solicitud_principal"
 
+# chk_regla_escalamiento_prioridad: varchar enum (NO es entero 0-100 como FAQ).
+PRIORIDADES_REGLA_ESCALAMIENTO = frozenset({"baja", "normal", "alta", "urgente"})
+# Semántica: 'urgente' > 'alta' > 'normal' > 'baja' (severidad de atención humana).
+# El orden de resolución entre reglas usa `orden`, no este campo.
+EVENTOS_CONTACTO_HUMANO = frozenset(
+    {"solicitud_humano", "transferir_humano", "escalar"}
+)
+# Alineado con la regla plantilla: «El usuario solicita expresamente hablar…»
+PRIORIDAD_CONTACTO_HUMANO = "alta"
+
 _URL_RE = re.compile(r"https?://[^\s<>\"']+", re.I)
 _PREGUNTA_RE = re.compile(
     r"(?:pregunta|q)\s*[:\-–]\s*(.+?)(?:\n|\r|$)", re.I
@@ -35,6 +45,99 @@ _RESPUESTA_RE = re.compile(
 
 def _slug(valor: Any, prefijo: str = "item") -> str:
     return db._slug_codigo(valor, prefijo=prefijo)
+
+
+def normalizar_prioridad_regla_escalamiento(valor: Any) -> str:
+    """
+    Normaliza prioridad al enum de BD:
+    baja | normal | alta | urgente.
+
+    Acepta el enum textual o enteros legacy (confundidos con prioridad FAQ 0-100)
+    y nunca devuelve un valor incompatible con chk_regla_escalamiento_prioridad.
+    """
+    if isinstance(valor, str):
+        v = valor.strip().lower()
+        if v in PRIORIDADES_REGLA_ESCALAMIENTO:
+            return v
+        # Alias frecuentes desde IA / textos libres
+        aliases = {
+            "low": "baja",
+            "medium": "normal",
+            "med": "normal",
+            "high": "alta",
+            "critical": "urgente",
+            "critica": "urgente",
+            "crítica": "urgente",
+        }
+        if v in aliases:
+            return aliases[v]
+    if isinstance(valor, bool):
+        return "normal"
+    if isinstance(valor, (int, float)):
+        # Legacy erróneo: enteros estilo FAQ. Mapear a severidad razonable.
+        n = int(valor)
+        if n >= 80:
+            return "urgente"
+        if n >= 40:
+            return "alta"
+        if n >= 10:
+            return "normal"
+        if n > 0:
+            return "baja"
+        return "normal"
+    return "normal"
+
+
+def _campos_regla_escalamiento_seguros(campos: Dict[str, Any]) -> Dict[str, Any]:
+    """Garantiza prioridad válida antes de crear/actualizar la regla."""
+    out = dict(campos or {})
+    out["prioridad"] = normalizar_prioridad_regla_escalamiento(out.get("prioridad"))
+    return out
+
+
+def _es_regla_contacto_humano_equivalente(regla: Optional[Dict[str, Any]]) -> bool:
+    """
+    Detecta reglas ya existentes que cubren «hablar con una persona».
+
+    Incluye la plantilla:
+    «El usuario solicita expresamente hablar con una persona, asesor,
+    reclutador o manager.»
+    """
+    if not isinstance(regla, dict):
+        return False
+    evento = str(regla.get("evento") or "").strip().lower()
+    if evento in EVENTOS_CONTACTO_HUMANO:
+        return True
+    desc = _norm_nombre(
+        " ".join(
+            [
+                str(regla.get("descripcion") or ""),
+                str(regla.get("nombre") or ""),
+                str(regla.get("mensaje_usuario") or ""),
+            ]
+        )
+    )
+    if "contacto humano" in desc:
+        return True
+    if "solicita expresamente" in desc and "persona" in desc:
+        return True
+    if "hablar con una persona" in desc or "hablar con un asesor" in desc:
+        return True
+    return False
+
+
+def _prioridad_contacto_humano(valor: Any) -> str:
+    """
+    Prioridad para solicitud_humano.
+
+    Si el valor ya es un enum válido, se respeta; enteros legacy (p.ej. 10)
+    u otros inválidos → 'alta' (misma semántica que la regla plantilla).
+    """
+    if isinstance(valor, str):
+        v = valor.strip().lower()
+        if v in PRIORIDADES_REGLA_ESCALAMIENTO:
+            return v
+    return PRIORIDAD_CONTACTO_HUMANO
 
 
 def _norm_nombre(valor: Any) -> str:
@@ -696,6 +799,81 @@ def _anotar_ids_existentes(
 # ---------------------------------------------------------------------------
 
 
+def persistir_datos_generales_asistente(
+    agencia_id: int,
+    chatbot_configuracion_id: int,
+    general: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Guarda nombre / presentación / tono en transacción propia.
+
+    No limpia ``presentacion_inicial`` si llega vacía: así un guardado parcial
+    de catálogos no borra la bienvenida ya configurada.
+    """
+    general = dict(general or {})
+    campos_a: Dict[str, Any] = {}
+    if general.get("nombre_asistente"):
+        campos_a["nombre_asistente"] = str(general["nombre_asistente"]).strip()[:120]
+    if "presentacion_inicial" in general:
+        nueva = str(general.get("presentacion_inicial") or "").strip()
+        if nueva:
+            campos_a["presentacion_inicial"] = nueva[:4000]
+        # vacío → no tocar (evita borrado accidental)
+    if general.get("tono") in {"profesional", "cercano", "juvenil"}:
+        campos_a["tono"] = general["tono"]
+
+    if not campos_a:
+        asistente = db.obtener_asistente_por_config(agencia_id, chatbot_configuracion_id)
+        return {
+            "ok": True,
+            "asistente": asistente,
+            "actualizado": False,
+            "presentacion_chars": len(
+                str((asistente or {}).get("presentacion_inicial") or "")
+            ),
+        }
+
+    asistente = db.obtener_asistente_por_config(agencia_id, chatbot_configuracion_id)
+    if asistente:
+        actualizado = db.actualizar_asistente(
+            agencia_id, int(asistente["id"]), campos_a
+        )
+    else:
+        campos_a.setdefault(
+            "nombre_asistente",
+            str(general.get("nombre_asistente") or "Asistente virtual")[:120],
+        )
+        campos_a.update(
+            {
+                "activo": True,
+                "declarar_asistente_virtual": True,
+                "modo_informativo_activo": True,
+                "modo_conversion_activo": True,
+                "modo_predeterminado": "conversion",
+            }
+        )
+        actualizado = db.upsert_asistente(
+            agencia_id, chatbot_configuracion_id, campos_a
+        )
+
+    logger.info(
+        "[CARGA_INFO] generales agencia_id=%s config_id=%s "
+        "presentacion_chars=%s campos=%s",
+        agencia_id,
+        chatbot_configuracion_id,
+        len(str((actualizado or {}).get("presentacion_inicial") or "")),
+        sorted(campos_a.keys()),
+    )
+    return {
+        "ok": True,
+        "asistente": actualizado,
+        "actualizado": True,
+        "presentacion_chars": len(
+            str((actualizado or {}).get("presentacion_inicial") or "")
+        ),
+    }
+
+
 def guardar_informacion_organizada(
     agencia_id: int,
     chatbot_configuracion_id: int,
@@ -708,45 +886,36 @@ def guardar_informacion_organizada(
     creados = actualizados = 0
     advertencias: List[str] = []
 
+    # 1) Bienvenida / tono / nombre: commit independiente (no se revierte
+    #    si falla después el guardado de requisitos/flujo/enlaces).
+    resumen_general = persistir_datos_generales_asistente(
+        agencia_id, chatbot_configuracion_id, general
+    )
+
     with db._cursor(cur) as c:
         db._exige_configuracion(agencia_id, chatbot_configuracion_id, cur=c)
 
         asistente = db.obtener_asistente_por_config(
             agencia_id, chatbot_configuracion_id, cur=c
         )
-        campos_a = {}
-        if general.get("nombre_asistente"):
-            campos_a["nombre_asistente"] = str(general["nombre_asistente"]).strip()[:120]
-        if "presentacion_inicial" in general:
-            campos_a["presentacion_inicial"] = (
-                str(general.get("presentacion_inicial") or "").strip() or None
-            )
-            logger.info(
-                "[CARGA_INFO] presentacion_inicial chars=%s config_id=%s",
-                len(str(campos_a.get("presentacion_inicial") or "")),
+        # No volver a tocar presentacion_inicial aquí (ya quedó en paso 1).
+        if not asistente:
+            # Defensa: crear cascarón si el paso 1 no pudo (sin presentación vacía).
+            db.upsert_asistente(
+                agencia_id,
                 chatbot_configuracion_id,
-            )
-        if general.get("tono") in {"profesional", "cercano", "juvenil"}:
-            campos_a["tono"] = general["tono"]
-        if asistente:
-            if campos_a:
-                db.actualizar_asistente(agencia_id, int(asistente["id"]), campos_a, cur=c)
-                actualizados += 1
-        else:
-            campos_a.setdefault(
-                "nombre_asistente",
-                str(general.get("nombre_asistente") or "Asistente virtual")[:120],
-            )
-            campos_a.update(
                 {
-                    "activo": False,
+                    "nombre_asistente": str(
+                        general.get("nombre_asistente") or "Asistente virtual"
+                    )[:120],
+                    "activo": True,
                     "declarar_asistente_virtual": True,
                     "modo_informativo_activo": True,
                     "modo_conversion_activo": True,
-                    "modo_predeterminado": "informativo",
-                }
+                    "modo_predeterminado": "conversion",
+                },
+                cur=c,
             )
-            db.upsert_asistente(agencia_id, chatbot_configuracion_id, campos_a, cur=c)
             creados += 1
 
         # Requisitos
@@ -1011,6 +1180,8 @@ def guardar_informacion_organizada(
                     advertencias.append(f"No se pudo crear el enlace '{nombre}': {exc}")
 
         # Contacto humano (regla)
+        # Origen histórico del bug: prioridad=10 (entero FAQ) → CheckViolation.
+        # Semántica alineada a la plantilla existente (prioridad='alta').
         contacto = dict(datos.get("contacto_humano") or {})
         if contacto.get("equipo_destino"):
             reglas = db.listar_reglas_escalamiento(
@@ -1020,35 +1191,65 @@ def guardar_informacion_organizada(
                 cur=c,
             )
             regla = next(
-                (
-                    r
-                    for r in reglas
-                    if (r.get("evento") or "") in {"solicitud_humano", "transferir_humano", "escalar"}
-                ),
+                (r for r in reglas if _es_regla_contacto_humano_equivalente(r)),
                 None,
             )
-            campos_r = {
-                "chatbot_configuracion_id": chatbot_configuracion_id,
-                "evento": "solicitud_humano",
-                "descripcion": "Contacto humano (carga de información)",
-                "prioridad": 10,
-                "equipo_destino": str(contacto.get("equipo_destino")).strip()[:120],
-                "canal_destino": "panel",
-                "mensaje_usuario": (
-                    "Te conectaré con una persona del equipo para continuar."
-                ),
-                "estado_destino": "escalado_humano",
-                "activo": True,
-                "orden": 1,
-            }
+            equipo = str(contacto.get("equipo_destino") or "").strip()[:120]
+            prioridad = _prioridad_contacto_humano(contacto.get("prioridad"))
             if regla:
-                db.actualizar_regla_escalamiento(
-                    agencia_id, int(regla["id"]), campos_r, cur=c
+                # Reutilizar regla equivalente: no crear duplicado.
+                campos_upd: Dict[str, Any] = {}
+                if equipo and str(regla.get("equipo_destino") or "").strip() != equipo:
+                    campos_upd["equipo_destino"] = equipo
+                pri_actual = str(regla.get("prioridad") or "").strip().lower()
+                if pri_actual not in PRIORIDADES_REGLA_ESCALAMIENTO:
+                    campos_upd["prioridad"] = prioridad
+                if not regla.get("activo", True):
+                    campos_upd["activo"] = True
+                if campos_upd:
+                    db.actualizar_regla_escalamiento(
+                        agencia_id,
+                        int(regla["id"]),
+                        _campos_regla_escalamiento_seguros(campos_upd),
+                        cur=c,
+                    )
+                    actualizados += 1
+                else:
+                    advertencias.append(
+                        "Se reutilizó la regla de contacto humano existente "
+                        f"(id={regla.get('id')}); no se creó duplicado."
+                    )
+                logger.info(
+                    "[CARGA_INFO] regla_contacto reutilizada id=%s prioridad=%s "
+                    "actualizada=%s",
+                    regla.get("id"),
+                    pri_actual or prioridad,
+                    bool(campos_upd),
                 )
-                actualizados += 1
             else:
+                campos_r = _campos_regla_escalamiento_seguros(
+                    {
+                        "chatbot_configuracion_id": chatbot_configuracion_id,
+                        "evento": "solicitud_humano",
+                        "descripcion": "Contacto humano (carga de información)",
+                        "prioridad": prioridad,
+                        "equipo_destino": equipo,
+                        "canal_destino": "panel",
+                        "mensaje_usuario": (
+                            "Te conectaré con una persona del equipo para continuar."
+                        ),
+                        "estado_destino": "escalado_humano",
+                        "activo": True,
+                        "orden": 1,
+                    }
+                )
+                assert campos_r["prioridad"] in PRIORIDADES_REGLA_ESCALAMIENTO
                 db.crear_regla_escalamiento(agencia_id, campos_r, cur=c)
                 creados += 1
+                logger.info(
+                    "[CARGA_INFO] regla_contacto creada prioridad=%s",
+                    campos_r["prioridad"],
+                )
 
         # Proceso → flujo conversión (crear faltantes, no borrar)
         pasos = datos.get("proceso_ingreso") or []
@@ -1160,6 +1361,7 @@ def guardar_informacion_organizada(
         "actualizados": actualizados,
         "advertencias": advertencias,
         "textos": textos,
+        "general": resumen_general,
     }
 
 

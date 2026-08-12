@@ -576,6 +576,40 @@ def post_guardar_informacion_organizada(
         raise
 
 
+@router.put("/configuraciones/{chatbot_configuracion_id}/carga-informacion/general")
+def put_carga_informacion_general(
+    chatbot_configuracion_id: int,
+    payload: AnalizarInformacionIn,
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    """
+    Guarda solo nombre / presentación inicial / tono.
+    Independiente del organizador de requisitos/beneficios/proceso.
+    """
+    cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
+    import service_chatbot_carga_informacion as svc_carga
+
+    campos = _campos(payload)
+    try:
+        return svc_carga.persistir_datos_generales_asistente(
+            _agencia_id(agencia),
+            cfg_id,
+            {
+                "nombre_asistente": campos.get("nombre_asistente"),
+                "presentacion_inicial": campos.get("presentacion_inicial"),
+                "tono": campos.get("tono"),
+            },
+        )
+    except Exception as e:
+        from chatbot_conversacional_exceptions import ConversacionalError
+
+        if isinstance(e, ConversacionalError):
+            raise HTTPException(status_code=400, detail=e.mensaje) from e
+        if isinstance(e, _ERRORES_DATOS):
+            raise _http_error(e) from e
+        raise
+
+
 @router.get("/configuraciones/{chatbot_configuracion_id}/plantilla-excel")
 def get_plantilla_excel(
     chatbot_configuracion_id: int,

@@ -424,7 +424,7 @@ def aplicar_plantilla_asistente_conversacional(
                     "chatbot_configuracion_id": chatbot_configuracion_id,
                     "evento": "solicitud_humano",
                     "descripcion": "Transferencia a persona desde configuración rápida",
-                    "prioridad": 10,
+                    "prioridad": "alta",
                     "equipo_destino": "equipo_captacion",
                     "canal_destino": "panel",
                     "mensaje_usuario": (
@@ -1537,7 +1537,7 @@ def _guardar_contacto_humano(
         "chatbot_configuracion_id": cfg_id,
         "evento": "solicitud_humano",
         "descripcion": "Contacto humano (configuración rápida)",
-        "prioridad": 10,
+        "prioridad": "alta",
         "equipo_destino": str((contacto or {}).get("equipo_destino") or "").strip()
         or "equipo_captacion",
         "canal_destino": "panel",
