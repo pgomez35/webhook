@@ -62,7 +62,10 @@ def _norm(texto: str) -> str:
     valor = str(texto or "").strip().lower()
     valor = unicodedata.normalize("NFD", valor)
     valor = "".join(ch for ch in valor if unicodedata.category(ch) != "Mn")
+    # Conservar puntos/comas decimales entre dígitos (0.5 / 0,5).
+    valor = re.sub(r"(?<=\d)[.,](?=\d)", "DOT", valor)
     valor = re.sub(r"[^\w\s]", " ", valor, flags=re.UNICODE)
+    valor = valor.replace("DOT", ".")
     return re.sub(r"\s+", " ", valor).strip()
 
 
@@ -377,7 +380,31 @@ def interpretar_mensaje_v2(
     if not n:
         return TurnInterpretation(intent="empty", confidence=0.0)
 
-    # --- terceros ---
+    # Meta: usuario señala dato faltante (edad)
+    if re.search(
+        r"\b(no me has preguntado|no me preguntaste|falta (la )?edad|"
+        r"y la edad|preguntame la edad)\b",
+        n,
+    ):
+        return TurnInterpretation(
+            intent="request_missing_field",
+            facts={},
+            meta={"missing_field": "mayor_edad"},
+            confidence=0.9,
+        )
+
+    # Corrección: mostró proceso en lugar de beneficios
+    if re.search(
+        r"\b(proceso pero no|no los beneficios|no me (diste|mostraste) (los )?beneficios|"
+        r"me estas mostrando el proceso|eso no son beneficios)\b",
+        n,
+    ):
+        return TurnInterpretation(
+            intent="ask_information",
+            questions=[{"intent": "what_are_benefits"}],
+            meta={"correction": "wanted_benefits_not_process"},
+            confidence=0.9,
+        )
     if re.search(
         r"\b(hermana|hermano|esposo|esposa|amiga|amigo|prima|primo|referid)\b",
         n,
@@ -518,15 +545,28 @@ def interpretar_mensaje_v2(
             answer = "ambiguous"
 
     # --- device / internet (word boundaries; evita "beneficIOS") ---
-    if re.search(r"\bandroid\b", n):
+    android_brand = bool(
+        re.search(
+            r"\b(android|samsung|samsumg|samsun|xiaomi|huawei|motorola|moto|"
+            r"pixel|redmi|oppo|vivo|realme|honor)\b",
+            n,
+        )
+    )
+    if android_brand:
         facts["device_os"] = "android"
         intent = "provide_fact"
     if re.search(r"\b(iphone|ios)\b", n):
         facts["device_os"] = "ios"
         intent = "provide_fact"
+
     m_dev_age = re.search(r"\b(\d{1,2})\s*anos?\b", n)
-    m_year = re.search(r"\b(?:ano|del ano)\s+(\d{4})\b", n)
-    if pending_device or re.search(r"\b(android|iphone|telefono|celular|equipo)\b", n):
+    m_year = re.search(r"\b(?:ano|del ano|year)\s+(\d{4})\b", n)
+    if not m_year:
+        m_year = re.search(r"\b(20[0-2]\d)\b", n)
+
+    if pending_device or android_brand or re.search(
+        r"\b(iphone|telefono|celular|equipo)\b", n
+    ):
         if m_dev_age:
             edad_eq = int(m_dev_age.group(1))
             if 0 < edad_eq <= 20:
@@ -534,29 +574,43 @@ def interpretar_mensaje_v2(
                 intent = "provide_fact"
         if m_year:
             year = int(m_year.group(1))
-            # Ignorar años absurdos (ej. 1942) salvo rango razonable de smartphones
             if 2007 <= year <= 2026:
                 facts["device_year"] = year
                 intent = "provide_fact"
-        # "iphone 20" → modelo, no año 20 como edad si > 15
+                # Si hay año de teléfono y pending device sin OS, asumir Android
+                # salvo que diga iPhone.
+                if pending_device and "device_os" not in facts and "iphone" not in n:
+                    if android_brand or not re.search(r"\bios\b", n):
+                        facts.setdefault("device_os", "android")
         m_model = re.search(r"\biphone\s+(\d{1,2})\b", n)
         if m_model:
             facts["device_os"] = "ios"
             facts["device_model_hint"] = f"iphone_{m_model.group(1)}"
             intent = "provide_fact"
 
-    m_net = re.search(r"\b(\d{1,4})\s*(megas?|mbps|mb)\b", n)
-    if m_net or (pending_internet and re.search(r"\b\d+\b", n)) or (
-        "internet" in n and re.search(r"\d+", n)
-    ):
+    # Internet: soporta 0.5 / 0,5 / 10 megas
+    m_net = re.search(
+        r"\b(\d+(?:[.,]\d+)?)\s*(megas?|mbps|mb)\b", n
+    )
+    m_net_solo = re.search(r"\b(\d+[.,]\d+)\b", n) if pending_internet else None
+    if m_net or m_net_solo or (
+        pending_internet and re.search(r"\b\d+\b", n)
+    ) or ("internet" in n and re.search(r"\d+", n)):
+        raw = None
         if m_net:
-            facts["internet_speed_mbps"] = int(m_net.group(1))
-            intent = "provide_fact"
+            raw = m_net.group(1)
+        elif m_net_solo:
+            raw = m_net_solo.group(1)
         elif pending_internet:
-            m2 = re.search(r"\b(\d{1,4})\b", n)
-            if m2 and not m_year:
-                facts["internet_speed_mbps"] = int(m2.group(1))
+            m2 = re.search(r"\b(\d+(?:[.,]\d+)?)\b", n)
+            if m2 and not (m_year and m2.group(1) == m_year.group(1)):
+                raw = m2.group(1)
+        if raw is not None:
+            try:
+                facts["internet_speed_mbps"] = float(str(raw).replace(",", "."))
                 intent = "provide_fact"
+            except ValueError:
+                pass
 
     # --- personalidad ---
     traits = []
@@ -833,14 +887,13 @@ def _siguiente_dato_faltante(
             "texto": "¿Ya has realizado transmisiones LIVE?",
         }
     if perfil.get("mayor_edad") is None:
-        # Solo si hay requisito de edad o siempre preguntamos en evaluación
-        if any(_req_es_edad(r) for r in (requisitos or []) if r):
-            return {
-                "code": "mayor_edad",
-                "campo": "mayor_edad",
-                "tipo": "hacer_pregunta",
-                "texto": "Antes de continuar, ¿eres mayor de 18 años?",
-            }
+        # Siempre pedir edad en evaluación (no depender solo del catálogo).
+        return {
+            "code": "mayor_edad",
+            "campo": "mayor_edad",
+            "tipo": "hacer_pregunta",
+            "texto": "Antes de continuar, ¿eres mayor de 18 años?",
+        }
     if perfil.get("hours_per_day") is None and perfil.get("days_per_week") is None:
         if perfil.get("disponibilidad_live") is not True:
             return {
@@ -877,6 +930,78 @@ def _siguiente_dato_faltante(
     return None
 
 
+def _parece_texto_proceso(texto: str) -> bool:
+    n = _norm(texto)
+    marcas = (
+        "enlace de solicitud",
+        "pantallazos",
+        "evidencias",
+        "live de prueba",
+        "agendar",
+        "aprobacion final",
+        "proceso puede incluir",
+        "integrante autorizado",
+    )
+    return sum(1 for m in marcas if m in n) >= 2
+
+
+def _faq_beneficios(
+    faqs: Optional[List[Dict[str, Any]]],
+) -> Optional[str]:
+    """FAQ de beneficios: exige señal de beneficio y rechaza textos de proceso."""
+    mejor = None
+    score = 0
+    for f in faqs or []:
+        if not f or f.get("activo") is False:
+            continue
+        preg = _norm(str(f.get("pregunta") or ""))
+        resp = str(
+            f.get("respuesta_completa") or f.get("respuesta_corta") or ""
+        ).strip()
+        if not resp or _parece_texto_proceso(resp) or _parece_texto_proceso(preg):
+            continue
+        if not any(k in preg for k in ("beneficio", "beneficios", "bono", "incentivo")):
+            continue
+        s = 3
+        if "beneficio" in preg:
+            s += 5
+        if s > score:
+            score = s
+            mejor = resp
+    return mejor
+
+
+def _listar_beneficios_usuario(
+    beneficios: Optional[List[Dict[str, Any]]],
+) -> str:
+    """Lista beneficios + bonos (el usuario suele pedir ambos como 'beneficios')."""
+    items = []
+    for b in beneficios or []:
+        if not b or b.get("activo") is False:
+            continue
+        if b.get("permitir_mencion_automatica") is False:
+            continue
+        if b.get("visible_publicamente") is False:
+            continue
+        items.append(b)
+    if not items:
+        return ""
+    out = ["Beneficios y bonos disponibles:", ""]
+    for i, it in enumerate(items, start=1):
+        nombre = str(it.get("nombre") or it.get("titulo") or "").strip()
+        desc = str(
+            it.get("descripcion")
+            or it.get("texto_autorizado")
+            or it.get("descripcion_corta")
+            or ""
+        ).strip()
+        if nombre and desc and desc != nombre:
+            out.append(f"{i}. {nombre}: {desc}")
+        elif nombre or desc:
+            out.append(f"{i}. {nombre or desc}")
+    return "\n".join(out).strip()
+
+
 def _buscar_faq_topic(
     topic: str,
     faqs: Optional[List[Dict[str, Any]]],
@@ -887,6 +1012,11 @@ def _buscar_faq_topic(
     score = 0
     for f in faqs or []:
         if not f or f.get("activo") is False:
+            continue
+        resp = str(
+            f.get("respuesta_completa") or f.get("respuesta_corta") or ""
+        ).strip()
+        if resp and _parece_texto_proceso(resp):
             continue
         blob = _norm(
             " ".join(
@@ -950,13 +1080,26 @@ def _responder_pregunta(
         )
 
     if intent == "what_are_benefits":
-        texto = consultar_conocimiento_puro(
-            tipo="beneficios", requisitos=requisitos, beneficios=beneficios, faqs=faqs
-        )
-        if texto and "no tengo" not in texto.lower():
+        texto = _listar_beneficios_usuario(beneficios)
+        if not texto:
+            texto = consultar_conocimiento_puro(
+                tipo="beneficios",
+                requisitos=requisitos,
+                beneficios=beneficios,
+                faqs=faqs,
+            )
+        if texto and "no tengo" not in texto.lower() and not _parece_texto_proceso(texto):
             return texto
-        faq = _buscar_faq_topic("beneficios agencia", faqs)
-        return faq or (
+        # Bonos como fallback si no hay "beneficios" tipados
+        bonos = consultar_conocimiento_puro(
+            tipo="bonos", requisitos=requisitos, beneficios=beneficios, faqs=faqs
+        )
+        if bonos and "no tengo" not in bonos.lower():
+            return bonos
+        faq = _faq_beneficios(faqs)
+        if faq:
+            return faq
+        return (
             "Ahora mismo no tengo beneficios cargados en la configuración de esta "
             "agencia. Si el equipo los publica, podré detallártelos."
         )
@@ -1091,6 +1234,30 @@ def resolver_decision_turno(
     blockers = list(estado.get("blockers") or [])
     macro = str(estado.get("macro_state") or ST_ORIENTACION)
     answered = list(estado.get("answered_requirements") or [])
+
+    # 1b) Usuario pide un dato que saltamos (edad)
+    if interpretacion.intent == "request_missing_field":
+        field = str((interpretacion.meta or {}).get("missing_field") or "mayor_edad")
+        if field in {"mayor_edad", "edad"} and perfil.get("mayor_edad") is None:
+            pend = {
+                "code": "mayor_edad",
+                "campo": "mayor_edad",
+                "tipo": "hacer_pregunta",
+                "texto": "Tienes razón. Antes de continuar, ¿eres mayor de 18 años?",
+            }
+            return DecisionTurno(
+                type=DEC_ASK_DATA,
+                public_content=pend["texto"],
+                required_input=pend,
+                reason="user_requested_missing_age",
+                intent=interpretacion.intent,
+            )
+        return DecisionTurno(
+            type=DEC_ACK_FACT,
+            public_content="Gracias por avisarme. ¿Qué dato te falta por confirmar?",
+            reason="missing_field_ack",
+            intent=interpretacion.intent,
+        )
 
     # 1) Queja meta
     if interpretacion.intent == "user_complaint":
@@ -1421,13 +1588,14 @@ def _ack_hechos(facts: Dict[str, Any]) -> str:
             partes.append(f"Guardé que puedes unos {d} días a la semana.")
     if facts.get("device_os"):
         extra = ""
-        if facts.get("device_age_years") is not None:
+        if facts.get("device_year") is not None:
+            extra = f" {facts['device_year']}"
+        elif facts.get("device_age_years") is not None:
             extra = f" de unos {facts['device_age_years']} años"
         partes.append(f"Registré tu equipo ({facts['device_os']}{extra}).")
     if facts.get("internet_speed_mbps") is not None:
-        partes.append(
-            f"Registré tu conexión (~{facts['internet_speed_mbps']} Mbps)."
-        )
+        mbps = facts["internet_speed_mbps"]
+        partes.append(f"Registré tu conexión (~{mbps} Mbps).")
     if facts.get("personality_traits"):
         partes.append("Tomé nota de lo que comentas sobre tu estilo/energía.")
     return " ".join(partes)
