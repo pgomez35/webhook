@@ -94,13 +94,42 @@ def texto_bienvenida_con_atajos(nombre_agencia: str) -> str:
         "Estoy aquí para ayudarte con tus dudas y orientarte sobre la agencia. "
         "Puedes preguntarme sobre:\n"
         "\n"
-        "1. Requisitos para ingresar a la agencia.\n"
-        "2. Beneficios que ofrecemos.\n"
-        "3. Bonos disponibles.\n"
-        "4. Quiero continuar con el proceso.\n"
+        f"{texto_opciones_atajos_inicial()}\n"
         "\n"
         "O escríbeme directamente cualquier otra duda que tengas."
     )
+
+
+def texto_opciones_atajos_inicial() -> str:
+    return (
+        "1. Requisitos para ingresar a la agencia.\n"
+        "2. Beneficios que ofrecemos.\n"
+        "3. Bonos disponibles.\n"
+        "4. Quiero continuar con el proceso."
+    )
+
+
+def armar_bienvenida_inteligente(
+    *,
+    presentacion_custom: Optional[str],
+    nombre_agencia: str,
+) -> str:
+    """
+    Si hay presentación inteligente configurada: texto + menú 1–4.
+    Si no: plantilla completa de atajos.
+    """
+    custom = str(presentacion_custom or "").strip()
+    if custom:
+        return (
+            f"{custom.rstrip()}\n"
+            "\n"
+            "Puedes preguntarme sobre:\n"
+            "\n"
+            f"{texto_opciones_atajos_inicial()}\n"
+            "\n"
+            "O escríbeme directamente cualquier otra duda que tengas."
+        )
+    return texto_bienvenida_con_atajos(nombre_agencia)
 
 
 def _items_conocimiento(

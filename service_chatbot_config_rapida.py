@@ -1599,6 +1599,14 @@ def guardar_configuracion_rapida(
             campos_asistente["presentacion_inicial"] = (
                 str(general.get("presentacion_inicial") or "").strip() or None
             )
+        if "presentacion_informativo" in general:
+            campos_asistente["presentacion_informativo"] = (
+                str(general.get("presentacion_informativo") or "").strip() or None
+            )
+        if "presentacion_inteligente" in general:
+            campos_asistente["presentacion_inteligente"] = (
+                str(general.get("presentacion_inteligente") or "").strip() or None
+            )
         if "tono" in general and general.get("tono"):
             campos_asistente["tono"] = str(general.get("tono"))
         if "modo_informativo_activo" in general:

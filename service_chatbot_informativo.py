@@ -1724,7 +1724,10 @@ async def procesar_mensaje_informativo(
         nombre_agencia=nombre_agencia,
         opciones=opciones,
         presentacion=presentacion,
-        presentacion_inicial=(asistente or {}).get("presentacion_inicial"),
+        presentacion_inicial=(
+            (asistente or {}).get("presentacion_informativo")
+            or (asistente or {}).get("presentacion_inicial")
+        ),
     )
     texto_menu_retorno = construir_menu_retorno(
         opciones=opciones,

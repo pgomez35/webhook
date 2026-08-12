@@ -293,7 +293,21 @@ def obtener_textos_carga(
         return {
             "general": {
                 "nombre_asistente": asistente.get("nombre_asistente") or "",
-                "presentacion_inicial": asistente.get("presentacion_inicial") or "",
+                "presentacion_inicial": (
+                    asistente.get("presentacion_informativo")
+                    or asistente.get("presentacion_inicial")
+                    or ""
+                ),
+                "presentacion_informativo": (
+                    asistente.get("presentacion_informativo")
+                    or asistente.get("presentacion_inicial")
+                    or ""
+                ),
+                "presentacion_inteligente": (
+                    asistente.get("presentacion_inteligente")
+                    or asistente.get("presentacion_inicial")
+                    or ""
+                ),
                 "tono": tono,
             },
             "requisitos_texto": "\n".join(req_txt),
@@ -583,7 +597,17 @@ def _analizar_heuristico(payload: Dict[str, Any]) -> Dict[str, Any]:
         "general": {
             "nombre_asistente": str(payload.get("nombre_asistente") or "").strip(),
             "presentacion_inicial": str(
-                payload.get("presentacion_inicial") or ""
+                payload.get("presentacion_informativo")
+                or payload.get("presentacion_inicial")
+                or ""
+            ).strip(),
+            "presentacion_informativo": str(
+                payload.get("presentacion_informativo")
+                or payload.get("presentacion_inicial")
+                or ""
+            ).strip(),
+            "presentacion_inteligente": str(
+                payload.get("presentacion_inteligente") or ""
             ).strip(),
             "tono": payload.get("tono")
             if payload.get("tono") in {"profesional", "cercano", "juvenil"}
@@ -805,22 +829,44 @@ def persistir_datos_generales_asistente(
     general: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
     """
-    Guarda nombre / presentación / tono en transacción propia.
+    Guarda nombre / presentaciones / tono en transacción propia.
 
-    No limpia ``presentacion_inicial`` si llega vacía: así un guardado parcial
+    No limpia presentaciones si llegan vacías: así un guardado parcial
     de catálogos no borra la bienvenida ya configurada.
     """
     general = dict(general or {})
     campos_a: Dict[str, Any] = {}
     if general.get("nombre_asistente"):
         campos_a["nombre_asistente"] = str(general["nombre_asistente"]).strip()[:120]
-    if "presentacion_inicial" in general:
-        nueva = str(general.get("presentacion_inicial") or "").strip()
-        if nueva:
-            campos_a["presentacion_inicial"] = nueva[:4000]
-        # vacío → no tocar (evita borrado accidental)
+
+    def _tomar_presentacion(*claves: str) -> Optional[str]:
+        for clave in claves:
+            if clave not in general:
+                continue
+            nueva = str(general.get(clave) or "").strip()
+            if nueva:
+                return nueva[:4000]
+        return None
+
+    # Alias legacy: presentacion_inicial → informativo
+    info = _tomar_presentacion("presentacion_informativo", "presentacion_inicial")
+    if info:
+        campos_a["presentacion_informativo"] = info
+        campos_a["presentacion_inicial"] = info
+    intel = _tomar_presentacion("presentacion_inteligente")
+    if intel:
+        campos_a["presentacion_inteligente"] = intel
+
     if general.get("tono") in {"profesional", "cercano", "juvenil"}:
         campos_a["tono"] = general["tono"]
+
+    def _chars(asistente_row: Optional[Dict[str, Any]]) -> int:
+        a = asistente_row or {}
+        return max(
+            len(str(a.get("presentacion_informativo") or "")),
+            len(str(a.get("presentacion_inteligente") or "")),
+            len(str(a.get("presentacion_inicial") or "")),
+        )
 
     if not campos_a:
         asistente = db.obtener_asistente_por_config(agencia_id, chatbot_configuracion_id)
@@ -828,9 +874,7 @@ def persistir_datos_generales_asistente(
             "ok": True,
             "asistente": asistente,
             "actualizado": False,
-            "presentacion_chars": len(
-                str((asistente or {}).get("presentacion_inicial") or "")
-            ),
+            "presentacion_chars": _chars(asistente),
         }
 
     asistente = db.obtener_asistente_por_config(agencia_id, chatbot_configuracion_id)
@@ -861,16 +905,14 @@ def persistir_datos_generales_asistente(
         "presentacion_chars=%s campos=%s",
         agencia_id,
         chatbot_configuracion_id,
-        len(str((actualizado or {}).get("presentacion_inicial") or "")),
+        _chars(actualizado),
         sorted(campos_a.keys()),
     )
     return {
         "ok": True,
         "asistente": actualizado,
         "actualizado": True,
-        "presentacion_chars": len(
-            str((actualizado or {}).get("presentacion_inicial") or "")
-        ),
+        "presentacion_chars": _chars(actualizado),
     }
 
 
@@ -1376,8 +1418,22 @@ def generar_plantilla_excel_bytes() -> bytes:
     wb = Workbook()
     ws = wb.active
     ws.title = "Datos generales"
-    ws.append(["nombre_asistente", "presentacion_inicial", "tono"])
-    ws.append(["Asistente virtual", "¡Hola! Soy el asistente de la agencia…", "cercano"])
+    ws.append(
+        [
+            "nombre_asistente",
+            "presentacion_informativo",
+            "presentacion_inteligente",
+            "tono",
+        ]
+    )
+    ws.append(
+        [
+            "Asistente virtual",
+            "¡Hola! Bienvenido(a) al menú informativo…",
+            "¡Hola! Soy el asistente conversacional…",
+            "cercano",
+        ]
+    )
 
     ws2 = wb.create_sheet("Requisitos")
     ws2.append(["nombre", "descripcion", "tipo", "mensaje_si_no_cumple", "orden"])
@@ -1471,11 +1527,21 @@ def importar_excel_a_propuesta(
         return out
 
     general_rows = filas("Datos generales")
-    general = {"nombre_asistente": "", "presentacion_inicial": "", "tono": "cercano"}
+    general = {
+        "nombre_asistente": "",
+        "presentacion_inicial": "",
+        "presentacion_informativo": "",
+        "presentacion_inteligente": "",
+        "tono": "cercano",
+    }
     if general_rows:
         g = general_rows[0]
         general["nombre_asistente"] = _celda(g, "nombre_asistente")
-        general["presentacion_inicial"] = _celda(g, "presentacion_inicial")
+        info = _celda(g, "presentacion_informativo") or _celda(g, "presentacion_inicial")
+        intel = _celda(g, "presentacion_inteligente") or _celda(g, "presentacion_inicial")
+        general["presentacion_informativo"] = info
+        general["presentacion_inteligente"] = intel
+        general["presentacion_inicial"] = info
         tono = _celda(g, "tono").lower() or "cercano"
         general["tono"] = tono if tono in {"profesional", "cercano", "juvenil"} else "cercano"
 

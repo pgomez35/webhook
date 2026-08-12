@@ -265,19 +265,41 @@ def es_saludo_inicial(texto: str) -> bool:
     return False
 
 
-def texto_presentacion_inicial(asistente: Optional[Dict[str, Any]]) -> Optional[str]:
-    """
-    Devuelve presentacion_inicial tal cual (conserva saltos de línea y emoji).
-    Solo se recortan espacios al inicio/final del bloque completo.
-    """
+def texto_presentacion_desde_campo(
+    asistente: Optional[Dict[str, Any]],
+    *campos: str,
+) -> Optional[str]:
+    """Primera presentación no vacía entre los campos indicados."""
     if not isinstance(asistente, dict):
         return None
-    crudo = asistente.get("presentacion_inicial")
-    if not isinstance(crudo, str):
-        return None
-    if not crudo.strip():
-        return None
-    return preservar_formato_whatsapp(crudo)
+    for campo in campos:
+        crudo = asistente.get(campo)
+        if not isinstance(crudo, str):
+            continue
+        if not crudo.strip():
+            continue
+        return preservar_formato_whatsapp(crudo)
+    return None
+
+
+def texto_presentacion_informativo(asistente: Optional[Dict[str, Any]]) -> Optional[str]:
+    return texto_presentacion_desde_campo(
+        asistente, "presentacion_informativo", "presentacion_inicial"
+    )
+
+
+def texto_presentacion_inteligente(asistente: Optional[Dict[str, Any]]) -> Optional[str]:
+    return texto_presentacion_desde_campo(
+        asistente, "presentacion_inteligente", "presentacion_inicial"
+    )
+
+
+def texto_presentacion_inicial(asistente: Optional[Dict[str, Any]]) -> Optional[str]:
+    """
+    Alias legacy → presentación informativa (con fallback a presentacion_inicial).
+    Conserva saltos de línea y emoji.
+    """
+    return texto_presentacion_informativo(asistente)
 
 
 def preservar_formato_whatsapp(texto: str) -> str:

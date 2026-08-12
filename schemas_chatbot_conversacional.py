@@ -262,6 +262,8 @@ class AsistenteConfiguracionOut(_Salida):
     nombre_asistente: str
     descripcion_agencia: Optional[str] = None
     presentacion_inicial: Optional[str] = None
+    presentacion_informativo: Optional[str] = None
+    presentacion_inteligente: Optional[str] = None
     tono: Tono = "cercano"
     idioma: str = "es-CO"
     zona_horaria: str = "America/Bogota"
@@ -310,6 +312,8 @@ class AsistenteConfiguracionUpdate(_Entrada):
     nombre_asistente: Optional[str] = Field(None, max_length=120)
     descripcion_agencia: Optional[str] = Field(None, max_length=4000)
     presentacion_inicial: Optional[str] = Field(None, max_length=4000)
+    presentacion_informativo: Optional[str] = Field(None, max_length=4000)
+    presentacion_inteligente: Optional[str] = Field(None, max_length=4000)
     tono: Optional[Tono] = None
     idioma: Optional[str] = Field(None, max_length=10)
     zona_horaria: Optional[str] = Field(None, max_length=60)
@@ -353,6 +357,8 @@ class AsistenteConfiguracionUpdate(_Entrada):
     @field_validator(
         "descripcion_agencia",
         "presentacion_inicial",
+        "presentacion_informativo",
+        "presentacion_inteligente",
         "instrucciones_sistema",
         "mensaje_fuera_horario",
         "texto_privacidad",
@@ -492,6 +498,8 @@ class ConfigRapidaGeneralIn(_Entrada):
     nombre_asistente: Optional[str] = Field(None, max_length=120)
     descripcion_agencia: Optional[str] = Field(None, max_length=4000)
     presentacion_inicial: Optional[str] = Field(None, max_length=4000)
+    presentacion_informativo: Optional[str] = Field(None, max_length=4000)
+    presentacion_inteligente: Optional[str] = Field(None, max_length=4000)
     tono: Optional[Tono] = None
     modo_informativo_activo: Optional[bool] = None
     modo_conversion_activo: Optional[bool] = None
@@ -553,6 +561,8 @@ class PublicarAsistenteIn(_Entrada):
 class AnalizarInformacionIn(_Entrada):
     nombre_asistente: Optional[str] = Field(None, max_length=120)
     presentacion_inicial: Optional[str] = Field(None, max_length=4000)
+    presentacion_informativo: Optional[str] = Field(None, max_length=4000)
+    presentacion_inteligente: Optional[str] = Field(None, max_length=4000)
     tono: Optional[Literal["profesional", "cercano", "juvenil"]] = "cercano"
     requisitos_texto: Optional[str] = Field(None, max_length=20000)
     beneficios_texto: Optional[str] = Field(None, max_length=20000)

@@ -35,10 +35,10 @@ from chatbot_conversion_core import (
     schema_salida_conversion,
 )
 from chatbot_conversion_atajos_numericos import (
+    armar_bienvenida_inteligente,
     escribir_mapa_atajos,
     mapa_menu_inicial,
     resolver_atajo_numerico,
-    texto_bienvenida_con_atajos,
 )
 from chatbot_conversion_flags import (
     HERRAMIENTAS_EXTERNAS_CONVERSION,
@@ -426,20 +426,15 @@ async def procesar_mensaje_conversion(
             detalle=str(exc),
         )
 
-    # Bienvenida con atajos numéricos (primer contacto).
+    # Bienvenida inteligente + atajos numéricos (primer contacto).
     from service_chatbot_conversacional import (
         preservar_formato_whatsapp,
-        resolver_presentacion_literal,
+        texto_presentacion_inteligente,
     )
 
-    presentacion_cfg = resolver_presentacion_literal(
-        asistente=contexto.asistente,
-        mensajes=contexto.mensajes,
-        texto_usuario=texto,
-        mensaje_actual_id=mensaje_entrante_id,
-    )
+    presentacion_intel = texto_presentacion_inteligente(contexto.asistente)
     debe_bienvenida = salida_ia_inyectada is None and (
-        bool(presentacion_cfg)
+        bool(presentacion_intel)
         or _es_primer_contacto_conversion(
             mensajes=contexto.mensajes,
             mensaje_actual_id=mensaje_entrante_id,
@@ -448,7 +443,10 @@ async def procesar_mensaje_conversion(
     )
 
     if debe_bienvenida:
-        presentacion = texto_bienvenida_con_atajos(_nombre_agencia_atajos(contexto))
+        presentacion = armar_bienvenida_inteligente(
+            presentacion_custom=presentacion_intel,
+            nombre_agencia=_nombre_agencia_atajos(contexto),
+        )
         presentacion = preservar_formato_whatsapp(presentacion)
         presentacion = sanitizar_respuesta_publica(presentacion)
         presentacion = preservar_formato_whatsapp(presentacion)

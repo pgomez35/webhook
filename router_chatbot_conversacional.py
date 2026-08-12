@@ -597,6 +597,8 @@ def put_carga_informacion_general(
             {
                 "nombre_asistente": campos.get("nombre_asistente"),
                 "presentacion_inicial": campos.get("presentacion_inicial"),
+                "presentacion_informativo": campos.get("presentacion_informativo"),
+                "presentacion_inteligente": campos.get("presentacion_inteligente"),
                 "tono": campos.get("tono"),
             },
         )

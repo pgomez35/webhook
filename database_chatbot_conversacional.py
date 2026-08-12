@@ -122,6 +122,8 @@ COLUMNAS_ASISTENTE = {
     "nombre_asistente",
     "descripcion_agencia",
     "presentacion_inicial",
+    "presentacion_informativo",
+    "presentacion_inteligente",
     "tono",
     "idioma",
     "zona_horaria",
@@ -787,6 +789,40 @@ def _exige_configuracion(agencia_id: int, chatbot_configuracion_id: int, *, cur=
 # ---------------------------------------------------------------------------
 
 
+def _normalizar_campos_presentacion(campos: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Alias de escritura:
+    - presentacion_inicial → también presentacion_informativo (si no viene explícita)
+    - si solo llega informativo y no inicial, sincroniza inicial para legacy
+    """
+    datos = dict(campos or {})
+    if "presentacion_inicial" in datos and "presentacion_informativo" not in datos:
+        datos["presentacion_informativo"] = datos.get("presentacion_inicial")
+    if "presentacion_informativo" in datos and "presentacion_inicial" not in datos:
+        datos["presentacion_inicial"] = datos.get("presentacion_informativo")
+    return datos
+
+
+def _enriquecer_asistente_presentaciones(
+    fila: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Lectura: rellena faltantes desde presentacion_inicial legacy."""
+    if not fila:
+        return fila
+    out = dict(fila)
+    legacy = str(out.get("presentacion_inicial") or "").strip() or None
+    info = str(out.get("presentacion_informativo") or "").strip() or None
+    intel = str(out.get("presentacion_inteligente") or "").strip() or None
+    if not info and legacy:
+        out["presentacion_informativo"] = legacy
+        info = legacy
+    if not intel and legacy:
+        out["presentacion_inteligente"] = legacy
+    if not legacy and info:
+        out["presentacion_inicial"] = info
+    return out
+
+
 def obtener_asistente_por_config(
     agencia_id: int,
     chatbot_configuracion_id: int,
@@ -803,7 +839,7 @@ def obtener_asistente_por_config(
             """,
             (agencia_id, chatbot_configuracion_id),
         )
-        return _fila(c.fetchone())
+        return _enriquecer_asistente_presentaciones(_fila(c.fetchone()))
 
 
 def asistente_activo_para_config(
@@ -840,7 +876,9 @@ def upsert_asistente(
     lleva además el filtro por agencia para que una agencia nunca pueda pisar la
     fila de otra.
     """
-    datos = _campos_permitidos(campos, COLUMNAS_ASISTENTE)
+    datos = _campos_permitidos(
+        _normalizar_campos_presentacion(campos), COLUMNAS_ASISTENTE
+    )
 
     with _cursor(cur) as c:
         _exige_configuracion(agencia_id, chatbot_configuracion_id, cur=c)
@@ -875,7 +913,7 @@ def upsert_asistente(
         agencia_id,
         chatbot_configuracion_id,
     )
-    return dict(row)
+    return _enriquecer_asistente_presentaciones(dict(row))
 
 
 def actualizar_asistente(
@@ -885,9 +923,15 @@ def actualizar_asistente(
     *,
     cur=None,
 ) -> Optional[Dict[str, Any]]:
-    return _actualizar_registro(
-        "asistente", agencia_id, asistente_id, campos, COLUMNAS_ASISTENTE, cur=cur
+    out = _actualizar_registro(
+        "asistente",
+        agencia_id,
+        asistente_id,
+        _normalizar_campos_presentacion(campos),
+        COLUMNAS_ASISTENTE,
+        cur=cur,
     )
+    return _enriquecer_asistente_presentaciones(out)
 
 
 def listar_asistentes(agencia_id: int, *, solo_activos: bool = False, cur=None) -> List[Dict[str, Any]]:
@@ -3876,6 +3920,12 @@ def inicializar_asistente_desde_config(
                     "nombre_asistente": nombre_asistente,
                     "descripcion_agencia": nombre_agencia or None,
                     "presentacion_inicial": (
+                        str(cfg_rigida.get("mensaje_bienvenida") or "").strip() or None
+                    ),
+                    "presentacion_informativo": (
+                        str(cfg_rigida.get("mensaje_bienvenida") or "").strip() or None
+                    ),
+                    "presentacion_inteligente": (
                         str(cfg_rigida.get("mensaje_bienvenida") or "").strip() or None
                     ),
                     "modo_informativo_activo": True,

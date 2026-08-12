@@ -97,11 +97,15 @@ def _identidad(ctx: ConversationalContext) -> str:
     if asistente.get("descripcion_agencia"):
         lineas.append(f"- Sobre la agencia: {_texto(asistente['descripcion_agencia'], 600)}")
 
-    if asistente.get("presentacion_inicial"):
+    presentacion_ref = (
+        asistente.get("presentacion_inteligente")
+        or asistente.get("presentacion_inicial")
+    )
+    if presentacion_ref:
         lineas.append(
-            "- La presentación inicial autorizada ya se envía literalmente al primer "
+            "- La presentación inteligente autorizada ya se envía literalmente al primer "
             "contacto/saludo (no la reformules ni la resumas). Texto de referencia: "
-            f"{_texto(asistente['presentacion_inicial'], 800, conservar_saltos=True)}"
+            f"{_texto(presentacion_ref, 800, conservar_saltos=True)}"
         )
         lineas.append(
             "- Conserva los saltos de línea y párrafos de esa presentación si la "
@@ -110,6 +114,9 @@ def _identidad(ctx: ConversationalContext) -> str:
         lineas.append(
             "- No uses chatbot_configuracion.mensaje_bienvenida: esa fuente es solo "
             "del chatbot clásico o de migración."
+        )
+        lineas.append(
+            "- No uses presentacion_informativo aquí: esa bienvenida es solo del menú informativo."
         )
 
     if asistente.get("texto_privacidad"):
