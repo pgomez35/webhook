@@ -119,6 +119,7 @@ def crear_agente(
     *,
     dry_run: bool = False,
     mensaje_id: Optional[int] = None,
+    herramientas_excluidas: Optional[List[str]] = None,
 ) -> AgentePreparado:
     """Construye el agente con instrucciones, modelo y herramientas del tenant."""
     if not openai_configurado():
@@ -139,6 +140,7 @@ def crear_agente(
             contexto.conversacion or {}, contexto.aspirante
         ),
         estrategia_nivel=(contexto.asistente or {}).get("estrategia_nivel_aspirante"),
+        excluidas=herramientas_excluidas,
     )
 
     contexto_herramientas = ContextoHerramientas(

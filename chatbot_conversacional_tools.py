@@ -1579,6 +1579,7 @@ def obtener_herramientas(
     modo: Optional[str] = None,
     nivel_experiencia: Optional[str] = None,
     estrategia_nivel: Optional[str] = None,
+    excluidas: Optional[List[str]] = None,
 ) -> List[Any]:
     """
     Devuelve los objetos de herramienta habilitados.
@@ -1588,6 +1589,8 @@ def obtener_herramientas(
 
     Con estrategia adaptativa y nivel desconocido se excluyen herramientas de
     conversión LIVE (no se agenda por keyword).
+
+    `excluidas`: defensa nivel-orquestador (action gate) — el agente no las ve.
     """
     seleccion = list(NOMBRES_HERRAMIENTAS)
 
@@ -1628,6 +1631,10 @@ def obtener_herramientas(
     if estrategia == "adaptativa" and nivel == "desconocido":
         bloqueadas = {"preparar_prueba_live", "solicitar_evidencias", "registrar_evidencia_recibida"}
         seleccion = [nombre for nombre in seleccion if nombre not in bloqueadas]
+
+    if excluidas:
+        excl = {_normalizar_nombre_herramienta(x) for x in excluidas if x}
+        seleccion = [nombre for nombre in seleccion if nombre not in excl]
 
     return [HERRAMIENTAS[nombre] for nombre in seleccion]
 

@@ -483,67 +483,178 @@ async def procesar_mensaje_conversacional(
                 default=None,
             )
 
-    # Si pide incorporación y hay bloqueante: el backend corta (no el agente).
-    hechos_msg = actualizacion.get("hechos") or {}
     perfil_act = actualizacion.get("perfil") or leer_perfil(
         contexto.conversacion, contexto.aspirante
     )
-    if hechos_msg.get("interes") or any(
-        k in _normalizar_texto_salida(texto or "")
-        for k in ("quiero ingresar", "quiero entrar", "enviame el enlace", "mandame el enlace")
-    ):
-        gate = puede_ejecutar_accion(
-            accion="enviar_solicitud",
-            conversacion=contexto.conversacion,
-            aspirante=contexto.aspirante,
-            perfil=perfil_act,
-            flujo=contexto.flujo,
-            paso=contexto.paso,
-            requisitos=contexto.requisitos,
-        )
-        if not gate.get("permitida"):
-            respuesta_bloqueo = _sanitizar_respuesta_usuario(
-                mensaje_bloqueo_para_usuario(gate, perfil=perfil_act)
-            )
-            envio_b = await _enviar_respuesta(
-                canal=canal,
-                texto=respuesta_bloqueo,
-                enlaces=[],
-                token=token,
-                phone_number_id=phone_number_id,
-                destino=wa_id or usuario_externo_id,
-                enviar_callback=enviar_callback,
-                dry_run=dry_run,
-            )
-            await _actualizar_cierre_de_turno(
-                contexto,
-                respuesta=respuesta_bloqueo,
-                mensaje_usuario=texto,
-                acciones=[{"tipo": "action_gate_bloqueado", "gate": gate}],
-                escalado=False,
-                cerrada=False,
-                dry_run=dry_run,
-            )
-            return {
-                "usado": True,
-                "motivo": "requisito_bloqueante",
-                "conversacion_id": conversacion_id,
-                "mensaje_entrante_id": mensaje_entrante_id,
-                "respuesta": respuesta_bloqueo,
-                "modo": contexto.modo,
-                "acciones": [{"tipo": "action_gate_bloqueado", "gate": gate}],
-                "enlaces": [],
-                "escalado": False,
-                "cerrada": False,
-                "enviado": envio_b.get("enviado"),
-                "error": envio_b.get("error"),
-                "tipo_chatbot": "inteligente",
-                "modo_humano": False,
-                "perfil": perfil_act,
-                "action_gate": gate,
-            }
 
-    # Prioridad: respuesta contra pregunta_pendiente (no cambiar de tema).
+    # Orquestador backend: decide ANTES del agente.
+    from chatbot_conversacional_orquestador import resolver_turno_inteligente
+    from chatbot_conversacional_clasificacion import usar_rutas_adaptativas as _usar_rutas
+
+    nivel_actual = str(
+        perfil_act.get("nivel_experiencia")
+        or (contexto.conversacion or {}).get("nivel_experiencia")
+        or "desconocido"
+    ).lower()
+    nivel_abierto = nivel_actual in {"desconocido", ""} and not bool(
+        (contexto.conversacion or {}).get("nivel_experiencia_confirmado")
+    )
+
+    decision = resolver_turno_inteligente(
+        texto=texto or "",
+        conversacion=contexto.conversacion or {},
+        aspirante=contexto.aspirante,
+        perfil=perfil_act,
+        flujo=contexto.flujo,
+        paso=contexto.paso,
+        requisitos=contexto.requisitos,
+        beneficios=contexto.beneficios,
+        faqs=contexto.faqs,
+        pregunta_pendiente=_leer_pregunta_pendiente(contexto.conversacion),
+        nivel_abierto=nivel_abierto and bool(_usar_rutas(contexto.configuracion)),
+    )
+    # Persistir hechos extra del orquestador (p.ej. cumplo 18 mañana).
+    if decision.hechos:
+        from chatbot_conversacional_perfil import (
+            fusionar_hechos_en_perfil,
+            escribir_perfil_en_contexto,
+        )
+
+        perfil_act = fusionar_hechos_en_perfil(perfil_act, decision.hechos)
+        escribir_perfil_en_contexto(contexto.conversacion, perfil_act)
+
+    async def _responder_decision_directa(texto_resp: str, *, tipo_log: str, pend=None):
+        texto_resp = _sanitizar_respuesta_usuario(str(texto_resp or "").strip())
+        if pend and decision.retomar_pendiente:
+            preg = str((pend or {}).get("texto") or "").strip()
+            if preg and preg not in texto_resp and not _parece_instruccion_interna(preg):
+                # No retomar clasificación de nivel si ya está confirmado.
+                if str((pend or {}).get("campo") or "") == "nivel_experiencia" and str(
+                    perfil_act.get("nivel_experiencia") or ""
+                ) in {"principiante", "experimentado"}:
+                    pass
+                else:
+                    texto_resp = f"{texto_resp}\n\nPara continuar, {preg}"
+                    texto_resp = _sanitizar_respuesta_usuario(texto_resp)
+        logger.info("[CHATBOT_RESPUESTA] tipo=%s", tipo_log)
+        envio_d = await _enviar_respuesta(
+            canal=canal,
+            texto=texto_resp,
+            enlaces=[],
+            token=token,
+            phone_number_id=phone_number_id,
+            destino=wa_id or usuario_externo_id,
+            enviar_callback=enviar_callback,
+            dry_run=dry_run,
+        )
+        if pend and decision.retomar_pendiente:
+            await _guardar_pregunta_pendiente(contexto, pend, dry_run=dry_run)
+        await _actualizar_cierre_de_turno(
+            contexto,
+            respuesta=texto_resp,
+            mensaje_usuario=texto,
+            acciones=[{"tipo": "decision_turno", "decision": decision.tipo, "motivo": decision.motivo}],
+            escalado=False,
+            cerrada=False,
+            dry_run=dry_run,
+        )
+        return {
+            "usado": True,
+            "motivo": decision.motivo,
+            "conversacion_id": conversacion_id,
+            "mensaje_entrante_id": mensaje_entrante_id,
+            "respuesta": texto_resp,
+            "modo": contexto.modo,
+            "acciones": [{"tipo": "decision_turno", "decision": decision.tipo}],
+            "enlaces": [],
+            "escalado": False,
+            "cerrada": False,
+            "enviado": envio_d.get("enviado"),
+            "error": envio_d.get("error"),
+            "tipo_chatbot": "inteligente",
+            "modo_humano": False,
+            "perfil": perfil_act,
+            "decision": {
+                "tipo": decision.tipo,
+                "accion": decision.accion,
+                "motivo": decision.motivo,
+                "intencion": decision.intencion,
+            },
+            "action_gate": decision.gate,
+        }
+
+    if decision.tipo == "bloqueado":
+        return await _responder_decision_directa(
+            decision.texto_base or mensaje_bloqueo_para_usuario(
+                decision.gate or {}, perfil=perfil_act
+            ),
+            tipo_log="bloqueo",
+        )
+
+    if decision.tipo == "preguntar":
+        return await _responder_decision_directa(
+            decision.texto_base or "",
+            tipo_log="pregunta",
+            pend=decision.dato_pendiente,
+        )
+
+    if decision.tipo == "informar":
+        texto_info = decision.texto_base
+        if decision.accion == "proceso" or decision.intencion == "proceso":
+            texto_info = _construir_texto_informativo_inteligente(
+                contexto, "proceso", texto or ""
+            )
+        return await _responder_decision_directa(
+            texto_info or "",
+            tipo_log="informacion",
+            pend=decision.dato_pendiente,
+        )
+
+    if decision.tipo == "ejecutar_accion" and decision.accion == "enviar_solicitud":
+        # Gate nivel 1 ya pasó; la tool vuelve a validar (nivel 2).
+        return await _responder_envio_solicitud_adaptativo(
+            contexto=contexto,
+            conversacion_id=conversacion_id,
+            mensaje_entrante_id=mensaje_entrante_id,
+            texto_usuario=texto,
+            canal=canal,
+            token=token,
+            phone_number_id=phone_number_id,
+            destino=wa_id or usuario_externo_id,
+            enviar_callback=enviar_callback,
+            dry_run=dry_run,
+        )
+
+    # agendar_live y otras acciones autorizadas: el agente ejecuta la tool,
+    # pero con herramientas_bloqueadas filtradas (defense in depth).
+    if decision.tipo == "ejecutar_accion":
+        logger.info(
+            "[CHATBOT_DECISION] tipo=ejecutar_accion accion=%s via=agente_filtrado",
+            decision.accion,
+        )
+
+    if decision.tipo == "continuar_flujo":
+        return await _resolver_siguiente_paso_pendiente(
+            contexto=contexto,
+            prefijo=None,
+            conversacion_id=conversacion_id,
+            mensaje_entrante_id=mensaje_entrante_id,
+            texto_usuario=texto,
+            canal=canal,
+            token=token,
+            phone_number_id=phone_number_id,
+            destino=wa_id or usuario_externo_id,
+            enviar_callback=enviar_callback,
+            dry_run=dry_run,
+            origen="orquestador",
+        )
+
+    # continuar_clasificacion | usar_agente | ejecutar_accion parcial:
+    # sigue el pipeline (clasificación / agente) con tools filtradas.
+    herramientas_excluidas_turno = list(decision.herramientas_bloqueadas or [])
+
+    # Prioridad residual: respuesta ambigua ya cubierta; interrupción solo si
+    # el orquestador no resolvió información.
     interpretacion_pend = _interpretar_respuesta_a_pregunta_pendiente(
         contexto, texto
     )
@@ -891,7 +1002,14 @@ async def procesar_mensaje_conversacional(
                 dry_run=dry_run,
             )
 
-    preparado = crear_agente(contexto, dry_run=dry_run, mensaje_id=mensaje_entrante_id)
+    preparado = crear_agente(
+        contexto,
+        dry_run=dry_run,
+        mensaje_id=mensaje_entrante_id,
+        herramientas_excluidas=herramientas_excluidas_turno
+        if "herramientas_excluidas_turno" in locals()
+        else None,
+    )
     entrada = _construir_entrada(contexto, texto, mensaje_entrante_id)
 
     try:

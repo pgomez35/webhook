@@ -178,6 +178,15 @@ def extraer_hechos_de_texto(texto: str) -> Dict[str, Any]:
     if "horas_disponibles_dia" in hechos or "dias_disponibles" in hechos:
         hechos.setdefault("disponibilidad_live", True)
 
+    # Cumple 18 pronto: se registra, pero sigue siendo menor HOY.
+    if re.search(
+        r"\b(cumplo\s+18|manana cumplo|en un dia cumplo|en unos dias cumplo|"
+        r"casi cumplo|voy a cumplir 18)\b",
+        n,
+    ):
+        hechos["edad_cumple_pronto"] = True
+        hechos["mayor_edad"] = False
+
     if re.search(
         r"\b(si quiero ingresar|quiero ingresar|quiero entrar|quiero unirme|"
         r"me interesa continuar|enviame el (enlace|link)|"
