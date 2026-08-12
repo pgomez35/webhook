@@ -5,12 +5,10 @@ Contrato de decisión:
 
   tipo_chatbot = informativo
   → procesar_mensaje_informativo
-    (menú + información + consultas libres; sin clasificación ni flujo obligatorio)
 
   tipo_chatbot = inteligente
-  → procesar_mensaje_conversacional
-    (conversación + clasificación + recopilación + flujo;
-     también responde información y retoma pregunta_pendiente)
+  → V2 (default): procesar_mensaje_inteligente_v2
+     rollback interno: CHATBOT_INTELIGENTE_V2=0 → legacy conversacional
 
 Entry point único conceptual para WhatsApp, simulador y futuros canales.
 """
@@ -121,31 +119,58 @@ async def procesar_mensaje_segun_tipo_chatbot(
             mensaje_externo_id=mensaje_externo_id,
         )
 
-    # --- inteligente (default si no es informativo) ---
-    from service_chatbot_conversacional import procesar_mensaje_conversacional
+    # --- inteligente ---
+    from chatbot_inteligente_v2_core import v2_enabled
 
-    resultado = await procesar_mensaje_conversacional(
-        agencia_id=agencia_id,
-        texto=texto or "",
-        usuario_externo_id=str(usuario_externo_id or wa_id or ""),
-        chatbot_configuracion_id=int(chatbot_configuracion_id),
-        canal=canal,
-        cuenta_externa_id=cuenta_externa_id or phone_number_id,
-        telefono=telefono or wa_id,
-        nombre_contacto=nombre_contacto,
-        mensaje_externo_id=mensaje_externo_id,
-        tipo_mensaje=tipo_mensaje,
-        aspirante_id=aspirante_id,
-        campania_id=campania_id,
-        token=token,
-        phone_number_id=phone_number_id,
-        wa_id=wa_id,
-        enviar_callback=enviar_callback,
-        dry_run=dry_run,
-    )
-    resultado = dict(resultado or {})
-    resultado.setdefault("tipo_chatbot", TIPO_INTELIGENTE)
-    resultado["motor"] = "inteligente"
+    if v2_enabled():
+        from service_chatbot_inteligente_v2 import procesar_mensaje_inteligente_v2
+
+        resultado = await procesar_mensaje_inteligente_v2(
+            agencia_id=agencia_id,
+            texto=texto or "",
+            usuario_externo_id=str(usuario_externo_id or wa_id or ""),
+            chatbot_configuracion_id=int(chatbot_configuracion_id),
+            canal=canal,
+            cuenta_externa_id=cuenta_externa_id or phone_number_id,
+            telefono=telefono or wa_id,
+            nombre_contacto=nombre_contacto,
+            mensaje_externo_id=mensaje_externo_id,
+            aspirante_id=aspirante_id,
+            campania_id=campania_id,
+            token=token,
+            phone_number_id=phone_number_id,
+            wa_id=wa_id,
+            enviar_callback=enviar_callback,
+            dry_run=dry_run,
+        )
+        resultado = dict(resultado or {})
+        resultado.setdefault("tipo_chatbot", TIPO_INTELIGENTE)
+        resultado.setdefault("motor", "inteligente_v2")
+    else:
+        from service_chatbot_conversacional import procesar_mensaje_conversacional
+
+        resultado = await procesar_mensaje_conversacional(
+            agencia_id=agencia_id,
+            texto=texto or "",
+            usuario_externo_id=str(usuario_externo_id or wa_id or ""),
+            chatbot_configuracion_id=int(chatbot_configuracion_id),
+            canal=canal,
+            cuenta_externa_id=cuenta_externa_id or phone_number_id,
+            telefono=telefono or wa_id,
+            nombre_contacto=nombre_contacto,
+            mensaje_externo_id=mensaje_externo_id,
+            tipo_mensaje=tipo_mensaje,
+            aspirante_id=aspirante_id,
+            campania_id=campania_id,
+            token=token,
+            phone_number_id=phone_number_id,
+            wa_id=wa_id,
+            enviar_callback=enviar_callback,
+            dry_run=dry_run,
+        )
+        resultado = dict(resultado or {})
+        resultado.setdefault("tipo_chatbot", TIPO_INTELIGENTE)
+        resultado["motor"] = "inteligente_legacy"
     # Normalizar flag de envío: solo True con confirmación Meta (o dry_run).
     if dry_run and resultado.get("usado"):
         resultado["respuesta_enviada"] = True
