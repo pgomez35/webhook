@@ -47,6 +47,34 @@ def _slug(valor: Any, prefijo: str = "item") -> str:
     return db._slug_codigo(valor, prefijo=prefijo)
 
 
+def _codigo_unico(
+    base: Any,
+    usados: set,
+    *,
+    prefijo: str = "item",
+    indice: int = 1,
+    max_len: int = 80,
+) -> str:
+    """Genera codigo único ≤ max_len (varchar(80) en BD)."""
+    codigo = str(base or "").strip() or _slug(prefijo, prefijo)
+    codigo = _slug(codigo, prefijo)[:max_len]
+    if codigo not in usados:
+        return codigo
+    suf = f"_{indice}"
+    recorte = max_len - len(suf)
+    if recorte < 1:
+        recorte = 1
+        suf = suf[: max_len - 1]
+    candidato = f"{codigo[:recorte]}{suf}"
+    n = indice
+    while candidato in usados:
+        n += 1
+        suf = f"_{n}"
+        recorte = max(1, max_len - len(suf))
+        candidato = f"{codigo[:recorte]}{suf}"
+    return candidato[:max_len]
+
+
 def normalizar_prioridad_regla_escalamiento(valor: Any) -> str:
     """
     Normaliza prioridad al enum de BD:
@@ -1439,9 +1467,12 @@ def guardar_informacion_organizada(
                 db.actualizar_requisito(agencia_id, int(hit["id"]), campos, cur=c)
                 actualizados += 1
             else:
-                codigo = item.get("codigo") or _slug(nombre, "requisito")
-                if codigo in usados_cod:
-                    codigo = f"{codigo}_{i}"
+                codigo = _codigo_unico(
+                    item.get("codigo") or nombre,
+                    usados_cod,
+                    prefijo="requisito",
+                    indice=i,
+                )
                 usados_cod.add(codigo)
                 campos.update(
                     {
@@ -1508,9 +1539,12 @@ def guardar_informacion_organizada(
                     db.actualizar_beneficio(agencia_id, int(hit["id"]), campos, cur=c)
                     actualizados += 1
                 else:
-                    codigo = item.get("codigo") or _slug(nombre, tipo)
-                    if codigo in usados_b:
-                        codigo = f"{codigo}_{i}"
+                    codigo = _codigo_unico(
+                        item.get("codigo") or nombre,
+                        usados_b,
+                        prefijo=tipo,
+                        indice=i,
+                    )
                     usados_b.add(codigo)
                     campos.update(
                         {
@@ -1589,9 +1623,12 @@ def guardar_informacion_organizada(
                 db.actualizar_faq(agencia_id, int(hit["id"]), campos, cur=c)
                 actualizados += 1
             else:
-                codigo = item.get("codigo") or _slug(pregunta, "faq")
-                if codigo in usados_f:
-                    codigo = f"{codigo}_{i}"
+                codigo = _codigo_unico(
+                    item.get("codigo") or pregunta,
+                    usados_f,
+                    prefijo="faq",
+                    indice=i,
+                )
                 usados_f.add(codigo)
                 campos.update(
                     {
@@ -1616,7 +1653,7 @@ def guardar_informacion_organizada(
             codigo = (
                 CODIGO_RECURSO_SOLICITUD
                 if tipo == "solicitud"
-                else _slug(nombre, "recurso")
+                else _codigo_unico(nombre, set(), prefijo="recurso", indice=1)
             )
             existente = db.obtener_recurso_por_codigo(
                 agencia_id,
@@ -1817,7 +1854,12 @@ def guardar_informacion_organizada(
                     campos_p.update(
                         {
                             "flujo_id": int(flujo["id"]),
-                            "codigo": _slug(nombre, f"paso_{item.get('orden') or 0}"),
+                            "codigo": _codigo_unico(
+                                nombre,
+                                set(),
+                                prefijo=f"paso_{item.get('orden') or 0}",
+                                indice=int(item.get("orden") or 0) or 1,
+                            ),
                             "obligatorio": True,
                         }
                     )

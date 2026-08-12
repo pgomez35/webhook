@@ -556,13 +556,14 @@ def _filas(rows: Any) -> List[Dict[str, Any]]:
 
 
 def _slug_codigo(valor: Any, prefijo: str = "item") -> str:
+    """Slug estable acotado a varchar(80) de las columnas codigo en chatbot.*."""
     texto = str(valor or "").strip().lower()
     texto = unicodedata.normalize("NFKD", texto)
     texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
     texto = texto.replace(" ", "_").replace("-", "_")
     texto = _CODIGO_RE.sub("", texto)
     texto = re.sub(r"_+", "_", texto).strip("_")
-    return (texto or prefijo)[:100]
+    return (texto or prefijo)[:80]
 
 
 def _valor_jsonb(columna: str, valor: Any) -> Any:

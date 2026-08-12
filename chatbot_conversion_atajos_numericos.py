@@ -109,17 +109,44 @@ def texto_opciones_atajos_inicial() -> str:
     )
 
 
+def _custom_ya_incluye_atajos(texto: str) -> bool:
+    """
+    True si la presentación configurada ya trae el menú numérico 1–4
+    (o un listado equivalente). Evita duplicar al armar la bienvenida.
+    """
+    t = str(texto or "")
+    if not t.strip():
+        return False
+    lineas_num = re.findall(r"(?m)^\s*([1-4])[\.\)]\s+\S", t)
+    nums = set(lineas_num)
+    if nums >= {"1", "2", "3", "4"}:
+        return True
+    # Variante: opciones embebidas en un solo bloque sin saltos perfectos
+    bajos = t.lower()
+    if (
+        re.search(r"1[\.\)]\s*requisito", bajos)
+        and re.search(r"2[\.\)]\s*beneficio", bajos)
+        and re.search(r"3[\.\)]\s*bono", bajos)
+    ):
+        return True
+    return False
+
+
 def armar_bienvenida_inteligente(
     *,
     presentacion_custom: Optional[str],
     nombre_agencia: str,
 ) -> str:
     """
-    Si hay presentación inteligente configurada: texto + menú 1–4.
-    Si no: plantilla completa de atajos.
+    Si hay presentación inteligente configurada:
+      - si ya incluye atajos 1–4 → se envía literal;
+      - si no → se añade el menú 1–4 debajo.
+    Si no hay custom → plantilla completa de atajos.
     """
     custom = str(presentacion_custom or "").strip()
     if custom:
+        if _custom_ya_incluye_atajos(custom):
+            return custom
         return (
             f"{custom.rstrip()}\n"
             "\n"
