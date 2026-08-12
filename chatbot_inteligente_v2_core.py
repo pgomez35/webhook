@@ -172,6 +172,182 @@ def escribir_estado_v2(
 # ---------------------------------------------------------------------------
 
 
+def _pend_code(pending: Optional[Dict[str, Any]]) -> str:
+    if not isinstance(pending, dict):
+        return ""
+    return str(pending.get("code") or pending.get("campo") or pending.get("tipo") or "").lower()
+
+
+def _es_pregunta_informativa(n: str, texto: str) -> List[Dict[str, Any]]:
+    """Detecta consultas de conocimiento (prioridad alta)."""
+    questions: List[Dict[str, Any]] = []
+    mira = (
+        "?" in str(texto)
+        or "¿" in str(texto)
+        or re.search(r"\b(que|cual|cuales|como|cuanto|cuantos|donde)\b", n)
+    )
+    if not mira and not re.search(r"\b(benefic|requisito|bono|agencia|monetiz|diamante|regalo)\b", n):
+        return questions
+
+    if re.search(r"\b(bonos?|incentivos?)\b", n):
+        if re.search(r"\b(dinero|especie|efectivo|pago)\b", n):
+            questions.append({"intent": "bonus_payment_form"})
+        else:
+            questions.append({"intent": "what_are_bonuses"})
+
+    # benefic* cubre typo "benficios"
+    if re.search(r"\bbenefic", n) or "benficios" in n:
+        questions.append({"intent": "what_are_benefits"})
+
+    if re.search(r"\brequisitos?\b", n):
+        questions.append({"intent": "what_are_requirements"})
+
+    if re.search(r"\b(agencia)\b", n) and re.search(
+        r"\b(que|cual|como|quien|que es)\b", n
+    ):
+        questions.append({"intent": "what_is_agency"})
+
+    if re.search(
+        r"\b(cuanto|cuanto dinero|que paga|cuanto paga|pago|comision|gana)\b", n
+    ) or re.search(r"\b(dinero|paga la agencia|cuanto pagan)\b", n):
+        questions.append({"intent": "how_much_pays"})
+
+    if re.search(r"\bmonetiz", n):
+        questions.append({"intent": "how_monetize"})
+
+    if re.search(r"\b(diamantes?|regalos?)\b", n):
+        questions.append({"intent": "platform_knowledge", "topic": n})
+
+    if re.search(
+        r"\b(que sabes|que es lo que sabes|que puedes|en que ayudas|"
+        r"cuantos anos tienes|que edad tienes|quien eres)\b",
+        n,
+    ):
+        questions.append({"intent": "what_can_you_do"})
+
+    if re.search(r"\b(proceso de ingreso|como ingreso|como entro)\b", n):
+        questions.append({"intent": "what_is_process"})
+
+    # Dedup por intent
+    seen = set()
+    out = []
+    for q in questions:
+        key = q.get("intent")
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(q)
+    return out
+
+
+def _parse_disponibilidad(n: str) -> Dict[str, Any]:
+    """N días + horas/minutos → disponibilidad (no experiencia LIVE)."""
+    facts: Dict[str, Any] = {}
+    m_dias = re.search(r"\b(\d{1,2})\s*dias?\b", n)
+    if re.search(r"lunes\s+a\s+jueves", n):
+        facts["days_per_week"] = 4
+    elif re.search(r"lunes\s+a\s+viernes", n):
+        facts["days_per_week"] = 5
+    elif re.search(r"todos\s+los\s+dias", n):
+        facts["days_per_week"] = 7
+    elif m_dias:
+        d = int(m_dias.group(1))
+        if 1 <= d <= 7:
+            facts["days_per_week"] = d
+
+    # 7x24 / 7x24h
+    m_x = re.search(r"\b(\d)\s*[x×]\s*(\d{1,2})\b", n)
+    if m_x:
+        facts["days_per_week"] = int(m_x.group(1))
+        facts["hours_per_day"] = int(m_x.group(2))
+
+    m_horas = re.search(r"\b(\d{1,2})\s*(horas?|hrs?|h)\b", n)
+    m_min = re.search(r"\b(\d{1,3})\s*minutos?\b", n)
+    if m_horas:
+        facts["hours_per_day"] = int(m_horas.group(1))
+    elif m_min:
+        mins = int(m_min.group(1))
+        # 160 minutos/día ≈ 2.7 h → guardar horas redondeadas a 1 decimal útil
+        facts["hours_per_day"] = round(mins / 60.0, 1) if mins >= 60 else round(mins / 60.0, 2)
+        facts["availability_minutes_per_day"] = mins
+
+    if facts:
+        facts["disponibilidad_live"] = True
+    return facts
+
+
+def _parse_experiencia_live(n: str, *, pending_live: bool) -> Dict[str, Any]:
+    facts: Dict[str, Any] = {}
+    # Afirmaciones amplias (crítico en producción)
+    if re.search(
+        r"\b(algunas veces|varias veces|a veces|si he (hecho|tenido|realizado)|"
+        r"si he hecho|si he tenido|ya he (hecho|transmitido)|claro que si|"
+        r"obvio|por supuesto|si tengo|si hago|casi 1|casi una|"
+        r"de que otra forma|como te digo que si)\b",
+        n,
+    ):
+        facts["live_experience"] = True
+        if re.search(r"\b(casi 1|casi una|una|1)\b", n):
+            facts["live_count"] = 1
+        return facts
+
+    if pending_live and n in {
+        "si",
+        "sip",
+        "claro",
+        "ok",
+        "okay",
+        "vale",
+        "de acuerdo",
+        "bueno",
+        "dale",
+        "afirmativo",
+    }:
+        facts["live_experience"] = True
+        return facts
+
+    if pending_live and re.search(r"\b(otra vez|ya te dije|te dije)\b", n):
+        # Queja de repetición con pending LIVE → tratar como sí implícito si ya
+        # no hay dato; el reducer/decisión maneja queja. Aquí no forzar.
+        return facts
+
+    if re.search(
+        r"\b(he hecho|hice|realice|realice|realicé|ya hago|ya realizo|"
+        r"hago transmisiones|hago live|he transmitido)\b",
+        n,
+    ):
+        facts["live_experience"] = True
+        m_count = re.search(r"\b(\d{1,3})\s*(lives?|transmisiones?)\b", n)
+        if m_count:
+            facts["live_count"] = int(m_count.group(1))
+        elif re.search(r"\b(una|1|un|una sola|un solo)\b", n):
+            facts["live_count"] = 1
+
+    if re.search(r"\b(nunca|no he|no hice|cero transmisiones|0 transmisiones|no tengo experiencia)\b", n):
+        facts["live_experience"] = False
+        facts["live_count"] = 0
+
+    # Duración de una transmisión (solo si no parece disponibilidad)
+    if "dias" not in n and not re.search(r"\b\d+\s*dias?\b", n):
+        m_min = re.search(r"\b(\d{1,3})\s*minutos?\b", n)
+        if m_min and (
+            "live" in n
+            or "transmision" in n
+            or "he hecho" in n
+            or "hice" in n
+            or pending_live
+        ):
+            facts["live_duration_minutes"] = int(m_min.group(1))
+            facts.setdefault("live_experience", True)
+            facts.setdefault("live_count", 1)
+
+    if "bigo" in n:
+        facts["live_platform"] = "bigo"
+        facts.setdefault("live_experience", True)
+
+    return facts
+
+
 def interpretar_mensaje_v2(
     texto: str,
     *,
@@ -182,6 +358,13 @@ def interpretar_mensaje_v2(
     n = _norm(texto)
     estado = estado or estado_vacio()
     pending = pending or estado.get("pending_requirement")
+    pcode = _pend_code(pending)
+    pending_live = any(k in pcode for k in ("live", "experiencia", "transm"))
+    pending_disp = any(k in pcode for k in ("disponib", "hora", "dia"))
+    pending_interest = "interes" in pcode or pcode == "confirmar_interes"
+    pending_internet = "internet" in pcode or "conexion" in pcode
+    pending_device = "device" in pcode or "telefono" in pcode
+
     facts: Dict[str, Any] = {}
     questions: List[Dict[str, Any]] = []
     intent = "unknown"
@@ -206,26 +389,28 @@ def interpretar_mensaje_v2(
             confidence=0.9,
         )
 
-    # --- queja / meta ---
+    # --- queja / meta (incl. "otra vez" / "ya te dije") ---
     if re.search(
         r"\b(ya estamos|para que (vuelves|preguntas)|otra vez|de nuevo|"
-        r"ya te dije|hace rato)\b",
+        r"ya te dije|hace rato|te enloqueciste|te contradices)\b",
         n,
-    ) and re.search(r"\b(proceso|pregunt|interes|continuar|quiero)\b", n):
+    ):
         return TurnInterpretation(
             intent="user_complaint",
             facts={"process_already_active": True},
             confidence=0.85,
-            meta={"complaint_about": "repeated_interest"},
+            meta={"complaint_about": pcode or "repetition"},
         )
 
-    # --- edad / contradicción ---
+    # --- preguntas informativas ANTES de hechos (evita falsos positivos) ---
+    questions = _es_pregunta_informativa(n, texto)
+    if questions and not pending_disp and not pending_live:
+        # Si es claramente pregunta, priorizar info (salvo datos explícitos de edad)
+        intent = "ask_information"
+
+    # --- edad persona (solo "tengo N años", no años de dispositivo) ---
     m_edad = re.search(r"\btengo\s+(\d{1,2})\s+anos?\b", n)
-    if not m_edad and not re.search(
-        r"\b(android|iphone|ios|telefono|celular|equipo|internet)\b", n
-    ):
-        m_edad = re.search(r"\b(\d{1,2})\s+anos?\b", n)
-    menti = bool(re.search(r"\b(menti|mentí|la verdad|en realidad|corrijo)\b", n))
+    menti = bool(re.search(r"\b(menti|la verdad|en realidad|corrijo)\b", n))
     if m_edad:
         edad = int(m_edad.group(1))
         if 10 <= edad <= 80:
@@ -241,7 +426,7 @@ def interpretar_mensaje_v2(
                 }
             intent = "provide_fact"
 
-    if re.search(r"\b(menti|mentí).{0,40}\b(tengo\s+)?(\d{1,2})\b", n):
+    if re.search(r"\b(menti).{0,40}\b(tengo\s+)?(\d{1,2})\b", n):
         m2 = re.search(r"\b(\d{1,2})\b", n)
         if m2:
             edad = int(m2.group(1))
@@ -256,20 +441,21 @@ def interpretar_mensaje_v2(
                 }
                 intent = "provide_fact"
 
-    # --- interés ---
+    # --- interés (incluye "me gustaria pero no quiero") ---
     if re.search(
         r"\b(no quiero|no me interesa|no deseo|mejor no|no continuar|"
-        r"no quiero continuar|no quiero ingresar)\b",
+        r"no quiero continuar|no quiero ingresar|pero no quiero)\b",
         n,
     ):
         facts["interest"] = False
         intent = "decline_interest"
         answer = "no"
+        questions = []
     elif re.search(
         r"\b(quiero ingresar|quiero entrar|quiero unirme|si quiero|"
-        r"cambie de opinion|cambié de opinión|ahora si quiero)\b",
+        r"cambie de opinion|ahora si quiero)\b",
         n,
-    ):
+    ) and "no quiero" not in n:
         facts["interest"] = True
         if "puedo" in n or "ingresar" in n:
             questions.append({"intent": "can_i_join"})
@@ -278,40 +464,51 @@ def interpretar_mensaje_v2(
     elif re.search(r"\b(puedo ingresar|puedo entrar|me dejan ingresar)\b", n):
         questions.append({"intent": "can_i_join"})
         intent = "ask_eligibility"
+    elif pending_interest and n in {"si", "sip", "claro", "ok", "vale", "bueno", "dale"}:
+        facts["interest"] = True
+        answer = "yes"
+        intent = "answer_pending"
 
-    # --- experiencia LIVE ---
-    if re.search(
-        r"\b(he hecho|hice|realice|realicé|una transmision|una transmisión|"
-        r"un live|una sola|he hecho una)\b",
-        n,
-    ) or re.search(r"\b(he hecho una|hice una)\b", n):
-        facts["live_experience"] = True
-        if re.search(r"\b(una|1|un)\b", n) or "he hecho una" in n or "hice una" in n:
-            facts["live_count"] = 1
-        intent = "provide_fact"
-    if re.search(r"\b(ya hago|ya realizo|hago transmisiones|hago live)\b", n):
-        facts["live_experience"] = True
-        facts.setdefault("live_count", None)
-        intent = "provide_fact"
-    if re.search(r"\b(nunca|no he|no hice|cero transmisiones|0 transmisiones)\b", n):
-        facts["live_experience"] = False
-        facts["live_count"] = 0
-        intent = "provide_fact"
-    m_min = re.search(r"\b(\d{1,3})\s*minutos?\b", n)
-    if m_min:
-        facts["live_duration_minutes"] = int(m_min.group(1))
-        facts.setdefault("live_experience", True)
-        facts.setdefault("live_count", 1)
-        intent = "provide_fact"
-    if "bigo" in n:
-        facts["live_platform"] = "bigo"
-        facts.setdefault("live_experience", True)
-        intent = "provide_fact"
+    # --- disponibilidad vs experiencia (orden según pending) ---
+    parece_disponibilidad = bool(
+        re.search(r"\b\d+\s*dias?\b", n)
+        or re.search(r"\b\d+\s*[x×]\s*\d+", n)
+        or (re.search(r"\b\d+\s*(horas?|hrs?|minutos?)\b", n) and "dias" in n)
+        or pending_disp
+    )
+    # "he hecho 2 dias y 160 minutos" con pending disponibilidad → NO es live_count
+    if parece_disponibilidad and (
+        pending_disp
+        or re.search(r"\b\d+\s*dias?\b", n)
+        or re.search(r"\b\d+\s*[x×]\s*\d+", n)
+    ):
+        disp = _parse_disponibilidad(n)
+        if disp:
+            facts.update(disp)
+            intent = "provide_fact"
+            # No mezclar con experiencia salvo que también diga lives/transmisiones
+            if not re.search(r"\b(lives?|transmisiones?)\b", n):
+                facts.pop("live_duration_minutes", None)
+    else:
+        live = _parse_experiencia_live(n, pending_live=pending_live)
+        if live:
+            facts.update(live)
+            intent = "provide_fact"
+        # Disponibilidad suelta ("2 horas") sin días
+        if not pending_live:
+            disp = _parse_disponibilidad(n)
+            # Solo si no es claramente duración de un live
+            if disp and (
+                "days_per_week" in disp
+                or pending_disp
+                or ("hora" in n and "minuto" not in n and "he hecho" not in n)
+            ):
+                facts.update(disp)
+                intent = "provide_fact"
 
     # "cero" contextual
     if n in {"cero", "0", "nada"}:
-        pend_code = str((pending or {}).get("code") or (pending or {}).get("campo") or "")
-        if "live" in pend_code or "experiencia" in pend_code or "transm" in pend_code:
+        if pending_live:
             facts["live_experience"] = False
             facts["live_count"] = 0
             intent = "provide_fact"
@@ -320,47 +517,46 @@ def interpretar_mensaje_v2(
             intent = "ambiguous"
             answer = "ambiguous"
 
-    # --- disponibilidad ---
-    m_horas = re.search(r"\b(\d{1,2})\s*horas?\b", n)
-    if m_horas:
-        facts["hours_per_day"] = int(m_horas.group(1))
-        facts["disponibilidad_live"] = True
-        intent = "provide_fact"
-    if re.search(r"lunes\s+a\s+jueves", n):
-        facts["days_per_week"] = 4
-        facts["disponibilidad_live"] = True
-        intent = "provide_fact"
-    elif re.search(r"lunes\s+a\s+viernes", n):
-        facts["days_per_week"] = 5
-        facts["disponibilidad_live"] = True
-        intent = "provide_fact"
-    elif re.search(r"todos\s+los\s+dias", n):
-        facts["days_per_week"] = 7
-        facts["disponibilidad_live"] = True
-        intent = "provide_fact"
-
-    # --- device / internet ---
-    if "android" in n:
+    # --- device / internet (word boundaries; evita "beneficIOS") ---
+    if re.search(r"\bandroid\b", n):
         facts["device_os"] = "android"
         intent = "provide_fact"
-    if "iphone" in n or "ios" in n:
+    if re.search(r"\b(iphone|ios)\b", n):
         facts["device_os"] = "ios"
         intent = "provide_fact"
     m_dev_age = re.search(r"\b(\d{1,2})\s*anos?\b", n)
-    if m_dev_age and (
-        "android" in n or "telefono" in n or "celular" in n or "iphone" in n or "equipo" in n
-    ):
-        facts["device_age_years"] = int(m_dev_age.group(1))
-        intent = "provide_fact"
+    m_year = re.search(r"\b(?:ano|del ano)\s+(\d{4})\b", n)
+    if pending_device or re.search(r"\b(android|iphone|telefono|celular|equipo)\b", n):
+        if m_dev_age:
+            edad_eq = int(m_dev_age.group(1))
+            if 0 < edad_eq <= 20:
+                facts["device_age_years"] = edad_eq
+                intent = "provide_fact"
+        if m_year:
+            year = int(m_year.group(1))
+            # Ignorar años absurdos (ej. 1942) salvo rango razonable de smartphones
+            if 2007 <= year <= 2026:
+                facts["device_year"] = year
+                intent = "provide_fact"
+        # "iphone 20" → modelo, no año 20 como edad si > 15
+        m_model = re.search(r"\biphone\s+(\d{1,2})\b", n)
+        if m_model:
+            facts["device_os"] = "ios"
+            facts["device_model_hint"] = f"iphone_{m_model.group(1)}"
+            intent = "provide_fact"
+
     m_net = re.search(r"\b(\d{1,4})\s*(megas?|mbps|mb)\b", n)
-    if m_net or ("internet" in n and re.search(r"\d+", n)):
+    if m_net or (pending_internet and re.search(r"\b\d+\b", n)) or (
+        "internet" in n and re.search(r"\d+", n)
+    ):
         if m_net:
             facts["internet_speed_mbps"] = int(m_net.group(1))
-        else:
+            intent = "provide_fact"
+        elif pending_internet:
             m2 = re.search(r"\b(\d{1,4})\b", n)
-            if m2:
+            if m2 and not m_year:
                 facts["internet_speed_mbps"] = int(m2.group(1))
-        intent = "provide_fact"
+                intent = "provide_fact"
 
     # --- personalidad ---
     traits = []
@@ -370,55 +566,32 @@ def interpretar_mensaje_v2(
         traits.append("baja_energia")
     if traits:
         facts["personality_traits"] = traits
-        intent = "provide_fact"
+        if intent == "unknown":
+            intent = "provide_fact"
 
-    # --- preguntas informativas (pueden coexistir con hechos) ---
-    if re.search(r"\b(bonos?|incentivos?)\b", n) and (
-        "?" in str(texto)
-        or "¿" in str(texto)
-        or re.search(r"\b(que|cual|cuales|como|son)\b", n)
-    ):
-        if re.search(r"\b(dinero|especie|efectivo|pago)\b", n):
-            questions.append({"intent": "bonus_payment_form"})
-        else:
-            questions.append({"intent": "what_are_bonuses"})
-        intent = "ask_information" if not facts else "compound"
-
-    if re.search(r"\b(beneficios?)\b", n) and re.search(
-        r"\b(que|cual|cuales|como)\b", n
-    ):
-        questions.append({"intent": "what_are_benefits"})
-        intent = "ask_information" if not facts else "compound"
-
-    if re.search(r"\b(requisitos?)\b", n) and re.search(
-        r"\b(que|cual|cuales|como)\b", n
-    ):
-        questions.append({"intent": "what_are_requirements"})
-        intent = "ask_information" if not facts else "compound"
-
-    if re.search(r"\b(diamantes?|regalos?|leon|león)\b", n) and re.search(
-        r"\b(que|cual|cuanto|cuántos|vale|son)\b", n
-    ):
-        questions.append({"intent": "platform_knowledge", "topic": n})
-        intent = "ask_information" if not facts else "compound"
-
-    if re.search(
-        r"\b(sirve|cuenta|califica|suficiente|experimentado)\b", n
-    ) and (
-        "transmision" in n
-        or "transmisión" in _norm(texto)
-        or "live" in n
-        or facts.get("live_count")
-        or facts.get("live_duration_minutes")
+    # qualify live question
+    if re.search(r"\b(sirve|cuenta|califica|suficiente)\b", n) and (
+        "transmision" in n or "live" in n or facts.get("live_count")
     ):
         questions.append({"intent": "does_my_live_experience_qualify"})
-        intent = "compound" if questions or facts else "ask_information"
+        intent = "compound" if facts else "ask_information"
 
-    # frase compuesta típica
     if "pero" in n and questions and facts:
         intent = "compound"
 
-    # --- respuesta a pendiente ---
+    # Si había questions de info y también facts de device por error, limpiar
+    # cuando el mensaje es claramente solo pregunta de beneficios/requisitos
+    if questions and re.search(r"\b(benefic|benficios|requisitos?|bonos?)\b", n):
+        # No persistir device_os por substring accidental (ya corregido con \b)
+        if not re.search(r"\b(android|iphone|ios|telefono)\b", n):
+            for k in ("device_os", "device_age_years", "device_model_hint", "device_year"):
+                facts.pop(k, None)
+        if facts and intent == "ask_information":
+            intent = "compound" if facts else "ask_information"
+        elif not facts:
+            intent = "ask_information"
+
+    # --- respuesta corta a pendiente ---
     if pending and n in {
         "si",
         "sip",
@@ -433,14 +606,23 @@ def interpretar_mensaje_v2(
         answer = "yes"
         if intent == "unknown":
             intent = "answer_pending"
+            if pending_live:
+                facts["live_experience"] = True
+                intent = "provide_fact"
     if pending and n in {"no", "nop", "nel"}:
         answer = "no"
         if intent == "unknown":
             intent = "answer_pending"
+            if pending_live:
+                facts["live_experience"] = False
+                facts["live_count"] = 0
+                intent = "provide_fact"
     if pending and n in {"mas o menos", "masomenos", "regular", "no se", "nose", "depende"}:
         answer = "ambiguous"
         intent = "ambiguous"
 
+    if questions and intent == "unknown":
+        intent = "ask_information"
     if intent == "unknown" and facts:
         intent = "provide_fact"
     if intent == "unknown" and questions:
@@ -491,8 +673,18 @@ def reducir_estado(
             continue
         perfil[k] = v
 
-    # interest desde answer_to_pending solo si pendiente es interés
+    # Queja de repetición sobre LIVE pendiente → afirmar experiencia
     pend = estado.get("pending_requirement")
+    if interpretacion.intent == "user_complaint":
+        pcode = _pend_code(pend if isinstance(pend, dict) else None)
+        if perfil.get("live_experience") is None and any(
+            k in pcode for k in ("live", "experiencia", "transm")
+        ):
+            perfil["live_experience"] = True
+        if perfil.get("interest") is None and "interes" in pcode:
+            perfil["interest"] = True
+
+    # interest desde answer_to_pending solo si pendiente es interés
     if interpretacion.answer_to_pending in {"yes", "no"} and isinstance(pend, dict):
         code = str(pend.get("code") or pend.get("campo") or "").lower()
         if "interes" in code or pend.get("tipo") == "confirmar_interes":
@@ -567,14 +759,11 @@ def reducir_estado(
             new_pending = None
 
     if interpretacion.intent == "user_complaint":
-        # Cancelar pending de interés
+        # Cancelar pending de interés tras queja
         if isinstance(new_pending, dict) and "interes" in str(
             new_pending.get("code") or new_pending.get("tipo") or ""
         ):
             new_pending = None
-        if perfil.get("interest") is None:
-            # Si ya hay proceso activo, asumir interés implícito sin preguntar
-            perfil["interest"] = True
 
     estado["profile"] = perfil
     estado["blockers"] = blockers
@@ -608,10 +797,12 @@ def _pending_resuelto(pend: Dict[str, Any], perfil: Dict[str, Any]) -> bool:
     tipo = str(pend.get("tipo") or "").lower()
     if "edad" in code or "mayor" in code:
         return perfil.get("mayor_edad") is not None
-    if "disponib" in code or "hora" in code:
-        return perfil.get("hours_per_day") is not None or perfil.get(
-            "disponibilidad_live"
-        ) is not None
+    if "disponib" in code or "hora" in code or "dia" in code:
+        return (
+            perfil.get("hours_per_day") is not None
+            or perfil.get("days_per_week") is not None
+            or perfil.get("disponibilidad_live") is True
+        )
     if "live" in code or "experiencia" in code or "transm" in code:
         return perfil.get("live_experience") is not None
     if "telefono" in code or "device" in code or "conexion" in code or "internet" in code:
@@ -651,7 +842,7 @@ def _siguiente_dato_faltante(
                 "texto": "Antes de continuar, ¿eres mayor de 18 años?",
             }
     if perfil.get("hours_per_day") is None and perfil.get("days_per_week") is None:
-        if perfil.get("disponibilidad_live") is None:
+        if perfil.get("disponibilidad_live") is not True:
             return {
                 "code": "disponibilidad",
                 "campo": "disponibilidad",
@@ -759,38 +950,78 @@ def _responder_pregunta(
         )
 
     if intent == "what_are_benefits":
-        return consultar_conocimiento_puro(
+        texto = consultar_conocimiento_puro(
             tipo="beneficios", requisitos=requisitos, beneficios=beneficios, faqs=faqs
-        ) or "No tengo beneficios confirmados para compartir ahora."
+        )
+        if texto and "no tengo" not in texto.lower():
+            return texto
+        faq = _buscar_faq_topic("beneficios agencia", faqs)
+        return faq or (
+            "Ahora mismo no tengo beneficios cargados en la configuración de esta "
+            "agencia. Si el equipo los publica, podré detallártelos."
+        )
 
     if intent == "what_are_requirements":
-        return consultar_conocimiento_puro(
+        texto = consultar_conocimiento_puro(
             tipo="requisitos", requisitos=requisitos, beneficios=beneficios, faqs=faqs
-        ) or "No tengo requisitos confirmados para compartir ahora."
-
-    if intent == "does_my_live_experience_qualify":
-        count = perfil.get("live_count")
-        mins = perfil.get("live_duration_minutes")
-        partes = []
-        if count or mins:
-            partes.append(
-                "Sí cuenta como experiencia previa"
-                + (
-                    f" ({count} transmisión"
-                    + ("es" if (count or 0) != 1 else "")
-                    + (f" de {mins} minutos" if mins else "")
-                    + ")"
-                    if count or mins
-                    else ""
-                )
-                + "."
-            )
-        partes.append(
-            "No tengo una regla configurada que me permita afirmar que eso "
-            "baste para clasificarte como experimentado; el equipo lo valida "
-            "con el resto del perfil."
         )
-        return " ".join(partes)
+        if texto and "no tengo" not in texto.lower():
+            return texto
+        return (
+            "Ahora mismo no tengo requisitos públicos cargados en la configuración. "
+            "Lo habitual suele incluir mayoría de edad y disponibilidad para LIVE, "
+            "pero confirma con el equipo los de esta campaña."
+        )
+
+    if intent == "what_is_agency":
+        texto = consultar_conocimiento_puro(
+            tipo="agencia", requisitos=requisitos, beneficios=beneficios, faqs=faqs
+        )
+        if texto and "no encontr" not in texto.lower() and "no tengo" not in texto.lower():
+            return texto
+        faq = _buscar_faq_topic("que es la agencia", faqs)
+        return faq or (
+            "Somos una agencia que acompaña creadores en plataformas de LIVE. "
+            "Puedo orientarte sobre el proceso de ingreso; los detalles comerciales "
+            "los confirma el equipo."
+        )
+
+    if intent == "how_much_pays":
+        faq = _buscar_faq_topic("cuanto paga comision dinero", faqs)
+        if faq:
+            return faq
+        # Buscar en beneficios menciones de pago/comisión
+        for b in beneficios or []:
+            desc = str(b.get("descripcion") or b.get("texto_autorizado") or "")
+            if re.search(r"(?i)comisi|pago|dinero|\$|usd|cop", desc):
+                return f"{b.get('nombre') or 'Beneficio'}: {desc[:300]}"
+        return (
+            "No tengo un monto de pago confirmado en la configuración. "
+            "Ese dato debe confirmarlo el equipo de la agencia."
+        )
+
+    if intent == "how_monetize":
+        faq = _buscar_faq_topic("monetizar diamantes regalos", faqs)
+        return faq or (
+            "En plataformas LIVE la monetización suele venir de regalos/diamantes "
+            "y acuerdos de agencia, pero no tengo el detalle exacto cargado aquí. "
+            "El equipo puede explicarte el esquema de esta campaña."
+        )
+
+    if intent == "what_can_you_do":
+        return (
+            "Puedo ayudarte a: (1) registrar tu experiencia y datos de evaluación, "
+            "(2) responder con información configurada de requisitos/beneficios/FAQ, "
+            "y (3) indicar si hay algún bloqueo para avanzar. "
+            "Si un dato no está cargado en la configuración, te lo digo con claridad."
+        )
+
+    if intent == "what_is_process":
+        return (
+            "El proceso puede incluir conocernos, confirmar requisitos básicos, "
+            "completar solicitud cuando seas elegible y, si aplica, prueba LIVE o "
+            "evidencias. El equipo hace la revisión final."
+        )
 
     if intent == "platform_knowledge":
         topic = str(q.get("topic") or "")
@@ -798,9 +1029,27 @@ def _responder_pregunta(
         if faq:
             return faq
         return (
-            "No tengo ese dato confirmado en la información autorizada. "
-            "Puedo ayudarte con requisitos, beneficios o el proceso de ingreso."
+            "No tengo ese dato confirmado en la información autorizada de esta agencia."
         )
+
+    if intent == "does_my_live_experience_qualify":
+        count = perfil.get("live_count")
+        mins = perfil.get("live_duration_minutes")
+        partes = []
+        if count or mins or perfil.get("live_experience"):
+            partes.append("Sí cuenta como experiencia previa.")
+            if count or mins:
+                detalle = []
+                if count:
+                    detalle.append(f"{count} transmisión(es)")
+                if mins:
+                    detalle.append(f"{mins} minutos")
+                partes.append(f"({', '.join(detalle)}).")
+        partes.append(
+            "No tengo una regla configurada que permita afirmar que eso baste "
+            "para clasificarte como experimentado; el equipo lo valida con el resto del perfil."
+        )
+        return " ".join(partes)
 
     if intent == "can_i_join":
         blockers = estado.get("blockers") or []
@@ -846,27 +1095,21 @@ def resolver_decision_turno(
     # 1) Queja meta
     if interpretacion.intent == "user_complaint":
         faltante = _siguiente_dato_faltante(perfil, requisitos, answered)
-        # Nunca interés si ya conocido
-        if faltante and faltante.get("code") == "interest" and perfil.get("interest") is not None:
-            faltante = None
         if faltante and faltante.get("code") == "interest":
-            # Buscar otro dato o no preguntar interés tras queja
-            faltante = None
-            # recompute without interest
-            tmp = dict(perfil)
-            tmp["interest"] = True
-            faltante = _siguiente_dato_faltante(tmp, requisitos, answered)
-        texto = (
-            "Tienes razón: ya estamos en el proceso y no necesito repetir "
-            "esa pregunta de interés."
-        )
+            if perfil.get("interest") is not None or blockers:
+                faltante = None
+            else:
+                tmp = dict(perfil)
+                tmp["interest"] = True
+                faltante = _siguiente_dato_faltante(tmp, requisitos, answered)
+        texto = "Tienes razón, no voy a repetir la misma pregunta."
         if faltante:
             texto = f"{texto} Sigamos con esto: {faltante['texto']}"
             return DecisionTurno(
                 type=DEC_ASK_DATA,
                 public_content=texto,
                 required_input=faltante,
-                reason="complaint_skip_interest",
+                reason="complaint_advance",
                 intent=interpretacion.intent,
             )
         return DecisionTurno(
@@ -946,6 +1189,11 @@ def resolver_decision_turno(
             )
 
         partes: List[str] = []
+        # Solo ack hechos del MISMO mensaje si aportan (no device fantasma)
+        if interpretacion.intent == "compound" and interpretacion.facts:
+            ack = _ack_hechos(interpretacion.facts)
+            if ack:
+                partes.append(ack)
         for q in interpretacion.questions:
             resp = _responder_pregunta(
                 q,
@@ -956,28 +1204,11 @@ def resolver_decision_turno(
             )
             if resp:
                 partes.append(resp)
-        # Mencionar bloqueo SOLO si preguntó elegibilidad
-        solo_info = all(
-            str(q.get("intent"))
-            not in {"can_i_join", "ask_eligibility"}
-            for q in interpretacion.questions
-        )
-        # Ack hechos si venían en el mismo mensaje
-        if interpretacion.facts and interpretacion.intent == "compound":
-            ack = _ack_hechos(interpretacion.facts)
-            if ack:
-                partes.insert(0, ack)
         content = "\n\n".join(p for p in partes if p).strip()
         if not content:
             content = (
                 "No tengo información confirmada para esa consulta en este momento."
             )
-        # Tras info: si hay dato faltante y NO hay blockers secuestrando,
-        # preguntar siguiente SOLO si no era solo consulta y no hay interés ya
-        # Para consultas informativas puras: no empujar confirmar_interes
-        next_q = None
-        if interpretacion.facts and not solo_info:
-            next_q = None
         return DecisionTurno(
             type=DEC_ANSWER_INFO,
             public_content=content,
