@@ -832,20 +832,23 @@ def _analizar_heuristico(payload: Dict[str, Any]) -> Dict[str, Any]:
             "No se detectaron pares Pregunta/Respuesta en las FAQ."
         )
 
+    general_out: Dict[str, Any] = {
+        "nombre_asistente": str(payload.get("nombre_asistente") or "").strip(),
+        "tono": payload.get("tono")
+        if payload.get("tono") in {"profesional", "cercano", "juvenil"}
+        else "cercano",
+    }
+    # Solo incluir presentaciones si vinieron en el payload (no inventar vacíos).
+    for clave in (
+        "presentacion_inicial",
+        "presentacion_informativo",
+        "presentacion_inteligente",
+    ):
+        if clave in payload:
+            general_out[clave] = str(payload.get(clave) or "").strip()
+
     return {
-        "general": {
-            "nombre_asistente": str(payload.get("nombre_asistente") or "").strip(),
-            "presentacion_inicial": str(payload.get("presentacion_inicial") or "").strip(),
-            "presentacion_informativo": str(
-                payload.get("presentacion_informativo") or ""
-            ).strip(),
-            "presentacion_inteligente": str(
-                payload.get("presentacion_inteligente") or ""
-            ).strip(),
-            "tono": payload.get("tono")
-            if payload.get("tono") in {"profesional", "cercano", "juvenil"}
-            else "cercano",
-        },
+        "general": general_out,
         "requisitos": requisitos,
         "beneficios": beneficios,
         "bonos": bonos,
@@ -1192,6 +1195,22 @@ def persistir_datos_generales_asistente(
     if legacy:
         campos_a["presentacion_inicial"] = legacy
 
+    if (
+        "presentacion_informativo" in general
+        and not info
+        and legacy
+        and origen.startswith("PUT_")
+    ):
+        logger.warning(
+            "[CARGA_INFO_PRESENTACION_SAVE] origen=%s agencia_id=%s config_id=%s "
+            "ALERTA: presentacion_informativo vacío pero presentacion_inicial "
+            "tiene %s chars. El cliente está mandando el texto al campo legacy. "
+            "No se copia automáticamente a presentacion_informativo.",
+            origen,
+            agencia_id,
+            chatbot_configuracion_id,
+            len(legacy),
+        )
     if "descripcion_agencia" in general:
         desc = str(general.get("descripcion_agencia") or "").strip()
         if desc:

@@ -620,21 +620,26 @@ def put_carga_informacion_general(
     import service_chatbot_carga_informacion as svc_carga
 
     campos = _campos(payload)
+    # Solo reenviar campos realmente enviados (exclude_unset).
+    # Antes se inyectaban presentacion_* = None y el backend las veía como "enviadas".
+    general = {
+        k: campos[k]
+        for k in (
+            "nombre_asistente",
+            "descripcion_agencia",
+            "presentacion_inicial",
+            "presentacion_informativo",
+            "presentacion_inteligente",
+            "tono",
+            "formato_respuestas_informativas",
+        )
+        if k in campos
+    }
     try:
         return svc_carga.persistir_datos_generales_asistente(
             _agencia_id(agencia),
             cfg_id,
-            {
-                "nombre_asistente": campos.get("nombre_asistente"),
-                "descripcion_agencia": campos.get("descripcion_agencia"),
-                "presentacion_inicial": campos.get("presentacion_inicial"),
-                "presentacion_informativo": campos.get("presentacion_informativo"),
-                "presentacion_inteligente": campos.get("presentacion_inteligente"),
-                "tono": campos.get("tono"),
-                "formato_respuestas_informativas": campos.get(
-                    "formato_respuestas_informativas"
-                ),
-            },
+            general,
             origen="PUT_/carga-informacion/general",
         )
     except Exception as e:
