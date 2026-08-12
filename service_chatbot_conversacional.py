@@ -448,6 +448,101 @@ async def procesar_mensaje_conversacional(
 
     await _persistir_modo(contexto, dry_run=dry_run)
 
+    # PRIORIDAD: extraer hechos y actualizar perfil ANTES de decidir acciones.
+    from chatbot_conversacional_perfil import (
+        actualizar_perfil_desde_mensaje,
+        puede_ejecutar_accion,
+        mensaje_bloqueo_para_usuario,
+        leer_perfil,
+    )
+
+    actualizacion = actualizar_perfil_desde_mensaje(
+        conversacion=contexto.conversacion,
+        aspirante=contexto.aspirante,
+        texto=texto or "",
+        requisitos=contexto.requisitos,
+    )
+    if contexto.aspirante is not None and actualizacion.get("campos_aspirante"):
+        contexto.aspirante.update(actualizacion["campos_aspirante"])
+    if not dry_run and conversacion_id:
+        campos_conv = actualizacion.get("campos_conversacion") or {}
+        if campos_conv:
+            await _db(
+                "actualizar_conversacion",
+                agencia_id,
+                conversacion_id,
+                campos_conv,
+            )
+        aspirante_id_act = contexto.aspirante_id
+        if aspirante_id_act and actualizacion.get("campos_aspirante"):
+            await _db(
+                "actualizar_datos_explicitos_aspirante",
+                agencia_id,
+                int(aspirante_id_act),
+                actualizacion["campos_aspirante"],
+                default=None,
+            )
+
+    # Si pide incorporación y hay bloqueante: el backend corta (no el agente).
+    hechos_msg = actualizacion.get("hechos") or {}
+    perfil_act = actualizacion.get("perfil") or leer_perfil(
+        contexto.conversacion, contexto.aspirante
+    )
+    if hechos_msg.get("interes") or any(
+        k in _normalizar_texto_salida(texto or "")
+        for k in ("quiero ingresar", "quiero entrar", "enviame el enlace", "mandame el enlace")
+    ):
+        gate = puede_ejecutar_accion(
+            accion="enviar_solicitud",
+            conversacion=contexto.conversacion,
+            aspirante=contexto.aspirante,
+            perfil=perfil_act,
+            flujo=contexto.flujo,
+            paso=contexto.paso,
+            requisitos=contexto.requisitos,
+        )
+        if not gate.get("permitida"):
+            respuesta_bloqueo = _sanitizar_respuesta_usuario(
+                mensaje_bloqueo_para_usuario(gate, perfil=perfil_act)
+            )
+            envio_b = await _enviar_respuesta(
+                canal=canal,
+                texto=respuesta_bloqueo,
+                enlaces=[],
+                token=token,
+                phone_number_id=phone_number_id,
+                destino=wa_id or usuario_externo_id,
+                enviar_callback=enviar_callback,
+                dry_run=dry_run,
+            )
+            await _actualizar_cierre_de_turno(
+                contexto,
+                respuesta=respuesta_bloqueo,
+                mensaje_usuario=texto,
+                acciones=[{"tipo": "action_gate_bloqueado", "gate": gate}],
+                escalado=False,
+                cerrada=False,
+                dry_run=dry_run,
+            )
+            return {
+                "usado": True,
+                "motivo": "requisito_bloqueante",
+                "conversacion_id": conversacion_id,
+                "mensaje_entrante_id": mensaje_entrante_id,
+                "respuesta": respuesta_bloqueo,
+                "modo": contexto.modo,
+                "acciones": [{"tipo": "action_gate_bloqueado", "gate": gate}],
+                "enlaces": [],
+                "escalado": False,
+                "cerrada": False,
+                "enviado": envio_b.get("enviado"),
+                "error": envio_b.get("error"),
+                "tipo_chatbot": "inteligente",
+                "modo_humano": False,
+                "perfil": perfil_act,
+                "action_gate": gate,
+            }
+
     # Prioridad: respuesta contra pregunta_pendiente (no cambiar de tema).
     interpretacion_pend = _interpretar_respuesta_a_pregunta_pendiente(
         contexto, texto
@@ -2200,10 +2295,25 @@ def _construir_texto_informativo_inteligente(
     intencion: str,
     texto_consulta: str,
 ) -> str:
-    """Respuesta informativa para el inteligente: sin pies de menú ni submenús."""
+    """
+    Respuesta informativa para el inteligente:
+    conocimiento autorizado SIN navegación del menú informativo.
+    """
     if intencion == "proceso":
         return _resolver_consultar_proceso(contexto, texto_consulta)
 
+    from chatbot_conversacional_perfil import consultar_conocimiento_puro
+
+    if intencion in {"requisitos", "beneficios", "bonos", "agencia", "faq"}:
+        texto = consultar_conocimiento_puro(
+            tipo=intencion,
+            requisitos=contexto.requisitos,
+            beneficios=contexto.beneficios,
+            faqs=contexto.faqs,
+        )
+        return _sanitizar_respuesta_usuario(str(texto or "").strip())
+
+    # Fallback controlado: sin pies de menú.
     from service_chatbot_informativo import (
         construir_respuesta_por_intencion_informativa,
         presentacion_desde_asistente,
@@ -2211,7 +2321,6 @@ def _construir_texto_informativo_inteligente(
     import database_chatbot_conversacional as db_conv
 
     presentacion = presentacion_desde_asistente(contexto.asistente)
-    # El inteligente NO hereda pies de submenú del informativo.
     presentacion = dict(presentacion)
     presentacion["agregar_pregunta_final"] = False
 
@@ -2276,6 +2385,13 @@ async def _resolver_siguiente_paso_pendiente(
     pendiente: Optional[Dict[str, Any]] = None
     max_hops = 10
 
+    from chatbot_conversacional_perfil import (
+        leer_perfil,
+        paso_resuelto_por_perfil,
+        puede_ejecutar_accion,
+        mensaje_bloqueo_para_usuario,
+    )
+
     for _ in range(max_hops):
         paso = contexto.paso or {}
         if not paso:
@@ -2284,6 +2400,71 @@ async def _resolver_siguiente_paso_pendiente(
         paso_id = paso.get("id") or (contexto.conversacion or {}).get(
             "paso_actual_id"
         )
+        perfil = leer_perfil(contexto.conversacion, contexto.aspirante)
+
+        # Memoria factual: no repreguntar datos ya confirmados.
+        if paso_resuelto_por_perfil(paso, perfil):
+            logger.info(
+                "[CHATBOT_FLUJO] conversacion_id=%s paso_id=%s "
+                "tipo_accion=%s accion=omitido_dato_confirmado origen=%s",
+                conversacion_id,
+                paso_id,
+                tipo,
+                origen,
+            )
+            # Si el dato bloquea incorporación, informar y detener avance de conversión.
+            if tipo in {"hacer_pregunta", "esperar_respuesta"}:
+                codigo = str(paso.get("codigo") or "").lower()
+                nombre = str(paso.get("nombre") or "").lower()
+                if any(k in codigo or k in nombre for k in ("edad", "mayor")):
+                    gate = puede_ejecutar_accion(
+                        accion="enviar_solicitud",
+                        conversacion=contexto.conversacion,
+                        aspirante=contexto.aspirante,
+                        perfil=perfil,
+                        flujo=contexto.flujo,
+                        paso=paso,
+                        requisitos=contexto.requisitos,
+                    )
+                    if not gate.get("permitida"):
+                        bloques.append(
+                            mensaje_bloqueo_para_usuario(gate, perfil=perfil)
+                        )
+                        pendiente = None
+                        break
+            siguiente = await _avanzar_paso_flujo(contexto, dry_run=dry_run)
+            if not siguiente:
+                break
+            continue
+
+        # Action gating antes de pasos de acción de conversión.
+        if tipo in {
+            "enviar_enlace",
+            "agendar_live",
+            "solicitar_live",
+            "solicitar_evidencias",
+        }:
+            gate = puede_ejecutar_accion(
+                accion=tipo if tipo != "enviar_enlace" else "enviar_solicitud",
+                conversacion=contexto.conversacion,
+                aspirante=contexto.aspirante,
+                perfil=perfil,
+                flujo=contexto.flujo,
+                paso=paso,
+                requisitos=contexto.requisitos,
+            )
+            if not gate.get("permitida"):
+                bloques.append(mensaje_bloqueo_para_usuario(gate, perfil=perfil))
+                logger.info(
+                    "[CHATBOT_FLUJO] conversacion_id=%s paso_id=%s "
+                    "tipo_accion=%s accion=bloqueado_por_gate origen=%s",
+                    conversacion_id,
+                    paso_id,
+                    tipo,
+                    origen,
+                )
+                pendiente = None
+                break
 
         if tipo in _TIPOS_PASO_AUTO:
             contenido = _contenido_ejecucion_paso_auto(contexto, paso)

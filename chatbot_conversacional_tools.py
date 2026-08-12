@@ -731,6 +731,27 @@ async def registrar_dato_explicito_aspirante(
     if ctxh.contexto.aspirante is not None:
         ctxh.contexto.aspirante.update(campos)
 
+    # Sincronizar perfil acumulado (memoria factual).
+    try:
+        from chatbot_conversacional_perfil import (
+            leer_perfil,
+            escribir_perfil_en_contexto,
+            fusionar_hechos_en_perfil,
+        )
+
+        if isinstance(ctxh.contexto.conversacion, dict):
+            perfil = leer_perfil(ctxh.contexto.conversacion, ctxh.contexto.aspirante)
+            hechos_sync = {}
+            if "mayor_edad" in campos:
+                hechos_sync["mayor_edad"] = campos["mayor_edad"]
+            if "disponibilidad_live" in campos:
+                hechos_sync["disponibilidad_live"] = campos["disponibilidad_live"]
+            if hechos_sync:
+                perfil = fusionar_hechos_en_perfil(perfil, hechos_sync)
+                escribir_perfil_en_contexto(ctxh.contexto.conversacion, perfil)
+    except Exception:  # noqa: BLE001
+        pass
+
     _registrar(
         ctxh,
         herramienta="registrar_dato_explicito_aspirante",
@@ -784,6 +805,18 @@ async def crear_tarea_candidato(
 
     datos = tarea.model_dump()
     tipo_tarea = str(datos.get("tipo_tarea") or "").strip().lower()
+
+    ok_gate, motivo_gate, gate = _gate_accion_conversion(ctxh, "crear_tarea_candidato")
+    if not ok_gate:
+        _registrar(
+            ctxh,
+            herramienta="crear_tarea_candidato",
+            exitoso=False,
+            error_detalle=str(gate.get("motivo") or "action_gate")[:240],
+            detalle={"tipo_tarea": tipo_tarea, "gate": gate},
+        )
+        return _error(motivo_gate)
+
     if tipo_tarea in {"agendar_live", "preparar_live", "prueba_live", "solicitar_live"}:
         ok_live, motivo_live = puede_ejecutar_accion_conversion_live(ctxh)
         if not ok_live:
@@ -854,6 +887,48 @@ def _pasos_previos_obligatorios_cumplidos(ctxh: ContextoHerramientas) -> bool:
     return True
 
 
+def _gate_accion_conversion(
+    ctxh: "ContextoHerramientas",
+    accion: str,
+) -> Tuple[bool, str, Dict[str, Any]]:
+    """
+    Autoridad backend: valida bloqueantes/perfil antes de ejecutar la tool.
+    Retorna (permitida, mensaje_usuario_si_bloquea, gate_dict).
+    """
+    from chatbot_conversacional_perfil import (
+        puede_ejecutar_accion,
+        mensaje_bloqueo_para_usuario,
+        leer_perfil,
+        evaluar_requisitos_bloqueantes,
+        escribir_perfil_en_contexto,
+    )
+
+    perfil = leer_perfil(ctxh.contexto.conversacion, ctxh.contexto.aspirante)
+    evaluacion = evaluar_requisitos_bloqueantes(
+        requisitos=ctxh.contexto.requisitos,
+        perfil=perfil,
+        aspirante=ctxh.contexto.aspirante,
+    )
+    perfil["requisitos_evaluados"] = evaluacion.get("requisitos_evaluados") or {}
+    perfil["puede_incorporarse"] = evaluacion.get("puede_incorporarse")
+    perfil["bloqueantes_incumplidos"] = evaluacion.get("bloqueantes_incumplidos") or []
+    if isinstance(ctxh.contexto.conversacion, dict):
+        escribir_perfil_en_contexto(ctxh.contexto.conversacion, perfil)
+
+    gate = puede_ejecutar_accion(
+        accion=accion,
+        conversacion=ctxh.contexto.conversacion,
+        aspirante=ctxh.contexto.aspirante,
+        perfil=perfil,
+        flujo=ctxh.contexto.flujo,
+        paso=ctxh.contexto.paso,
+        requisitos=ctxh.contexto.requisitos,
+    )
+    if gate.get("permitida"):
+        return True, "", gate
+    return False, mensaje_bloqueo_para_usuario(gate, perfil=perfil), gate
+
+
 def puede_ejecutar_accion_conversion_live(
     ctxh: ContextoHerramientas,
     *,
@@ -862,10 +937,13 @@ def puede_ejecutar_accion_conversion_live(
     """
     Gate duro para preparar_prueba_live / agendar_live / enlace LIVE.
 
-    Requiere conversación, nivel resuelto (si el flujo lo exige vía estrategia
-    adaptativa), flujo seleccionado, paso activo con tipo_accion adecuada y
-    pasos previos coherentes. Nunca se activa solo por la palabra «Live».
+    Primero aplica action gating central (bloqueantes). Luego valida
+    flujo/paso/nivel. Nunca se activa solo por la palabra «Live».
     """
+    ok_gate, motivo_gate, _gate = _gate_accion_conversion(ctxh, "agendar_live")
+    if not ok_gate:
+        return False, motivo_gate
+
     tipos = tipos_accion_permitidos or frozenset({"agendar_live", "solicitar_live"})
     conv = ctxh.contexto.conversacion or {}
     if not ctxh.conversacion_id and not conv.get("id"):
@@ -935,6 +1013,28 @@ def preparar_envio_enlace_autorizado(
     Nunca activa modo_humano. Ante fallo puede marcar requiere_asesor y deja
     chatbot_continua=True.
     """
+    # Gate central: requisitos bloqueantes (p.ej. menor de edad) impiden enlace.
+    ok_gate, motivo_gate, gate = _gate_accion_conversion(ctxh, "enviar_solicitud")
+    if not ok_gate:
+        _registrar(
+            ctxh,
+            herramienta="enviar_enlace_autorizado",
+            tipo_evento="envio_enlace",
+            detalle={"codigo": str(codigo_recurso or "").strip(), "gate": gate},
+            exitoso=False,
+            error_detalle=str(gate.get("motivo") or "action_gate"),
+        )
+        return {
+            "ok": False,
+            "error": motivo_gate,
+            "codigo": str(codigo_recurso or "").strip(),
+            "requiere_asesor": False,
+            "modo_humano": False,
+            "chatbot_continua": True,
+            "mensaje_usuario": motivo_gate,
+            "action_gate": gate,
+        }
+
     codigo = str(codigo_recurso or "").strip()
     aspirante_id = ctxh.contexto.aspirante_id
 
@@ -1190,6 +1290,18 @@ async def solicitar_evidencias(
         momento: Filtro opcional: antes_live, inicio_live, durante_live, durante_batalla, final_live o despues_live.
     """
     ctxh = _ctx(ctx)
+
+    ok_gate, motivo_gate, gate = _gate_accion_conversion(ctxh, "solicitar_evidencias")
+    if not ok_gate:
+        _registrar(
+            ctxh,
+            herramienta="solicitar_evidencias",
+            tipo_evento="solicitud",
+            detalle={"momento": momento, "gate": gate},
+            exitoso=False,
+            error_detalle=str(gate.get("motivo") or "action_gate"),
+        )
+        return _error(motivo_gate)
 
     requeridas = [
         {
