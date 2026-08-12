@@ -154,10 +154,131 @@ def _lineas_bullet(texto: str) -> List[str]:
         linea = raw.strip()
         if not linea:
             continue
-        linea = re.sub(r"^[\-\*\u2022\d]+[\.\)\-]\s*", "", linea).strip()
+        # Quitar prefijos de lista repetidos: "- - - Nombre"
+        prev = None
+        while prev != linea:
+            prev = linea
+            linea = re.sub(r"^[\-\*\u2022]+[\.\)\-]?\s*", "", linea).strip()
+            linea = re.sub(r"^\d+[\.\)\-]\s*", "", linea).strip()
         if linea:
             out.append(linea)
     return out
+
+
+def _parece_dump_lista(texto: str) -> bool:
+    t = str(texto or "")
+    guiones = t.count(" - ") + t.count("\n-") + t.count("- -")
+    pasos_num = len(re.findall(r"(?:^|\s)\d+[\.\)]\s+\S", t))
+    # Frases que se repiten muchas veces = dump fractal
+    repeticiones = 0
+    for frag in (
+        "mayoría de edad",
+        "disponibilidad",
+        "teléfono",
+        "ser mayor",
+        "disposición",
+    ):
+        repeticiones += t.lower().count(frag)
+    return (
+        guiones >= 2
+        or pasos_num >= 2
+        or repeticiones >= 3
+        or len(t) > 800
+    )
+
+
+def _texto_corto_limpio(texto: Optional[str], *, max_len: int = 500) -> str:
+    """Corta dumps anidados y deja un texto usable."""
+    d = str(texto or "").strip()
+    if not d:
+        return ""
+    if _parece_dump_lista(d):
+        m = re.search(
+            r"\s+-\s+-|\n\s*[-*]|\s+—\s+\d+[\.\)]|\s+\d+[\.\)]\s+\S",
+            d,
+        )
+        if m:
+            d = d[: m.start()].strip()
+        if _parece_dump_lista(d) or len(d) > max_len:
+            d = re.split(r"[.\n]", d, maxsplit=1)[0].strip()
+    return d[:max_len].strip()
+
+
+def _descripcion_requisito_limpia(nombre: str, desc: Optional[str]) -> str:
+    """
+    Evita reinyectar dumps anidados de listas previas en la descripción.
+    """
+    d = _texto_corto_limpio(desc, max_len=500)
+    if not d:
+        return ""
+    n = str(nombre or "").strip()
+    if n and d.lower().startswith(n.lower()):
+        d = d[len(n) :].lstrip(" .:-–—")
+    if _norm_nombre(d) == _norm_nombre(n):
+        return ""
+    return d.strip()
+
+
+def _nombre_item_limpio(nombre: str, *, max_len: int = 160) -> str:
+    n = str(nombre or "").strip()
+    while n.startswith("-"):
+        n = n.lstrip("- ").strip()
+    n = re.sub(r"^\d+[\.\)\-]\s*", "", n).strip()
+    if _parece_dump_lista(n) or len(n) > max_len:
+        n = n.split(".")[0].split("—")[0].split(" - ")[0].strip()[:max_len]
+    return n[:max_len].strip()
+
+
+def _linea_requisito_legible(nombre: str, desc: Optional[str]) -> Optional[str]:
+    n = _nombre_item_limpio(nombre)
+    if not n:
+        return None
+    d = _descripcion_requisito_limpia(n, desc)
+    if d:
+        return f"- {n}. {d}"
+    return f"- {n}"
+
+
+def _linea_beneficio_legible(
+    nombre: str,
+    desc: Optional[str],
+    *,
+    valor: Any = None,
+    moneda: Optional[str] = None,
+) -> Optional[str]:
+    n = _nombre_item_limpio(nombre)
+    if not n:
+        return None
+    d = _descripcion_requisito_limpia(n, desc)
+    lineas = [f"- {n}"]
+    if d:
+        lineas.append(f"  {d}")
+    if valor not in (None, ""):
+        lineas.append(f"  Valor: {valor} {(moneda or '')}".rstrip())
+    return "\n".join(lineas)
+
+
+def _linea_proceso_legible(
+    orden: int, nombre: str, mensaje: Optional[str]
+) -> Optional[str]:
+    n = _nombre_item_limpio(nombre)
+    if not n:
+        return None
+    msg = _texto_corto_limpio(mensaje, max_len=300)
+    # Evitar mensaje = nombre o dump del proceso completo
+    if msg and _norm_nombre(msg) == _norm_nombre(n):
+        msg = ""
+    if msg and (
+        _parece_dump_lista(msg)
+        or msg.count(".") > 4
+        or re.search(r"\d+[\.\)]\s+\S", msg)
+    ):
+        # Si quedó resto con otro paso numerado, quedarse solo con la 1ª frase
+        primera = re.split(r"[.\n]", msg, maxsplit=1)[0].strip()
+        msg = primera if primera and not re.search(r"\d+[\.\)]\s+\S", primera) else ""
+    if msg:
+        return f"{orden}. {n} — {msg}"
+    return f"{orden}. {n}"
 
 
 def _url_real(url: Optional[str]) -> Optional[str]:
@@ -229,48 +350,90 @@ def obtener_textos_carga(
         )
 
         req_txt = []
+        vistos_req: set = set()
         for r in requisitos:
             nombre = (r.get("nombre") or "").strip()
-            desc = (r.get("descripcion") or "").strip()
-            req_txt.append(f"- {nombre}" + (f". {desc}" if desc and desc != nombre else ""))
+            clave = _norm_nombre(nombre)
+            if not clave or clave in vistos_req:
+                continue
+            linea = _linea_requisito_legible(nombre, r.get("descripcion"))
+            if not linea:
+                continue
+            vistos_req.add(clave)
+            req_txt.append(linea)
 
         ben_txt, bon_txt = [], []
+        vistos_ben: set = set()
+        vistos_bon: set = set()
         for b in beneficios:
             tipo = str(b.get("tipo") or "beneficio").lower()
-            linea = f"- {(b.get('nombre') or '').strip()}"
+            nombre = (b.get("nombre") or "").strip()
+            clave = _norm_nombre(nombre)
+            if not clave:
+                continue
             desc = (
                 b.get("descripcion_corta")
                 or b.get("texto_autorizado")
                 or b.get("descripcion_completa")
                 or ""
-            ).strip()
-            if desc:
-                linea += f"\n  {desc}"
-            if tipo == "bono":
-                valor = b.get("valor")
-                moneda = b.get("moneda") or ""
-                if valor not in (None, ""):
-                    linea += f"\n  Valor: {valor} {moneda}".rstrip()
+            )
+            if tipo in {"bono", "incentivo"}:
+                if clave in vistos_bon:
+                    continue
+                linea = _linea_beneficio_legible(
+                    nombre,
+                    desc,
+                    valor=b.get("valor"),
+                    moneda=b.get("moneda"),
+                )
+                if not linea:
+                    continue
+                vistos_bon.add(clave)
                 bon_txt.append(linea)
             else:
+                if clave in vistos_ben:
+                    continue
+                linea = _linea_beneficio_legible(nombre, desc)
+                if not linea:
+                    continue
+                vistos_ben.add(clave)
                 ben_txt.append(linea)
 
         faq_txt = []
+        vistos_faq: set = set()
         for f in faqs:
             preg = (f.get("pregunta") or "").strip()
             resp = (f.get("respuesta_completa") or f.get("respuesta_corta") or "").strip()
-            if preg and resp:
-                faq_txt.append(f"Pregunta: {preg}\nRespuesta: {resp}")
+            clave = _norm_nombre(preg)
+            if not preg or not resp or not clave or clave in vistos_faq:
+                continue
+            if _parece_dump_lista(preg) or _parece_dump_lista(resp):
+                preg = _nombre_item_limpio(preg, max_len=200)
+                resp = _texto_corto_limpio(resp, max_len=800)
+            if not preg or not resp:
+                continue
+            vistos_faq.add(clave)
+            faq_txt.append(f"Pregunta: {preg}\nRespuesta: {resp}")
 
         proceso_txt = []
+        vistos_paso: set = set()
         if flujos:
             pasos = db.listar_flujo_pasos(
                 agencia_id, int(flujos[0]["id"]), solo_activos=True, cur=c
             )
-            for i, p in enumerate(pasos, start=1):
-                nombre = (p.get("nombre") or p.get("codigo") or f"Paso {i}").strip()
+            orden_vis = 0
+            for p in pasos:
+                nombre = (p.get("nombre") or p.get("codigo") or "").strip()
+                clave = _norm_nombre(nombre)
+                if not clave or clave in vistos_paso:
+                    continue
                 msg = (p.get("mensaje_instrucciones") or "").strip()
-                proceso_txt.append(f"{i}. {nombre}" + (f" — {msg}" if msg else ""))
+                orden_vis += 1
+                linea = _linea_proceso_legible(orden_vis, nombre, msg)
+                if not linea:
+                    continue
+                vistos_paso.add(clave)
+                proceso_txt.append(linea)
 
         enlaces_txt = []
         for r in recursos:
@@ -327,16 +490,38 @@ def obtener_textos_carga(
 
 def _parse_requisitos(texto: str) -> List[Dict[str, Any]]:
     items = []
+    vistos: set = set()
     for i, linea in enumerate(_lineas_bullet(texto), start=1):
-        nombre = linea.split(".")[0].strip()[:160] or linea[:160]
+        # Limpiar restos de anidación en la misma línea
+        while linea.startswith("-"):
+            linea = linea.lstrip("- ").strip()
+        if not linea or _parece_dump_lista(linea) and linea.count(".") > 3:
+            # Línea basura: intentar rescatar solo el primer nombre
+            nombre = linea.split(".")[0].strip()[:160]
+            nombre = re.sub(r"^[\-\*\u2022]+\s*", "", nombre).strip()
+            if not nombre:
+                continue
+            desc = ""
+        else:
+            if "." in linea:
+                nombre, resto = linea.split(".", 1)
+                nombre = nombre.strip()[:160]
+                desc = _descripcion_requisito_limpia(nombre, resto.strip())
+            else:
+                nombre = linea.strip()[:160]
+                desc = ""
+        clave = _norm_nombre(nombre)
+        if not clave or clave in vistos:
+            continue
+        vistos.add(clave)
         items.append(
             {
                 "nombre": nombre,
-                "descripcion": linea,
+                "descripcion": desc or nombre,
                 "categoria": "obligatorio",
                 "bloquea_proceso": True,
                 "mensaje_si_no_cumple": None,
-                "orden": i,
+                "orden": len(items) + 1,
             }
         )
     return items
@@ -344,21 +529,34 @@ def _parse_requisitos(texto: str) -> List[Dict[str, Any]]:
 
 def _parse_beneficios(texto: str, tipo: str = "beneficio") -> List[Dict[str, Any]]:
     items = []
+    vistos: set = set()
     bloques = re.split(r"\n\s*\n", (texto or "").strip()) if texto else []
     if not bloques and (texto or "").strip():
         bloques = _lineas_bullet(texto)
     else:
-        # si hay líneas con bullets, preferirlas
         bullets = _lineas_bullet(texto)
         if len(bullets) >= len(bloques):
             bloques = bullets
 
-    for i, bloque in enumerate(bloques, start=1):
+    for bloque in bloques:
         lineas = [x.strip() for x in str(bloque).splitlines() if x.strip()]
         if not lineas:
             continue
-        nombre = re.sub(r"^[\-\*]\s*", "", lineas[0])[:160]
-        desc = "\n".join(lineas[1:]).strip() if len(lineas) > 1 else nombre
+        nombre = _nombre_item_limpio(re.sub(r"^[\-\*]\s*", "", lineas[0]))
+        if not nombre:
+            continue
+        clave = _norm_nombre(nombre)
+        if not clave or clave in vistos:
+            continue
+        desc_raw = "\n".join(lineas[1:]).strip() if len(lineas) > 1 else ""
+        # Si vino todo en una sola línea "Nombre. desc - - Nombre..."
+        if not desc_raw and "." in nombre:
+            # nombre already cleaned; try from original first line
+            orig = re.sub(r"^[\-\*]\s*", "", lineas[0])
+            if "." in orig:
+                _, resto = orig.split(".", 1)
+                desc_raw = resto.strip()
+        desc = _descripcion_requisito_limpia(nombre, desc_raw) or nombre
         valor = None
         moneda = None
         m = re.search(r"valor\s*:\s*([\d.,]+)\s*([A-Za-z$€]*)", bloque, re.I)
@@ -368,15 +566,16 @@ def _parse_beneficios(texto: str, tipo: str = "beneficio") -> List[Dict[str, Any
             except ValueError:
                 valor = None
             moneda = (m.group(2) or "").strip() or None
+        vistos.add(clave)
         items.append(
             {
                 "nombre": nombre,
-                "descripcion": desc or nombre,
+                "descripcion": desc,
                 "tipo": tipo,
                 "valor": valor,
                 "moneda": moneda,
                 "requiere_validacion_humana": tipo == "bono",
-                "orden": i,
+                "orden": len(items) + 1,
             }
         )
     return items
@@ -488,14 +687,32 @@ def _parse_faq(texto: str) -> List[Dict[str, Any]]:
 
 def _parse_proceso(texto: str) -> List[Dict[str, Any]]:
     items = []
-    for i, linea in enumerate(_lineas_bullet(texto), start=1):
-        nombre = linea
-        if "—" in linea:
-            nombre = linea.split("—", 1)[0].strip()
-        elif " - " in linea:
-            nombre = linea.split(" - ", 1)[0].strip()
+    vistos: set = set()
+    for linea in _lineas_bullet(texto):
+        while linea.startswith("-"):
+            linea = linea.lstrip("- ").strip()
+        cruda = linea
+        nombre = cruda
+        mensaje = ""
+        if "—" in cruda:
+            nombre, mensaje = cruda.split("—", 1)
+        elif " - " in cruda and not cruda.strip().startswith("-"):
+            # Solo partir en " - " si no es dump anidado
+            if not _parece_dump_lista(cruda):
+                nombre, mensaje = cruda.split(" - ", 1)
+        nombre = _nombre_item_limpio(nombre)
+        mensaje = _texto_corto_limpio(mensaje, max_len=300)
+        if mensaje and _norm_nombre(mensaje) == _norm_nombre(nombre):
+            mensaje = ""
+        if not nombre:
+            continue
+        clave = _norm_nombre(nombre)
+        if clave in vistos:
+            continue
+        vistos.add(clave)
+        texto_paso = f"{nombre}" + (f" — {mensaje}" if mensaje else "")
         accion = "informar"
-        baja = linea.lower()
+        baja = texto_paso.lower()
         if "solicitud" in baja or "enlace" in baja:
             accion = "enviar_enlace"
         elif "evidencia" in baja:
@@ -506,11 +723,11 @@ def _parse_proceso(texto: str) -> List[Dict[str, Any]]:
             accion = "confirmar_interes"
         items.append(
             {
-                "orden": i,
+                "orden": len(items) + 1,
                 "nombre": nombre[:160],
-                "descripcion": linea,
+                "descripcion": mensaje or nombre,
                 "accion": accion,
-                "mensaje": linea,
+                "mensaje": mensaje or nombre,
                 "requiere_humano": accion == "transferir_humano",
             }
         )
@@ -989,7 +1206,10 @@ def guardar_informacion_organizada(
                 continue
             campos = {
                 "nombre": nombre[:160],
-                "descripcion": str(item.get("descripcion") or "").strip() or None,
+                "descripcion": _descripcion_requisito_limpia(
+                    nombre, item.get("descripcion")
+                )
+                or None,
                 "categoria": (
                     "obligatorio"
                     if str(item.get("categoria") or "obligatorio") == "obligatorio"
@@ -1049,10 +1269,14 @@ def guardar_informacion_organizada(
                 if not nombre:
                     continue
                 tipo = str(item.get("tipo") or tipo_default).lower()
+                desc_limpia = (
+                    _descripcion_requisito_limpia(nombre, item.get("descripcion"))
+                    or None
+                )
                 campos = {
-                    "nombre": nombre[:160],
-                    "descripcion_corta": str(item.get("descripcion") or "").strip() or None,
-                    "texto_autorizado": str(item.get("descripcion") or "").strip() or None,
+                    "nombre": _nombre_item_limpio(nombre)[:160],
+                    "descripcion_corta": desc_limpia,
+                    "texto_autorizado": desc_limpia,
                     "tipo": tipo,
                     "activo": True,
                     "permitir_mencion_automatica": True,
@@ -1356,14 +1580,18 @@ def guardar_informacion_organizada(
                 if accion not in validas:
                     accion = "informar"
                 hit = existentes_pasos.get(_norm_nombre(nombre))
+                msg_limpio = _texto_corto_limpio(
+                    item.get("mensaje") or item.get("descripcion") or "",
+                    max_len=500,
+                )
+                nombre_limpio = _nombre_item_limpio(nombre)
+                if msg_limpio and _norm_nombre(msg_limpio) == _norm_nombre(nombre_limpio):
+                    msg_limpio = ""
                 campos_p = {
-                    "nombre": nombre[:160],
+                    "nombre": (nombre_limpio or nombre)[:160],
                     "orden": int(item.get("orden") or 0),
                     "tipo_accion": accion,
-                    "mensaje_instrucciones": str(item.get("mensaje") or item.get("descripcion") or "")[
-                        :4000
-                    ]
-                    or None,
+                    "mensaje_instrucciones": msg_limpio or None,
                     "requiere_humano": bool(item.get("requiere_humano")),
                     "activo": True,
                     "configuracion": (
