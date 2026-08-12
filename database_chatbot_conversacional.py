@@ -575,6 +575,13 @@ def _valor_jsonb(columna: str, valor: Any) -> Any:
         valor = list(valor) if isinstance(valor, (tuple, set)) else []
     if columna not in _COLUMNAS_JSONB_ARRAY and not isinstance(valor, (dict, list)):
         valor = {}
+    # Defensa: Decimal/datetime desde filas RealDictCursor no son JSON-safe.
+    try:
+        from chatbot_conversacional_perfil import normalizar_json_safe
+
+        valor = normalizar_json_safe(valor)
+    except Exception:  # noqa: BLE001
+        pass
     return Json(valor)
 
 

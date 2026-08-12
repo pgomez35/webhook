@@ -1339,14 +1339,17 @@ async def _procesar_conversacional_si_aplica(
         return None
 
     async def _enviar_wa(texto_out: str):
-        from chatbot_envio_whatsapp import enviar_whatsapp_texto_meta
+        from chatbot_envio_whatsapp import (
+            conversacion_id_envio_actual,
+            enviar_whatsapp_texto_meta,
+        )
 
         return await enviar_whatsapp_texto_meta(
             token=token,
             phone_number_id=phone_number_id,
             destino=str(wa_id),
             texto=texto_out,
-            conversacion_id=None,
+            conversacion_id=conversacion_id_envio_actual(),
         )
 
     try:

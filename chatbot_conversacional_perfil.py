@@ -9,10 +9,43 @@ from __future__ import annotations
 import logging
 import re
 import unicodedata
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("uvicorn.error")
+
+
+def normalizar_json_safe(valor: Any) -> Any:
+    """
+    Normaliza estructuras anidadas a tipos JSON-serializables.
+    Decimal entero → int; Decimal con fracción → float.
+    No convierte números a str (rompe comparaciones posteriores).
+    """
+    if valor is None or isinstance(valor, (bool, str, int)):
+        return valor
+    if isinstance(valor, float):
+        return valor
+    if isinstance(valor, Decimal):
+        if valor == valor.to_integral_value():
+            return int(valor)
+        return float(valor)
+    if isinstance(valor, datetime):
+        return valor.isoformat()
+    if isinstance(valor, date):
+        return valor.isoformat()
+    if isinstance(valor, dict):
+        return {str(k): normalizar_json_safe(v) for k, v in valor.items()}
+    if isinstance(valor, (list, tuple, set)):
+        return [normalizar_json_safe(v) for v in valor]
+    # UUID u otros: str controlado
+    try:
+        import json as _json
+
+        _json.dumps(valor)
+        return valor
+    except (TypeError, ValueError):
+        return str(valor)
 
 PERFIL_KEY = "perfil_aspirante"
 
@@ -120,11 +153,11 @@ def escribir_perfil_en_contexto(
     perfil: Dict[str, Any],
 ) -> Dict[str, Any]:
     ctx = _ctx_dict(conversacion)
-    perfil = dict(perfil or {})
+    perfil = normalizar_json_safe(dict(perfil or {}))
     perfil["actualizado_at"] = _ahora_iso()
     ctx[PERFIL_KEY] = perfil
-    conversacion["contexto"] = ctx
-    return ctx
+    conversacion["contexto"] = normalizar_json_safe(ctx)
+    return conversacion["contexto"]
 
 
 def extraer_hechos_de_texto(texto: str) -> Dict[str, Any]:
@@ -195,6 +228,13 @@ def extraer_hechos_de_texto(texto: str) -> Dict[str, Any]:
     ):
         hechos["interes"] = True
 
+    if re.search(
+        r"\b(no quiero|no me interesa|no deseo|ahora no|mejor no|"
+        r"no gracias|no continuar|no quiero continuar|no quiero ingresar)\b",
+        n,
+    ):
+        hechos["interes"] = False
+
     detalle: Dict[str, Any] = {}
     if re.search(
         r"\b(solo|solamente|unicamente|un unico|una sola|un solo)\b.*\blive", n
@@ -243,8 +283,8 @@ def fusionar_hechos_en_perfil(
         out["horas_disponibles_dia"] = hechos["horas_disponibles_dia"]
     if "dias_disponibles" in hechos:
         out["dias_disponibles"] = hechos["dias_disponibles"]
-    if hechos.get("interes") is True:
-        out["interes"] = True
+    if "interes" in hechos and hechos.get("interes") is not None:
+        out["interes"] = bool(hechos["interes"])
     return out
 
 
@@ -480,13 +520,13 @@ def mensaje_bloqueo_para_usuario(
         if edad:
             return (
                 f"Me comentaste que tienes {edad} años y la mayoría de edad es un "
-                "requisito obligatorio para continuar. Por ahora no puedo avanzar "
-                "con la solicitud ni con la incorporación."
+                "requisito necesario para continuar. Por ahora no puedo avanzar "
+                "con la incorporación, pero puedo seguir resolviendo tus dudas."
             )
         return (
             "Me comentaste que eres menor de 18 años y la mayoría de edad es un "
-            "requisito obligatorio para continuar. Por ahora no puedo avanzar "
-            "con la solicitud ni con la incorporación."
+            "requisito necesario para continuar. Por ahora no puedo avanzar "
+            "con la incorporación, pero puedo seguir resolviendo tus dudas."
         )
     if bloqueantes:
         return (
@@ -755,9 +795,11 @@ def actualizar_perfil_desde_mensaje(
     ):
         campos_asp["disponibilidad_live"] = True
 
-    campos_conv: Dict[str, Any] = {"contexto": conversacion.get("contexto")}
+    campos_conv: Dict[str, Any] = {
+        "contexto": normalizar_json_safe(conversacion.get("contexto") or {}),
+    }
     if campos_nivel:
-        campos_conv.update(campos_nivel)
+        campos_conv.update(normalizar_json_safe(campos_nivel))
         conversacion.update(campos_nivel)
 
     logger.info(
@@ -773,6 +815,6 @@ def actualizar_perfil_desde_mensaje(
         "perfil": perfil,
         "hechos": hechos,
         "campos_aspirante": campos_asp,
-        "campos_conversacion": campos_conv,
+        "campos_conversacion": normalizar_json_safe(campos_conv),
         "evaluacion": evaluacion,
     }

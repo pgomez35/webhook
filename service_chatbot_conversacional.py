@@ -134,6 +134,51 @@ def _normalizar_fila_mensaje(valor: Any) -> Optional[Dict[str, Any]]:
     return _normalizar_fila_db(valor)
 
 
+async def _persistir_conversacion_campos(
+    *,
+    agencia_id: int,
+    conversacion_id: int,
+    campos: Dict[str, Any],
+) -> bool:
+    """
+    Persiste campos de conversación con normalización JSON-safe.
+    Devuelve False si la DB falla (no silenciar pérdida de perfil/contexto).
+    """
+    from chatbot_conversacional_perfil import normalizar_json_safe
+
+    campos_safe = normalizar_json_safe(dict(campos or {}))
+    try:
+        # call (no call_opcional): queremos saber si falló.
+        resultado = await asyncio.to_thread(
+            gw.call,
+            "actualizar_conversacion",
+            agencia_id,
+            conversacion_id,
+            campos_safe,
+        )
+        if resultado is None and campos_safe:
+            logger.error(
+                "[CHATBOT_PERSISTENCIA] conversacion_id=%s resultado=error "
+                "motivo=actualizar_retorno_none",
+                conversacion_id,
+            )
+            return False
+        logger.info(
+            "[CHATBOT_PERSISTENCIA] conversacion_id=%s resultado=ok",
+            conversacion_id,
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001
+        motivo = "json_serializacion" if "Decimal" in str(exc) or "serializ" in str(exc).lower() else "db_error"
+        logger.error(
+            "[CHATBOT_PERSISTENCIA] conversacion_id=%s resultado=error motivo=%s detalle=%s",
+            conversacion_id,
+            motivo,
+            str(exc)[:300],
+        )
+        return False
+
+
 def debe_responder_ia(conversacion: Optional[Dict[str, Any]]) -> bool:
     """True si la conversación debe recibir respuesta automática del agente."""
     if not conversacion:
@@ -382,6 +427,12 @@ async def procesar_mensaje_conversacional(
         return _resultado_no_usado("conversacion_no_disponible")
 
     conversacion_id = conversacion.get("id")
+    try:
+        from chatbot_envio_whatsapp import fijar_conversacion_id_envio
+
+        fijar_conversacion_id_envio(conversacion_id)
+    except Exception:  # noqa: BLE001
+        pass
 
     if mensaje_externo_id:
         existente = await _db(
@@ -467,12 +518,17 @@ async def procesar_mensaje_conversacional(
     if not dry_run and conversacion_id:
         campos_conv = actualizacion.get("campos_conversacion") or {}
         if campos_conv:
-            await _db(
-                "actualizar_conversacion",
-                agencia_id,
-                conversacion_id,
-                campos_conv,
+            ok_persist = await _persistir_conversacion_campos(
+                agencia_id=agencia_id,
+                conversacion_id=conversacion_id,
+                campos=campos_conv,
             )
+            if not ok_persist:
+                logger.error(
+                    "[CHATBOT_PERSISTENCIA] conversacion_id=%s "
+                    "resultado=error motivo=fallo_actualizar_perfil_contexto",
+                    conversacion_id,
+                )
         aspirante_id_act = contexto.aspirante_id
         if aspirante_id_act and actualizacion.get("campos_aspirante"):
             await _db(
@@ -525,6 +581,9 @@ async def procesar_mensaje_conversacional(
 
     async def _responder_decision_directa(texto_resp: str, *, tipo_log: str, pend=None):
         texto_resp = _sanitizar_respuesta_usuario(str(texto_resp or "").strip())
+        if getattr(decision, "cancelar_pendiente", False):
+            await _limpiar_pregunta_pendiente(contexto, dry_run=dry_run)
+            pend = None
         if pend and decision.retomar_pendiente:
             preg = str((pend or {}).get("texto") or "").strip()
             if preg and preg not in texto_resp and not _parece_instruccion_interna(preg):
@@ -532,6 +591,17 @@ async def procesar_mensaje_conversacional(
                 if str((pend or {}).get("campo") or "") == "nivel_experiencia" and str(
                     perfil_act.get("nivel_experiencia") or ""
                 ) in {"principiante", "experimentado"}:
+                    pass
+                elif perfil_act.get("puede_incorporarse") is False and str(
+                    (pend or {}).get("tipo") or ""
+                ).lower() in {
+                    "confirmar_interes",
+                    "enviar_enlace",
+                    "agendar_live",
+                    "solicitar_evidencias",
+                }:
+                    pass
+                elif perfil_act.get("interes") is False:
                     pass
                 else:
                     texto_resp = f"{texto_resp}\n\nPara continuar, {preg}"
@@ -546,8 +616,11 @@ async def procesar_mensaje_conversacional(
             destino=wa_id or usuario_externo_id,
             enviar_callback=enviar_callback,
             dry_run=dry_run,
+            conversacion_id=conversacion_id,
         )
-        if pend and decision.retomar_pendiente:
+        if pend and decision.retomar_pendiente and not getattr(
+            decision, "cancelar_pendiente", False
+        ):
             await _guardar_pregunta_pendiente(contexto, pend, dry_run=dry_run)
         await _actualizar_cierre_de_turno(
             contexto,
@@ -1472,6 +1545,12 @@ _PATRONES_INSTRUCCION_INTERNA = (
     "mensaje_instrucciones",
     "tipo_accion",
     "paso_actual_id",
+    "informa solo",
+    "informa únicamente",
+    "informa unicamente",
+    "bonos activos vigentes y autorizados",
+    "para la campana o perfil",
+    "para la campaña o perfil",
 )
 _PIES_MENU_INFORMATIVO = (
     "escribe el numero para mas detalle",
@@ -1502,7 +1581,7 @@ def _parece_instruccion_interna(texto: str) -> bool:
     if "?" not in crudo and "¿" not in crudo:
         if re.match(
             r"^(reconoce|explica|confirma|solicita|envia|envía|transfiere|"
-            r"menciona|responde con base|presentate|preséntate)\b",
+            r"menciona|responde con base|presentate|preséntate|informa)\b",
             n,
         ):
             return True
@@ -1825,14 +1904,16 @@ async def _guardar_pregunta_pendiente(
         pendiente["texto"] = publico
     ctx = _contexto_conversacion_dict(contexto.conversacion)
     ctx["pregunta_pendiente"] = pendiente
+    from chatbot_conversacional_perfil import normalizar_json_safe
+
+    ctx = normalizar_json_safe(ctx)
     contexto.conversacion["contexto"] = ctx
     if dry_run or not contexto.conversacion_id:
         return
-    await _db(
-        "actualizar_conversacion",
-        contexto.agencia_id,
-        contexto.conversacion_id,
-        {"contexto": ctx},
+    await _persistir_conversacion_campos(
+        agencia_id=contexto.agencia_id,
+        conversacion_id=contexto.conversacion_id,
+        campos={"contexto": ctx},
     )
 
 
@@ -1845,14 +1926,16 @@ async def _limpiar_pregunta_pendiente(
     if "pregunta_pendiente" not in ctx:
         return
     ctx.pop("pregunta_pendiente", None)
+    from chatbot_conversacional_perfil import normalizar_json_safe
+
+    ctx = normalizar_json_safe(ctx)
     contexto.conversacion["contexto"] = ctx
     if dry_run or not contexto.conversacion_id:
         return
-    await _db(
-        "actualizar_conversacion",
-        contexto.agencia_id,
-        contexto.conversacion_id,
-        {"contexto": ctx},
+    await _persistir_conversacion_campos(
+        agencia_id=contexto.agencia_id,
+        conversacion_id=contexto.conversacion_id,
+        campos={"contexto": ctx},
     )
 
 
@@ -2106,6 +2189,7 @@ def _pasos_publicos_seguros(
     """
     Representación pública sanitizada de pasos.
     Excluye mensaje_instrucciones, configuracion, estados y textos internos.
+    Conserva tipo_accion aunque el nombre sea interno (para resumen narrativo).
     """
     out: List[Dict[str, Any]] = []
     for p in sorted(
@@ -2135,9 +2219,10 @@ def _pasos_publicos_seguros(
                 texto_publico = desc
 
         tipo = str(p.get("tipo_accion") or "").strip().lower()
+        nombre_publico = "" if _parece_nombre_paso_interno(nombre) else nombre[:160]
         out.append(
             {
-                "nombre": nombre[:160],
+                "nombre": nombre_publico,
                 "tipo_accion": tipo,
                 "texto_publico": texto_publico[:400] if texto_publico else "",
             }
@@ -2519,6 +2604,39 @@ async def _resolver_siguiente_paso_pendiente(
             "paso_actual_id"
         )
         perfil = leer_perfil(contexto.conversacion, contexto.aspirante)
+
+        # Bloqueante domina: no preguntar confirmar_interes ni avanzar conversión.
+        if perfil.get("puede_incorporarse") is False or perfil.get(
+            "bloqueantes_incumplidos"
+        ):
+            if tipo in {
+                "confirmar_interes",
+                "enviar_enlace",
+                "agendar_live",
+                "solicitar_live",
+                "solicitar_evidencias",
+            } or origen == "orquestador":
+                gate = puede_ejecutar_accion(
+                    accion="enviar_solicitud",
+                    conversacion=contexto.conversacion,
+                    aspirante=contexto.aspirante,
+                    perfil=perfil,
+                    flujo=contexto.flujo,
+                    paso=paso,
+                    requisitos=contexto.requisitos,
+                )
+                bloques.append(mensaje_bloqueo_para_usuario(gate, perfil=perfil))
+                logger.info(
+                    "[CHATBOT_FLUJO] conversacion_id=%s paso_id=%s "
+                    "tipo_accion=%s accion=bloqueado_estado origen=%s",
+                    conversacion_id,
+                    paso_id,
+                    tipo,
+                    origen,
+                )
+                pendiente = None
+                await _limpiar_pregunta_pendiente(contexto, dry_run=dry_run)
+                break
 
         # Memoria factual: no repreguntar datos ya confirmados.
         if paso_resuelto_por_perfil(paso, perfil):
@@ -3741,7 +3859,9 @@ async def _enviar_respuesta(
     destino: Optional[str],
     enviar_callback: Optional[EnviarCallback],
     dry_run: bool,
+    conversacion_id: Optional[int] = None,
 ) -> Dict[str, Any]:
+    # Defensa final única antes de cualquier envío del inteligente.
     texto = _sanitizar_respuesta_usuario(texto)
     if dry_run:
         return {
@@ -3766,33 +3886,48 @@ async def _enviar_respuesta(
         etiqueta = enlace.get("nombre") or enlace.get("codigo") or "Enlace"
         partes.append(f"{etiqueta}: {enlace['url']}")
 
-    from chatbot_envio_whatsapp import normalizar_resultado_envio
+    from chatbot_envio_whatsapp import (
+        normalizar_resultado_envio,
+        fijar_conversacion_id_envio,
+    )
 
-    ultimo: Dict[str, Any] = {"enviado": False}
-    if enviar_callback is not None:
-        try:
-            for parte in partes:
-                resultado = await _quizas_await(enviar_callback(parte))
-                ultimo = normalizar_resultado_envio(resultado)
-                if not ultimo.get("enviado"):
-                    return ultimo
-            return ultimo
+    token_ctx = fijar_conversacion_id_envio(conversacion_id)
+    try:
+        ultimo: Dict[str, Any] = {"enviado": False}
+        if enviar_callback is not None:
+            try:
+                for parte in partes:
+                    resultado = await _quizas_await(enviar_callback(parte))
+                    ultimo = normalizar_resultado_envio(resultado)
+                    if not ultimo.get("enviado"):
+                        return ultimo
+                return ultimo
 
-        except Exception as exc:  # noqa: BLE001
-            logger.error("chatbot_conversacional: callback de envío falló: %s", exc)
-            return {
-                "enviado": False,
-                "error": str(exc)[:400],
-                "requiere_reintento": True,
-            }
+            except Exception as exc:  # noqa: BLE001
+                logger.error("chatbot_conversacional: callback de envío falló: %s", exc)
+                return {
+                    "enviado": False,
+                    "error": str(exc)[:400],
+                    "requiere_reintento": True,
+                }
 
-    if canal == CANAL_WHATSAPP:
-        return await _enviar_whatsapp(partes, token, phone_number_id, destino)
+        if canal == CANAL_WHATSAPP:
+            return await _enviar_whatsapp(
+                partes, token, phone_number_id, destino, conversacion_id=conversacion_id
+            )
 
-    if canal == CANAL_INSTAGRAM:
-        return await _enviar_instagram(partes, destino)
+        if canal == CANAL_INSTAGRAM:
+            return await _enviar_instagram(partes, destino)
 
-    return {"enviado": False, "motivo": f"canal_sin_adaptador:{canal}", "requiere_reintento": True}
+        return {
+            "enviado": False,
+            "motivo": f"canal_sin_adaptador:{canal}",
+            "requiere_reintento": True,
+        }
+    finally:
+        from chatbot_envio_whatsapp import reset_conversacion_id_envio
+
+        reset_conversacion_id_envio(token_ctx)
 
 
 async def _enviar_whatsapp(
@@ -3800,6 +3935,7 @@ async def _enviar_whatsapp(
     token: Optional[str],
     phone_number_id: Optional[str],
     destino: Optional[str],
+    conversacion_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     if not token or not phone_number_id or not destino:
         return {
@@ -3817,6 +3953,7 @@ async def _enviar_whatsapp(
             phone_number_id=phone_number_id,
             destino=destino,
             texto=parte,
+            conversacion_id=conversacion_id,
         )
         if not ultimo.get("enviado"):
             return ultimo
@@ -3895,7 +4032,11 @@ async def _actualizar_cierre_de_turno(
     if not escalado and not cerrada:
         campos["estado"] = "esperando_usuario"
 
-    await _db("actualizar_conversacion", contexto.agencia_id, contexto.conversacion_id, campos)
+    await _persistir_conversacion_campos(
+        agencia_id=contexto.agencia_id,
+        conversacion_id=contexto.conversacion_id,
+        campos=campos,
+    )
 
 
 async def _manejar_fallo_ia(

@@ -6,10 +6,44 @@ No sustituye enviar_mensaje_texto_simple: lo envuelve y normaliza el resultado.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger("uvicorn.error")
+
+_conversacion_id_envio: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar(
+    "chatbot_conversacion_id_envio", default=None
+)
+
+
+def fijar_conversacion_id_envio(conversacion_id: Optional[int]):
+    """Propaga conversacion_id a logs/envíos del turno actual."""
+    return _conversacion_id_envio.set(
+        int(conversacion_id) if conversacion_id is not None else None
+    )
+
+
+def reset_conversacion_id_envio(token) -> None:
+    try:
+        _conversacion_id_envio.reset(token)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def conversacion_id_envio_actual(
+    explicito: Optional[int] = None,
+) -> Optional[int]:
+    if explicito is not None:
+        try:
+            return int(explicito)
+        except (TypeError, ValueError):
+            return None
+    valor = _conversacion_id_envio.get()
+    try:
+        return int(valor) if valor is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def extraer_mensaje_externo_id(respuesta_api: Any) -> Optional[str]:
@@ -151,6 +185,7 @@ async def enviar_whatsapp_texto_meta(
     """
     Llama al servicio real ``enviar_mensaje_texto_simple`` y normaliza el resultado.
     """
+    conversacion_id = conversacion_id_envio_actual(conversacion_id)
     cuerpo = str(texto or "").strip()
     if not cuerpo:
         return {

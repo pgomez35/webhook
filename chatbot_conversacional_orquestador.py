@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from chatbot_conversacional_perfil import (
     consultar_conocimiento_puro,
+    extraer_hechos_de_texto,
     leer_perfil,
     mensaje_bloqueo_para_usuario,
     puede_ejecutar_accion,
@@ -32,6 +33,20 @@ HERRAMIENTAS_CONVERSION = frozenset(
     }
 )
 
+_PASOS_CONVERSION = frozenset(
+    {
+        "confirmar_interes",
+        "enviar_enlace",
+        "enviar_solicitud",
+        "agendar_live",
+        "solicitar_live",
+        "solicitar_evidencias",
+        "crear_tarea_candidato",
+        "avanzar_incorporacion",
+        "preparar_prueba_live",
+    }
+)
+
 
 @dataclass
 class DecisionTurno:
@@ -44,6 +59,7 @@ class DecisionTurno:
     intencion: Optional[str] = None
     gate: Optional[Dict[str, Any]] = None
     retomar_pendiente: bool = False
+    cancelar_pendiente: bool = False
     hechos: Dict[str, Any] = field(default_factory=dict)
     perfil: Dict[str, Any] = field(default_factory=dict)
     herramientas_bloqueadas: List[str] = field(default_factory=list)
@@ -57,6 +73,31 @@ def _normalizar(texto: str) -> str:
     return re.sub(r"\s+", " ", valor).strip()
 
 
+def _perfil_bloqueado(perfil: Optional[Dict[str, Any]]) -> bool:
+    perfil = perfil or {}
+    if perfil.get("puede_incorporarse") is False:
+        return True
+    return bool(perfil.get("bloqueantes_incumplidos"))
+
+
+def _pendiente_es_incorporacion(pendiente: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(pendiente, dict):
+        return False
+    tipo = str(pendiente.get("tipo") or "").strip().lower()
+    campo = str(pendiente.get("campo") or "").strip().lower()
+    if tipo in _PASOS_CONVERSION or tipo == "confirmar_interes":
+        return True
+    if "interes" in campo or "confirmar_interes" in campo:
+        return True
+    texto = _normalizar(str(pendiente.get("texto") or ""))
+    return "continuar con el proceso" in texto or "te gustaria continuar" in texto
+
+
+def _paso_es_conversion(paso: Optional[Dict[str, Any]]) -> bool:
+    tipo = str((paso or {}).get("tipo_accion") or "").strip().lower()
+    return tipo in _PASOS_CONVERSION
+
+
 def interpretar_mensaje(
     texto: str,
     *,
@@ -66,11 +107,12 @@ def interpretar_mensaje(
     n = _normalizar(texto)
     perfil = perfil or {}
     pendiente = pregunta_pendiente or {}
+    hechos = extraer_hechos_de_texto(texto)
     out: Dict[str, Any] = {
         "intencion": "desconocida",
         "respuesta_pendiente": None,
         "ambigua_pendiente": False,
-        "hechos_extra": {},
+        "hechos_extra": dict(hechos),
         "texto_normalizado": n,
     }
     if not n:
@@ -84,12 +126,22 @@ def interpretar_mensaje(
         out["hechos_extra"]["edad_cumple_pronto"] = True
         out["hechos_extra"]["mayor_edad"] = False
 
+    # Hechos explícitos tienen prioridad alta sobre fallback de flujo.
+    if any(
+        k in out["hechos_extra"]
+        for k in ("edad", "mayor_edad", "horas_disponibles_dia", "dias_disponibles")
+    ):
+        out["intencion"] = "dato_explicito"
+
     if re.search(
         r"\b(hermana|hermano|amiga|amigo|prima|primo|referid|otra persona|alguien mas)\b",
         n,
     ) and re.search(r"\b(quiere|pued[eo]|entrar|unirse|proceso|decir|invitar)\b", n):
         out["intencion"] = "referido_tercero"
-        logger.info("[CHATBOT_INTERPRETACION] intencion=referido_tercero")
+        logger.info(
+            "[CHATBOT_INTERPRETACION] intencion=referido_tercero hechos_extraidos=%s",
+            list(out["hechos_extra"].keys()),
+        )
         return out
 
     if (
@@ -109,6 +161,22 @@ def interpretar_mensaje(
         logger.info("[CHATBOT_INTERPRETACION] intencion=diferenciadores_agencia")
         return out
 
+    # Negativa a continuar / confirmar interés (antes del fallback).
+    if re.search(
+        r"\b(no quiero|no me interesa|no deseo|ahora no|mejor no|no gracias|"
+        r"no continuar|no quiero continuar|no quiero ingresar)\b",
+        n,
+    ) or (
+        pendiente
+        and _pendiente_es_incorporacion(pendiente)
+        and n in {"no", "nop", "nel", "negativo"}
+    ):
+        out["intencion"] = "respuesta_no"
+        out["respuesta_pendiente"] = "negativa"
+        out["hechos_extra"]["interes"] = False
+        logger.info("[CHATBOT_INTERPRETACION] intencion=respuesta_no")
+        return out
+
     if re.search(r"\b(bonos?|incentivos?)\b", n):
         out["intencion"] = "bonos"
         return out
@@ -124,6 +192,28 @@ def interpretar_mensaje(
     ):
         out["intencion"] = "proceso"
         return out
+
+    # Pregunta informativa (diamantes, regalos, cómo funciona, qué es…).
+    if (
+        "?" in str(texto or "")
+        or "¿" in str(texto or "")
+        or re.search(
+            r"\b(que son|que es|cuales son|como funciona|como es|"
+            r"diamantes|regalos|agencia)\b",
+            n,
+        )
+    ) and not re.search(
+        r"\b(quiero ingresar|quiero entrar|agendar|enviame el)\b",
+        n,
+    ):
+        # Evitar clasificar afirmaciones cortas como pregunta.
+        if re.search(
+            r"\b(que|cual|cuales|como|donde|cuando|por que|para que)\b",
+            n,
+        ) or re.search(r"\b(diamantes|regalos)\b", n):
+            out["intencion"] = "pregunta_informativa"
+            logger.info("[CHATBOT_INTERPRETACION] intencion=pregunta_informativa")
+            return out
 
     if re.search(
         r"\b(quiero ingresar|quiero entrar|quiero unirme|si quiero ingresar|"
@@ -144,26 +234,40 @@ def interpretar_mensaje(
         "algunos",
         "a veces",
     }:
-        out["intencion"] = "respuesta_pendiente"
+        out["intencion"] = "respuesta_ambigua"
         out["ambigua_pendiente"] = True
         out["respuesta_pendiente"] = "ambigua"
         return out
 
-    if pendiente and n in {"si", "sip", "claro", "ok", "okay", "vale", "de acuerdo", "no", "nop"}:
-        out["intencion"] = "respuesta_pendiente"
-        out["respuesta_pendiente"] = (
-            "afirmativa"
-            if n in {"si", "sip", "claro", "ok", "okay", "vale", "de acuerdo"}
-            else "negativa"
-        )
+    if pendiente and n in {
+        "si",
+        "sip",
+        "claro",
+        "ok",
+        "okay",
+        "vale",
+        "de acuerdo",
+        "bueno",
+        "dale",
+        "va",
+    }:
+        out["intencion"] = "respuesta_si"
+        out["respuesta_pendiente"] = "afirmativa"
         return out
 
     if re.search(r"\b(agendar|agenda|quiero agendar|programar prueba)\b", n):
         out["intencion"] = "agendar_live"
         return out
 
-    if out["hechos_extra"]:
-        out["intencion"] = "actualizar_hechos"
+    if out["intencion"] == "dato_explicito":
+        logger.info(
+            "[CHATBOT_INTERPRETACION] intencion=dato_explicito hechos_extraidos=%s",
+            {k: out["hechos_extra"].get(k) for k in ("edad", "mayor_edad") if k in out["hechos_extra"]},
+        )
+        return out
+
+    if out["hechos_extra"] and out["intencion"] == "desconocida":
+        out["intencion"] = "dato_explicito"
 
     logger.info(
         "[CHATBOT_INTERPRETACION] intencion=%s ambigua_pendiente=%s hechos_extra=%s",
@@ -223,6 +327,78 @@ def _texto_diferenciadores(
     )
 
 
+def _texto_pregunta_informativa(
+    texto: str,
+    *,
+    requisitos: Optional[List[Dict[str, Any]]],
+    beneficios: Optional[List[Dict[str, Any]]],
+    faqs: Optional[List[Dict[str, Any]]],
+) -> str:
+    n = _normalizar(texto)
+    if "beneficio" in n:
+        return consultar_conocimiento_puro(
+            tipo="beneficios",
+            requisitos=requisitos,
+            beneficios=beneficios,
+            faqs=faqs,
+        )
+    if "bono" in n or "incentivo" in n:
+        return consultar_conocimiento_puro(
+            tipo="bonos",
+            requisitos=requisitos,
+            beneficios=beneficios,
+            faqs=faqs,
+        )
+    if "requisito" in n:
+        return consultar_conocimiento_puro(
+            tipo="requisitos",
+            requisitos=requisitos,
+            beneficios=beneficios,
+            faqs=faqs,
+        )
+
+    tokens = [t for t in n.split() if len(t) >= 4]
+    mejor = None
+    mejor_score = 0
+    for f in faqs or []:
+        if not f or f.get("activo") is False:
+            continue
+        blob = _normalizar(
+            " ".join(
+                [
+                    str(f.get("pregunta") or ""),
+                    str(f.get("respuesta_corta") or ""),
+                    str(f.get("respuesta_completa") or ""),
+                    " ".join(str(x) for x in (f.get("palabras_clave") or []) if x),
+                ]
+            )
+        )
+        score = sum(1 for t in tokens if t in blob)
+        if score > mejor_score:
+            mejor_score = score
+            mejor = f
+    if mejor and mejor_score > 0:
+        resp = str(
+            mejor.get("respuesta_completa")
+            or mejor.get("respuesta_corta")
+            or ""
+        ).strip()
+        if resp:
+            return resp
+
+    if "agencia" in n or "funciona" in n:
+        return consultar_conocimiento_puro(
+            tipo="agencia",
+            requisitos=requisitos,
+            beneficios=beneficios,
+            faqs=faqs,
+        )
+    return (
+        "Puedo ayudarte con esa consulta con la información confirmada que "
+        "tengo. Si me precisas un poco más, te respondo con más detalle."
+    )
+
+
 def _herramientas_bloqueadas_por_gate(
     *,
     conversacion: Dict[str, Any],
@@ -239,6 +415,7 @@ def _herramientas_bloqueadas_por_gate(
         "preparar_prueba_live": "agendar_live",
         "solicitar_evidencias": "solicitar_evidencias",
         "registrar_evidencia_recibida": "solicitar_evidencias",
+        "confirmar_interes": "enviar_solicitud",
     }
     for tool, accion in mapa.items():
         gate = puede_ejecutar_accion(
@@ -253,6 +430,34 @@ def _herramientas_bloqueadas_por_gate(
         if not gate.get("permitida"):
             bloqueadas.append(tool)
     return bloqueadas
+
+
+def _decision_bloqueo(
+    *,
+    perfil: Dict[str, Any],
+    intencion: str,
+    paso: Optional[Dict[str, Any]] = None,
+) -> DecisionTurno:
+    bloqueantes = list(perfil.get("bloqueantes_incumplidos") or [])
+    gate = {
+        "permitida": False,
+        "motivo": "requisito_bloqueante",
+        "bloqueantes": bloqueantes,
+        "accion": "avanzar_incorporacion",
+    }
+    return DecisionTurno(
+        tipo="bloqueado",
+        accion="avanzar_incorporacion",
+        texto_base=mensaje_bloqueo_para_usuario(gate, perfil=perfil),
+        motivo="requisito_bloqueante",
+        intencion=intencion,
+        gate=gate,
+        cancelar_pendiente=_pendiente_es_incorporacion(
+            {"tipo": str((paso or {}).get("tipo_accion") or "confirmar_interes")}
+        )
+        or True,
+        paso_id=(paso or {}).get("id"),
+    )
 
 
 def resolver_turno_inteligente(
@@ -289,8 +494,18 @@ def resolver_turno_inteligente(
         hechos = dict(perfil.get("hechos") or {})
         if hechos_extra.get("edad_cumple_pronto"):
             hechos["edad_cumple_pronto"] = True
+        if "edad" in hechos_extra:
+            perfil["edad"] = hechos_extra["edad"]
+            hechos["edad"] = hechos_extra["edad"]
         perfil["hechos"] = hechos
+    if hechos_extra.get("interes") is False:
+        perfil = dict(perfil)
+        perfil["interes"] = False
+    if hechos_extra.get("interes") is True:
+        perfil = dict(perfil)
+        perfil["interes"] = True
 
+    # Releer bloqueantes del perfil ya actualizado (autoridad).
     bloqueadas = _herramientas_bloqueadas_por_gate(
         conversacion=conversacion,
         aspirante=aspirante,
@@ -307,6 +522,21 @@ def resolver_turno_inteligente(
         perfil.get("nivel_experiencia"),
     )
 
+    def _retomar_ok() -> bool:
+        if not isinstance(pendiente, dict):
+            return False
+        if _perfil_bloqueado(perfil) and _pendiente_es_incorporacion(pendiente):
+            return False
+        if perfil.get("interes") is False and _pendiente_es_incorporacion(pendiente):
+            return False
+        if (
+            str(pendiente.get("campo") or "") == "nivel_experiencia"
+            and str(perfil.get("nivel_experiencia") or "")
+            in {"principiante", "experimentado"}
+        ):
+            return False
+        return True
+
     def _fin(d: DecisionTurno) -> DecisionTurno:
         logger.info(
             "[CHATBOT_DECISION] tipo=%s accion=%s paso_id=%s motivo=%s intencion=%s",
@@ -321,7 +551,38 @@ def resolver_turno_inteligente(
         d.herramientas_bloqueadas = bloqueadas
         return d
 
+    # PRIORIDAD ABSOLUTA: bloqueantes dominan sobre flujo_activo / confirmar_interes.
+    # Salvo intenciones puramente informativas (se resuelven abajo sin conversión).
+    intenciones_info = {
+        "bonos",
+        "beneficios",
+        "requisitos",
+        "agencia",
+        "proceso",
+        "pregunta_informativa",
+        "consultar_fecha_pago_bono",
+        "diferenciadores_agencia",
+        "referido_tercero",
+    }
+
+    if _perfil_bloqueado(perfil) and intencion not in intenciones_info:
+        # dato_explicito / desconocida / respuesta_si → bloqueado
+        # (quiero_ingresar / agendar_live tienen handlers propios más abajo)
+        if intencion in {
+            "dato_explicito",
+            "desconocida",
+            "respuesta_si",
+            "respuesta_pendiente",
+            "actualizar_hechos",
+        } or (
+            intencion == "respuesta_ambigua"
+            and _pendiente_es_incorporacion(pendiente if isinstance(pendiente, dict) else None)
+        ):
+            return _fin(_decision_bloqueo(perfil=perfil, intencion=intencion, paso=paso))
+
     if interp.get("ambigua_pendiente") and isinstance(pendiente, dict):
+        if _perfil_bloqueado(perfil) and _pendiente_es_incorporacion(pendiente):
+            return _fin(_decision_bloqueo(perfil=perfil, intencion=intencion, paso=paso))
         preg = _normalizar(str(pendiente.get("texto") or ""))
         if "requisito" in preg or "cumple" in preg:
             texto_q = (
@@ -343,8 +604,24 @@ def resolver_turno_inteligente(
             )
         )
 
-    # Sí/no claro a pregunta pendiente: no reinterpretar como nueva intención.
-    if intencion == "respuesta_pendiente":
+    if intencion == "respuesta_no":
+        return _fin(
+            DecisionTurno(
+                tipo="informar",
+                texto_base=(
+                    "Entiendo. No avanzaremos con el proceso por ahora. "
+                    "Si quieres, puedo seguir respondiendo tus dudas sobre la agencia."
+                ),
+                motivo="interes_rechazado",
+                intencion=intencion,
+                cancelar_pendiente=True,
+                retomar_pendiente=False,
+            )
+        )
+
+    if intencion in {"respuesta_si", "respuesta_pendiente"}:
+        if _perfil_bloqueado(perfil):
+            return _fin(_decision_bloqueo(perfil=perfil, intencion=intencion, paso=paso))
         return _fin(
             DecisionTurno(
                 tipo="usar_agente",
@@ -361,8 +638,11 @@ def resolver_turno_inteligente(
                 texto_base=_texto_referido(),
                 motivo="referido_tercero",
                 intencion=intencion,
-                retomar_pendiente=bool(pendiente),
-                dato_pendiente=pendiente if isinstance(pendiente, dict) else None,
+                retomar_pendiente=_retomar_ok(),
+                cancelar_pendiente=not _retomar_ok() and _pendiente_es_incorporacion(
+                    pendiente if isinstance(pendiente, dict) else None
+                ),
+                dato_pendiente=pendiente if _retomar_ok() and isinstance(pendiente, dict) else None,
             )
         )
 
@@ -373,8 +653,11 @@ def resolver_turno_inteligente(
                 texto_base=_texto_fecha_pago_bono(beneficios),
                 motivo="fecha_pago_bono",
                 intencion=intencion,
-                retomar_pendiente=bool(pendiente),
-                dato_pendiente=pendiente if isinstance(pendiente, dict) else None,
+                retomar_pendiente=_retomar_ok(),
+                cancelar_pendiente=not _retomar_ok() and _pendiente_es_incorporacion(
+                    pendiente if isinstance(pendiente, dict) else None
+                ),
+                dato_pendiente=pendiente if _retomar_ok() and isinstance(pendiente, dict) else None,
             )
         )
 
@@ -385,22 +668,36 @@ def resolver_turno_inteligente(
                 texto_base=_texto_diferenciadores(requisitos, beneficios, faqs),
                 motivo="sin_comparativa_confirmada",
                 intencion=intencion,
-                retomar_pendiente=bool(pendiente),
-                dato_pendiente=pendiente if isinstance(pendiente, dict) else None,
+                retomar_pendiente=_retomar_ok(),
+                cancelar_pendiente=not _retomar_ok() and _pendiente_es_incorporacion(
+                    pendiente if isinstance(pendiente, dict) else None
+                ),
+                dato_pendiente=pendiente if _retomar_ok() and isinstance(pendiente, dict) else None,
+            )
+        )
+
+    if intencion == "pregunta_informativa":
+        return _fin(
+            DecisionTurno(
+                tipo="informar",
+                texto_base=_texto_pregunta_informativa(
+                    texto,
+                    requisitos=requisitos,
+                    beneficios=beneficios,
+                    faqs=faqs,
+                ),
+                motivo="pregunta_informativa",
+                intencion=intencion,
+                retomar_pendiente=_retomar_ok(),
+                cancelar_pendiente=not _retomar_ok() and _pendiente_es_incorporacion(
+                    pendiente if isinstance(pendiente, dict) else None
+                ),
+                dato_pendiente=pendiente if _retomar_ok() and isinstance(pendiente, dict) else None,
             )
         )
 
     if intencion in {"bonos", "beneficios", "requisitos", "agencia"}:
-        retomar = bool(pendiente)
-        pend_usar = pendiente if isinstance(pendiente, dict) else None
-        if (
-            isinstance(pendiente, dict)
-            and str(pendiente.get("campo") or "") == "nivel_experiencia"
-            and str(perfil.get("nivel_experiencia") or "")
-            in {"principiante", "experimentado"}
-        ):
-            retomar = False
-            pend_usar = None
+        retomar = _retomar_ok()
         return _fin(
             DecisionTurno(
                 tipo="informar",
@@ -413,7 +710,10 @@ def resolver_turno_inteligente(
                 motivo=f"info_{intencion}",
                 intencion=intencion,
                 retomar_pendiente=retomar,
-                dato_pendiente=pend_usar,
+                cancelar_pendiente=not retomar and _pendiente_es_incorporacion(
+                    pendiente if isinstance(pendiente, dict) else None
+                ),
+                dato_pendiente=pendiente if retomar and isinstance(pendiente, dict) else None,
             )
         )
 
@@ -424,10 +724,27 @@ def resolver_turno_inteligente(
                 accion="proceso",
                 motivo="consultar_proceso",
                 intencion=intencion,
-                retomar_pendiente=bool(pendiente),
-                dato_pendiente=pendiente if isinstance(pendiente, dict) else None,
+                retomar_pendiente=_retomar_ok(),
+                cancelar_pendiente=not _retomar_ok() and _pendiente_es_incorporacion(
+                    pendiente if isinstance(pendiente, dict) else None
+                ),
+                dato_pendiente=pendiente if _retomar_ok() and isinstance(pendiente, dict) else None,
             )
         )
+
+    if intencion == "dato_explicito":
+        if _perfil_bloqueado(perfil):
+            return _fin(_decision_bloqueo(perfil=perfil, intencion=intencion, paso=paso))
+        # Hecho nuevo sin bloqueo: no repetir confirmar_interes ciegamente.
+        if _pendiente_es_incorporacion(pendiente if isinstance(pendiente, dict) else None):
+            return _fin(
+                DecisionTurno(
+                    tipo="usar_agente",
+                    motivo="dato_explicito_con_pendiente",
+                    intencion=intencion,
+                    dato_pendiente=pendiente if isinstance(pendiente, dict) else None,
+                )
+            )
 
     if intencion == "quiero_ingresar":
         gate = puede_ejecutar_accion(
@@ -448,6 +765,7 @@ def resolver_turno_inteligente(
                     motivo=str(gate.get("motivo") or "requisito_bloqueante"),
                     intencion=intencion,
                     gate=gate,
+                    cancelar_pendiente=True,
                 )
             )
         return _fin(
@@ -479,6 +797,9 @@ def resolver_turno_inteligente(
                     motivo=str(gate.get("motivo") or "agendamiento_no_permitido"),
                     intencion=intencion,
                     gate=gate,
+                    cancelar_pendiente=_pendiente_es_incorporacion(
+                        pendiente if isinstance(pendiente, dict) else None
+                    ),
                 )
             )
         return _fin(
@@ -501,15 +822,35 @@ def resolver_turno_inteligente(
         )
 
     if (flujo or {}).get("id") or conversacion.get("flujo_id"):
+        # Bloqueante domina sobre flujo_activo (nunca confirmar_interes).
+        if _perfil_bloqueado(perfil):
+            return _fin(_decision_bloqueo(perfil=perfil, intencion=intencion, paso=paso))
+        if perfil.get("interes") is False and _paso_es_conversion(paso):
+            return _fin(
+                DecisionTurno(
+                    tipo="informar",
+                    texto_base=(
+                        "Entiendo. No avanzaremos con el proceso por ahora. "
+                        "Si quieres, puedo seguir respondiendo tus dudas sobre la agencia."
+                    ),
+                    motivo="interes_rechazado_flujo",
+                    intencion=intencion,
+                    cancelar_pendiente=True,
+                )
+            )
+
         tipo_paso = str((paso or {}).get("tipo_accion") or "").lower()
         if tipo_paso in {
             "enviar_enlace",
             "agendar_live",
             "solicitar_live",
             "solicitar_evidencias",
+            "confirmar_interes",
         }:
             accion_gate = (
-                "enviar_solicitud" if tipo_paso == "enviar_enlace" else tipo_paso
+                "enviar_solicitud"
+                if tipo_paso in {"enviar_enlace", "confirmar_interes"}
+                else tipo_paso
             )
             gate = puede_ejecutar_accion(
                 accion=accion_gate,
@@ -530,6 +871,7 @@ def resolver_turno_inteligente(
                         intencion=intencion,
                         gate=gate,
                         paso_id=(paso or {}).get("id"),
+                        cancelar_pendiente=True,
                     )
                 )
         return _fin(
