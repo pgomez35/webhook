@@ -277,7 +277,32 @@ def texto_presentacion_inicial(asistente: Optional[Dict[str, Any]]) -> Optional[
         return None
     if not crudo.strip():
         return None
-    return crudo.strip("\n\r ")
+    return preservar_formato_whatsapp(crudo)
+
+
+def preservar_formato_whatsapp(texto: str) -> str:
+    """
+    Normaliza saltos para WhatsApp sin colapsar párrafos.
+
+    Nunca usa ``\" \".join(texto.split())``: eso convierte saltos en espacios
+    y es lo que hace que la bienvenida se vea como un solo bloque.
+    """
+    t = str(texto or "").replace("\r\n", "\n").replace("\r", "\n")
+    if not t.strip():
+        return ""
+    lineas = [ln.rstrip() for ln in t.split("\n")]
+    # Evitar más de una línea en blanco consecutiva (ruido), pero conservar párrafos.
+    out: List[str] = []
+    vacias = 0
+    for ln in lineas:
+        if ln.strip() == "":
+            vacias += 1
+            if vacias <= 1:
+                out.append("")
+            continue
+        vacias = 0
+        out.append(ln)
+    return "\n".join(out).strip("\n").strip()
 
 
 def _mensajes_previos(
@@ -1607,11 +1632,16 @@ def _sanitizar_respuesta_usuario(texto: str) -> str:
     """
     Frontera de salida: solo texto dirigido al usuario.
     Quita pies de menú informativo y líneas que parecen instrucciones internas.
+    Conserva saltos de línea y párrafos (no colapsa whitespace).
     """
     limpio = _quitar_pies_menu_informativo(texto)
     lineas_ok: List[str] = []
     filtradas = 0
     for linea in limpio.splitlines():
+        # Conservar líneas en blanco (separadores de párrafo en WhatsApp).
+        if not linea.strip():
+            lineas_ok.append("")
+            continue
         if _parece_instruccion_interna(linea):
             filtradas += 1
             continue
@@ -1628,7 +1658,7 @@ def _sanitizar_respuesta_usuario(texto: str) -> str:
             "lineas_filtradas=%s",
             filtradas,
         )
-    return "\n".join(lineas_ok).strip()
+    return preservar_formato_whatsapp("\n".join(lineas_ok))
 
 
 def _texto_publico_paso(
@@ -3333,7 +3363,7 @@ async def _responder_presentacion_literal(
 
     envio = await _enviar_respuesta(
         canal=canal,
-        texto=presentacion,
+        texto=preservar_formato_whatsapp(presentacion),
         enlaces=[],
         token=token,
         phone_number_id=phone_number_id,
@@ -3343,7 +3373,8 @@ async def _responder_presentacion_literal(
     )
 
     mensaje_saliente = None
-    if presentacion and not dry_run and conversacion_id:
+    presentacion_envio = preservar_formato_whatsapp(presentacion)
+    if presentacion_envio and not dry_run and conversacion_id:
         mensaje_saliente = await _db(
             "insertar_mensaje",
             contexto.agencia_id,
@@ -3352,7 +3383,7 @@ async def _responder_presentacion_literal(
             direccion="saliente",
             remitente_tipo="chatbot",
             tipo_mensaje="texto",
-            texto=presentacion,
+            texto=presentacion_envio,
             estado_envio="enviado" if envio.get("enviado") else "error",
             error_detalle=envio.get("error"),
             procesado_por_ia=False,
@@ -3372,7 +3403,7 @@ async def _responder_presentacion_literal(
 
     await _actualizar_cierre_de_turno(
         contexto,
-        respuesta=presentacion,
+        respuesta=presentacion_envio,
         mensaje_usuario=texto_usuario,
         acciones=[],
         escalado=False,
@@ -3387,7 +3418,7 @@ async def _responder_presentacion_literal(
         "conversacion_id": conversacion_id,
         "mensaje_entrante_id": mensaje_entrante_id,
         "mensaje_saliente_id": (_normalizar_fila_mensaje(mensaje_saliente) or {}).get("id"),
-        "respuesta": presentacion,
+        "respuesta": presentacion_envio,
         "modo": contexto.modo,
         "modelo": None,
         "tokens_entrada": 0,
@@ -4186,4 +4217,5 @@ __all__ = [
     "resolver_presentacion_literal",
     "simular_mensaje",
     "texto_presentacion_inicial",
+    "preservar_formato_whatsapp",
 ]

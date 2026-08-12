@@ -398,7 +398,17 @@ async def procesar_mensaje_conversion(
         mensaje_actual_id=mensaje_entrante_id,
     )
     if presentacion and salida_ia_inyectada is None:
+        from service_chatbot_conversacional import preservar_formato_whatsapp
+
+        # Literal: conservar párrafos; no aplanar a un solo bloque.
+        presentacion = preservar_formato_whatsapp(presentacion)
         presentacion = sanitizar_respuesta_publica(presentacion)
+        presentacion = preservar_formato_whatsapp(presentacion)
+        logger.info(
+            "[CHATBOT_CONVERSION_PRESENTACION] chars=%s saltos=%s",
+            len(presentacion or ""),
+            (presentacion or "").count("\n"),
+        )
         envio = await _enviar(
             texto=presentacion,
             canal=canal,

@@ -49,11 +49,15 @@ REGLAS_OBLIGATORIAS: List[str] = [
 ]
 
 
-def _texto(valor: Any, limite: int = LIMITE_TEXTO_ITEM) -> str:
+def _texto(valor: Any, limite: int = LIMITE_TEXTO_ITEM, *, conservar_saltos: bool = False) -> str:
     if valor is None:
         return ""
 
-    texto = " ".join(str(valor).split())
+    if conservar_saltos:
+        # Conserva párrafos/saltos (p. ej. presentación inicial para WhatsApp/prompt).
+        texto = str(valor).replace("\r\n", "\n").replace("\r", "\n").strip()
+    else:
+        texto = " ".join(str(valor).split())
     if len(texto) <= limite:
         return texto
 
@@ -97,7 +101,11 @@ def _identidad(ctx: ConversationalContext) -> str:
         lineas.append(
             "- La presentación inicial autorizada ya se envía literalmente al primer "
             "contacto/saludo (no la reformules ni la resumas). Texto de referencia: "
-            f"{_texto(asistente['presentacion_inicial'], 400)}"
+            f"{_texto(asistente['presentacion_inicial'], 800, conservar_saltos=True)}"
+        )
+        lineas.append(
+            "- Conserva los saltos de línea y párrafos de esa presentación si la "
+            "reutilizas como referencia; no la conviertas en un solo bloque."
         )
         lineas.append(
             "- No uses chatbot_configuracion.mensaje_bienvenida: esa fuente es solo "
