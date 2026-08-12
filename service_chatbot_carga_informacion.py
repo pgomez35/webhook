@@ -721,6 +721,11 @@ def guardar_informacion_organizada(
             campos_a["presentacion_inicial"] = (
                 str(general.get("presentacion_inicial") or "").strip() or None
             )
+            logger.info(
+                "[CARGA_INFO] presentacion_inicial chars=%s config_id=%s",
+                len(str(campos_a.get("presentacion_inicial") or "")),
+                chatbot_configuracion_id,
+            )
         if general.get("tono") in {"profesional", "cercano", "juvenil"}:
             campos_a["tono"] = general["tono"]
         if asistente:
