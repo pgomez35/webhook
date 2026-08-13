@@ -162,6 +162,9 @@ def es_comando_volver_menu(texto: str) -> bool:
     n = _normalizar(texto)
     if not n:
         return False
+    # 0 / cero = volver al menú principal (listas de requisitos/beneficios/…).
+    if n in {"0", "cero"}:
+        return True
     if n in _COMANDOS_VOLVER_MENU:
         return True
     return any(p in n for p in _PATRONES_VOLVER_MENU)
@@ -212,7 +215,32 @@ def _ya_indica_volver_menu(texto: str) -> bool:
         return True
     if "o menu" in n and "menu" in n:
         return True
+    if "menu principal" in n:
+        return True
     return False
+
+
+def _etiqueta_otro_item_lista(tipo: str) -> str:
+    t = str(tipo or "").strip().lower()
+    return {
+        "requisitos": "Otro requisito",
+        "beneficio": "Otro beneficio",
+        "beneficios": "Otro beneficio",
+        "bono": "Otro bono",
+        "bonos": "Otro bono",
+        "faq": "Otra pregunta",
+        "proceso": "Otro paso",
+    }.get(t, "Otra opción")
+
+
+def _pie_navegacion_lista(*, tipo: str = "", total: int = 0) -> str:
+    """Pie de listas/detalle: rangos 1-N y 0 = menú principal."""
+    if int(total or 0) > 1:
+        return (
+            f"{_etiqueta_otro_item_lista(tipo)}: 1-{int(total)}\n"
+            "0. Menú principal"
+        )
+    return "0. Menú principal"
 
 
 def _con_pie_menu(respuesta: str, presentacion: Optional[Dict[str, Any]]) -> str:
@@ -1080,6 +1108,7 @@ def construir_texto_detalle_item(
     *,
     presentacion: Optional[Dict[str, Any]] = None,
     total: int = 0,
+    tipo_lista: str = "",
 ) -> str:
     p = presentacion_desde_asistente(presentacion)
     titulo = str(item.get("titulo") or "").strip() or "Detalle"
@@ -1090,13 +1119,7 @@ def construir_texto_detalle_item(
     lineas = [f"*{titulo}*", "", detalle]
     if p.get("agregar_pregunta_final"):
         lineas.append("")
-        if total > 1:
-            lineas.append(
-                f"Escribe otro *número* (1-{int(total)}) para más detalle, "
-                "o *menu* para volver al menú."
-            )
-        else:
-            lineas.append("Escribe *menu* para volver al menú.")
+        lineas.append(_pie_navegacion_lista(tipo=tipo_lista, total=total))
     return "\n".join(lineas).strip()
 
 
@@ -1310,6 +1333,7 @@ def construir_respuesta_lista_o_detalle(
                 item,
                 presentacion=presentacion,
                 total=len(list(lista.get("items") or [])),
+                tipo_lista=tipo,
             )
             return texto, lista, True
     texto = construir_texto_lista_detalle(
@@ -1317,6 +1341,7 @@ def construir_respuesta_lista_o_detalle(
         titulo=titulo,
         introduccion=introduccion,
         presentacion=presentacion,
+        tipo_lista=tipo,
     )
     return texto, lista, False
 
@@ -1602,6 +1627,7 @@ def construir_texto_lista_detalle(
     titulo: str,
     introduccion: str,
     presentacion: Optional[Dict[str, Any]] = None,
+    tipo_lista: str = "",
 ) -> str:
     """Lista numerada + ✅ para elegir detalle con un número."""
     p = presentacion_desde_asistente(presentacion)
@@ -1617,7 +1643,7 @@ def construir_texto_lista_detalle(
     if p.get("agregar_pregunta_final"):
         lineas.append("")
         lineas.append(
-            "Escribe el *número* para más detalle, o *menu* para volver al menú."
+            _pie_navegacion_lista(tipo=tipo_lista, total=len(items or []))
         )
     return "\n".join(lineas).strip()
 
@@ -1635,6 +1661,7 @@ def construir_respuesta_requisitos(
         titulo="Requisitos para ser creador LIVE 🎥",
         introduccion="Para formar parte de la agencia necesitas:",
         presentacion=presentacion,
+        tipo_lista="requisitos",
     )
     return texto, items
 
@@ -1725,6 +1752,11 @@ def construir_respuesta_beneficios(
         titulo=titulo,
         introduccion="Esto es lo que ofrece la agencia:",
         presentacion=presentacion,
+        tipo_lista=(
+            "bonos"
+            if any(t in {"bono", "incentivo"} for t in (tipos or ()))
+            else "beneficios"
+        ),
     )
     return texto, items
 
@@ -2092,6 +2124,7 @@ async def procesar_mensaje_informativo(
                 item_det,
                 presentacion=presentacion,
                 total=len(items_lista),
+                tipo_lista=str(lista_detalle.get("tipo") or ""),
             )
             if respuesta and texto_menu and texto_menu not in respuesta:
                 respuesta = _con_pie_menu(respuesta, presentacion)
