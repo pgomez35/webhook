@@ -433,13 +433,32 @@ def _tema_beneficio_carga(nombre: str, desc: Optional[str] = None) -> Optional[s
 def _clave_dedupe_beneficio(
     tipo: str, nombre: str, desc: Optional[str] = None
 ) -> str:
-    tema = _tema_beneficio_carga(nombre, desc)
-    if tema == "junk_money":
+    """
+    Clave anti-duplicado.
+
+    - Bonos: sí colapsa variantes semánticas (meta / incorporación / constancia).
+    - Beneficios: NO colapsa títulos distintos solo porque la descripción
+      mencione «manager», «capacitación» o «batallas». Eso hacía que 6
+      beneficios quedaran en 3–4. Solo colapsa ecos (nombre = descripción).
+    """
+    limpio = _nombre_item_limpio(nombre)
+    tema_full = _tema_beneficio_carga(limpio, desc)
+    if tema_full == "junk_money":
         return "tema:junk_money"
-    if tema:
-        return f"tema:{tema}"
+
+    tema_titulo = _tema_beneficio_carga(limpio, None)
+    parece_desc = _nombre_beneficio_parece_descripcion(limpio)
+
+    if tema_titulo and tema_titulo.startswith("bono_"):
+        return f"tema:{tema_titulo}"
+    if parece_desc and tema_full and tema_full.startswith("bono_"):
+        return f"tema:{tema_full}"
+
+    if parece_desc and tema_full and not tema_full.startswith("bono_"):
+        return f"tema:{tema_full}"
+
     fam = _familia_tipo_beneficio(tipo)
-    return f"{fam}:{_norm_nombre(_nombre_item_limpio(nombre))}"
+    return f"{fam}:{_norm_nombre(limpio)}"
 
 
 def _nombre_beneficio_parece_descripcion(nombre: str) -> bool:
