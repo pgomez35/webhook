@@ -170,10 +170,17 @@ def _prioridad_contacto_humano(valor: Any) -> str:
 
 def _norm_nombre(valor: Any) -> str:
     texto = str(valor or "").strip().lower()
+    # Quitar viñetas/guiones repetidos para dedupe ("- - edad" == "edad")
+    prev = None
+    while prev != texto:
+        prev = texto
+        texto = re.sub(r"^[\-\*\u2022●•]+[\.\)\-]?\s*", "", texto).strip()
+        texto = re.sub(r"^\d+[\.\)\-]\s*", "", texto).strip()
     texto = unicodedata.normalize("NFKD", texto)
     texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
+    texto = re.sub(r"[^\w\s]", " ", texto, flags=re.UNICODE)
     texto = re.sub(r"\s+", " ", texto)
-    return texto
+    return texto.strip()
 
 
 def _lineas_bullet(texto: str) -> List[str]:
@@ -186,7 +193,7 @@ def _lineas_bullet(texto: str) -> List[str]:
         prev = None
         while prev != linea:
             prev = linea
-            linea = re.sub(r"^[\-\*\u2022]+[\.\)\-]?\s*", "", linea).strip()
+            linea = re.sub(r"^[\-\*\u2022●•]+[\.\)\-]?\s*", "", linea).strip()
             linea = re.sub(r"^\d+[\.\)\-]\s*", "", linea).strip()
         if linea:
             out.append(linea)
@@ -237,21 +244,262 @@ def _descripcion_requisito_limpia(nombre: str, desc: Optional[str]) -> str:
     Evita reinyectar dumps anidados de listas previas en la descripción.
     """
     d = _texto_corto_limpio(desc, max_len=500)
-    if not d:
+    if not d or d in {"-", "—", "–", ".", "…"}:
         return ""
-    n = str(nombre or "").strip()
+    n = _nombre_item_limpio(str(nombre or "").strip())
     if n and d.lower().startswith(n.lower()):
         d = d[len(n) :].lstrip(" .:-–—")
+    if not d or d in {"-", "—", "–", ".", "…"}:
+        return ""
     if _norm_nombre(d) == _norm_nombre(n):
+        return ""
+    # Descripción que es solo otro dump de lista
+    if _parece_dump_lista(d) or d.startswith("-"):
+        d = _texto_corto_limpio(d, max_len=240)
+    if not d or d in {"-", "—", "–", ".", "…"}:
         return ""
     return d.strip()
 
 
+def _tema_requisito_carga(texto: str) -> Optional[str]:
+    """
+    Agrupa variantes equivalentes (p. ej. 'Mayoría de edad' ≈ 'Ser mayor de edad')
+    para no crear filas nuevas en cada guardado.
+    """
+    n = _norm_nombre(_nombre_item_limpio(texto))
+    if not n:
+        return None
+    if any(k in n for k in ("18", "edad", "mayor de edad", "mayoria")):
+        return "edad"
+    if ("hora" in n or "horas" in n) and (
+        "dia" in n or "diaria" in n or "diario" in n
+    ):
+        return "horas_dia"
+    if "semana" in n or "semanal" in n:
+        return "semana"
+    if any(k in n for k in ("telefono", "celular", "conexion", "internet")):
+        return "equipo"
+    if any(
+        k in n
+        for k in ("hablador", "convers", "interact", "comunicativ", "audiencia")
+    ):
+        return "comunicacion"
+    if any(k in n for k in ("energia", "camara", "entretenid")):
+        return "energia"
+    if any(
+        k in n
+        for k in ("responsable", "responsabilidad", "constancia", "compromiso")
+    ):
+        return "compromiso"
+    if "batalla" in n:
+        return "batallas"
+    if any(k in n for k in ("acompanamiento", "capacitacion", "orientacion")):
+        return "acompanamiento"
+    if any(k in n for k in ("interes", "crecer", "aprender", "mejorar")):
+        return "crecimiento"
+    if any(k in n for k in ("disponibilidad", "disponible", "transmit")):
+        return "disponibilidad"
+    return None
+
+
+def _clave_dedupe_requisito(nombre: str) -> str:
+    limpio = _nombre_item_limpio(nombre)
+    tema = _tema_requisito_carga(limpio)
+    if tema:
+        return f"tema:{tema}"
+    return f"n:{_norm_nombre(limpio)}"
+
+
+_ETIQUETAS_TEMA_BENEFICIO = {
+    "acompanamiento": "Acompañamiento de manager",
+    "capacitacion": "Capacitaciones para creadores LIVE",
+    "comunidad": "Comunidad y participación en batallas",
+    "bono_meta": "Bono por cumplimiento de meta",
+    "bono_incorporacion": "Bono de incorporación",
+}
+
+
+def _familia_tipo_beneficio(tipo: str) -> str:
+    t = str(tipo or "beneficio").lower().strip()
+    if t in {"bono", "incentivo"}:
+        return "bono"
+    return "beneficio"
+
+
+def _tema_beneficio_carga(nombre: str, desc: Optional[str] = None) -> Optional[str]:
+    """Agrupa variantes de beneficios/bonos (título vs descripción como nombre)."""
+    n = _norm_nombre(
+        f"{_nombre_item_limpio(nombre)} {_nombre_item_limpio(desc or '', max_len=240)}"
+    )
+    if not n:
+        return None
+    if re.fullmatch(r"\d+([.,]\d+)?\s*(usd|us\$|eur|cop)?", n) or n in {
+        "valor",
+        "00 usd",
+        "0 usd",
+    }:
+        return "junk_money"
+    if any(
+        k in n
+        for k in (
+            "incorporacion",
+            "nuevos creadores",
+            "nuevo creador",
+            "bienvenida",
+            "periodo de vigencia",
+        )
+    ):
+        return "bono_incorporacion"
+    if any(
+        k in n
+        for k in (
+            "cumplimiento de meta",
+            "bono por cumplimiento",
+            "incentivo sujeto",
+            "meta durante",
+        )
+    ):
+        return "bono_meta"
+    if any(k in n for k in ("acompanamiento", "manager", "orientacion")):
+        return "acompanamiento"
+    if any(
+        k in n
+        for k in (
+            "capacitacion",
+            "aprendizaje",
+            "habilidades de transmision",
+            "clases",
+        )
+    ):
+        return "capacitacion"
+    if any(
+        k in n
+        for k in (
+            "batalla",
+            "comunidad",
+            "actividades",
+            "oportunidades de participar",
+        )
+    ):
+        return "comunidad"
+    return None
+
+
+def _clave_dedupe_beneficio(
+    tipo: str, nombre: str, desc: Optional[str] = None
+) -> str:
+    tema = _tema_beneficio_carga(nombre, desc)
+    if tema == "junk_money":
+        return "tema:junk_money"
+    if tema:
+        return f"tema:{tema}"
+    fam = _familia_tipo_beneficio(tipo)
+    return f"{fam}:{_norm_nombre(_nombre_item_limpio(nombre))}"
+
+
+def _nombre_beneficio_parece_descripcion(nombre: str) -> bool:
+    n = _nombre_item_limpio(nombre)
+    if not n:
+        return True
+    if len(n) > 80:
+        return True
+    low = n.lower()
+    if low.startswith(
+        (
+            "la agencia",
+            "espacios de",
+            "orientaci",
+            "incentivo sujeto",
+            "bono dirigido",
+            "bono para",
+            "participaci",
+            "valor:",
+            "valor ",
+        )
+    ):
+        return True
+    if re.match(r"^[\d.,]+\s*(usd|us\$|\$)?$", low):
+        return True
+    return False
+
+
+def _desc_beneficio_de_row(row: Dict[str, Any]) -> str:
+    return str(
+        row.get("descripcion_corta")
+        or row.get("texto_autorizado")
+        or row.get("descripcion_completa")
+        or row.get("descripcion")
+        or ""
+    ).strip()
+
+
+def _score_beneficio_keeper(row: Dict[str, Any]) -> Tuple[int, int]:
+    nombre = str(row.get("nombre") or "")
+    desc = _desc_beneficio_de_row(row)
+    score = 0
+    if row.get("activo") is not False:
+        score += 1000
+    if not _nombre_beneficio_parece_descripcion(nombre):
+        score += 400
+    if not _nombre_parece_fractal(nombre):
+        score += 200
+    nlimpio = _nombre_item_limpio(nombre)
+    score += max(0, 100 - len(nlimpio))
+    d = _descripcion_requisito_limpia(nlimpio, desc)
+    if d and _norm_nombre(d) != _norm_nombre(nlimpio):
+        score += min(len(d), 120)
+    tipo = str(row.get("tipo") or "").lower()
+    tema = _tema_beneficio_carga(nombre, desc)
+    if tema and tema.startswith("bono_") and tipo in {"bono", "incentivo"}:
+        score += 80
+    if tema and not tema.startswith("bono_") and tipo not in {"bono", "incentivo"}:
+        score += 40
+    if row.get("valor") not in (None, "", 0, 0.0):
+        score += 60
+    rid = int(row.get("id") or 0)
+    return (score, -rid)
+
+
+def _nombre_parece_fractal(nombre: str) -> bool:
+    n = str(nombre or "").strip()
+    if not n:
+        return True
+    if n.startswith("-") or " - -" in n or n.count(" - ") >= 2:
+        return True
+    return _parece_dump_lista(n)
+
+
+def _score_requisito_keeper(row: Dict[str, Any]) -> Tuple[int, int]:
+    """Mayor score = mejor fila a conservar. Desempate: id más bajo."""
+    nombre = str(row.get("nombre") or "")
+    desc = str(row.get("descripcion") or "")
+    score = 0
+    if row.get("activo") is not False:
+        score += 1000
+    if not _nombre_parece_fractal(nombre):
+        score += 300
+    nlimpio = _nombre_item_limpio(nombre)
+    # Prefiere títulos cortos frente a frases largas usadas como nombre.
+    score += max(0, 120 - len(nlimpio))
+    d = _descripcion_requisito_limpia(nlimpio, desc)
+    if d:
+        score += min(len(d), 120)
+    if _parece_dump_lista(desc) or _nombre_parece_fractal(desc):
+        score -= 200
+    rid = int(row.get("id") or 0)
+    return (score, -rid)
+
+
 def _nombre_item_limpio(nombre: str, *, max_len: int = 160) -> str:
     n = str(nombre or "").strip()
-    while n.startswith("-"):
-        n = n.lstrip("- ").strip()
-    n = re.sub(r"^\d+[\.\)\-]\s*", "", n).strip()
+    prev = None
+    while prev != n:
+        prev = n
+        n = re.sub(r"^[\-\*\u2022●•]+[\.\)\-]?\s*", "", n).strip()
+        n = re.sub(r"^\d+[\.\)\-]\s*", "", n).strip()
+    # Cortar dumps "Nombre - - Nombre..."
+    if " - -" in n or n.count(" - ") >= 2:
+        n = re.split(r"\s+-\s+-|\s+-\s+", n, maxsplit=1)[0].strip()
     if _parece_dump_lista(n) or len(n) > max_len:
         n = n.split(".")[0].split("—")[0].split(" - ")[0].strip()[:max_len]
     return n[:max_len].strip()
@@ -380,9 +628,12 @@ def obtener_textos_carga(
         req_txt = []
         vistos_req: set = set()
         for r in requisitos:
-            nombre = (r.get("nombre") or "").strip()
-            clave = _norm_nombre(nombre)
+            nombre = _nombre_item_limpio((r.get("nombre") or "").strip())
+            clave = _clave_dedupe_requisito(nombre)
             if not clave or clave in vistos_req:
+                continue
+            # Saltar filas basura cuyo nombre limpio quedó vacío o es un dump
+            if not nombre or _parece_dump_lista(nombre):
                 continue
             linea = _linea_requisito_legible(nombre, r.get("descripcion"))
             if not linea:
@@ -395,16 +646,13 @@ def obtener_textos_carga(
         vistos_bon: set = set()
         for b in beneficios:
             tipo = str(b.get("tipo") or "beneficio").lower()
-            nombre = (b.get("nombre") or "").strip()
-            clave = _norm_nombre(nombre)
-            if not clave:
+            nombre = _nombre_item_limpio((b.get("nombre") or "").strip())
+            if not nombre or _parece_dump_lista(nombre):
                 continue
-            desc = (
-                b.get("descripcion_corta")
-                or b.get("texto_autorizado")
-                or b.get("descripcion_completa")
-                or ""
-            )
+            desc = _desc_beneficio_de_row(b)
+            clave = _clave_dedupe_beneficio(tipo, nombre, desc)
+            if not clave or clave == "tema:junk_money":
+                continue
             if tipo in {"bono", "incentivo"}:
                 if clave in vistos_bon:
                     continue
@@ -421,6 +669,12 @@ def obtener_textos_carga(
             else:
                 if clave in vistos_ben:
                     continue
+                # Si el nombre era una descripción, preferir etiqueta de tema
+                tema = _tema_beneficio_carga(nombre, desc)
+                if tema and _nombre_beneficio_parece_descripcion(nombre):
+                    if not desc:
+                        desc = nombre
+                    nombre = _ETIQUETAS_TEMA_BENEFICIO.get(tema, nombre)
                 linea = _linea_beneficio_legible(nombre, desc)
                 if not linea:
                     continue
@@ -542,32 +796,35 @@ def _parse_requisitos(texto: str) -> List[Dict[str, Any]]:
     items = []
     vistos: set = set()
     for i, linea in enumerate(_lineas_bullet(texto), start=1):
-        # Limpiar restos de anidación en la misma línea
-        while linea.startswith("-"):
-            linea = linea.lstrip("- ").strip()
-        if not linea or _parece_dump_lista(linea) and linea.count(".") > 3:
+        linea = _nombre_item_limpio(linea, max_len=500)
+        if not linea:
+            continue
+        if _parece_dump_lista(linea) and linea.count(".") > 3:
             # Línea basura: intentar rescatar solo el primer nombre
-            nombre = linea.split(".")[0].strip()[:160]
-            nombre = re.sub(r"^[\-\*\u2022]+\s*", "", nombre).strip()
+            nombre = _nombre_item_limpio(linea.split(".")[0].split(" - ")[0])
             if not nombre:
                 continue
             desc = ""
         else:
             if "." in linea:
-                nombre, resto = linea.split(".", 1)
-                nombre = nombre.strip()[:160]
+                nombre_raw, resto = linea.split(".", 1)
+                nombre = _nombre_item_limpio(nombre_raw)[:160]
                 desc = _descripcion_requisito_limpia(nombre, resto.strip())
             else:
-                nombre = linea.strip()[:160]
+                # "Nombre - dump" o solo nombre
+                nombre = _nombre_item_limpio(linea.split(" - ")[0])[:160]
                 desc = ""
-        clave = _norm_nombre(nombre)
-        if not clave or clave in vistos:
+        clave = _clave_dedupe_requisito(nombre)
+        if not clave or clave == "n:" or clave in vistos:
             continue
+        # Descartar restos que son solo eco del nombre
+        if desc and _norm_nombre(desc) == _norm_nombre(nombre):
+            desc = ""
         vistos.add(clave)
         items.append(
             {
                 "nombre": nombre,
-                "descripcion": desc or nombre,
+                "descripcion": desc or None,
                 "categoria": "obligatorio",
                 "bloquea_proceso": True,
                 "mensaje_si_no_cumple": None,
@@ -595,18 +852,40 @@ def _parse_beneficios(texto: str, tipo: str = "beneficio") -> List[Dict[str, Any
         nombre = _nombre_item_limpio(re.sub(r"^[\-\*]\s*", "", lineas[0]))
         if not nombre:
             continue
-        clave = _norm_nombre(nombre)
-        if not clave or clave in vistos:
+        # Basura tipo "00 USD" / "Valor: 35"
+        if _tema_beneficio_carga(nombre) == "junk_money":
+            continue
+        if re.match(r"^valor\s*:\s*[\d.,]+", nombre, re.I):
             continue
         desc_raw = "\n".join(lineas[1:]).strip() if len(lineas) > 1 else ""
-        # Si vino todo en una sola línea "Nombre. desc - - Nombre..."
-        if not desc_raw and "." in nombre:
-            # nombre already cleaned; try from original first line
+        if not desc_raw and "." in nombre and _nombre_beneficio_parece_descripcion(nombre):
+            # Toda la línea es descripción: intentar título por tema
+            tema = _tema_beneficio_carga(nombre)
+            if tema and tema in _ETIQUETAS_TEMA_BENEFICIO:
+                desc_raw = nombre
+                nombre = _ETIQUETAS_TEMA_BENEFICIO[tema]
+        elif not desc_raw and "." in str(lineas[0]):
             orig = re.sub(r"^[\-\*]\s*", "", lineas[0])
             if "." in orig:
-                _, resto = orig.split(".", 1)
+                nombre_raw, resto = orig.split(".", 1)
+                nombre = _nombre_item_limpio(nombre_raw)[:160] or nombre
                 desc_raw = resto.strip()
-        desc = _descripcion_requisito_limpia(nombre, desc_raw) or nombre
+        desc = _descripcion_requisito_limpia(nombre, desc_raw)
+        if desc and _norm_nombre(desc) == _norm_nombre(nombre):
+            desc = ""
+        # Si el "nombre" era una descripción y hay tema, promover etiqueta
+        tema = _tema_beneficio_carga(nombre, desc)
+        if tema == "junk_money":
+            continue
+        if tema and _nombre_beneficio_parece_descripcion(nombre):
+            if not desc:
+                desc = _descripcion_requisito_limpia(
+                    _ETIQUETAS_TEMA_BENEFICIO.get(tema, nombre), nombre
+                )
+            nombre = _ETIQUETAS_TEMA_BENEFICIO.get(tema, _nombre_item_limpio(nombre)[:80])
+        clave = _clave_dedupe_beneficio(tipo, nombre, desc)
+        if not clave or clave.endswith(":") or clave in vistos:
+            continue
         valor = None
         moneda = None
         m = re.search(r"valor\s*:\s*([\d.,]+)\s*([A-Za-z$€]*)", bloque, re.I)
@@ -619,8 +898,8 @@ def _parse_beneficios(texto: str, tipo: str = "beneficio") -> List[Dict[str, Any
         vistos.add(clave)
         items.append(
             {
-                "nombre": nombre,
-                "descripcion": desc,
+                "nombre": nombre[:160],
+                "descripcion": desc or None,
                 "tipo": tipo,
                 "valor": valor,
                 "moneda": moneda,
@@ -1354,6 +1633,216 @@ def persistir_datos_generales_asistente(
     }
 
 
+def _scrub_requisitos_duplicados(
+    agencia_id: int,
+    chatbot_configuracion_id: int,
+    existentes: Dict[int, Dict[str, Any]],
+    *,
+    ids_conservar: Optional[set] = None,
+    cur=None,
+) -> Dict[str, int]:
+    """
+    Colapsa requisitos fractal/duplicados por tema o nombre limpio.
+
+    Conserva la mejor fila de cada grupo, limpia nombre/descripcion y
+    desactiva el resto (incluidas filas cuyo nombre es solo basura).
+    """
+    ids_conservar = set(ids_conservar or set())
+    grupos: Dict[str, List[Dict[str, Any]]] = {}
+    basura: List[Dict[str, Any]] = []
+
+    for row in existentes.values():
+        nombre = str(row.get("nombre") or "")
+        clave = _clave_dedupe_requisito(nombre)
+        limpio = _nombre_item_limpio(nombre)
+        if not limpio or clave == "n:":
+            basura.append(row)
+            continue
+        grupos.setdefault(clave, []).append(row)
+
+    desactivados = 0
+    limpiados = 0
+
+    for row in basura:
+        rid = int(row["id"])
+        if rid in ids_conservar:
+            continue
+        if row.get("activo") is not False:
+            db.actualizar_requisito(agencia_id, rid, {"activo": False}, cur=cur)
+            desactivados += 1
+
+    for _clave, filas in grupos.items():
+        if not filas:
+            continue
+        # Preferir ids tocados en este guardado si están en el grupo.
+        keep = None
+        for f in filas:
+            if int(f["id"]) in ids_conservar:
+                keep = f
+                break
+        if keep is None:
+            keep = max(filas, key=_score_requisito_keeper)
+        keep_id = int(keep["id"])
+
+        nombre_limpio = _nombre_item_limpio(str(keep.get("nombre") or ""))
+        desc_limpia = _descripcion_requisito_limpia(
+            nombre_limpio, keep.get("descripcion")
+        )
+        patch: Dict[str, Any] = {}
+        if nombre_limpio and nombre_limpio != str(keep.get("nombre") or "").strip():
+            patch["nombre"] = nombre_limpio[:160]
+        if (desc_limpia or None) != (str(keep.get("descripcion") or "").strip() or None):
+            patch["descripcion"] = desc_limpia or None
+        if keep.get("activo") is False:
+            patch["activo"] = True
+        if patch:
+            db.actualizar_requisito(agencia_id, keep_id, patch, cur=cur)
+            limpiados += 1
+            existentes[keep_id] = {**keep, **patch}
+
+        for f in filas:
+            rid = int(f["id"])
+            if rid == keep_id:
+                continue
+            if f.get("activo") is not False:
+                db.actualizar_requisito(
+                    agencia_id, rid, {"activo": False}, cur=cur
+                )
+                desactivados += 1
+
+    if desactivados or limpiados:
+        logger.info(
+            "[CARGA_INFO_REQUISITOS_SCRUB] agencia_id=%s config_id=%s "
+            "desactivados=%s limpiados=%s grupos=%s",
+            agencia_id,
+            chatbot_configuracion_id,
+            desactivados,
+            limpiados,
+            len(grupos),
+        )
+    return {"desactivados": desactivados, "limpiados": limpiados}
+
+
+def _scrub_beneficios_duplicados(
+    agencia_id: int,
+    chatbot_configuracion_id: int,
+    existentes: Dict[int, Dict[str, Any]],
+    *,
+    ids_conservar: Optional[set] = None,
+    cur=None,
+) -> Dict[str, int]:
+    """Colapsa beneficios/bonos duplicados por tema o nombre limpio."""
+    ids_conservar = set(ids_conservar or set())
+    grupos: Dict[str, List[Dict[str, Any]]] = {}
+    basura: List[Dict[str, Any]] = []
+
+    for row in existentes.values():
+        nombre = str(row.get("nombre") or "")
+        desc = _desc_beneficio_de_row(row)
+        tipo = str(row.get("tipo") or "beneficio")
+        clave = _clave_dedupe_beneficio(tipo, nombre, desc)
+        limpio = _nombre_item_limpio(nombre)
+        if (
+            not limpio
+            or clave.endswith(":")
+            or clave == "tema:junk_money"
+            or _parece_dump_lista(nombre)
+        ):
+            basura.append(row)
+            continue
+        grupos.setdefault(clave, []).append(row)
+
+    desactivados = 0
+    limpiados = 0
+
+    for row in basura:
+        rid = int(row["id"])
+        if rid in ids_conservar:
+            continue
+        if row.get("activo") is not False:
+            db.actualizar_beneficio(agencia_id, rid, {"activo": False}, cur=cur)
+            desactivados += 1
+
+    for clave, filas in grupos.items():
+        if not filas:
+            continue
+        keep = None
+        for f in filas:
+            if int(f["id"]) in ids_conservar:
+                keep = f
+                break
+        if keep is None:
+            keep = max(filas, key=_score_beneficio_keeper)
+        keep_id = int(keep["id"])
+
+        nombre_raw = str(keep.get("nombre") or "")
+        desc_raw = _desc_beneficio_de_row(keep)
+        tema = _tema_beneficio_carga(nombre_raw, desc_raw)
+        nombre_limpio = _nombre_item_limpio(nombre_raw)
+        if tema and (
+            _nombre_beneficio_parece_descripcion(nombre_limpio)
+            or tema in _ETIQUETAS_TEMA_BENEFICIO
+        ):
+            etiqueta = _ETIQUETAS_TEMA_BENEFICIO.get(tema)
+            if etiqueta and (
+                _nombre_beneficio_parece_descripcion(nombre_limpio)
+                or _norm_nombre(nombre_limpio) != _norm_nombre(etiqueta)
+                and len(nombre_limpio) > len(etiqueta) + 10
+            ):
+                if not desc_raw or _norm_nombre(desc_raw) == _norm_nombre(nombre_limpio):
+                    desc_raw = nombre_limpio if _nombre_beneficio_parece_descripcion(
+                        nombre_limpio
+                    ) else desc_raw
+                nombre_limpio = etiqueta
+        desc_limpia = _descripcion_requisito_limpia(nombre_limpio, desc_raw)
+        if desc_limpia and _norm_nombre(desc_limpia) == _norm_nombre(nombre_limpio):
+            desc_limpia = ""
+
+        patch: Dict[str, Any] = {}
+        if nombre_limpio and nombre_limpio != str(keep.get("nombre") or "").strip():
+            patch["nombre"] = nombre_limpio[:160]
+        if (desc_limpia or None) != (desc_raw or None):
+            patch["descripcion_corta"] = desc_limpia or None
+            patch["texto_autorizado"] = desc_limpia or None
+        # Normalizar tipo canónico por tema
+        tipo_keep = str(keep.get("tipo") or "beneficio").lower()
+        if tema and tema.startswith("bono_") and tipo_keep not in {"bono", "incentivo"}:
+            patch["tipo"] = "bono"
+            patch["requiere_validacion_humana"] = True
+        elif tema and not tema.startswith("bono_") and tipo_keep in {"bono", "incentivo"}:
+            # Si no hay valor monetario, conviene beneficio narrativo
+            if keep.get("valor") in (None, "", 0, 0.0):
+                patch["tipo"] = "beneficio"
+        if keep.get("activo") is False:
+            patch["activo"] = True
+        if patch:
+            db.actualizar_beneficio(agencia_id, keep_id, patch, cur=cur)
+            limpiados += 1
+            existentes[keep_id] = {**keep, **patch}
+
+        for f in filas:
+            rid = int(f["id"])
+            if rid == keep_id:
+                continue
+            if f.get("activo") is not False:
+                db.actualizar_beneficio(
+                    agencia_id, rid, {"activo": False}, cur=cur
+                )
+                desactivados += 1
+
+    if desactivados or limpiados:
+        logger.info(
+            "[CARGA_INFO_BENEFICIOS_SCRUB] agencia_id=%s config_id=%s "
+            "desactivados=%s limpiados=%s grupos=%s",
+            agencia_id,
+            chatbot_configuracion_id,
+            desactivados,
+            limpiados,
+            len(grupos),
+        )
+    return {"desactivados": desactivados, "limpiados": limpiados}
+
+
 def guardar_informacion_organizada(
     agencia_id: int,
     chatbot_configuracion_id: int,
@@ -1432,14 +1921,23 @@ def guardar_informacion_organizada(
             for r in existentes_req.values()
             if r.get("codigo")
         }
-        por_nombre = {
-            _norm_nombre(r.get("nombre")): r for r in existentes_req.values()
-        }
+        # Preferir la mejor fila por tema/nombre (evita ecos fractal).
+        por_clave: Dict[str, Dict[str, Any]] = {}
+        for r in existentes_req.values():
+            clave = _clave_dedupe_requisito(str(r.get("nombre") or ""))
+            if not clave or clave == "n:":
+                continue
+            prev = por_clave.get(clave)
+            if prev is None or _score_requisito_keeper(r) > _score_requisito_keeper(
+                prev
+            ):
+                por_clave[clave] = r
+        ids_tocados: set = set()
 
         for i, item in enumerate(datos.get("requisitos") or [], start=1):
             if not isinstance(item, dict):
                 continue
-            nombre = str(item.get("nombre") or "").strip()
+            nombre = _nombre_item_limpio(str(item.get("nombre") or "").strip())
             if not nombre:
                 continue
             campos = {
@@ -1460,11 +1958,14 @@ def guardar_informacion_organizada(
                 "permitir_mencion_automatica": True,
             }
             item_id = item.get("id")
-            hit = existentes_req.get(int(item_id)) if item_id else por_nombre.get(
-                _norm_nombre(nombre)
-            )
+            clave = _clave_dedupe_requisito(nombre)
+            hit = existentes_req.get(int(item_id)) if item_id else por_clave.get(clave)
             if hit:
                 db.actualizar_requisito(agencia_id, int(hit["id"]), campos, cur=c)
+                ids_tocados.add(int(hit["id"]))
+                merged = {**hit, **campos, "id": hit["id"]}
+                por_clave[clave] = merged
+                existentes_req[int(hit["id"])] = merged
                 actualizados += 1
             else:
                 codigo = _codigo_unico(
@@ -1481,9 +1982,25 @@ def guardar_informacion_organizada(
                         "tipo_dato": "texto",
                     }
                 )
-                db.crear_requisito(agencia_id, campos, cur=c)
+                creado = db.crear_requisito(agencia_id, campos, cur=c)
+                if creado and creado.get("id"):
+                    cid = int(creado["id"])
+                    ids_tocados.add(cid)
+                    por_clave[clave] = creado
+                    existentes_req[cid] = creado
                 creados += 1
 
+        # Scrub: desactivar duplicados por tema/nombre y filas fractal.
+        scrub = _scrub_requisitos_duplicados(
+            agencia_id,
+            chatbot_configuracion_id,
+            existentes_req,
+            ids_conservar=ids_tocados,
+            cur=c,
+        )
+        actualizados += int(scrub.get("desactivados") or 0) + int(
+            scrub.get("limpiados") or 0
+        )
         # Beneficios / bonos
         existentes_ben = {
             int(b["id"]): b
@@ -1497,16 +2014,27 @@ def guardar_informacion_organizada(
             if b.get("id")
         }
         usados_b = {str(b.get("codigo")) for b in existentes_ben.values() if b.get("codigo")}
-        por_tn = {
-            (str(b.get("tipo") or "").lower(), _norm_nombre(b.get("nombre"))): b
-            for b in existentes_ben.values()
-        }
+        por_clave_ben: Dict[str, Dict[str, Any]] = {}
+        for b in existentes_ben.values():
+            clave_b = _clave_dedupe_beneficio(
+                str(b.get("tipo") or "beneficio"),
+                str(b.get("nombre") or ""),
+                _desc_beneficio_de_row(b),
+            )
+            if not clave_b or clave_b.endswith(":") or clave_b == "tema:junk_money":
+                continue
+            prev = por_clave_ben.get(clave_b)
+            if prev is None or _score_beneficio_keeper(b) > _score_beneficio_keeper(
+                prev
+            ):
+                por_clave_ben[clave_b] = b
+        ids_ben_tocados: set = set()
 
         for tipo_default, clave in (("beneficio", "beneficios"), ("bono", "bonos")):
             for i, item in enumerate(datos.get(clave) or [], start=1):
                 if not isinstance(item, dict):
                     continue
-                nombre = str(item.get("nombre") or "").strip()
+                nombre = _nombre_item_limpio(str(item.get("nombre") or "").strip())
                 if not nombre:
                     continue
                 tipo = str(item.get("tipo") or tipo_default).lower()
@@ -1514,8 +2042,26 @@ def guardar_informacion_organizada(
                     _descripcion_requisito_limpia(nombre, item.get("descripcion"))
                     or None
                 )
+                tema = _tema_beneficio_carga(nombre, desc_limpia)
+                if tema == "junk_money":
+                    continue
+                if tema and _nombre_beneficio_parece_descripcion(nombre):
+                    if not desc_limpia:
+                        desc_limpia = _descripcion_requisito_limpia(
+                            _ETIQUETAS_TEMA_BENEFICIO.get(tema, nombre), nombre
+                        ) or None
+                    nombre = _ETIQUETAS_TEMA_BENEFICIO.get(tema, nombre[:80])
+                if tema and tema.startswith("bono_"):
+                    tipo = "bono"
+                elif tema and tipo in {"bono", "incentivo"} and item.get("valor") in (
+                    None,
+                    "",
+                ):
+                    # Narrativo tipificado como bono sin monto → beneficio
+                    if tipo_default == "beneficio":
+                        tipo = "beneficio"
                 campos = {
-                    "nombre": _nombre_item_limpio(nombre)[:160],
+                    "nombre": nombre[:160],
                     "descripcion_corta": desc_limpia,
                     "texto_autorizado": desc_limpia,
                     "tipo": tipo,
@@ -1526,17 +2072,25 @@ def guardar_informacion_organizada(
                     campos["valor"] = item.get("valor")
                 if item.get("moneda"):
                     campos["moneda"] = str(item.get("moneda"))[:10]
-                if "requiere_validacion_humana" in item or "requiere_confirmacion_humana" in item:
+                if tipo == "bono" or "requiere_validacion_humana" in item or "requiere_confirmacion_humana" in item:
                     campos["requiere_validacion_humana"] = bool(
                         item.get("requiere_validacion_humana")
                         or item.get("requiere_confirmacion_humana")
+                        or tipo == "bono"
                     )
                 item_id = item.get("id")
-                hit = existentes_ben.get(int(item_id)) if item_id else por_tn.get(
-                    (tipo, _norm_nombre(nombre))
+                clave_b = _clave_dedupe_beneficio(tipo, nombre, desc_limpia)
+                hit = (
+                    existentes_ben.get(int(item_id))
+                    if item_id
+                    else por_clave_ben.get(clave_b)
                 )
                 if hit:
                     db.actualizar_beneficio(agencia_id, int(hit["id"]), campos, cur=c)
+                    ids_ben_tocados.add(int(hit["id"]))
+                    merged = {**hit, **campos, "id": hit["id"]}
+                    por_clave_ben[clave_b] = merged
+                    existentes_ben[int(hit["id"])] = merged
                     actualizados += 1
                 else:
                     codigo = _codigo_unico(
@@ -1552,8 +2106,24 @@ def guardar_informacion_organizada(
                             "chatbot_configuracion_id": chatbot_configuracion_id,
                         }
                     )
-                    db.crear_beneficio(agencia_id, campos, cur=c)
+                    creado = db.crear_beneficio(agencia_id, campos, cur=c)
+                    if creado and creado.get("id"):
+                        cid = int(creado["id"])
+                        ids_ben_tocados.add(cid)
+                        por_clave_ben[clave_b] = creado
+                        existentes_ben[cid] = creado
                     creados += 1
+
+        scrub_ben = _scrub_beneficios_duplicados(
+            agencia_id,
+            chatbot_configuracion_id,
+            existentes_ben,
+            ids_conservar=ids_ben_tocados,
+            cur=c,
+        )
+        actualizados += int(scrub_ben.get("desactivados") or 0) + int(
+            scrub_ben.get("limpiados") or 0
+        )
 
         # FAQ
         existentes_faq = {

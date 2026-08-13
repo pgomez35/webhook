@@ -662,9 +662,21 @@ def _es_pregunta(texto: str) -> bool:
     )
 
 
+def _limpiar_prefijos_viñeta(texto: str) -> str:
+    """Quita '- - -', viñetas y numeración repetida al inicio."""
+    t = re.sub(r"\s+", " ", str(texto or "").strip())
+    prev = None
+    while prev != t:
+        prev = t
+        t = re.sub(r"^[\-\*\u2022●•]+[\.\)\-]?\s*", "", t).strip()
+        t = re.sub(r"^\d+[\.\)\-]\s*", "", t).strip()
+        t = re.sub(r"^(✅|✔️|☑️)\s*", "", t).strip()
+    return t
+
+
 def _limpiar_frase_requisito(texto: str) -> str:
     """Deja una frase corta y afirmativa para listar en WhatsApp."""
-    t = re.sub(r"\s+", " ", str(texto or "").strip())
+    t = _limpiar_prefijos_viñeta(texto)
     t = re.sub(
         r"^(la persona debe|se requiere|es necesario|necesitas|debes)\s+",
         "",
@@ -672,7 +684,7 @@ def _limpiar_frase_requisito(texto: str) -> str:
         flags=re.IGNORECASE,
     )
     # Quita emojis/viñetas sueltos al inicio (la marca ✅ ya aporta el acento).
-    t = re.sub(r"^[\W_🚀✅✔️☑️●•\-]+\s*", "", t)
+    t = re.sub(r"^[\W_🚀✅✔️☑️●•\-]+", "", t).strip()
     if not t:
         return ""
     if t[0].islower():
@@ -1412,12 +1424,17 @@ def _titulo_opcion_menu_corta(titulo: str) -> str:
 
 def _titulo_corto_requisito(requisito: Dict[str, Any]) -> str:
     """Título de lista = nombre configurado en el admin (sin reescribir)."""
-    nombre = re.sub(r"\s+", " ", str(requisito.get("nombre") or "").strip())
+    nombre = _limpiar_prefijos_viñeta(
+        re.sub(r"\s+", " ", str(requisito.get("nombre") or "").strip())
+    )
+    # Cortes de dumps anidados: "Nombre - - Nombre - dump"
+    if " - -" in nombre or nombre.count(" - ") >= 2:
+        nombre = re.split(r"\s+-\s+-|\s+-\s+", nombre, maxsplit=1)[0].strip()
     if nombre and not _es_pregunta(nombre):
         return nombre
-    desc = str(
-        requisito.get("descripcion") or requisito.get("valor_texto") or ""
-    ).strip()
+    desc = _limpiar_prefijos_viñeta(
+        str(requisito.get("descripcion") or requisito.get("valor_texto") or "").strip()
+    )
     if desc and not _es_pregunta(desc):
         return _resumir_frase(desc, max_len=80).rstrip(".")
     return nombre or _resumir_frase(desc or "Requisito", max_len=80).rstrip(".")
@@ -1425,10 +1442,15 @@ def _titulo_corto_requisito(requisito: Dict[str, Any]) -> str:
 
 def _detalle_requisito(requisito: Dict[str, Any]) -> str:
     """Detalle = descripción configurada; si es pregunta de formulario, usa el nombre."""
-    nombre = str(requisito.get("nombre") or "").strip()
-    desc = str(
-        requisito.get("descripcion") or requisito.get("valor_texto") or ""
-    ).strip()
+    nombre = _limpiar_prefijos_viñeta(str(requisito.get("nombre") or "").strip())
+    desc = _limpiar_prefijos_viñeta(
+        str(requisito.get("descripcion") or requisito.get("valor_texto") or "").strip()
+    )
+    # Evitar dumps: "Nombre - - Nombre - ..."
+    if desc and (" - -" in desc or desc.count(" - ") >= 2):
+        desc = re.split(r"\s+-\s+-|\s+-\s+", desc, maxsplit=1)[0].strip()
+        if _normalizar(desc) == _normalizar(nombre):
+            desc = ""
     if desc and not _es_pregunta(desc):
         return _limpiar_frase_requisito(desc)
     if desc and _es_pregunta(desc) and nombre:

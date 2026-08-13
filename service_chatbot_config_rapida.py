@@ -1049,6 +1049,13 @@ def _sincronizar_requisitos(
     *,
     cur,
 ) -> Dict[str, int]:
+    from service_chatbot_carga_informacion import (
+        _clave_dedupe_requisito,
+        _descripcion_requisito_limpia,
+        _nombre_item_limpio,
+        _scrub_requisitos_duplicados,
+    )
+
     existentes = db.listar_requisitos(
         agencia_id,
         chatbot_configuracion_id=cfg_id,
@@ -1057,6 +1064,11 @@ def _sincronizar_requisitos(
         cur=cur,
     )
     por_id = {int(r["id"]): r for r in existentes if r.get("id")}
+    por_clave = {}
+    for r in existentes:
+        clave = _clave_dedupe_requisito(str(r.get("nombre") or ""))
+        if clave and clave != "n:":
+            por_clave[clave] = r
     usados = {str(r.get("codigo")) for r in existentes if r.get("codigo")}
     vistos: Set[int] = set()
     creados = actualizados = 0
@@ -1066,21 +1078,28 @@ def _sincronizar_requisitos(
             continue
         if item.get("activo") is False:
             continue
-        nombre = str(item.get("nombre") or "").strip()
+        nombre = _nombre_item_limpio(str(item.get("nombre") or "").strip())
         if not nombre:
             continue
         campos = {
-            "nombre": nombre,
-            "descripcion": str(item.get("descripcion") or "").strip() or None,
+            "nombre": nombre[:160],
+            "descripcion": _descripcion_requisito_limpia(
+                nombre, item.get("descripcion")
+            )
+            or None,
             "categoria": "obligatorio" if item.get("obligatorio", True) else "deseable",
             "orden": idx + 1,
             "activo": True,
             "permitir_mencion_automatica": True,
         }
         item_id = item.get("id")
-        if item_id and int(item_id) in por_id:
-            db.actualizar_requisito(agencia_id, int(item_id), campos, cur=cur)
-            vistos.add(int(item_id))
+        clave = _clave_dedupe_requisito(nombre)
+        hit = por_id.get(int(item_id)) if item_id else por_clave.get(clave)
+        if hit and int(hit["id"]) in por_id:
+            db.actualizar_requisito(agencia_id, int(hit["id"]), campos, cur=cur)
+            vistos.add(int(hit["id"]))
+            por_id[int(hit["id"])] = {**hit, **campos}
+            por_clave[clave] = por_id[int(hit["id"])]
             actualizados += 1
         else:
             codigo = item.get("codigo") or _slug_unico(nombre, usados, "requisito")
@@ -1093,17 +1112,29 @@ def _sincronizar_requisitos(
             )
             creado = db.crear_requisito(agencia_id, campos, cur=cur)
             vistos.add(int(creado["id"]))
+            por_id[int(creado["id"])] = creado
+            por_clave[clave] = creado
             creados += 1
 
-    desactivados = 0
-    for rid, row in por_id.items():
-        if rid in vistos:
-            continue
-        if row.get("chatbot_configuracion_id") != cfg_id:
-            continue
-        if row.get("activo"):
-            db.actualizar_requisito(agencia_id, rid, {"activo": False}, cur=cur)
-            desactivados += 1
+    scrub = _scrub_requisitos_duplicados(
+        agencia_id,
+        cfg_id,
+        por_id,
+        ids_conservar=vistos,
+        cur=cur,
+    )
+    desactivados = int(scrub.get("desactivados") or 0)
+
+    # Desactivar activos que ya no vienen en la carga rápida (si hubo items).
+    if items:
+        for rid, row in list(por_id.items()):
+            if rid in vistos:
+                continue
+            if row.get("chatbot_configuracion_id") != cfg_id:
+                continue
+            if row.get("activo"):
+                db.actualizar_requisito(agencia_id, rid, {"activo": False}, cur=cur)
+                desactivados += 1
 
     return {"creados": creados, "actualizados": actualizados, "desactivados": desactivados}
 
@@ -1116,6 +1147,16 @@ def _sincronizar_beneficios(
     tipo_default: str,
     cur,
 ) -> Dict[str, int]:
+    from service_chatbot_carga_informacion import (
+        _ETIQUETAS_TEMA_BENEFICIO,
+        _clave_dedupe_beneficio,
+        _descripcion_requisito_limpia,
+        _nombre_beneficio_parece_descripcion,
+        _nombre_item_limpio,
+        _scrub_beneficios_duplicados,
+        _tema_beneficio_carga,
+    )
+
     existentes = db.listar_beneficios(
         agencia_id,
         chatbot_configuracion_id=cfg_id,
@@ -1124,6 +1165,19 @@ def _sincronizar_beneficios(
         cur=cur,
     )
     por_id = {int(r["id"]): r for r in existentes if r.get("id")}
+    por_clave: Dict[str, Dict[str, Any]] = {}
+    for r in existentes:
+        clave = _clave_dedupe_beneficio(
+            str(r.get("tipo") or tipo_default),
+            str(r.get("nombre") or ""),
+            str(
+                r.get("descripcion_corta")
+                or r.get("texto_autorizado")
+                or ""
+            ),
+        )
+        if clave and not clave.endswith(":") and clave != "tema:junk_money":
+            por_clave[clave] = r
     usados = {str(r.get("codigo")) for r in existentes if r.get("codigo")}
     vistos: Set[int] = set()
     creados = actualizados = 0
@@ -1134,14 +1188,26 @@ def _sincronizar_beneficios(
             continue
         if item.get("activo") is False:
             continue
-        nombre = str(item.get("nombre") or "").strip()
+        nombre = _nombre_item_limpio(str(item.get("nombre") or "").strip())
         if not nombre:
             continue
         tipo = str(item.get("tipo") or tipo_target).lower()
+        desc = _descripcion_requisito_limpia(nombre, item.get("descripcion")) or None
+        tema = _tema_beneficio_carga(nombre, desc)
+        if tema == "junk_money":
+            continue
+        if tema and _nombre_beneficio_parece_descripcion(nombre):
+            if not desc:
+                desc = _descripcion_requisito_limpia(
+                    _ETIQUETAS_TEMA_BENEFICIO.get(tema, nombre), nombre
+                ) or None
+            nombre = _ETIQUETAS_TEMA_BENEFICIO.get(tema, nombre[:80])
+        if tema and tema.startswith("bono_"):
+            tipo = "bono"
         campos = {
-            "nombre": nombre,
-            "descripcion_corta": str(item.get("descripcion") or "").strip() or None,
-            "texto_autorizado": str(item.get("descripcion") or "").strip() or None,
+            "nombre": nombre[:160],
+            "descripcion_corta": desc,
+            "texto_autorizado": desc,
             "tipo": tipo,
             "activo": True,
             "permitir_mencion_automatica": True,
@@ -1150,16 +1216,20 @@ def _sincronizar_beneficios(
             campos["valor"] = item.get("valor")
         if item.get("moneda"):
             campos["moneda"] = str(item.get("moneda"))[:10]
-        if "requiere_confirmacion_humana" in item:
+        if "requiere_confirmacion_humana" in item or tipo == "bono":
             campos["requiere_validacion_humana"] = bool(
-                item.get("requiere_confirmacion_humana")
+                item.get("requiere_confirmacion_humana") or tipo == "bono"
             )
 
         item_id = item.get("id")
-        if item_id and int(item_id) in por_id:
-            # Solo campos expuestos; preserva condiciones/vigencias/etc.
-            db.actualizar_beneficio(agencia_id, int(item_id), campos, cur=cur)
-            vistos.add(int(item_id))
+        clave = _clave_dedupe_beneficio(tipo, nombre, desc)
+        hit = por_id.get(int(item_id)) if item_id else por_clave.get(clave)
+        if hit and int(hit["id"]) in por_id:
+            db.actualizar_beneficio(agencia_id, int(hit["id"]), campos, cur=cur)
+            vistos.add(int(hit["id"]))
+            merged = {**hit, **campos, "id": hit["id"]}
+            por_id[int(hit["id"])] = merged
+            por_clave[clave] = merged
             actualizados += 1
         else:
             codigo = item.get("codigo") or _slug_unico(nombre, usados, tipo)
@@ -1171,9 +1241,19 @@ def _sincronizar_beneficios(
             )
             creado = db.crear_beneficio(agencia_id, campos, cur=cur)
             vistos.add(int(creado["id"]))
+            por_id[int(creado["id"])] = creado
+            por_clave[clave] = creado
             creados += 1
 
-    desactivados = 0
+    scrub = _scrub_beneficios_duplicados(
+        agencia_id,
+        cfg_id,
+        por_id,
+        ids_conservar=vistos,
+        cur=cur,
+    )
+    desactivados = int(scrub.get("desactivados") or 0)
+
     if tipo_default == "beneficio":
         tipos_sync = {
             "beneficio",
@@ -1183,18 +1263,19 @@ def _sincronizar_beneficios(
             "acompañamiento",
         }
     else:
-        tipos_sync = {tipo_default}
+        tipos_sync = {tipo_default, "incentivo"}
 
-    for bid, row in por_id.items():
-        if bid in vistos:
-            continue
-        if row.get("chatbot_configuracion_id") != cfg_id:
-            continue
-        if str(row.get("tipo") or "").lower() not in tipos_sync:
-            continue
-        if row.get("activo"):
-            db.actualizar_beneficio(agencia_id, bid, {"activo": False}, cur=cur)
-            desactivados += 1
+    if items:
+        for bid, row in list(por_id.items()):
+            if bid in vistos:
+                continue
+            if row.get("chatbot_configuracion_id") != cfg_id:
+                continue
+            if str(row.get("tipo") or "").lower() not in tipos_sync:
+                continue
+            if row.get("activo"):
+                db.actualizar_beneficio(agencia_id, bid, {"activo": False}, cur=cur)
+                desactivados += 1
 
     return {"creados": creados, "actualizados": actualizados, "desactivados": desactivados}
 
