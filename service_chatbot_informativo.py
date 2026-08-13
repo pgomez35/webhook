@@ -662,6 +662,64 @@ def _es_pregunta(texto: str) -> bool:
     )
 
 
+def _extraer_cuerpo_detalle(nombre: str, desc: str) -> str:
+    """
+    Saca el detalle útil de descripciones sucias del admin/carga.
+
+    Ej.: "Mayoría de edad. - Mayoría de edad. ¿Eres mayor de 18 años?"
+    → "¿Eres mayor de 18 años?"
+    """
+    d = _limpiar_prefijos_viñeta(desc or "")
+    n = _limpiar_prefijos_viñeta(nombre or "")
+    if not d:
+        return ""
+
+    # Preferir pregunta explícita embebida (común en textos de formulario).
+    m = re.search(r"¿[^¿?]+\?", d)
+    if m:
+        return m.group(0).strip()
+
+    # Segmentos separados por " - " / " - - "
+    partes = [
+        _limpiar_prefijos_viñeta(p)
+        for p in re.split(r"\s+-\s+", d)
+        if str(p or "").strip()
+    ]
+    utiles = [
+        p
+        for p in partes
+        if p and _normalizar(p) != _normalizar(n) and not _normalizar(p).startswith(
+            _normalizar(n) + " "
+        )
+    ]
+    # Si un segmento es "Nombre. resto…", quedarse con el resto
+    refinados: List[str] = []
+    for p in partes:
+        if not p:
+            continue
+        if n and _normalizar(p).startswith(_normalizar(n)):
+            resto = p
+            # Quitar prefijo nombre (tolerante a mayúsculas)
+            if resto.lower().startswith(n.lower()):
+                resto = resto[len(n) :].lstrip(" .:-–—")
+            if resto and _normalizar(resto) != _normalizar(n):
+                refinados.append(resto)
+            continue
+        if _normalizar(p) != _normalizar(n):
+            refinados.append(p)
+    if refinados:
+        d = max(refinados, key=len)
+    elif utiles:
+        d = max(utiles, key=len)
+
+    # Último pase: quitar nombre al inicio
+    if n and d.lower().startswith(n.lower()):
+        d = d[len(n) :].lstrip(" .:-–—")
+    if _normalizar(d) == _normalizar(n):
+        return ""
+    return d.strip()
+
+
 def _limpiar_prefijos_viñeta(texto: str) -> str:
     """Quita '- - -', viñetas y numeración repetida al inicio."""
     t = re.sub(r"\s+", " ", str(texto or "").strip())
@@ -1026,6 +1084,9 @@ def construir_texto_detalle_item(
     p = presentacion_desde_asistente(presentacion)
     titulo = str(item.get("titulo") or "").strip() or "Detalle"
     detalle = str(item.get("detalle") or "").strip() or "Sin detalle adicional."
+    # No repetir el título como único "detalle".
+    if _normalizar(detalle.rstrip(".")) == _normalizar(titulo.rstrip(".")):
+        detalle = "Sin detalle adicional configurado para este requisito."
     lineas = [f"*{titulo}*", "", detalle]
     if p.get("agregar_pregunta_final"):
         lineas.append("")
@@ -1431,6 +1492,9 @@ def _titulo_corto_requisito(requisito: Dict[str, Any]) -> str:
     if " - -" in nombre or nombre.count(" - ") >= 2:
         nombre = re.split(r"\s+-\s+-|\s+-\s+", nombre, maxsplit=1)[0].strip()
     if nombre and not _es_pregunta(nombre):
+        # Si el "nombre" es una frase larga, acortar para la lista.
+        if len(nombre) > 72:
+            return _resumir_frase(nombre, max_len=72).rstrip(".")
         return nombre
     desc = _limpiar_prefijos_viñeta(
         str(requisito.get("descripcion") or requisito.get("valor_texto") or "").strip()
@@ -1441,22 +1505,27 @@ def _titulo_corto_requisito(requisito: Dict[str, Any]) -> str:
 
 
 def _detalle_requisito(requisito: Dict[str, Any]) -> str:
-    """Detalle = descripción configurada; si es pregunta de formulario, usa el nombre."""
+    """
+    Detalle al elegir un número.
+
+    Extrae el cuerpo útil aunque la descripción venga sucia
+    («Nombre. - Nombre. ¿pregunta?») o sea solo una pregunta de formulario.
+    """
     nombre = _limpiar_prefijos_viñeta(str(requisito.get("nombre") or "").strip())
-    desc = _limpiar_prefijos_viñeta(
-        str(requisito.get("descripcion") or requisito.get("valor_texto") or "").strip()
-    )
-    # Evitar dumps: "Nombre - - Nombre - ..."
-    if desc and (" - -" in desc or desc.count(" - ") >= 2):
-        desc = re.split(r"\s+-\s+-|\s+-\s+", desc, maxsplit=1)[0].strip()
-        if _normalizar(desc) == _normalizar(nombre):
-            desc = ""
-    if desc and not _es_pregunta(desc):
-        return _limpiar_frase_requisito(desc)
-    if desc and _es_pregunta(desc) and nombre:
-        # Evita responder solo con "¿Eres mayor de 18?" en WhatsApp.
+    desc = str(requisito.get("descripcion") or requisito.get("valor_texto") or "").strip()
+    cuerpo = _extraer_cuerpo_detalle(nombre, desc)
+
+    if cuerpo:
+        if _es_pregunta(cuerpo):
+            # El título ya dice el tema; la pregunta aporta el detalle real.
+            return _limpiar_prefijos_viñeta(cuerpo)
+        return _limpiar_frase_requisito(cuerpo)
+
+    # Sin descripción útil: no repetir el mismo título como "detalle".
+    if nombre and len(nombre) > 70:
+        # El nombre era en realidad la descripción completa.
         return _limpiar_frase_requisito(nombre)
-    return _limpiar_frase_requisito(desc or nombre or "Sin detalle adicional.")
+    return "Sin detalle adicional configurado para este requisito."
 
 
 def preparar_items_requisitos(
@@ -1598,8 +1667,27 @@ def preparar_items_beneficios(
         )
         if not nombre and not detalle_raw:
             continue
+        # Basura tipo "Valor: 35.00 USD" / "00 USD" usada como nombre.
+        if re.match(
+            r"^(valor\s*:?\s*)?[\d.,]+\s*(usd|us\$|\$|eur|cop)?$",
+            nombre.strip(),
+            re.I,
+        ):
+            continue
         titulo = nombre or _resumir_frase(detalle_raw, max_len=80).rstrip(".")
-        detalle = detalle_raw or nombre
+        detalle = _extraer_cuerpo_detalle(titulo, detalle_raw) or detalle_raw or ""
+        if not detalle or _normalizar(detalle.rstrip(".")) == _normalizar(
+            titulo.rstrip(".")
+        ):
+            detalle = (
+                detalle_raw
+                if detalle_raw
+                and _normalizar(detalle_raw.rstrip("."))
+                != _normalizar(titulo.rstrip("."))
+                else ""
+            )
+        if not detalle:
+            detalle = "Sin detalle adicional configurado."
         if b.get("requiere_validacion_humana"):
             detalle = f"{detalle.rstrip('.')} (sujeto a validación del equipo)"
         n += 1
@@ -1608,7 +1696,11 @@ def preparar_items_beneficios(
                 "n": n,
                 "id": b.get("id"),
                 "titulo": titulo,
-                "detalle": _limpiar_frase_requisito(detalle),
+                "detalle": (
+                    _limpiar_prefijos_viñeta(detalle)
+                    if _es_pregunta(detalle)
+                    else _limpiar_frase_requisito(detalle)
+                ),
             }
         )
         if n >= max(1, int(max_elementos or 15)):
