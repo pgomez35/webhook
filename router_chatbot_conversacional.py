@@ -588,7 +588,8 @@ def post_guardar_informacion_organizada(
     payload: GuardarInformacionOrganizadaIn,
     agencia: dict = Depends(obtener_agencia_chatbot_actual),
 ):
-    """Persiste la propuesta revisada. No desactiva registros omitidos."""
+    """Persiste la propuesta revisada. Desactiva bonos/beneficios huérfanos
+    de la sección enviada y colapsa duplicados/basura."""
     cfg_id = _validar_configuracion(agencia, chatbot_configuracion_id)
     import service_chatbot_carga_informacion as svc_carga
 

@@ -316,6 +316,7 @@ _ETIQUETAS_TEMA_BENEFICIO = {
     "comunidad": "Comunidad y participación en batallas",
     "bono_meta": "Bono por cumplimiento de meta",
     "bono_incorporacion": "Bono de incorporación",
+    "bono_constancia": "Bono por constancia",
 }
 
 
@@ -347,6 +348,7 @@ def _tema_beneficio_carga(nombre: str, desc: Optional[str] = None) -> Optional[s
             "nuevo creador",
             "bienvenida",
             "periodo de vigencia",
+            "periodo de incorporacion",
         )
     ):
         return "bono_incorporacion"
@@ -357,9 +359,25 @@ def _tema_beneficio_carga(nombre: str, desc: Optional[str] = None) -> Optional[s
             "bono por cumplimiento",
             "incentivo sujeto",
             "meta durante",
+            "meta establecida",
+            "meta especifica",
+            "alcancen la meta",
+            "alcance la meta",
+            "bono por meta",
+            "meta de desempeno",
+            "meta vigente",
         )
     ):
         return "bono_meta"
+    if any(
+        k in n
+        for k in (
+            "constancia",
+            "participacion constante",
+            "continuidad durante",
+        )
+    ):
+        return "bono_constancia"
     if any(k in n for k in ("acompanamiento", "manager", "orientacion")):
         return "acompanamiento"
     if any(
@@ -410,15 +428,41 @@ def _nombre_beneficio_parece_descripcion(nombre: str) -> bool:
             "espacios de",
             "orientaci",
             "incentivo sujeto",
+            "incentivo para",
             "bono dirigido",
             "bono para",
             "participaci",
             "valor:",
             "valor ",
+            "el cumplimiento",
+            "su reconocimiento",
+            "el valor",
+            "el pago",
+            "el incentivo",
+            "las condiciones",
         )
     ):
         return True
     if re.match(r"^[\d.,]+\s*(usd|us\$|\$)?$", low):
+        return True
+    # Oraciones sueltas (sin título tipo "Bono …" / "Incentivo …").
+    if not re.match(r"^(bono|incentivo)\b", low) and (
+        n.endswith(".") or " debe " in low or " depende " in low
+    ):
+        return True
+    return False
+
+
+def _beneficio_es_basura_nombre(nombre: str, desc: Optional[str] = None) -> bool:
+    """Filas que no deben listarse ni conservarse como ficha propia."""
+    limpio = _nombre_item_limpio(nombre)
+    if not limpio or _parece_dump_lista(limpio):
+        return True
+    tema = _tema_beneficio_carga(limpio, desc)
+    if tema == "junk_money":
+        return True
+    # Descripción huérfana sin tema reconocible → basura.
+    if _nombre_beneficio_parece_descripcion(limpio) and not tema:
         return True
     return False
 
@@ -671,12 +715,17 @@ def obtener_textos_carga(
         for b in beneficios:
             tipo = str(b.get("tipo") or "beneficio").lower()
             nombre = _nombre_item_limpio((b.get("nombre") or "").strip())
-            if not nombre or _parece_dump_lista(nombre):
-                continue
             desc = _desc_beneficio_de_row(b)
+            if not nombre or _beneficio_es_basura_nombre(nombre, desc):
+                continue
             clave = _clave_dedupe_beneficio(tipo, nombre, desc)
             if not clave or clave == "tema:junk_money":
                 continue
+            tema = _tema_beneficio_carga(nombre, desc)
+            if tema and _nombre_beneficio_parece_descripcion(nombre):
+                if not desc:
+                    desc = nombre
+                nombre = _ETIQUETAS_TEMA_BENEFICIO.get(tema, nombre)
             if tipo in {"bono", "incentivo"}:
                 if clave in vistos_bon:
                     continue
@@ -693,12 +742,6 @@ def obtener_textos_carga(
             else:
                 if clave in vistos_ben:
                     continue
-                # Si el nombre era una descripción, preferir etiqueta de tema
-                tema = _tema_beneficio_carga(nombre, desc)
-                if tema and _nombre_beneficio_parece_descripcion(nombre):
-                    if not desc:
-                        desc = nombre
-                    nombre = _ETIQUETAS_TEMA_BENEFICIO.get(tema, nombre)
                 linea = _linea_beneficio_legible(nombre, desc)
                 if not linea:
                     continue
@@ -913,8 +956,6 @@ def _parse_beneficios(texto: str, tipo: str = "beneficio") -> List[Dict[str, Any
         nombre = _nombre_item_limpio(re.sub(r"^[\-\*•]\s*", "", lineas[0]))
         if not nombre:
             continue
-        if _tema_beneficio_carga(nombre) == "junk_money":
-            continue
         if re.match(r"^valor\s*:\s*", nombre, re.I):
             continue
 
@@ -948,6 +989,8 @@ def _parse_beneficios(texto: str, tipo: str = "beneficio") -> List[Dict[str, Any
 
         tema = _tema_beneficio_carga(nombre, desc)
         if tema == "junk_money":
+            continue
+        if _beneficio_es_basura_nombre(nombre, desc):
             continue
         if tema and _nombre_beneficio_parece_descripcion(nombre):
             if not desc:
@@ -2014,7 +2057,7 @@ def _scrub_beneficios_duplicados(
             not limpio
             or clave.endswith(":")
             or clave == "tema:junk_money"
-            or _parece_dump_lista(nombre)
+            or _beneficio_es_basura_nombre(nombre, desc)
         ):
             basura.append(row)
             continue
@@ -2311,7 +2354,9 @@ def guardar_informacion_organizada(
                     or None
                 )
                 tema = _tema_beneficio_carga(nombre, desc_limpia)
-                if tema == "junk_money":
+                if tema == "junk_money" or _beneficio_es_basura_nombre(
+                    nombre, desc_limpia
+                ):
                     continue
                 if tema and _nombre_beneficio_parece_descripcion(nombre):
                     if not desc_limpia:
@@ -2381,6 +2426,29 @@ def guardar_informacion_organizada(
                         por_clave_ben[clave_b] = creado
                         existentes_ben[cid] = creado
                     creados += 1
+
+        # Si el payload trae la sección, desactivar fichas huérfanas
+        # (restos de descripciones viejas que ya no están en el texto).
+        secciones_ben = set()
+        if "beneficios" in datos:
+            secciones_ben.add("beneficio")
+        if "bonos" in datos:
+            secciones_ben.add("bono")
+        if secciones_ben:
+            for row in list(existentes_ben.values()):
+                rid = int(row.get("id") or 0)
+                if not rid or rid in ids_ben_tocados:
+                    continue
+                if row.get("activo") is False:
+                    continue
+                fam = _familia_tipo_beneficio(str(row.get("tipo") or "beneficio"))
+                if fam not in secciones_ben:
+                    continue
+                db.actualizar_beneficio(
+                    agencia_id, rid, {"activo": False}, cur=c
+                )
+                existentes_ben[rid] = {**row, "activo": False}
+                actualizados += 1
 
         scrub_ben = _scrub_beneficios_duplicados(
             agencia_id,
