@@ -1035,10 +1035,9 @@ def _parse_proceso(texto: str) -> List[Dict[str, Any]]:
             mensaje = ""
         if not nombre:
             continue
-        clave = _norm_nombre(nombre)
-        if clave in vistos:
+        if any(_nombres_paso_compatibles(nombre, v) for v in vistos):
             continue
-        vistos.add(clave)
+        vistos.add(nombre)
         texto_paso = f"{nombre}" + (f" — {mensaje}" if mensaje else "")
         accion = "informar"
         baja = texto_paso.lower()
@@ -1374,18 +1373,94 @@ def _anotar_ids_existentes(
         pasos_db = db.listar_flujo_pasos(
             agencia_id, int(flujo["id"]), solo_activos=False, cur=cur
         )
+        ids_usados: set = set()
+        antes = len(propuesta.get("proceso_ingreso") or [])
         for item in propuesta.get("proceso_ingreso") or []:
             if not isinstance(item, dict):
                 continue
-            hit, _via = _resolver_paso_existente(item, pasos_db)
+            hit, _via = _resolver_paso_existente(
+                item, pasos_db, ids_ya_usados=ids_usados
+            )
             if hit:
                 item["id"] = hit.get("id")
                 item["codigo"] = hit.get("codigo")
                 # Conservar orden real del flujo (no el del textarea/IA).
                 if hit.get("orden") is not None:
                     item["orden"] = hit.get("orden")
+                ids_usados.add(int(hit["id"]))
+        propuesta["proceso_ingreso"] = _dedupe_proceso_ingreso(
+            propuesta.get("proceso_ingreso") or []
+        )
+        despues = len(propuesta.get("proceso_ingreso") or [])
+        ids_out = [
+            p.get("id")
+            for p in (propuesta.get("proceso_ingreso") or [])
+            if isinstance(p, dict) and p.get("id")
+        ]
+        codigos_out = [
+            p.get("codigo")
+            for p in (propuesta.get("proceso_ingreso") or [])
+            if isinstance(p, dict) and p.get("codigo")
+        ]
+        logger.info(
+            "[CARGA_INFO_ANALISIS_PASOS] antes=%s despues=%s ids=%s "
+            "codigos=%s duplicados_eliminados=%s",
+            antes,
+            despues,
+            ids_out,
+            codigos_out,
+            max(0, antes - despues),
+        )
 
     return propuesta
+
+
+def _dedupe_proceso_ingreso(pasos: List[Any]) -> List[Dict[str, Any]]:
+    """Una sola representación por paso (id → codigo → nombre compatible)."""
+    out: List[Dict[str, Any]] = []
+    vistos_id: set = set()
+    vistos_cod: set = set()
+    nombres_keep: List[str] = []
+
+    for item in pasos or []:
+        if not isinstance(item, dict):
+            continue
+        nombre = str(item.get("nombre") or "").strip()
+        if not nombre:
+            continue
+
+        iid = item.get("id")
+        if iid is not None:
+            try:
+                iid_i = int(iid)
+            except (TypeError, ValueError):
+                iid_i = None
+            if iid_i is not None:
+                if iid_i in vistos_id:
+                    continue
+                vistos_id.add(iid_i)
+                out.append(item)
+                nombres_keep.append(nombre)
+                cod = str(item.get("codigo") or "").strip().lower()
+                if cod:
+                    vistos_cod.add(cod)
+                continue
+
+        cod = str(item.get("codigo") or "").strip().lower()
+        if cod:
+            if cod in vistos_cod:
+                continue
+            vistos_cod.add(cod)
+            out.append(item)
+            nombres_keep.append(nombre)
+            continue
+
+        if any(_nombres_paso_compatibles(nombre, n) for n in nombres_keep):
+            continue
+        nombres_keep.append(nombre)
+        out.append(item)
+
+    return out
 
 
 def _nombres_paso_compatibles(a: Any, b: Any) -> bool:
@@ -2548,14 +2623,15 @@ def guardar_informacion_organizada(
                     "actualizar" if hit else "crear",
                 )
                 logger.info(
-                    "[CARGA_INFO_PASO] flujo_id=%s orden=%s codigo=%s nombre=%r "
-                    "id_existente=%s accion=%s",
-                    flujo_id,
-                    (hit or {}).get("orden", item.get("orden")),
+                    "[CARGA_INFO_PASO] id_entrada=%s codigo=%s orden=%s "
+                    "id_existente=%s accion=%s flujo_id=%s nombre=%r",
+                    item.get("id"),
                     (hit or {}).get("codigo") or item.get("codigo"),
-                    nombre_limpio or nombre,
+                    (hit or {}).get("orden", item.get("orden")),
                     hit.get("id") if hit else None,
                     "actualizar" if hit else "crear",
+                    flujo_id,
+                    nombre_limpio or nombre,
                 )
                 if hit:
                     db.actualizar_flujo_paso(

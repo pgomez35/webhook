@@ -615,6 +615,8 @@ class PropuestaItemFaq(_Entrada):
 
 
 class PropuestaItemPaso(_Entrada):
+    id: Optional[int] = Field(None, gt=0)
+    codigo: Optional[str] = None
     orden: Optional[int] = None
     nombre: str = Field(..., max_length=160)
     descripcion: Optional[str] = None
