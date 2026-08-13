@@ -49,7 +49,7 @@ DEFAULTS_PRESENTACION = {
     "mostrar_titulo_respuesta": True,
     "agregar_pregunta_final": True,
     "repetir_menu_despues_respuesta": False,
-    "pie_volver_menu": "Puedes escribir *menu* cuando quieras ver las opciones.",
+    "pie_volver_menu": "0. 🏠 Menú principal",
     "mensaje_hola_de_nuevo": "¡Hola de nuevo! 👋 ¿En qué puedo ayudarte?",
     "mensaje_no_entendido": (
         "No entendí tu mensaje. Puedes escribir el número de una opción "
@@ -187,19 +187,62 @@ def es_comando_menu_o_saludo(texto: str) -> bool:
     return es_comando_volver_menu(texto) or es_comando_saludo(texto)
 
 
+def _pie_es_legado_menu(texto: str) -> bool:
+    """Detecta pies antiguos que pedían escribir menu/menú."""
+    n = _normalizar(texto)
+    if not n:
+        return False
+    if "opciones otra vez" in n:
+        return True
+    if "escribe menu" in n or "escribir menu" in n:
+        return True
+    if n in {"menu", "menu principal", "0 menu principal"}:
+        return True
+    return False
+
+
+def _strip_pies_legado(texto: str) -> str:
+    """
+    Quita del cuerpo pies antiguos («Puedes escribir menu…») para poder
+    unificar con «0. 🏠 Menú principal» (p. ej. en asesor / cómo funciona).
+    """
+    t = str(texto or "").strip()
+    if not t:
+        return ""
+    while True:
+        partes = [p.strip() for p in re.split(r"\n\s*\n", t) if p.strip()]
+        if len(partes) >= 2 and _pie_es_legado_menu(partes[-1]):
+            t = "\n\n".join(partes[:-1]).strip()
+            continue
+        lineas = t.split("\n")
+        if len(lineas) >= 2 and _pie_es_legado_menu(lineas[-1]):
+            t = "\n".join(lineas[:-1]).rstrip()
+            continue
+        break
+    t = re.sub(
+        r"(?:\s*\n)?\s*Puedes\s+escribir\s+\*?men[uú]\*?\s+cuando\s+quieras[^\n]*\.?\s*$",
+        "",
+        t,
+        flags=re.IGNORECASE,
+    ).strip()
+    t = re.sub(
+        r"(?:\s*\n)?\s*Escribe\s+\*?men[uú]\*?\s+para\s+volver[^\n]*\.?\s*$",
+        "",
+        t,
+        flags=re.IGNORECASE,
+    ).strip()
+    return t
+
+
 def _pie_volver_menu(presentacion: Optional[Dict[str, Any]]) -> str:
-    """Pie opcional; el aviso de *menu* redundante se omite siempre."""
+    """Pie unificado: 0 = menú principal (menu/inicio siguen funcionando)."""
     p = presentacion or {}
     pie = str(
         p.get("pie_volver_menu")
         if p.get("pie_volver_menu") is not None
         else DEFAULTS_PRESENTACION["pie_volver_menu"]
     ).strip()
-    if not pie:
-        return ""
-    n = _normalizar(pie)
-    # Omite solo el pie antiguo redundante ("…opciones otra vez").
-    if "escribe menu" in n and "opciones otra vez" in n:
+    if not pie or _pie_es_legado_menu(pie):
         return str(DEFAULTS_PRESENTACION["pie_volver_menu"] or "").strip()
     return pie
 
@@ -209,15 +252,24 @@ def _ya_indica_volver_menu(texto: str) -> bool:
     n = _normalizar(texto)
     if not n:
         return False
-    if "escribe menu" in n:
+    # Pie unificado actual.
+    if "menu principal" in n and re.search(r"(^|\s)0(\s|$)", n):
         return True
-    if "volver al menu" in n or "ver el menu" in n or "ver las opciones" in n:
-        return True
-    if "o menu" in n and "menu" in n:
-        return True
-    if "menu principal" in n:
+    if "0." in str(texto or "") and "menú principal" in str(texto or "").lower():
         return True
     return False
+
+
+def _con_pie_menu(respuesta: str, presentacion: Optional[Dict[str, Any]]) -> str:
+    cuerpo = _strip_pies_legado(str(respuesta or "").strip())
+    if not cuerpo:
+        return cuerpo
+    pie = _pie_volver_menu(presentacion)
+    if not pie:
+        return cuerpo
+    if _ya_indica_volver_menu(cuerpo):
+        return cuerpo
+    return f"{cuerpo}\n\n{pie}"
 
 
 def _etiqueta_otro_item_lista(tipo: str) -> str:
@@ -247,6 +299,8 @@ _EMOJI_MENU_POR_CODIGO = {
     "beneficios_bonos_monetizacion": "🎁",
     "bonos": "💰",
     "como_funciona": "ℹ️",
+    "como_funciona_la_agencia": "ℹ️",
+    "funcionamiento": "ℹ️",
     "agencia": "ℹ️",
     "asesor": "👤",
 }
@@ -294,9 +348,24 @@ def _titulo_menu_visible(opcion: Dict[str, Any]) -> str:
         return ""
     codigo = _normalizar(str(opcion.get("codigo") or ""))
     intencion = _normalizar(str(opcion.get("intencion") or ""))
-    emoji = _EMOJI_MENU_POR_CODIGO.get(codigo) or _EMOJI_MENU_POR_CODIGO.get(
-        intencion
+    tipo_fuente = _normalizar(str(opcion.get("tipo_fuente") or ""))
+    emoji = (
+        _EMOJI_MENU_POR_CODIGO.get(codigo)
+        or _EMOJI_MENU_POR_CODIGO.get(intencion)
+        or _EMOJI_MENU_POR_CODIGO.get(tipo_fuente)
     )
+    if not emoji:
+        ntit = _normalizar(titulo)
+        if "requisito" in ntit:
+            emoji = "🎥"
+        elif "bono" in ntit or "incentivo" in ntit:
+            emoji = "💰"
+        elif "beneficio" in ntit:
+            emoji = "🎁"
+        elif "funciona" in ntit:
+            emoji = "ℹ️"
+        elif "asesor" in ntit or ntit.startswith("hablar"):
+            emoji = "👤"
     if not emoji:
         return titulo
     return _prefijar_emoji_si_falta(emoji, titulo)
@@ -310,18 +379,6 @@ def _pie_navegacion_lista(*, tipo: str = "", total: int = 0) -> str:
             "0. 🏠 Menú principal"
         )
     return "0. 🏠 Menú principal"
-
-
-def _con_pie_menu(respuesta: str, presentacion: Optional[Dict[str, Any]]) -> str:
-    cuerpo = str(respuesta or "").strip()
-    if not cuerpo:
-        return cuerpo
-    pie = _pie_volver_menu(presentacion)
-    if not pie:
-        return cuerpo
-    if _ya_indica_volver_menu(cuerpo):
-        return cuerpo
-    return f"{cuerpo}\n\n{pie}"
 
 
 def _linea_lista_numerada(numero: int, texto: str) -> str:
@@ -386,15 +443,7 @@ def presentacion_desde_asistente(asistente: Optional[Dict[str, Any]]) -> Dict[st
 
     # Nunca reinyectar el pie largo redundante antiguo.
     pie = str(out.get("pie_volver_menu") or "").strip()
-    n_pie = _normalizar(pie)
-    if pie and "escribe menu" in n_pie and "opciones otra vez" in n_pie:
-        out["pie_volver_menu"] = DEFAULTS_PRESENTACION["pie_volver_menu"]
-    elif pie and n_pie in {
-        "escribe menu para volver al menu",
-        "escribe menu para volver al menu.",
-    }:
-        out["pie_volver_menu"] = DEFAULTS_PRESENTACION["pie_volver_menu"]
-    elif not pie:
+    if (not pie) or _pie_es_legado_menu(pie):
         out["pie_volver_menu"] = DEFAULTS_PRESENTACION["pie_volver_menu"]
     return out
 
