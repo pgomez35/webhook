@@ -525,12 +525,36 @@ def _linea_beneficio_legible(
     n = _nombre_item_limpio(nombre)
     if not n:
         return None
+    # No listar basura monetaria como ficha.
+    if re.match(
+        r"^(valor\s*:?\s*)?[\d.,]+\s*(usd|us\$|\$|eur|cop)?$",
+        n.strip(),
+        re.I,
+    ):
+        return None
     d = _descripcion_requisito_limpia(n, desc)
-    lineas = [f"- {n}"]
+    # Evitar meter "Valor: …" dentro de la descripción.
     if d:
+        d = re.sub(
+            r"(?im)^\s*valor\s*:\s*[\d.,]+\s*[A-Za-z$€]*\s*$",
+            "",
+            d,
+        ).strip()
+    lineas = [f"- {n}"]
+    if d and _norm_nombre(d) != _norm_nombre(n):
         lineas.append(f"  {d}")
     if valor not in (None, ""):
-        lineas.append(f"  Valor: {valor} {(moneda or '')}".rstrip())
+        try:
+            vnum = float(valor)
+        except (TypeError, ValueError):
+            vnum = None
+        if vnum is not None and vnum != 0:
+            mon = (moneda or "").strip()
+            if vnum == int(vnum):
+                valor_txt = str(int(vnum))
+            else:
+                valor_txt = f"{vnum:.2f}"
+            lineas.append(f"  Valor: {valor_txt} {mon}".rstrip())
     return "\n".join(lineas)
 
 
@@ -778,8 +802,10 @@ def obtener_textos_carga(
         return {
             "general": general,
             "requisitos_texto": "\n".join(req_txt),
-            "beneficios_texto": "\n".join(ben_txt),
-            "bonos_texto": "\n".join(bon_txt),
+            # Separar fichas con línea en blanco para que el parse no parta
+            # descripciones/Valor: como ítems nuevos.
+            "beneficios_texto": "\n\n".join(ben_txt),
+            "bonos_texto": "\n\n".join(bon_txt),
             "faq_texto": "\n\n".join(faq_txt),
             "proceso_ingreso_texto": "\n".join(proceso_txt),
             "enlaces_contacto_texto": "\n\n".join(enlaces_txt),
@@ -835,45 +861,91 @@ def _parse_requisitos(texto: str) -> List[Dict[str, Any]]:
 
 
 def _parse_beneficios(texto: str, tipo: str = "beneficio") -> List[Dict[str, Any]]:
-    items = []
+    """
+    Parsea beneficios/bonos en bloques.
+
+    Formato esperado (una ficha por item):
+      - Nombre del bono
+        Descripcion…
+        Valor: 35.00 USD
+
+    No trata cada linea suelta como un item nuevo (eso fragmentaba
+    Valor: y descripciones largas).
+    """
+    items: List[Dict[str, Any]] = []
     vistos: set = set()
-    bloques = re.split(r"\n\s*\n", (texto or "").strip()) if texto else []
-    if not bloques and (texto or "").strip():
-        bloques = _lineas_bullet(texto)
-    else:
-        bullets = _lineas_bullet(texto)
-        if len(bullets) >= len(bloques):
-            bloques = bullets
+
+    def _es_inicio_item(linea: str) -> bool:
+        return bool(re.match(r"^[\-\*•]\s+\S", linea.strip()))
+
+    def _es_linea_valor(linea: str) -> bool:
+        s = linea.strip()
+        if re.match(r"^valor\s*:\s*[\d.,]+", s, re.I):
+            return True
+        if re.match(r"^[\d.,]+\s*(usd|us\$|\$|eur|cop)?$", s, re.I):
+            return True
+        return False
+
+    # Armar bloques: nueva vineta "- …" o linea en blanco = nuevo item.
+    bloques: List[str] = []
+    actual: List[str] = []
+    for raw in (texto or "").splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            if actual:
+                bloques.append("\n".join(actual))
+                actual = []
+            continue
+        if _es_inicio_item(stripped) and actual:
+            bloques.append("\n".join(actual))
+            actual = [stripped]
+        else:
+            actual.append(stripped)
+    if actual:
+        bloques.append("\n".join(actual))
 
     for bloque in bloques:
         lineas = [x.strip() for x in str(bloque).splitlines() if x.strip()]
         if not lineas:
             continue
-        nombre = _nombre_item_limpio(re.sub(r"^[\-\*]\s*", "", lineas[0]))
+        if _es_linea_valor(lineas[0]):
+            continue
+        nombre = _nombre_item_limpio(re.sub(r"^[\-\*•]\s*", "", lineas[0]))
         if not nombre:
             continue
-        # Basura tipo "00 USD" / "Valor: 35"
         if _tema_beneficio_carga(nombre) == "junk_money":
             continue
-        if re.match(r"^valor\s*:\s*[\d.,]+", nombre, re.I):
+        if re.match(r"^valor\s*:\s*", nombre, re.I):
             continue
-        desc_raw = "\n".join(lineas[1:]).strip() if len(lineas) > 1 else ""
-        if not desc_raw and "." in nombre and _nombre_beneficio_parece_descripcion(nombre):
-            # Toda la línea es descripción: intentar título por tema
+
+        cuerpo: List[str] = []
+        for ln in lineas[1:]:
+            if _es_linea_valor(ln):
+                continue
+            cuerpo.append(ln)
+        desc_raw = "\n".join(cuerpo).strip()
+
+        if (not desc_raw) and _nombre_beneficio_parece_descripcion(nombre):
             tema = _tema_beneficio_carga(nombre)
             if tema and tema in _ETIQUETAS_TEMA_BENEFICIO:
                 desc_raw = nombre
                 nombre = _ETIQUETAS_TEMA_BENEFICIO[tema]
-        elif not desc_raw and "." in str(lineas[0]):
-            orig = re.sub(r"^[\-\*]\s*", "", lineas[0])
-            if "." in orig:
-                nombre_raw, resto = orig.split(".", 1)
-                nombre = _nombre_item_limpio(nombre_raw)[:160] or nombre
-                desc_raw = resto.strip()
+
         desc = _descripcion_requisito_limpia(nombre, desc_raw)
         if desc and _norm_nombre(desc) == _norm_nombre(nombre):
             desc = ""
-        # Si el "nombre" era una descripción y hay tema, promover etiqueta
+        if desc:
+            desc = re.sub(
+                r"(?im)^\s*valor\s*:\s*[\d.,]+\s*[A-Za-z$€]*\s*$",
+                "",
+                desc,
+            ).strip()
+            desc = re.sub(
+                r"(?i)\s*valor\s*:\s*[\d.,]+\s*[A-Za-z$€]*\s*$",
+                "",
+                desc,
+            ).strip()
+
         tema = _tema_beneficio_carga(nombre, desc)
         if tema == "junk_money":
             continue
@@ -882,19 +954,32 @@ def _parse_beneficios(texto: str, tipo: str = "beneficio") -> List[Dict[str, Any
                 desc = _descripcion_requisito_limpia(
                     _ETIQUETAS_TEMA_BENEFICIO.get(tema, nombre), nombre
                 )
-            nombre = _ETIQUETAS_TEMA_BENEFICIO.get(tema, _nombre_item_limpio(nombre)[:80])
+            nombre = _ETIQUETAS_TEMA_BENEFICIO.get(
+                tema, _nombre_item_limpio(nombre)[:80]
+            )
+
         clave = _clave_dedupe_beneficio(tipo, nombre, desc)
         if not clave or clave.endswith(":") or clave in vistos:
             continue
+
         valor = None
         moneda = None
         m = re.search(r"valor\s*:\s*([\d.,]+)\s*([A-Za-z$€]*)", bloque, re.I)
+        if not m:
+            m = re.search(
+                r"(?m)^\s*([\d.,]+)\s*(usd|us\$|\$|eur|cop)\s*$",
+                bloque,
+                re.I,
+            )
         if m:
             try:
                 valor = float(m.group(1).replace(",", ""))
             except ValueError:
                 valor = None
             moneda = (m.group(2) or "").strip() or None
+            if moneda == "$":
+                moneda = "USD"
+
         vistos.add(clave)
         items.append(
             {
@@ -908,6 +993,7 @@ def _parse_beneficios(texto: str, tipo: str = "beneficio") -> List[Dict[str, Any
             }
         )
     return items
+
 
 
 def _inferir_meta_faq(pregunta: str) -> Dict[str, Any]:
