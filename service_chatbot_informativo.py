@@ -233,14 +233,83 @@ def _etiqueta_otro_item_lista(tipo: str) -> str:
     }.get(t, "Otra opción")
 
 
+# Títulos estructurales (solo presentación; no afectan matching).
+TITULO_SECCION_REQUISITOS = "🎥 Requisitos para ser creador LIVE"
+TITULO_SECCION_BENEFICIOS = "🎁 Beneficios de pertenecer a la agencia"
+TITULO_SECCION_BONOS = "💰 Bonos e incentivos"
+TITULO_SECCION_BENEFICIOS_BONOS = "🎁 Beneficios y bonos"
+
+_EMOJI_MENU_POR_CODIGO = {
+    "requisitos": "🎥",
+    "beneficios": "🎁",
+    "beneficios_bonos": "🎁",
+    "beneficios_y_bonos": "🎁",
+    "beneficios_bonos_monetizacion": "🎁",
+    "bonos": "💰",
+    "como_funciona": "ℹ️",
+    "agencia": "ℹ️",
+    "asesor": "👤",
+}
+
+_RE_EMOJI_INICIAL = re.compile(
+    r"^(?:"
+    r"[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F1E0-\U0001F1FF]"
+    r"|✅|✔️|☑️|ℹ\ufe0f?|❤\ufe0f?"
+    r")"
+)
+
+
+def _texto_tiene_emoji_inicial(texto: str) -> bool:
+    return bool(_RE_EMOJI_INICIAL.match(str(texto or "").lstrip()))
+
+
+def _prefijar_emoji_si_falta(emoji: str, titulo: str) -> str:
+    """Añade emoji estructural solo si el título aún no empieza con uno."""
+    t = str(titulo or "").strip()
+    if not t:
+        return t
+    if _texto_tiene_emoji_inicial(t):
+        return t
+    e = str(emoji or "").strip()
+    if not e:
+        return t
+    return f"{e} {t}"
+
+
+def _limpiar_prefijos_lista_conservando_emoji(texto: str) -> str:
+    """Quita viñetas/numeración al inicio sin borrar emojis del título configurado."""
+    t = re.sub(r"\s+", " ", str(texto or "").strip())
+    prev = None
+    while prev != t:
+        prev = t
+        t = re.sub(r"^[\-\*\u2022●•]+[\.\)\-]?\s*", "", t).strip()
+        t = re.sub(r"^\d+[\.\)\-]\s*", "", t).strip()
+    return t
+
+
+def _titulo_menu_visible(opcion: Dict[str, Any]) -> str:
+    """Título de opción de menú con emoji estructural (solo visual)."""
+    titulo = _titulo_opcion_menu_corta(str(opcion.get("titulo") or "").strip())
+    if not titulo:
+        return ""
+    codigo = _normalizar(str(opcion.get("codigo") or ""))
+    intencion = _normalizar(str(opcion.get("intencion") or ""))
+    emoji = _EMOJI_MENU_POR_CODIGO.get(codigo) or _EMOJI_MENU_POR_CODIGO.get(
+        intencion
+    )
+    if not emoji:
+        return titulo
+    return _prefijar_emoji_si_falta(emoji, titulo)
+
+
 def _pie_navegacion_lista(*, tipo: str = "", total: int = 0) -> str:
     """Pie de listas/detalle: rangos 1-N y 0 = menú principal."""
     if int(total or 0) > 1:
         return (
             f"{_etiqueta_otro_item_lista(tipo)}: 1-{int(total)}\n"
-            "0. Menú principal"
+            "0. 🏠 Menú principal"
         )
-    return "0. Menú principal"
+    return "0. 🏠 Menú principal"
 
 
 def _con_pie_menu(respuesta: str, presentacion: Optional[Dict[str, Any]]) -> str:
@@ -256,9 +325,9 @@ def _con_pie_menu(respuesta: str, presentacion: Optional[Dict[str, Any]]) -> str
 
 
 def _linea_lista_numerada(numero: int, texto: str) -> str:
-    """Formato unificado de menús/listas: 1. ✅ Título"""
+    """Formato unificado: 1. Título (sin ✅ automático; respeta emoji del título)."""
     titulo = str(texto or "").strip()
-    return f"{int(numero)}. ✅ {titulo}"
+    return f"{int(numero)}. {titulo}"
 
 
 def _vigente(registro: Dict[str, Any], hoy: Optional[date] = None) -> bool:
@@ -415,7 +484,7 @@ def _lineas_opciones_menu(opciones: List[Dict[str, Any]]) -> List[str]:
     """Única fuente de numeración visible 1..N para menú inicial y de retorno."""
     lineas: List[str] = []
     for op in numerar_opciones_activas(opciones):
-        titulo = _titulo_opcion_menu_corta(str(op.get("titulo") or "").strip())
+        titulo = _titulo_menu_visible(op)
         if not titulo:
             continue
         lineas.append(_linea_lista_numerada(int(op["numero_visible"]), titulo))
@@ -1008,7 +1077,7 @@ def construir_respuesta_por_intencion_informativa(
             texto_consulta,
             items,
             tipo="requisitos",
-            titulo="Requisitos para ser creador LIVE 🎥",
+            titulo=TITULO_SECCION_REQUISITOS,
             introduccion="Para formar parte de la agencia necesitas:",
             presentacion=presentacion,
         )
@@ -1029,7 +1098,7 @@ def construir_respuesta_por_intencion_informativa(
             texto_consulta,
             items,
             tipo="beneficios",
-            titulo="Beneficios de pertenecer a la agencia",
+            titulo=TITULO_SECCION_BENEFICIOS,
             introduccion="Esto es lo que ofrece la agencia:",
             presentacion=presentacion,
         )
@@ -1050,7 +1119,7 @@ def construir_respuesta_por_intencion_informativa(
             texto_consulta,
             items,
             tipo="bonos",
-            titulo="Bonos e incentivos",
+            titulo=TITULO_SECCION_BONOS,
             introduccion="Esto es lo que ofrece la agencia:",
             presentacion=presentacion,
         )
@@ -1116,7 +1185,7 @@ def construir_texto_detalle_item(
     # No repetir el título como único "detalle".
     if _normalizar(detalle.rstrip(".")) == _normalizar(titulo.rstrip(".")):
         detalle = "Sin detalle adicional configurado para este requisito."
-    lineas = [f"*{titulo}*", "", detalle]
+    lineas = [titulo, "", detalle]
     if p.get("agregar_pregunta_final"):
         lineas.append("")
         lineas.append(_pie_navegacion_lista(tipo=tipo_lista, total=total))
@@ -1509,8 +1578,8 @@ def _titulo_opcion_menu_corta(titulo: str) -> str:
 
 
 def _titulo_corto_requisito(requisito: Dict[str, Any]) -> str:
-    """Título de lista = nombre configurado en el admin (sin reescribir)."""
-    nombre = _limpiar_prefijos_viñeta(
+    """Título de lista = nombre configurado en el admin (sin reescribir; conserva emoji)."""
+    nombre = _limpiar_prefijos_lista_conservando_emoji(
         re.sub(r"\s+", " ", str(requisito.get("nombre") or "").strip())
     )
     # Cortes de dumps anidados: "Nombre - - Nombre - dump"
@@ -1518,10 +1587,10 @@ def _titulo_corto_requisito(requisito: Dict[str, Any]) -> str:
         nombre = re.split(r"\s+-\s+-|\s+-\s+", nombre, maxsplit=1)[0].strip()
     if nombre and not _es_pregunta(nombre):
         # Si el "nombre" es una frase larga, acortar para la lista.
-        if len(nombre) > 72:
+        if len(nombre) > 72 and not _texto_tiene_emoji_inicial(nombre):
             return _resumir_frase(nombre, max_len=72).rstrip(".")
         return nombre
-    desc = _limpiar_prefijos_viñeta(
+    desc = _limpiar_prefijos_lista_conservando_emoji(
         str(requisito.get("descripcion") or requisito.get("valor_texto") or "").strip()
     )
     if desc and not _es_pregunta(desc):
@@ -1629,7 +1698,7 @@ def construir_texto_lista_detalle(
     presentacion: Optional[Dict[str, Any]] = None,
     tipo_lista: str = "",
 ) -> str:
-    """Lista numerada + ✅ para elegir detalle con un número."""
+    """Lista numerada para elegir detalle con un número (sin ✅ automático)."""
     p = presentacion_desde_asistente(presentacion)
     lineas: List[str] = []
     if p.get("mostrar_titulo_respuesta"):
@@ -1658,7 +1727,7 @@ def construir_respuesta_requisitos(
     )
     texto = construir_texto_lista_detalle(
         items,
-        titulo="Requisitos para ser creador LIVE 🎥",
+        titulo=TITULO_SECCION_REQUISITOS,
         introduccion="Para formar parte de la agencia necesitas:",
         presentacion=presentacion,
         tipo_lista="requisitos",
@@ -1686,7 +1755,9 @@ def preparar_items_beneficios(
         if tipos and tipo not in tipos:
             continue
 
-        nombre = re.sub(r"\s+", " ", str(b.get("nombre") or "").strip())
+        nombre = _limpiar_prefijos_lista_conservando_emoji(
+            re.sub(r"\s+", " ", str(b.get("nombre") or "").strip())
+        )
         detalle_raw = (
             str(b.get("texto_autorizado") or "").strip()
             or str(b.get("descripcion_corta") or "").strip()
@@ -2251,7 +2322,7 @@ async def procesar_mensaje_informativo(
                 texto_in,
                 items,
                 tipo="requisitos",
-                titulo="Requisitos para ser creador LIVE 🎥",
+                titulo=TITULO_SECCION_REQUISITOS,
                 introduccion="Para formar parte de la agencia necesitas:",
                 presentacion=presentacion,
             )
@@ -2280,14 +2351,14 @@ async def procesar_mensaje_informativo(
                     ),
                     max_elementos=int(presentacion.get("max_elementos_respuesta") or 15),
                 )
-                titulo_ben = "Beneficios y bonos"
+                titulo_ben = TITULO_SECCION_BENEFICIOS_BONOS
             else:
                 items = preparar_items_beneficios(
                     bens or [],
                     tipos=("beneficio", "capacitacion", "acompanamiento", "otro"),
                     max_elementos=int(presentacion.get("max_elementos_respuesta") or 15),
                 )
-                titulo_ben = "Beneficios de pertenecer a la agencia"
+                titulo_ben = TITULO_SECCION_BENEFICIOS
             respuesta, lista_detalle_a_guardar, _det = construir_respuesta_lista_o_detalle(
                 texto_in,
                 items,
@@ -2311,7 +2382,7 @@ async def procesar_mensaje_informativo(
                 texto_in,
                 items,
                 tipo="bonos",
-                titulo="Bonos e incentivos",
+                titulo=TITULO_SECCION_BONOS,
                 introduccion="Esto es lo que ofrece la agencia:",
                 presentacion=presentacion,
             )
@@ -2619,7 +2690,7 @@ async def _responder_conocimiento_faq(
             texto_in,
             items,
             tipo="requisitos",
-            titulo="Requisitos para ser creador LIVE",
+            titulo=TITULO_SECCION_REQUISITOS,
             introduccion="Para formar parte de la agencia necesitas:",
             presentacion=presentacion,
         )
@@ -2642,7 +2713,7 @@ async def _responder_conocimiento_faq(
             tipos=tipos,
             max_elementos=int(presentacion.get("max_elementos_respuesta") or 15),
         )
-        titulo = "Bonos e incentivos" if cat == "bonos" else "Beneficios de la agencia"
+        titulo = TITULO_SECCION_BONOS if cat == "bonos" else TITULO_SECCION_BENEFICIOS
         respuesta, lista_detalle_a_guardar, _det = construir_respuesta_lista_o_detalle(
             texto_in,
             items,
