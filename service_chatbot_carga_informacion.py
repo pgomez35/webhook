@@ -1358,7 +1358,114 @@ def _anotar_ids_existentes(
             item["id"] = hit.get("id")
             item["codigo"] = hit.get("codigo")
 
+    # Pasos del flujo de conversión: anotar id/codigo para guardar idempotente.
+    flujos = db.listar_flujos(
+        agencia_id,
+        chatbot_configuracion_id=cfg_id,
+        tipo_flujo="conversion",
+        solo_activos=False,
+        cur=cur,
+    )
+    flujo = next(
+        (f for f in flujos if f.get("codigo") == CODIGO_FLUJO_CONVERSION),
+        flujos[0] if flujos else None,
+    )
+    if flujo and flujo.get("id"):
+        pasos_db = db.listar_flujo_pasos(
+            agencia_id, int(flujo["id"]), solo_activos=False, cur=cur
+        )
+        for item in propuesta.get("proceso_ingreso") or []:
+            if not isinstance(item, dict):
+                continue
+            hit, _via = _resolver_paso_existente(item, pasos_db)
+            if hit:
+                item["id"] = hit.get("id")
+                item["codigo"] = hit.get("codigo")
+                # Conservar orden real del flujo (no el del textarea/IA).
+                if hit.get("orden") is not None:
+                    item["orden"] = hit.get("orden")
+
     return propuesta
+
+
+def _nombres_paso_compatibles(a: Any, b: Any) -> bool:
+    na = _norm_nombre(_nombre_item_limpio(str(a or "")))
+    nb = _norm_nombre(_nombre_item_limpio(str(b or "")))
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    # Prefijo significativo: "explicar beneficios" ≈ "explicar beneficios y bonos…"
+    corto, largo = (na, nb) if len(na) <= len(nb) else (nb, na)
+    if len(corto) >= 12 and largo.startswith(corto):
+        return True
+    return False
+
+
+def _resolver_paso_existente(
+    item: Dict[str, Any],
+    pasos_db: List[Dict[str, Any]],
+    *,
+    ids_ya_usados: Optional[set] = None,
+) -> Tuple[Optional[Dict[str, Any]], str]:
+    """
+    Identifica el paso existente. Prioridad:
+    1) id (mismo flujo)
+    2) codigo
+    3) nombre (exacto o prefijo significativo)
+    4) orden (protección final anti-colisión)
+    """
+    usados = set(ids_ya_usados or set())
+    candidatos = [p for p in pasos_db if p.get("id") and int(p["id"]) not in usados]
+
+    item_id = item.get("id")
+    if item_id:
+        for p in candidatos:
+            if int(p["id"]) == int(item_id):
+                return p, "id"
+
+    codigo = str(item.get("codigo") or "").strip().lower()
+    if codigo:
+        for p in candidatos:
+            if str(p.get("codigo") or "").strip().lower() == codigo:
+                return p, "codigo"
+
+    nombre = str(item.get("nombre") or "").strip()
+    if nombre:
+        for p in candidatos:
+            if _nombres_paso_compatibles(nombre, p.get("nombre")):
+                return p, "nombre"
+
+    orden = item.get("orden")
+    if orden is not None and str(orden).strip() != "":
+        try:
+            orden_i = int(orden)
+        except (TypeError, ValueError):
+            orden_i = None
+        if orden_i is not None:
+            for p in candidatos:
+                if int(p.get("orden") or -1) == orden_i:
+                    return p, "orden"
+
+    return None, ""
+
+
+def _validar_ordenes_proceso(pasos: List[Any]) -> None:
+    vistos: set = set()
+    for item in pasos:
+        if not isinstance(item, dict):
+            continue
+        if item.get("orden") is None or str(item.get("orden")).strip() == "":
+            continue
+        try:
+            orden = int(item.get("orden"))
+        except (TypeError, ValueError):
+            continue
+        if orden in vistos:
+            raise ConversacionalError(
+                f"El proceso de ingreso trae dos pasos con el mismo orden ({orden})."
+            )
+        vistos.add(orden)
 
 
 # ---------------------------------------------------------------------------
@@ -2337,6 +2444,7 @@ def guardar_informacion_organizada(
         # Proceso → flujo conversión (crear faltantes, no borrar)
         pasos = datos.get("proceso_ingreso") or []
         if pasos:
+            _validar_ordenes_proceso(pasos)
             flujos = db.listar_flujos(
                 agencia_id,
                 chatbot_configuracion_id=chatbot_configuracion_id,
@@ -2364,12 +2472,15 @@ def guardar_informacion_organizada(
                     cur=c,
                 )
                 creados += 1
-            existentes_pasos = {
-                _norm_nombre(p.get("nombre")): p
-                for p in db.listar_flujo_pasos(
-                    agencia_id, int(flujo["id"]), solo_activos=False, cur=c
-                )
+            flujo_id = int(flujo["id"])
+            pasos_db = db.listar_flujo_pasos(
+                agencia_id, flujo_id, solo_activos=False, cur=c
+            )
+            usados_cod_pasos = {
+                str(p.get("codigo")) for p in pasos_db if p.get("codigo")
             }
+            ids_pasos_tocados: set = set()
+
             for item in pasos:
                 if not isinstance(item, dict):
                     continue
@@ -2396,7 +2507,10 @@ def guardar_informacion_organizada(
                 }
                 if accion not in validas:
                     accion = "informar"
-                hit = existentes_pasos.get(_norm_nombre(nombre))
+
+                hit, via = _resolver_paso_existente(
+                    item, pasos_db, ids_ya_usados=ids_pasos_tocados
+                )
                 msg_limpio = _texto_corto_limpio(
                     item.get("mensaje") or item.get("descripcion") or "",
                     max_len=500,
@@ -2404,9 +2518,9 @@ def guardar_informacion_organizada(
                 nombre_limpio = _nombre_item_limpio(nombre)
                 if msg_limpio and _norm_nombre(msg_limpio) == _norm_nombre(nombre_limpio):
                     msg_limpio = ""
+                # No tocar orden ni siguiente_paso_id: el motor avanza por orden.
                 campos_p = {
                     "nombre": (nombre_limpio or nombre)[:160],
-                    "orden": int(item.get("orden") or 0),
                     "tipo_accion": accion,
                     "mensaje_instrucciones": msg_limpio or None,
                     "requiere_humano": bool(item.get("requiere_humano")),
@@ -2417,23 +2531,64 @@ def guardar_informacion_organizada(
                         else {}
                     ),
                 }
+                logger.info(
+                    "[CARGA_INFO_MATCH_PASO] entrada_nombre=%r entrada_codigo=%r "
+                    "entrada_orden=%s entrada_id=%s match_por_id=%s match_por_codigo=%s "
+                    "match_por_nombre=%s match_por_orden=%s paso_existente_id=%s "
+                    "accion_final=%s",
+                    nombre,
+                    item.get("codigo"),
+                    item.get("orden"),
+                    item.get("id"),
+                    via == "id",
+                    via == "codigo",
+                    via == "nombre",
+                    via == "orden",
+                    hit.get("id") if hit else None,
+                    "actualizar" if hit else "crear",
+                )
+                logger.info(
+                    "[CARGA_INFO_PASO] flujo_id=%s orden=%s codigo=%s nombre=%r "
+                    "id_existente=%s accion=%s",
+                    flujo_id,
+                    (hit or {}).get("orden", item.get("orden")),
+                    (hit or {}).get("codigo") or item.get("codigo"),
+                    nombre_limpio or nombre,
+                    hit.get("id") if hit else None,
+                    "actualizar" if hit else "crear",
+                )
                 if hit:
-                    db.actualizar_flujo_paso(agencia_id, int(hit["id"]), campos_p, cur=c)
+                    db.actualizar_flujo_paso(
+                        agencia_id, int(hit["id"]), campos_p, cur=c
+                    )
+                    ids_pasos_tocados.add(int(hit["id"]))
+                    merged = {**hit, **campos_p}
+                    for i, p in enumerate(pasos_db):
+                        if int(p.get("id") or 0) == int(hit["id"]):
+                            pasos_db[i] = merged
+                            break
                     actualizados += 1
                 else:
+                    codigo = _codigo_unico(
+                        item.get("codigo") or nombre,
+                        usados_cod_pasos,
+                        prefijo=f"paso_{item.get('orden') or 0}",
+                        indice=int(item.get("orden") or 0) or 1,
+                    )
+                    usados_cod_pasos.add(codigo)
                     campos_p.update(
                         {
-                            "flujo_id": int(flujo["id"]),
-                            "codigo": _codigo_unico(
-                                nombre,
-                                set(),
-                                prefijo=f"paso_{item.get('orden') or 0}",
-                                indice=int(item.get("orden") or 0) or 1,
-                            ),
+                            "flujo_id": flujo_id,
+                            "codigo": codigo,
                             "obligatorio": True,
+                            # orden=None → DB asigna MAX+1 (evita uq_flujo_paso_orden)
+                            "orden": None,
                         }
                     )
-                    db.crear_flujo_paso(agencia_id, campos_p, cur=c)
+                    creado = db.crear_flujo_paso(agencia_id, campos_p, cur=c)
+                    if creado and creado.get("id"):
+                        ids_pasos_tocados.add(int(creado["id"]))
+                        pasos_db.append(creado)
                     creados += 1
 
         textos = obtener_textos_carga(agencia_id, chatbot_configuracion_id, cur=c)
