@@ -310,6 +310,33 @@ def _clave_dedupe_requisito(nombre: str) -> str:
     return f"n:{_norm_nombre(limpio)}"
 
 
+def _nombre_requisito_parece_descripcion(nombre: str) -> bool:
+    """Detecta filas cuyo 'nombre' es en realidad una oración de descripción."""
+    n = _nombre_item_limpio(nombre)
+    if not n:
+        return True
+    if len(n) > 90:
+        return True
+    low = n.lower()
+    if low.startswith(
+        (
+            "la persona",
+            "se buscan",
+            "se valoran",
+            "se espera",
+            "el creador",
+            "debe ",
+            "deben ",
+            "contar con",
+            "tener al menos",
+        )
+    ):
+        return True
+    if n.endswith(".") and len(n) > 50:
+        return True
+    return False
+
+
 _ETIQUETAS_TEMA_BENEFICIO = {
     "acompanamiento": "Acompañamiento de manager",
     "capacitacion": "Capacitaciones para creadores LIVE",
@@ -554,8 +581,8 @@ def _linea_requisito_legible(nombre: str, desc: Optional[str]) -> Optional[str]:
     if not n:
         return None
     d = _descripcion_requisito_limpia(n, desc)
-    if d:
-        return f"- {n}. {d}"
+    if d and _norm_nombre(d) != _norm_nombre(n):
+        return f"- {n}\n  {d}"
     return f"- {n}"
 
 
@@ -701,7 +728,11 @@ def obtener_textos_carga(
             if not clave or clave in vistos_req:
                 continue
             # Saltar filas basura cuyo nombre limpio quedó vacío o es un dump
-            if not nombre or _parece_dump_lista(nombre):
+            if (
+                not nombre
+                or _parece_dump_lista(nombre)
+                or _nombre_requisito_parece_descripcion(nombre)
+            ):
                 continue
             linea = _linea_requisito_legible(nombre, r.get("descripcion"))
             if not linea:
@@ -844,7 +875,7 @@ def obtener_textos_carga(
 
         return {
             "general": general,
-            "requisitos_texto": "\n".join(req_txt),
+            "requisitos_texto": "\n\n".join(req_txt),
             # Separar fichas con línea en blanco para que el parse no parta
             # descripciones/Valor: como ítems nuevos.
             "beneficios_texto": "\n\n".join(ben_txt),
@@ -862,31 +893,86 @@ def obtener_textos_carga(
 
 
 def _parse_requisitos(texto: str) -> List[Dict[str, Any]]:
-    items = []
+    """
+    Parsea requisitos en bloques (igual que beneficios):
+
+      - Nombre del requisito
+        Descripción en líneas siguientes…
+
+    También acepta el formato legacy en una sola línea:
+      - Nombre. Descripción
+    """
+    items: List[Dict[str, Any]] = []
     vistos: set = set()
-    for i, linea in enumerate(_lineas_bullet(texto), start=1):
-        linea = _nombre_item_limpio(linea, max_len=500)
-        if not linea:
+
+    def _es_inicio_item(linea: str) -> bool:
+        return bool(re.match(r"^[\-\*•]\s+\S", linea.strip())) or bool(
+            re.match(r"^\d+[\.\)]\s+\S", linea.strip())
+        )
+
+    bloques: List[str] = []
+    actual: List[str] = []
+    for raw in (texto or "").splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            if actual:
+                bloques.append("\n".join(actual))
+                actual = []
             continue
-        if _parece_dump_lista(linea) and linea.count(".") > 3:
-            # Línea basura: intentar rescatar solo el primer nombre
-            nombre = _nombre_item_limpio(linea.split(".")[0].split(" - ")[0])
-            if not nombre:
-                continue
-            desc = ""
+        if _es_inicio_item(stripped) and actual:
+            bloques.append("\n".join(actual))
+            actual = [stripped]
         else:
-            if "." in linea:
-                nombre_raw, resto = linea.split(".", 1)
+            actual.append(stripped)
+    if actual:
+        bloques.append("\n".join(actual))
+
+    for bloque in bloques:
+        lineas = [x.strip() for x in str(bloque).splitlines() if x.strip()]
+        if not lineas:
+            continue
+        primera = re.sub(r"^[\-\*•]\s*", "", lineas[0])
+        primera = re.sub(r"^\d+[\.\)]\s*", "", primera).strip()
+        primera = _nombre_item_limpio(primera, max_len=500)
+        if not primera:
+            continue
+
+        if len(lineas) == 1:
+            # Legacy: "Nombre. Descripción" o solo nombre / dump
+            if _parece_dump_lista(primera) and primera.count(".") > 3:
+                nombre = _nombre_item_limpio(
+                    primera.split(".")[0].split(" - ")[0]
+                )
+                desc = ""
+            elif "." in primera:
+                nombre_raw, resto = primera.split(".", 1)
                 nombre = _nombre_item_limpio(nombre_raw)[:160]
                 desc = _descripcion_requisito_limpia(nombre, resto.strip())
             else:
-                # "Nombre - dump" o solo nombre
-                nombre = _nombre_item_limpio(linea.split(" - ")[0])[:160]
+                nombre = _nombre_item_limpio(primera.split(" - ")[0])[:160]
                 desc = ""
+        else:
+            nombre = _nombre_item_limpio(primera.split(" - ")[0])[:160]
+            # Si la primera línea venía como "Nombre. resto", partir.
+            if "." in nombre and len(nombre) > 40:
+                nombre_raw, resto = primera.split(".", 1)
+                nombre = _nombre_item_limpio(nombre_raw)[:160]
+                cuerpo = [resto.strip()] + lineas[1:]
+            else:
+                cuerpo = lineas[1:]
+            desc = _descripcion_requisito_limpia(
+                nombre, "\n".join(cuerpo).strip()
+            )
+
+        if not nombre:
+            continue
+        if _nombre_requisito_parece_descripcion(nombre):
+            # Oración suelta: no crear ficha nueva.
+            continue
+
         clave = _clave_dedupe_requisito(nombre)
         if not clave or clave == "n:" or clave in vistos:
             continue
-        # Descartar restos que son solo eco del nombre
         if desc and _norm_nombre(desc) == _norm_nombre(nombre):
             desc = ""
         vistos.add(clave)
@@ -1966,7 +2052,12 @@ def _scrub_requisitos_duplicados(
         nombre = str(row.get("nombre") or "")
         clave = _clave_dedupe_requisito(nombre)
         limpio = _nombre_item_limpio(nombre)
-        if not limpio or clave == "n:":
+        if (
+            not limpio
+            or clave == "n:"
+            or _nombre_requisito_parece_descripcion(limpio)
+            or _parece_dump_lista(limpio)
+        ):
             basura.append(row)
             continue
         grupos.setdefault(clave, []).append(row)
@@ -2249,7 +2340,7 @@ def guardar_informacion_organizada(
             if not isinstance(item, dict):
                 continue
             nombre = _nombre_item_limpio(str(item.get("nombre") or "").strip())
-            if not nombre:
+            if not nombre or _nombre_requisito_parece_descripcion(nombre):
                 continue
             campos = {
                 "nombre": nombre[:160],
@@ -2300,6 +2391,20 @@ def guardar_informacion_organizada(
                     por_clave[clave] = creado
                     existentes_req[cid] = creado
                 creados += 1
+
+        # Desactivar requisitos huérfanos si la sección vino en el payload.
+        if "requisitos" in datos:
+            for row in list(existentes_req.values()):
+                rid = int(row.get("id") or 0)
+                if not rid or rid in ids_tocados:
+                    continue
+                if row.get("activo") is False:
+                    continue
+                db.actualizar_requisito(
+                    agencia_id, rid, {"activo": False}, cur=c
+                )
+                existentes_req[rid] = {**row, "activo": False}
+                actualizados += 1
 
         # Scrub: desactivar duplicados por tema/nombre y filas fractal.
         scrub = _scrub_requisitos_duplicados(
