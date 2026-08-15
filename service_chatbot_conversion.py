@@ -37,6 +37,7 @@ from chatbot_conversion_core import (
 from chatbot_conversion_atajos_numericos import (
     armar_bienvenida_inteligente,
     escribir_mapa_atajos,
+    leer_mapa_atajos,
     mapa_menu_inicial,
     resolver_atajo_numerico,
 )
@@ -426,16 +427,20 @@ async def procesar_mensaje_conversion(
             detalle=str(exc),
         )
 
-    # Bienvenida inteligente + atajos numéricos (primer contacto).
+    # Bienvenida inteligente + atajos numéricos (solo primer contacto real).
     from service_chatbot_conversacional import (
         preservar_formato_whatsapp,
         texto_presentacion_inteligente,
     )
 
     presentacion_intel = texto_presentacion_inteligente(contexto.asistente)
-    debe_bienvenida = salida_ia_inyectada is None and (
-        bool(presentacion_intel)
-        or _es_primer_contacto_conversion(
+    # FIX: NO usar bool(presentacion_intel) — eso reenviaba la presentación
+    # en cada mensaje si el texto custom existía. Solo primer contacto.
+    # Si ya hay mapa de atajos, la bienvenida ya se envió.
+    debe_bienvenida = (
+        salida_ia_inyectada is None
+        and not leer_mapa_atajos(contexto.conversacion)
+        and _es_primer_contacto_conversion(
             mensajes=contexto.mensajes,
             mensaje_actual_id=mensaje_entrante_id,
             texto=texto or "",
