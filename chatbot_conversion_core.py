@@ -238,6 +238,7 @@ def construir_addendum_conversion(
     *,
     perfil: Dict[str, Any],
     pregunta_pendiente_texto: Optional[str] = None,
+    inicio_proceso_directo: bool = False,
 ) -> str:
     hechos = normalizar_json_safe(perfil.get("hechos") or {})
     blockers = list(perfil.get("bloqueantes_incumplidos") or [])
@@ -263,6 +264,26 @@ def construir_addendum_conversion(
         "- hechos_nuevos solo con datos NUEVOS o CORREGIDOS del aspirante actual; usa null si no aplica.",
         "- En fase actual accion_propuesta debe ser null salvo que el backend habilite tools externas.",
     ]
+    if inicio_proceso_directo:
+        lineas.extend(
+            [
+                "",
+                "## Preferencia de inicio (proceso directo)",
+                "- La agencia configuró INICIAR PROCESO DIRECTO: prioriza avanzar el proceso de a una pregunta.",
+                "- Usa requisitos bloqueantes / datos faltantes del perfil; no conviertas todos los ítems informativos en formulario.",
+                "- Si el usuario pregunta algo (beneficios, etc.), responde y después retoma la pregunta pendiente del proceso.",
+                "- No asumas cumplimiento ante respuestas ambiguas (p.ej. «más o menos»): aclara con naturalidad.",
+            ]
+        )
+    else:
+        lineas.extend(
+            [
+                "",
+                "## Preferencia de inicio (conversar primero)",
+                "- Responde dudas con naturalidad; no fuerces preguntas del proceso al inicio.",
+                "- Empieza o continúa el proceso cuando la persona muestre interés en ingresar/continuar.",
+            ]
+        )
     if pregunta_pendiente_texto:
         lineas.extend(
             [

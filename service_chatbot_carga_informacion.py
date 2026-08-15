@@ -2007,7 +2007,7 @@ def persistir_datos_generales_asistente(
                 "declarar_asistente_virtual": True,
                 "modo_informativo_activo": True,
                 "modo_conversion_activo": True,
-                "modo_predeterminado": "conversion",
+                "modo_predeterminado": "informativo",
             }
         )
         actualizado = db.upsert_asistente(
@@ -2319,7 +2319,7 @@ def guardar_informacion_organizada(
                     "declarar_asistente_virtual": True,
                     "modo_informativo_activo": True,
                     "modo_conversion_activo": True,
-                    "modo_predeterminado": "conversion",
+                    "modo_predeterminado": "informativo",
                 },
                 cur=c,
             )

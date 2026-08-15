@@ -81,6 +81,69 @@ def _es_primer_contacto_conversion(
         return False
     return bool(es_saludo_inicial(texto) or not previos)
 
+
+def _inicio_proceso_directo(asistente: Optional[Dict[str, Any]]) -> bool:
+    """
+    Preferencia de ARRANQUE del inteligente. No cambia el motor.
+
+    El dispatcher elige conversion por tipo_chatbot=inteligente.
+    Esta función solo decide, ya dentro de conversion:
+      - conversar primero (False)
+      - proceso directo tras la bienvenida (True)
+
+    Señal efectiva: reglas_adicionales.inicio_conversacion
+      - "proceso" → True
+      - "conversar" / ausente → False (compat: el FE antiguo
+        forzaba modo_predeterminado=conversion sin usarlo aquí)
+    """
+    asistente = asistente or {}
+    reglas = asistente.get("reglas_adicionales") or {}
+    if not isinstance(reglas, dict):
+        reglas = {}
+    inicio = str(reglas.get("inicio_conversacion") or "").strip().lower()
+    if inicio == "proceso":
+        return True
+    if inicio == "conversar":
+        return False
+    # Sin señal de la UI nueva: conservar conversar primero (histórico).
+    return False
+
+
+def _pregunta_arranque_proceso(contexto: ConversationalContext) -> str:
+    """Una sola pregunta inicial según paso/requisitos bloqueantes existentes."""
+    from chatbot_conversacional_perfil import (
+        _es_requisito_mayor_edad,
+        _requisito_es_bloqueante,
+    )
+
+    paso = contexto.paso or {}
+    msg_paso = str(paso.get("mensaje_usuario") or "").strip()
+    if msg_paso:
+        return msg_paso[:500]
+
+    for req in contexto.requisitos or []:
+        if not isinstance(req, dict) or not _requisito_es_bloqueante(req):
+            continue
+        if _es_requisito_mayor_edad(req):
+            return "¿Tienes 18 años o más?"
+        nombre = str(req.get("nombre") or "").lower()
+        desc = str(req.get("descripcion") or "").lower()
+        blob = f"{nombre} {desc}"
+        if "disponib" in blob:
+            return (
+                "¿Cuántos días a la semana tendrías disponibles para realizar LIVE?"
+            )
+        if any(
+            k in blob
+            for k in ("teléfono", "telefono", "conexión", "conexion", "internet")
+        ):
+            return "¿Cuentas con teléfono y conexión estable para transmitir?"
+
+    return (
+        "Para comenzar tu proceso, ¿cumples con los requisitos básicos "
+        "para ingresar a la agencia?"
+    )
+
 MENSAJE_RESPALDO = (
     "Estoy teniendo un problema técnico para responderte en este momento. "
     "Ya quedó registrado para que una persona del equipo continúe contigo."
@@ -136,6 +199,7 @@ async def _generar_turno_structured(
     addendum = construir_addendum_conversion(
         perfil=perfil,
         pregunta_pendiente_texto=_pregunta_pendiente_texto(contexto.conversacion),
+        inicio_proceso_directo=_inicio_proceso_directo(contexto.asistente),
     )
     system = f"{instrucciones}\n\n{addendum}"
 
@@ -452,10 +516,23 @@ async def procesar_mensaje_conversion(
             presentacion_custom=presentacion_intel,
             nombre_agencia=_nombre_agencia_atajos(contexto),
         )
+        proceso_directo = _inicio_proceso_directo(contexto.asistente)
+        pregunta_inicio = None
+        if proceso_directo:
+            pregunta_inicio = _pregunta_arranque_proceso(contexto)
+            presentacion = (
+                f"{(presentacion or '').rstrip()}\n\n"
+                "Para comenzar tu proceso voy a hacerte unas preguntas breves.\n\n"
+                f"{pregunta_inicio}"
+            )
         presentacion = preservar_formato_whatsapp(presentacion)
         presentacion = sanitizar_respuesta_publica(presentacion)
         presentacion = preservar_formato_whatsapp(presentacion)
         ctx_mapa = escribir_mapa_atajos(contexto.conversacion, mapa_menu_inicial())
+        if pregunta_inicio:
+            ctx_mapa = dict(ctx_mapa or {})
+            ctx_mapa["pregunta_pendiente"] = pregunta_inicio
+            contexto.conversacion["contexto"] = ctx_mapa
         if conversacion_id and not dry_run:
             await _persistir_campos(
                 agencia_id=agencia_id,
@@ -463,9 +540,10 @@ async def procesar_mensaje_conversion(
                 campos={"contexto": ctx_mapa},
             )
         logger.info(
-            "[CHATBOT_CONVERSION_PRESENTACION] chars=%s saltos=%s atajos=1",
+            "[CHATBOT_CONVERSION_PRESENTACION] chars=%s saltos=%s atajos=1 proceso_directo=%s",
             len(presentacion or ""),
             (presentacion or "").count("\n"),
+            int(bool(proceso_directo)),
         )
         envio = await _enviar(
             texto=presentacion,

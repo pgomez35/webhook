@@ -63,10 +63,12 @@ def modos_asistente_desde_tipo(tipo: str) -> Dict[str, Any]:
     """
     tipo_n = normalizar_tipo_chatbot(tipo) or TIPO_INFORMATIVO
     if tipo_n == TIPO_INTELIGENTE:
+        # Default: conversar primero (informativo). La agencia puede elegir
+        # proceso directo guardando modo_predeterminado=conversion.
         return {
             "modo_informativo_activo": True,
             "modo_conversion_activo": True,
-            "modo_predeterminado": "conversion",
+            "modo_predeterminado": "informativo",
         }
     if tipo_n == TIPO_INFORMATIVO:
         return {
