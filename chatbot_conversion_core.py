@@ -281,7 +281,10 @@ def construir_addendum_conversion(
                 "",
                 "## Preferencia de inicio (conversar primero)",
                 "- Responde dudas con naturalidad; no fuerces preguntas del proceso al inicio.",
-                "- Empieza o continúa el proceso cuando la persona muestre interés en ingresar/continuar.",
+                "- Cuando muestre interés en iniciar/continuar el proceso: valida los requisitos "
+                "necesarios uno por uno (espera respuesta); no muestres la lista completa ni "
+                "preguntes si cumple con todos. Al terminar, sigue el siguiente paso del flujo "
+                "configurado; no listes beneficios ni repreguntes si quiere iniciar.",
             ]
         )
     if pregunta_pendiente_texto:

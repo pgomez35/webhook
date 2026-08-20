@@ -222,10 +222,18 @@ def _requisitos(ctx: ConversationalContext) -> str:
 
     if lineas:
         lineas.append(
-            "- Explica los requisitos como información; nunca concluyas si la persona los cumple o no."
+            "- Usa estos requisitos como contexto autorizado; nunca concluyas si la persona los cumple o no."
         )
         lineas.append(
-            "- Si hay más de uno, preséntalos al usuario en lista con viñetas (un requisito por línea)."
+            "- Si preguntan qué requisitos hay (información), preséntalos en lista con viñetas "
+            "(un ítem por línea)."
+        )
+        lineas.append(
+            "- Si quieren iniciar o continuar el proceso: NO listes todos ni preguntes "
+            "«¿cumples con estos requisitos?». Valida solo los necesarios uno por uno, "
+            "esperando la respuesta antes de seguir. Al terminar las validaciones, continúa "
+            "con el siguiente paso configurado del flujo; no listes beneficios ni vuelvas a "
+            "preguntar si desea iniciar."
         )
 
     return _bloque("Requisitos vigentes", lineas)
