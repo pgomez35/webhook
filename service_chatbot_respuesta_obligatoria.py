@@ -67,6 +67,7 @@ async def garantizar_respuesta_saliente(
     error = None
     mid = None
     status_code = None
+    meta_error_code = None
     requiere_reintento = True
 
     try:
@@ -106,11 +107,15 @@ async def garantizar_respuesta_saliente(
         mid = norm.get("mensaje_externo_id")
         status_code = norm.get("status_code")
         error = norm.get("error")
+        meta_error_code = norm.get("meta_error_code")
         requiere_reintento = bool(norm.get("requiere_reintento", not enviado))
+        if meta_error_code == 131056 or (error and "131056" in str(error)):
+            requiere_reintento = False
     except Exception as exc:  # noqa: BLE001
         error = str(exc)[:400]
         enviado = False
         requiere_reintento = True
+        meta_error_code = None
         logger.warning(
             "[CHATBOT_FALLBACK] conversacion_id=%s motivo=%s error_envio=%s",
             conversacion_id,
@@ -182,6 +187,7 @@ async def garantizar_respuesta_saliente(
         "error": error,
         "mensaje_externo_id": mid,
         "status_code": status_code,
+        "meta_error_code": meta_error_code,
         "requiere_reintento": requiere_reintento,
         "respuesta_enviada": enviado,
     }

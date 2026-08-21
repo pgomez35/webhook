@@ -129,12 +129,27 @@ def normalizar_resultado_envio(
         enviado = bool(resultado.get("enviado") is True and ok_http)
         if resultado.get("dry_run"):
             enviado = True
+        error = None if enviado else (resultado.get("error") or "sin_confirmacion_meta")
+        meta_error_code = resultado.get("meta_error_code")
+        try:
+            meta_error_code = int(meta_error_code) if meta_error_code is not None else None
+        except (TypeError, ValueError):
+            meta_error_code = None
+        rate_limited = meta_error_code == 131056 or (
+            error is not None and "131056" in str(error)
+        )
+        req_retry = resultado.get("requiere_reintento")
+        if req_retry is None:
+            req_retry = (not enviado) and (not rate_limited)
+        else:
+            req_retry = bool(req_retry) and (not rate_limited)
         return {
             "enviado": enviado,
             "mensaje_externo_id": str(mid) if mid else None,
             "status_code": status_i,
-            "error": None if enviado else (resultado.get("error") or "sin_confirmacion_meta"),
-            "requiere_reintento": not enviado,
+            "error": error,
+            "meta_error_code": meta_error_code,
+            "requiere_reintento": bool(req_retry) if not enviado else False,
             "dry_run": bool(resultado.get("dry_run")),
         }
 
@@ -250,30 +265,49 @@ async def enviar_whatsapp_texto_meta(
             status_i,
         )
     error = None
+    meta_error_code = None
     if not ok:
         if isinstance(respuesta_api, dict):
             err = respuesta_api.get("error")
             if isinstance(err, dict):
+                meta_error_code = err.get("code")
+                try:
+                    meta_error_code = int(meta_error_code) if meta_error_code is not None else None
+                except (TypeError, ValueError):
+                    meta_error_code = None
                 error = str(err.get("message") or err)[:400]
             else:
                 error = str(err or respuesta_api)[:400]
         else:
             error = str(respuesta_api)[:400]
 
+    # Pair rate limit: reintentar inmediato empeora el 131056.
+    rate_limited = meta_error_code == 131056 or (
+        error is not None and "131056" in str(error)
+    )
+    requiere_reintento = (not ok) and (not rate_limited)
+
     logger.info(
         "[CHATBOT_ENVIO] canal=whatsapp conversacion_id=%s status_code=%s "
-        "mensaje_externo_id=%s respuesta_enviada=%s%s",
+        "mensaje_externo_id=%s respuesta_enviada=%s meta_error_code=%s%s",
         conversacion_id,
         status_i,
         mid or "",
         str(ok).lower(),
-        "" if ok else " requiere_reintento=true",
+        meta_error_code if meta_error_code is not None else "",
+        "" if requiere_reintento else (
+            "" if ok else " requiere_reintento=false"
+        ),
     )
     print(
         f"[CHATBOT_ENVIO] canal=whatsapp conversacion_id={conversacion_id} "
         f"status_code={status_i} mensaje_externo_id={mid or ''} "
         f"respuesta_enviada={str(ok).lower()}"
-        + ("" if ok else " requiere_reintento=true")
+        + ("" if ok else (
+            " requiere_reintento=false meta_error_code=131056"
+            if rate_limited
+            else " requiere_reintento=true"
+        ))
     )
 
     return {
@@ -281,6 +315,7 @@ async def enviar_whatsapp_texto_meta(
         "mensaje_externo_id": mid,
         "status_code": status_i,
         "error": error,
-        "requiere_reintento": not ok,
+        "meta_error_code": meta_error_code,
+        "requiere_reintento": requiere_reintento,
         "respuesta_api": respuesta_api if not ok else None,
     }

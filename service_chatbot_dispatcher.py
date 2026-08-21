@@ -313,6 +313,20 @@ async def _garantizar_si_falta(
         resultado.setdefault("requiere_reintento", False)
         return resultado
 
+    # Rate limit Meta: no reenviar en la misma petición.
+    err = str(resultado.get("error") or "")
+    meta_code = resultado.get("meta_error_code")
+    if meta_code == 131056 or "131056" in err:
+        logger.warning(
+            "[CHATBOT_FALLBACK] meta_error_code=131056 conversacion_id=%s "
+            "accion=no_reintentar",
+            conversacion_id,
+        )
+        resultado = dict(resultado)
+        resultado["requiere_reintento"] = False
+        resultado.setdefault("atendido", True)
+        return resultado
+
     # Hay texto generado pero sin confirmación Meta → reintentar envío una vez.
     texto_existente = str(resultado.get("respuesta") or "").strip()
     if texto_existente:

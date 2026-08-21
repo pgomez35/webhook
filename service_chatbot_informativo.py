@@ -2033,7 +2033,7 @@ async def procesar_mensaje_informativo(
                 int(conversacion_id),
                 canal=canal,
                 direccion="entrante",
-                remitente_tipo="usuario",
+                remitente_tipo="aspirante",
                 tipo_mensaje="texto",
                 texto=str(texto or "")[:4000],
                 mensaje_externo_id=str(mensaje_externo_id),
@@ -2064,7 +2064,23 @@ async def procesar_mensaje_informativo(
                     "requiere_reintento": False,
                     "enlaces": [],
                 }
-            logger.warning("[CHATBOT_MENU] no se pudo insertar entrante: %s", exc)
+            # Sin fila de wamid no hay idempotencia: no responder (anti-bucle Meta).
+            logger.error(
+                "[CHATBOT_MENU] insert_entrante_fallido mensaje_externo_id=%s "
+                "conversacion_id=%s error=%s accion=no_responder",
+                mensaje_externo_id,
+                conversacion_id,
+                exc,
+            )
+            return {
+                "usado": True,
+                "motivo": "insert_entrante_fallido",
+                "respuesta": None,
+                "respuesta_enviada": False,
+                "requiere_reintento": False,
+                "enlaces": [],
+                "error": str(exc)[:300],
+            }
 
     # Conversación / modo humano
     conversacion = None
@@ -2853,6 +2869,9 @@ async def _responder_conocimiento_faq(
         "motivo": resultado,
         "respuesta": respuesta,
         "respuesta_enviada": bool(envio.get("enviado") is True) or dry_run,
+        "requiere_reintento": bool(envio.get("requiere_reintento")) if not dry_run else False,
+        "error": envio.get("error"),
+        "meta_error_code": envio.get("meta_error_code"),
         "requiere_asesor": requiere_asesor,
         "modo_humano": False,
         "enlaces": [],
