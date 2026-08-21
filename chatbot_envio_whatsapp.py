@@ -289,7 +289,7 @@ async def enviar_whatsapp_texto_meta(
 
     logger.info(
         "[CHATBOT_ENVIO] canal=whatsapp conversacion_id=%s status_code=%s "
-        "mensaje_externo_id=%s respuesta_enviada=%s meta_error_code=%s%s",
+        "outgoing_wamid=%s respuesta_enviada=%s meta_error_code=%s%s",
         conversacion_id,
         status_i,
         mid or "",
@@ -300,8 +300,8 @@ async def enviar_whatsapp_texto_meta(
         ),
     )
     print(
-        f"[CHATBOT_ENVIO] canal=whatsapp conversacion_id={conversacion_id} "
-        f"status_code={status_i} mensaje_externo_id={mid or ''} "
+        f"[WHATSAPP_OUTBOUND] canal=whatsapp conversacion_id={conversacion_id} "
+        f"status_code={status_i} outgoing_wamid={mid or ''} "
         f"respuesta_enviada={str(ok).lower()}"
         + ("" if ok else (
             " requiere_reintento=false meta_error_code=131056"

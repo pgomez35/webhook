@@ -4275,11 +4275,21 @@ def procesar_flujo_aspiranteV4(tenant, phone_number_id, wa_id, tipo, texto, payl
 
 @router.post("/webhook")
 async def whatsapp_webhook(request: Request):
+    from webhook_trace import (
+        hash_texto,
+        log_prefix,
+        new_webhook_request_id,
+        preview_texto,
+    )
+
+    request_id = new_webhook_request_id()
     data = await request.json()
 
     try:
+        print(f"[WEBHOOK_RECEIVED] {log_prefix()}")
         webhook_data = _extract_webhook_data(data)
         if not webhook_data:
+            print(f"[WEBHOOK_EMPTY] {log_prefix()} action=ok")
             return {"status": "ok"}
 
         entry = webhook_data.get("entry")
@@ -4303,6 +4313,10 @@ async def whatsapp_webhook(request: Request):
 
         cuenta_info = _setup_tenant_context(phone_number_id)
         if not cuenta_info:
+            print(
+                f"[WEBHOOK_IGNORED] {log_prefix(phone_number_id=phone_number_id)} "
+                "motivo=sin_cuenta_waba"
+            )
             return {"status": "ignored"}
 
         tenant_name = cuenta_info["tenant_name"]
@@ -4312,12 +4326,34 @@ async def whatsapp_webhook(request: Request):
         whatsapp_account_id = cuenta_info.get("account_id")
         product_type = cuenta_info.get("product_type") or "talentum_manager"
 
-        # 3. Statuses
-        statuses = value.get("statuses", [])
+        # 3. Statuses / messages
+        statuses = value.get("statuses", []) or []
+        mensajes = value.get("messages") or []
+        print(
+            f"[WEBHOOK_CLASSIFY] {log_prefix(phone_number_id=phone_number_id)} "
+            f"messages={len(mensajes)} statuses={len(statuses)} "
+            f"product_type={product_type}"
+        )
+
+        if statuses and not mensajes:
+            print(
+                f"[WEBHOOK_STATUS_ONLY] {log_prefix(phone_number_id=phone_number_id)} "
+                f"status_count={len(statuses)} chatbot_invocado=false"
+            )
+            await _handle_statuses(
+                statuses=statuses,
+                tenant_name=tenant_name,
+                phone_number_id=phone_number_id,
+                token_access=token_access,
+                business_name=business_name,
+                raw_payload=value
+            )
+            return {"status": "ok"}
+
         if statuses:
             print(
-                f"📬 webhook statuses={len(statuses)} "
-                f"phone_number_id={phone_number_id} product_type={product_type}"
+                f"[WHATSAPP_STATUS] {log_prefix(phone_number_id=phone_number_id)} "
+                f"status_count={len(statuses)} accion=actualizar_estado"
             )
             await _handle_statuses(
                 statuses=statuses,
@@ -4328,22 +4364,27 @@ async def whatsapp_webhook(request: Request):
                 raw_payload=value
             )
 
-        # 4. Mensajes
-        mensajes = value.get("messages") or []
         if not mensajes:
-            if not statuses:
-                print(
-                    f"📭 webhook sin messages ni statuses "
-                    f"field={field} phone_number_id={phone_number_id}"
-                )
+            print(
+                f"[WEBHOOK_NO_MESSAGES] {log_prefix(phone_number_id=phone_number_id)} "
+                f"field={field}"
+            )
             return {"status": "ok"}
 
         print(
             f"💬 webhook messages={len(mensajes)} "
             f"phone_number_id={phone_number_id} product_type={product_type} "
-            f"chatbot_agencia_id={chatbot_agencia_id}"
+            f"chatbot_agencia_id={chatbot_agencia_id} request_id={request_id}"
         )
         for mensaje in mensajes:
+            incoming_wamid = mensaje.get("id")
+            print(
+                f"[WEBHOOK_INBOUND_MESSAGE] {log_prefix(phone_number_id=phone_number_id)} "
+                f"incoming_wamid={incoming_wamid} from={mensaje.get('from')} "
+                f"type={mensaje.get('type')} timestamp={mensaje.get('timestamp')} "
+                f"texto_hash={hash_texto((mensaje.get('text') or {}).get('body'))} "
+                f"texto_preview={preview_texto((mensaje.get('text') or {}).get('body'))}"
+            )
             await _procesar_mensaje_unico(
                 mensaje,
                 tenant_name,
@@ -4355,7 +4396,7 @@ async def whatsapp_webhook(request: Request):
             )
 
     except Exception as e:
-        print("❌ Error webhook:", e)
+        print(f"❌ Error webhook request_id={request_id}:", e)
         traceback.print_exc()
 
     return {"status": "ok"}

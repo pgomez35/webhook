@@ -1375,6 +1375,7 @@ async def _procesar_conversacional_si_aplica(
             wa_id=str(wa_id),
             enviar_callback=_enviar_wa,
             dry_run=False,
+            decision=decision,
         )
     except Exception as e:
         logger.exception(
@@ -1523,18 +1524,26 @@ async def procesar_chatbot_captacion(
 
         etapa_anterior = aspirante.get("etapa_chatbot") or ETAPA_INICIO
 
-        if (
-            message_id_meta
-            and aspirante.get("ultimo_message_id_meta")
-            and aspirante["ultimo_message_id_meta"] == message_id_meta
-        ):
-            logger.info(
-                "[CHATBOT] idempotente agencia=%s tel=%s msg=%s",
-                agencia_id,
-                enmascarar_telefono(telefono),
-                message_id_meta,
+        # Defensa primaria anti-bucle: claim atómico del incoming_wamid
+        # ANTES de OpenAI / FAQ / envío.
+        if message_id_meta:
+            from webhook_trace import log_prefix
+
+            acquired = db.claim_incoming_wamid(int(aspirante["id"]), str(message_id_meta))
+            print(
+                f"[WEBHOOK_DEDUP] {log_prefix()} "
+                f"incoming_wamid={message_id_meta} "
+                f"aspirante_id={aspirante.get('id')} "
+                f"acquired={str(acquired).lower()}"
+                + ("" if acquired else " action=STOP")
             )
-            return True
+            if not acquired:
+                logger.info(
+                    "[CHATBOT] dedup_acquired=false aspirante_id=%s incoming_wamid=%s",
+                    aspirante.get("id"),
+                    message_id_meta,
+                )
+                return True
 
         etapa = aspirante.get("etapa_chatbot") or ETAPA_INICIO
         logger.info("[CHATBOT] pregunta_actual/etapa=%s", etapa)

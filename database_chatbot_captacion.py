@@ -2180,6 +2180,40 @@ def actualizar_aspirante_flujo(cur, aspirante_id: int, campos: Dict[str, Any]) -
     return dict(row)
 
 
+def claim_incoming_wamid(
+    aspirante_id: int,
+    message_id_meta: str,
+) -> bool:
+    """
+    Reserva atómica del wamid entrante en chatbot_aspirantes.
+
+    True  → este worker puede procesar el mensaje.
+    False → otro request ya reclamó el mismo incoming_wamid.
+    """
+    mid = str(message_id_meta or "").strip()
+    if not mid:
+        # Sin id de Meta no hay idempotencia posible; no bloquear.
+        return True
+
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE chatbot.chatbot_aspirantes
+                SET ultimo_message_id_meta = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                  AND (
+                    ultimo_message_id_meta IS NULL
+                    OR ultimo_message_id_meta IS DISTINCT FROM %s
+                  )
+                RETURNING id
+                """,
+                (mid, int(aspirante_id), mid),
+            )
+            return cur.fetchone() is not None
+
+
 def actualizar_aspirante_flujo_commit(
     aspirante_id: int,
     campos: Dict[str, Any],

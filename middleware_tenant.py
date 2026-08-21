@@ -20,9 +20,11 @@ ROOT_DOMAIN_TENANTS = {
 }
 
 
-# Rutas Meta Social (Instagram/Messenger) — sin resolución de tenant/WABA.
-# /webhook (WhatsApp) NO se incluye aquí y mantiene el comportamiento actual.
-META_SOCIAL_WEBHOOK_PATHS = frozenset({
+# Rutas webhook Meta — sin resolución de tenant/WABA por hostname.
+# WhatsApp Cloud API: el tenant se resuelve luego por phone_number_id.
+META_WEBHOOK_PATHS = frozenset({
+    "/webhook",
+    "/webhook/",
     "/webhook/meta-social",
     "/webhook/meta-social/",
 })
@@ -52,10 +54,11 @@ class TenantMiddleware(BaseHTTPMiddleware):
         print("🧾 [MIDDLEWARE] X-Tenant-Name header:", request.headers.get("x-tenant-name"))
 
         path = request.url.path or ""
-        if path in META_SOCIAL_WEBHOOK_PATHS or path.rstrip("/") == "/webhook/meta-social":
+        path_norm = path.rstrip("/") or "/"
+        if path in META_WEBHOOK_PATHS or path_norm in {"/webhook", "/webhook/meta-social"}:
             print(
-                "🧾 [MIDDLEWARE] Ruta Meta Social: se omite resolución "
-                "tenant/WABA (no afecta /webhook de WhatsApp)"
+                "🧾 [MIDDLEWARE] Ruta webhook Meta: se omite resolución "
+                f"tenant/WABA por host path={path}"
             )
             current_tenant.set(None)
             current_token.set(None)

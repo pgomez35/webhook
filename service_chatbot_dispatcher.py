@@ -53,31 +53,42 @@ async def procesar_mensaje_segun_tipo_chatbot(
     wa_id: Optional[str] = None,
     enviar_callback: Optional[EnviarCallback] = None,
     dry_run: bool = False,
+    decision: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Enruta exclusivamente por tipo_chatbot.
 
     Los flags legacy (usar_rutas_adaptativas, modo_predeterminado) no cambian
     el motor cuando tipo_chatbot es válido.
+
+    Si ``decision`` ya viene resuelta (p. ej. desde captación), no se vuelve
+    a llamar a ``resolver_motor_conversacional``.
     """
-    decision = resolver_motor_conversacional(agencia_id, chatbot_configuracion_id)
+    if decision is None:
+        decision = resolver_motor_conversacional(agencia_id, chatbot_configuracion_id)
+        log_tag = "CHATBOT_TIPO"
+    else:
+        log_tag = "CHATBOT_DISPATCH"
     tipo = resolver_tipo_chatbot(
         {"tipo_chatbot": decision.get("tipo_chatbot")}
     ) or decision.get("tipo_chatbot")
 
     logger.info(
-        "[CHATBOT_TIPO] agencia_id=%s chatbot_configuracion_id=%s "
-        "tipo_chatbot=%s canal=%s conversacion_id=%s",
+        "[%s] agencia_id=%s chatbot_configuracion_id=%s "
+        "tipo_chatbot=%s canal=%s conversacion_id=%s incoming_wamid=%s",
+        log_tag,
         agencia_id,
         chatbot_configuracion_id,
         tipo,
         canal,
         conversacion_id,
+        mensaje_externo_id,
     )
     print(
-        f"[CHATBOT_TIPO] agencia_id={agencia_id} "
+        f"[{log_tag}] agencia_id={agencia_id} "
         f"chatbot_configuracion_id={chatbot_configuracion_id} "
-        f"tipo_chatbot={tipo} canal={canal} conversacion_id={conversacion_id}"
+        f"tipo_chatbot={tipo} canal={canal} conversacion_id={conversacion_id} "
+        f"incoming_wamid={mensaje_externo_id or ''}"
     )
 
     if tipo == TIPO_TRADICIONAL:
