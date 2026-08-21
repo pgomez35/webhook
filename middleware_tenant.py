@@ -21,10 +21,17 @@ ROOT_DOMAIN_TENANTS = {
 
 
 # Rutas webhook Meta — sin resolución de tenant/WABA por hostname.
-# WhatsApp Cloud API: el tenant se resuelve luego por phone_number_id.
+# WhatsApp Cloud API (/webhook): el tenant se resuelve en main_webhook
+# vía phone_number_id (_setup_tenant_context) para talentum_manager y chatbot.
+# No depende del host Render (p. ej. webhook-axec).
 META_WEBHOOK_PATHS = frozenset({
     "/webhook",
     "/webhook/",
+    "/webhook/meta-social",
+    "/webhook/meta-social/",
+})
+# Alias de compatibilidad (tests / imports existentes).
+META_SOCIAL_WEBHOOK_PATHS = frozenset({
     "/webhook/meta-social",
     "/webhook/meta-social/",
 })
