@@ -323,6 +323,15 @@ def upsert_config_valor(clave: str, data: ConfigUpdateIn = Body(...)):
             if requerido and valor == "":
                 raise HTTPException(status_code=422, detail="Este valor es requerido")
 
+            # Idioma de UI del dashboard: solo es|en (refuerzo además del regex en keys).
+            if clave == "ui_locale":
+                valor = valor.lower()
+                if valor not in ("es", "en"):
+                    raise HTTPException(
+                        status_code=422,
+                        detail="ui_locale debe ser 'es' o 'en'",
+                    )
+
             if validacion_regex and valor:
                 try:
                     if not re.fullmatch(validacion_regex, valor):
