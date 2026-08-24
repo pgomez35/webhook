@@ -913,6 +913,30 @@ def log_routes():
         if hasattr(route, "methods"):
             logger.info(f"➡️ {route.path} {route.methods}")
 
+
+@app.on_event("startup")
+async def startup_chatbot_webhook_queue():
+    try:
+        from chatbot_webhook_queue import start_chatbot_webhook_queue, webhook_async_habilitado
+
+        if webhook_async_habilitado():
+            await start_chatbot_webhook_queue()
+        else:
+            logger.info("[CHATBOT_WEBHOOK_QUEUE] deshabilitada (CHATBOT_WEBHOOK_ASYNC=0)")
+    except Exception:
+        logger.exception("[CHATBOT_WEBHOOK_QUEUE] no se pudo iniciar")
+
+
+@app.on_event("shutdown")
+async def shutdown_chatbot_webhook_queue():
+    try:
+        from chatbot_webhook_queue import stop_chatbot_webhook_queue
+
+        await stop_chatbot_webhook_queue()
+    except Exception:
+        logger.exception("[CHATBOT_WEBHOOK_QUEUE] error al detener")
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     auth = request.headers.get("authorization")

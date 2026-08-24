@@ -4385,6 +4385,43 @@ async def whatsapp_webhook(request: Request):
                 f"texto_hash={hash_texto((mensaje.get('text') or {}).get('body'))} "
                 f"texto_preview={preview_texto((mensaje.get('text') or {}).get('body'))}"
             )
+
+            # Chatbot: ACK rápido — encolar y no await OpenAI/FAQ en el request.
+            # Talentum Manager sigue await (comportamiento actual).
+            if (product_type or "").strip().lower() == "chatbot":
+                try:
+                    from chatbot_webhook_queue import encolar_mensaje_chatbot
+
+                    encolado = encolar_mensaje_chatbot(
+                        {
+                            "mensaje": mensaje,
+                            "mensaje_id": incoming_wamid,
+                            "tenant_name": tenant_name,
+                            "phone_number_id": phone_number_id,
+                            "token": token_access,
+                            "business_name": business_name,
+                            "chatbot_agencia_id": chatbot_agencia_id,
+                            "whatsapp_account_id": whatsapp_account_id,
+                            "request_id": request_id,
+                        }
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ [CHATBOT_WEBHOOK_QUEUE] enqueue error: {exc}")
+                    encolado = False
+
+                if encolado:
+                    print(
+                        f"[CHATBOT_WEBHOOK_QUEUE] enqueued "
+                        f"request_id={request_id} incoming_wamid={incoming_wamid} "
+                        f"action=ACK_DEFERRED"
+                    )
+                    continue
+
+                print(
+                    f"[CHATBOT_WEBHOOK_QUEUE] fallback_sync "
+                    f"request_id={request_id} incoming_wamid={incoming_wamid}"
+                )
+
             await _procesar_mensaje_unico(
                 mensaje,
                 tenant_name,
