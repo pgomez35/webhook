@@ -1471,6 +1471,29 @@ async def procesar_chatbot_captacion(
         print("[CHATBOT] abort: teléfono vacío")
         return True
 
+    # Entradas sin contenido útil ([unsupported], reaction, sticker, texto vacío…).
+    try:
+        from chatbot_proteccion import es_entrada_sin_auto_respuesta
+
+        if es_entrada_sin_auto_respuesta(tipo, texto, payload_id):
+            logger.info(
+                "[CHATBOT_PROTECCION] entrada_omitida agencia_id=%s telefono=%s "
+                "tipo=%s texto_preview=%s action=STOP motivo=sin_contenido_util",
+                agencia_id,
+                enmascarar_telefono(telefono),
+                tipo,
+                (str(texto or "")[:40] or None),
+            )
+            print(
+                f"[CHATBOT_PROTECCION] entrada_omitida "
+                f"agencia_id={agencia_id} tipo={tipo} action=STOP"
+            )
+            return True
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "[CHATBOT_PROTECCION] check entrada_omitida falló agencia_id=%s", agencia_id
+        )
+
     # Denylist temprana: no IA / no envío (mensaje consumido para no caer a TM).
     try:
         from database_chatbot_proteccion import telefono_esta_bloqueado

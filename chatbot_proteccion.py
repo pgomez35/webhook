@@ -38,6 +38,18 @@ CIRCUIT_SALIENTES_N = _env_int("CHATBOT_CIRCUIT_SALIENTES_N", 80)
 CIRCUIT_SALIENTES_VENTANA_SEG = _env_int("CHATBOT_CIRCUIT_SALIENTES_VENTANA_SEG", 600)
 CIRCUIT_PAUSA_SEG = _env_int("CHATBOT_CIRCUIT_PAUSA_SEG", 900)
 
+# Tipos Meta / placeholders que no aportan texto útil → no auto-responder
+TIPOS_SIN_AUTO_RESPUESTA = frozenset(
+    {
+        "unsupported",
+        "reaction",
+        "location",
+        "contacts",
+        "contact",
+        "sticker",
+    }
+)
+
 
 def normalizar_texto_anti_bucle(texto: Optional[str]) -> str:
     """Normaliza para comparar repeticiones (minúsculas, espacios colapsados)."""
@@ -99,3 +111,38 @@ def decidir_rate_inbound(
 
 def circuit_debe_abrir(count_salientes: int, limite: int = CIRCUIT_SALIENTES_N) -> bool:
     return int(count_salientes or 0) >= int(limite)
+
+
+def es_entrada_sin_auto_respuesta(
+    tipo: Optional[str],
+    texto: Optional[str],
+    payload_id: Optional[str] = None,
+) -> bool:
+    """
+    True si el inbound no debe disparar auto-respuesta del chatbot.
+
+    - Tipos Meta sin contenido útil (unsupported, reaction, sticker, …).
+    - Texto vacío sin payload interactivo.
+    - Placeholders tipo ``[unsupported]`` / ``[reaction]``.
+    No bloquea image/video/document/audio (pueden ser evidencias).
+    """
+    if str(payload_id or "").strip():
+        return False
+
+    t = str(tipo or "").strip().lower()
+    if t in TIPOS_SIN_AUTO_RESPUESTA:
+        return True
+
+    body = str(texto or "").strip()
+    if not body:
+        # text vacío u otros tipos sin cuerpo
+        if t in ("", "text", "unknown", "other") or t in TIPOS_SIN_AUTO_RESPUESTA:
+            return True
+        return False
+
+    if body.startswith("[") and body.endswith("]") and len(body) <= 24:
+        inner = body[1:-1].strip().lower()
+        if inner in TIPOS_SIN_AUTO_RESPUESTA:
+            return True
+
+    return False
