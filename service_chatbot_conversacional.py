@@ -452,6 +452,22 @@ async def procesar_mensaje_conversacional(
     if not openai_configurado():
         return _resultado_no_usado("openai_no_configurado")
 
+    try:
+        from chatbot_openai_guard import puede_llamar_openai
+
+        ok_presupuesto, info_p = puede_llamar_openai(int(agencia_id))
+        if not ok_presupuesto:
+            logger.warning(
+                "[CHATBOT_OPENAI_GUARD] skip conversacional agencia_id=%s motivo=%s",
+                agencia_id,
+                info_p.get("motivo"),
+            )
+            return _resultado_no_usado("openai_presupuesto")
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "[CHATBOT_OPENAI_GUARD] check presupuesto falló agencia_id=%s", agencia_id
+        )
+
     if not gw.disponible():
         return _resultado_no_usado("db_conversacional_no_disponible")
 
@@ -3747,10 +3763,38 @@ async def _ejecutar_agente(
     preparado: AgentePreparado,
     entrada: List[Dict[str, str]],
 ) -> Dict[str, Any]:
-    if preparado.sdk_disponible and preparado.agente is not None:
-        return await _ejecutar_con_sdk(preparado, entrada)
+    from chatbot_openai_guard import (
+        ConcurrenciaTimeout,
+        PresupuestoAgotado,
+        llamada_openai,
+        registrar_uso_openai,
+    )
 
-    return await _ejecutar_con_chat_completions(preparado, entrada)
+    agencia_id = int(
+        (preparado.metadata or {}).get("agencia_id")
+        or getattr(preparado.contexto_herramientas, "agencia_id", 0)
+        or 0
+    )
+    try:
+        async with llamada_openai(agencia_id):
+            if preparado.sdk_disponible and preparado.agente is not None:
+                resultado = await _ejecutar_con_sdk(preparado, entrada)
+            else:
+                resultado = await _ejecutar_con_chat_completions(preparado, entrada)
+            try:
+                registrar_uso_openai(
+                    agencia_id,
+                    llamadas=0,
+                    tokens_entrada=int(resultado.get("tokens_entrada") or 0),
+                    tokens_salida=int(resultado.get("tokens_salida") or 0),
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            return resultado
+    except PresupuestoAgotado as exc:
+        raise OpenAIFallido(f"openai_presupuesto:{exc}") from exc
+    except ConcurrenciaTimeout as exc:
+        raise OpenAIFallido(f"openai_concurrencia:{exc}") from exc
 
 
 async def _ejecutar_con_sdk(

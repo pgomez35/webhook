@@ -250,7 +250,11 @@ async def procesar_mensaje_segun_tipo_chatbot(
             "error": envio.get("error"),
         }
 
-    if resultado.get("motivo") == "mensaje_duplicado":
+    if resultado.get("motivo") in {
+        "mensaje_duplicado",
+        "openai_presupuesto",
+        "openai_concurrencia",
+    }:
         return resultado
 
     return await _garantizar_si_falta(

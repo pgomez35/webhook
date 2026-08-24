@@ -1020,6 +1020,7 @@ def clasificar_intencion_informativa_semantica(
     texto: str,
     *,
     modelo: Optional[str] = None,
+    agencia_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Clasificación semántica restringida vía IA.
@@ -1053,18 +1054,53 @@ def clasificar_intencion_informativa_semantica(
     try:
         from openai import OpenAI
 
-        client = OpenAI(api_key=str(api_key).strip())
-        respuesta = client.chat.completions.create(
-            model=modelo or os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-            temperature=0,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": prompt_sistema},
-                {"role": "user", "content": prompt_usuario},
-            ],
+        from chatbot_openai_guard import (
+            ConcurrenciaTimeout,
+            PresupuestoAgotado,
+            llamada_openai_sync,
+            registrar_uso_openai,
         )
+    except ImportError as exc:
+        logger.warning("[CHATBOT_MENU] dependencias IA no disponibles: %s", exc)
+        return fallback
+
+    try:
+        client = OpenAI(api_key=str(api_key).strip())
+        aid = int(agencia_id) if agencia_id else 0
+        if aid:
+            with llamada_openai_sync(aid):
+                respuesta = client.chat.completions.create(
+                    model=modelo or os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                    temperature=0,
+                    response_format={"type": "json_object"},
+                    messages=[
+                        {"role": "system", "content": prompt_sistema},
+                        {"role": "user", "content": prompt_usuario},
+                    ],
+                )
+                uso = getattr(respuesta, "usage", None)
+                if uso is not None:
+                    registrar_uso_openai(
+                        aid,
+                        llamadas=0,
+                        tokens_entrada=int(getattr(uso, "prompt_tokens", 0) or 0),
+                        tokens_salida=int(getattr(uso, "completion_tokens", 0) or 0),
+                    )
+        else:
+            respuesta = client.chat.completions.create(
+                model=modelo or os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                temperature=0,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": prompt_sistema},
+                    {"role": "user", "content": prompt_usuario},
+                ],
+            )
         contenido = (respuesta.choices[0].message.content or "").strip()
         datos = json.loads(contenido) if contenido else {}
+    except (PresupuestoAgotado, ConcurrenciaTimeout) as exc:
+        logger.warning("[CHATBOT_MENU] clasificación IA omitida por guard: %s", exc)
+        return fallback
     except Exception as exc:  # noqa: BLE001
         logger.warning("[CHATBOT_MENU] clasificación IA falló: %s", exc)
         return fallback

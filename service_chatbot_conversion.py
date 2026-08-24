@@ -233,20 +233,42 @@ async def _generar_turno_structured(
             },
         },
     }
+    from chatbot_openai_guard import (
+        ConcurrenciaTimeout,
+        PresupuestoAgotado,
+        llamada_openai,
+        registrar_uso_openai,
+    )
+
+    agencia_id = int(getattr(contexto, "agencia_id", 0) or 0)
     try:
-        resp = await cliente.chat.completions.create(**kwargs)
-    except Exception:
-        # Fallback si el modelo no acepta json_schema estricto.
-        kwargs.pop("response_format", None)
-        kwargs["response_format"] = {"type": "json_object"}
-        kwargs["messages"] = list(mensajes)
-        kwargs["messages"][0] = {
-            "role": "system",
-            "content": system
-            + "\nResponde ÚNICAMENTE un objeto JSON válido con las claves "
-            "respuesta, hechos_nuevos, correcciones, accion_propuesta, requiere_humano.",
-        }
-        resp = await cliente.chat.completions.create(**kwargs)
+        async with llamada_openai(agencia_id):
+            try:
+                resp = await cliente.chat.completions.create(**kwargs)
+            except Exception:
+                # Fallback si el modelo no acepta json_schema estricto.
+                kwargs.pop("response_format", None)
+                kwargs["response_format"] = {"type": "json_object"}
+                kwargs["messages"] = list(mensajes)
+                kwargs["messages"][0] = {
+                    "role": "system",
+                    "content": system
+                    + "\nResponde ÚNICAMENTE un objeto JSON válido con las claves "
+                    "respuesta, hechos_nuevos, correcciones, accion_propuesta, requiere_humano.",
+                }
+                resp = await cliente.chat.completions.create(**kwargs)
+            uso = getattr(resp, "usage", None)
+            if uso is not None:
+                registrar_uso_openai(
+                    agencia_id,
+                    llamadas=0,
+                    tokens_entrada=int(getattr(uso, "prompt_tokens", 0) or 0),
+                    tokens_salida=int(getattr(uso, "completion_tokens", 0) or 0),
+                )
+    except PresupuestoAgotado as exc:
+        raise OpenAIFallido(f"openai_presupuesto:{exc}") from exc
+    except ConcurrenciaTimeout as exc:
+        raise OpenAIFallido(f"openai_concurrencia:{exc}") from exc
 
     contenido = ""
     if resp.choices:
@@ -390,6 +412,23 @@ async def procesar_mensaje_conversion(
         return _resultado_no_usado("feature_deshabilitada")
     if salida_ia_inyectada is None and not openai_configurado():
         return _resultado_no_usado("openai_no_configurado")
+    if salida_ia_inyectada is None:
+        try:
+            from chatbot_openai_guard import puede_llamar_openai
+
+            ok_p, info_p = puede_llamar_openai(int(agencia_id))
+            if not ok_p:
+                logger.warning(
+                    "[CHATBOT_OPENAI_GUARD] skip conversion agencia_id=%s motivo=%s",
+                    agencia_id,
+                    info_p.get("motivo"),
+                )
+                return _resultado_no_usado("openai_presupuesto")
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "[CHATBOT_OPENAI_GUARD] check presupuesto conversion falló agencia_id=%s",
+                agencia_id,
+            )
     if not gw.disponible() and not dry_run and salida_ia_inyectada is None:
         return _resultado_no_usado("db_conversacional_no_disponible")
 
