@@ -41,6 +41,8 @@ from schemas_chatbot_captacion import (
     PlataformaResponse,
     PreguntaFrecuente,
     RecursoBienvenida,
+    TelefonoBloqueadoIn,
+    TelefonoBloqueadoResponse,
 )
 from service_cloudinary_chatbot import (
     destruir_recurso_cloudinary,
@@ -711,3 +713,70 @@ def reiniciar_flujo_aspirante(
         agencia_id=row["agencia_id"],
         updated_at=row.get("updated_at"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Denylist de teléfonos (protección anti-bots / abuso)
+# ---------------------------------------------------------------------------
+
+@router.get("/telefonos-bloqueados", response_model=list[TelefonoBloqueadoResponse])
+def list_telefonos_bloqueados(
+    solo_activos: bool = Query(True),
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    import database_chatbot_proteccion as proteccion
+
+    rows = proteccion.listar_telefonos_bloqueados(
+        int(agencia["id"]), solo_activos=solo_activos
+    )
+    return [TelefonoBloqueadoResponse(**r) for r in rows]
+
+
+@router.post("/telefonos-bloqueados", response_model=TelefonoBloqueadoResponse)
+def post_bloquear_telefono(
+    payload: TelefonoBloqueadoIn,
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    import database_chatbot_proteccion as proteccion
+
+    try:
+        row = proteccion.bloquear_telefono(
+            int(agencia["id"]),
+            payload.telefono,
+            motivo=payload.motivo,
+            conversacion_id=payload.conversacion_id,
+            aspirante_id=payload.aspirante_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        if "telefonos_bloqueados" in str(e).lower() or "does not exist" in str(e).lower():
+            raise HTTPException(
+                status_code=503,
+                detail="Ejecuta scripts/chatbot_telefonos_bloqueados.sql en la BD.",
+            ) from e
+        raise
+    return TelefonoBloqueadoResponse(**row)
+
+
+@router.delete("/telefonos-bloqueados/{telefono}", response_model=TelefonoBloqueadoResponse)
+def delete_desbloquear_telefono(
+    telefono: str,
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    import database_chatbot_proteccion as proteccion
+
+    try:
+        row = proteccion.desbloquear_telefono(int(agencia["id"]), telefono)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        if "telefonos_bloqueados" in str(e).lower() or "does not exist" in str(e).lower():
+            raise HTTPException(
+                status_code=503,
+                detail="Ejecuta scripts/chatbot_telefonos_bloqueados.sql en la BD.",
+            ) from e
+        raise
+    if not row:
+        raise HTTPException(status_code=404, detail="Teléfono no estaba en la denylist.")
+    return TelefonoBloqueadoResponse(**row)

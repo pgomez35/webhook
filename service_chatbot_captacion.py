@@ -1471,6 +1471,28 @@ async def procesar_chatbot_captacion(
         print("[CHATBOT] abort: teléfono vacío")
         return True
 
+    # Denylist temprana: no IA / no envío (mensaje consumido para no caer a TM).
+    try:
+        from database_chatbot_proteccion import telefono_esta_bloqueado
+
+        if telefono_esta_bloqueado(int(agencia_id), telefono):
+            logger.info(
+                "[CHATBOT_PROTECCION] denylist hit agencia_id=%s telefono=%s "
+                "action=STOP motivo=telefono_bloqueado",
+                agencia_id,
+                enmascarar_telefono(telefono),
+            )
+            print(
+                f"[CHATBOT_PROTECCION] denylist hit "
+                f"agencia_id={agencia_id} telefono={enmascarar_telefono(telefono)} "
+                f"action=STOP"
+            )
+            return True
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "[CHATBOT_PROTECCION] denylist check falló agencia_id=%s", agencia_id
+        )
+
     etapa_anterior = None
     etapa_nueva = None
 
@@ -1544,6 +1566,42 @@ async def procesar_chatbot_captacion(
                     message_id_meta,
                 )
                 return True
+
+        # Anti-bucle: mismo texto inbound ≥ N en M s → no auto-responder.
+        try:
+            from database_chatbot_proteccion import registrar_inbound_y_evaluar_anti_bucle
+
+            anti = registrar_inbound_y_evaluar_anti_bucle(
+                int(agencia_id), telefono, texto
+            )
+            if anti.get("disparar"):
+                logger.info(
+                    "[CHATBOT_PROTECCION] anti_bucle hit agencia_id=%s "
+                    "aspirante_id=%s repeticiones=%s/%s ventana_s=%s action=STOP",
+                    agencia_id,
+                    aspirante.get("id"),
+                    anti.get("repeticiones"),
+                    anti.get("n"),
+                    anti.get("m_seg"),
+                )
+                print(
+                    f"[CHATBOT_PROTECCION] anti_bucle hit "
+                    f"agencia_id={agencia_id} aspirante_id={aspirante.get('id')} "
+                    f"repeticiones={anti.get('repeticiones')}/{anti.get('n')} "
+                    f"action=STOP"
+                )
+                try:
+                    _actualizar_trazabilidad_sin_respuesta(aspirante, message_id_meta)
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "[CHATBOT_PROTECCION] trazabilidad anti_bucle aspirante_id=%s",
+                        aspirante.get("id"),
+                    )
+                return True
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "[CHATBOT_PROTECCION] anti_bucle check falló agencia_id=%s", agencia_id
+            )
 
         etapa = aspirante.get("etapa_chatbot") or ETAPA_INICIO
         logger.info("[CHATBOT] pregunta_actual/etapa=%s", etapa)

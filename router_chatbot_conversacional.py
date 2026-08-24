@@ -1946,6 +1946,122 @@ def cerrar_conversacion(
     return _o_404(row, "Conversación")
 
 
+@router.post("/conversaciones/{conversacion_id}/bloquear-telefono")
+def bloquear_telefono_conversacion(
+    conversacion_id: int,
+    payload: Optional[ConversacionCerrarIn] = None,
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    """
+    Añade el teléfono de la conversación a la denylist y silencia la IA
+    (modo_humano + estado bloqueada).
+    """
+    import database_chatbot_proteccion as proteccion
+
+    cid = _validar_conversacion(agencia, conversacion_id)
+    conversacion = _o_404(
+        db.obtener_conversacion(_agencia_id(agencia), cid),
+        "Conversación",
+    )
+    telefono = str(conversacion.get("telefono") or "").strip()
+    if not telefono:
+        raise HTTPException(
+            status_code=400,
+            detail="La conversación no tiene teléfono para bloquear.",
+        )
+    datos = _campos(payload)
+    motivo = datos.get("motivo") or "bloqueado_desde_panel"
+    try:
+        bloqueo = proteccion.bloquear_telefono(
+            _agencia_id(agencia),
+            telefono,
+            motivo=motivo,
+            conversacion_id=cid,
+            aspirante_id=conversacion.get("aspirante_id"),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        if "telefonos_bloqueados" in str(e).lower() or "does not exist" in str(e).lower():
+            raise HTTPException(
+                status_code=503,
+                detail="Ejecuta scripts/chatbot_telefonos_bloqueados.sql en la BD.",
+            ) from e
+        raise
+
+    try:
+        db.actualizar_conversacion(
+            _agencia_id(agencia),
+            cid,
+            {
+                "estado": "bloqueada",
+                "ia_habilitada": False,
+                "modo_humano": True,
+                "motivo_escalamiento": motivo,
+            },
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "[CHATBOT_PROTECCION] denylist ok pero no se pudo silenciar conversacion_id=%s",
+            cid,
+        )
+
+    actualizada = db.obtener_conversacion(_agencia_id(agencia), cid)
+    return {"bloqueo": bloqueo, "conversacion": actualizada}
+
+
+@router.post("/conversaciones/{conversacion_id}/desbloquear-telefono")
+def desbloquear_telefono_conversacion(
+    conversacion_id: int,
+    agencia: dict = Depends(obtener_agencia_chatbot_actual),
+):
+    import database_chatbot_proteccion as proteccion
+
+    cid = _validar_conversacion(agencia, conversacion_id)
+    conversacion = _o_404(
+        db.obtener_conversacion(_agencia_id(agencia), cid),
+        "Conversación",
+    )
+    telefono = str(conversacion.get("telefono") or "").strip()
+    if not telefono:
+        raise HTTPException(
+            status_code=400,
+            detail="La conversación no tiene teléfono para desbloquear.",
+        )
+    try:
+        bloqueo = proteccion.desbloquear_telefono(_agencia_id(agencia), telefono)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        if "telefonos_bloqueados" in str(e).lower() or "does not exist" in str(e).lower():
+            raise HTTPException(
+                status_code=503,
+                detail="Ejecuta scripts/chatbot_telefonos_bloqueados.sql en la BD.",
+            ) from e
+        raise
+    if not bloqueo:
+        raise HTTPException(status_code=404, detail="Teléfono no estaba en la denylist.")
+    try:
+        if str(conversacion.get("estado") or "") == "bloqueada":
+            db.actualizar_conversacion(
+                _agencia_id(agencia),
+                cid,
+                {
+                    "estado": "abierta",
+                    "ia_habilitada": True,
+                    "modo_humano": False,
+                    "motivo_escalamiento": None,
+                },
+            )
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "[CHATBOT_PROTECCION] desbloqueo ok pero no se restauró conversacion_id=%s",
+            cid,
+        )
+    actualizada = db.obtener_conversacion(_agencia_id(agencia), cid)
+    return {"bloqueo": bloqueo, "conversacion": actualizada}
+
+
 @router.post("/conversaciones/{conversacion_id}/asignar-campania")
 def asignar_campania(
     conversacion_id: int,

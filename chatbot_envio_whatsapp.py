@@ -226,6 +226,42 @@ async def enviar_whatsapp_texto_meta(
 
     from enviar_msg_wp import enviar_mensaje_texto_simple
 
+    # Cap de salientes del bot por conversación (no aplica a mensajes humanos del panel).
+    cid_cap = conversacion_id_envio_actual(conversacion_id)
+    if cid_cap:
+        try:
+            from chatbot_proteccion import (
+                CAP_SALIENTES_N,
+                CAP_SALIENTES_VENTANA_SEG,
+                cap_salientes_excedido,
+            )
+            from database_chatbot_proteccion import contar_salientes_bot_conversacion
+
+            n_sal = contar_salientes_bot_conversacion(
+                int(cid_cap), ventana_seg=CAP_SALIENTES_VENTANA_SEG
+            )
+            if cap_salientes_excedido(n_sal, CAP_SALIENTES_N):
+                logger.warning(
+                    "[CHATBOT_PROTECCION] cap_salientes hit conversacion_id=%s "
+                    "count=%s limite=%s ventana_s=%s action=STOP_SEND",
+                    cid_cap,
+                    n_sal,
+                    CAP_SALIENTES_N,
+                    CAP_SALIENTES_VENTANA_SEG,
+                )
+                return {
+                    "enviado": False,
+                    "mensaje_externo_id": None,
+                    "status_code": None,
+                    "error": "cap_salientes",
+                    "requiere_reintento": False,
+                }
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "[CHATBOT_PROTECCION] cap_salientes check falló conversacion_id=%s",
+                cid_cap,
+            )
+
     try:
         codigo, respuesta_api = await asyncio.to_thread(
             enviar_mensaje_texto_simple,

@@ -691,6 +691,28 @@ class ChatbotResumenResponse(BaseModel):
     descartados: int = 0
 
 
+class TelefonoBloqueadoIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    telefono: str = Field(..., min_length=5, max_length=40)
+    motivo: Optional[str] = Field(None, max_length=500)
+    conversacion_id: Optional[int] = Field(None, gt=0)
+    aspirante_id: Optional[int] = Field(None, gt=0)
+
+
+class TelefonoBloqueadoResponse(BaseModel):
+    id: int
+    agencia_id: int
+    telefono: str
+    activo: bool
+    motivo: Optional[str] = None
+    conversacion_id: Optional[int] = None
+    aspirante_id: Optional[int] = None
+    creado_por: Optional[int] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
 class MediaFirmaRequest(BaseModel):
     model_config = {"extra": "forbid"}
 
