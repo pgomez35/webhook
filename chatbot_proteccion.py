@@ -29,6 +29,15 @@ ANTI_BUCLE_M_SEG = _env_int("CHATBOT_ANTI_BUCLE_M_SEG", 60)
 CAP_SALIENTES_N = _env_int("CHATBOT_CAP_SALIENTES_N", 20)
 CAP_SALIENTES_VENTANA_SEG = _env_int("CHATBOT_CAP_SALIENTES_VENTANA_SEG", 3600)
 
+# Rate limit inbound por teléfono (cualquier texto)
+INBOUND_RATE_N = _env_int("CHATBOT_INBOUND_RATE_N", 15)
+INBOUND_RATE_M_SEG = _env_int("CHATBOT_INBOUND_RATE_M_SEG", 300)
+
+# Circuit breaker por agencia: demasiados salientes del bot → pausa
+CIRCUIT_SALIENTES_N = _env_int("CHATBOT_CIRCUIT_SALIENTES_N", 80)
+CIRCUIT_SALIENTES_VENTANA_SEG = _env_int("CHATBOT_CIRCUIT_SALIENTES_VENTANA_SEG", 600)
+CIRCUIT_PAUSA_SEG = _env_int("CHATBOT_CIRCUIT_PAUSA_SEG", 900)
+
 
 def normalizar_texto_anti_bucle(texto: Optional[str]) -> str:
     """Normaliza para comparar repeticiones (minúsculas, espacios colapsados)."""
@@ -69,3 +78,24 @@ def decidir_anti_bucle(
 
 def cap_salientes_excedido(count: int, limite: int = CAP_SALIENTES_N) -> bool:
     return int(count or 0) >= int(limite)
+
+
+def decidir_rate_inbound(
+    *,
+    count_prev: int,
+    edad_ventana_seg: float,
+    n: int = INBOUND_RATE_N,
+    m_seg: int = INBOUND_RATE_M_SEG,
+) -> Tuple[bool, int, bool]:
+    """
+    Retorna (disparar, nuevo_count, reiniciar_ventana).
+    Cuenta cualquier inbound; dispara al alcanzar n dentro de m_seg.
+    """
+    if edad_ventana_seg > float(m_seg):
+        return False, 1, True
+    nuevas = int(count_prev or 0) + 1
+    return nuevas >= int(n), nuevas, False
+
+
+def circuit_debe_abrir(count_salientes: int, limite: int = CIRCUIT_SALIENTES_N) -> bool:
+    return int(count_salientes or 0) >= int(limite)

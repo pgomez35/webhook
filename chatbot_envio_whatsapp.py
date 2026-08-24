@@ -235,7 +235,10 @@ async def enviar_whatsapp_texto_meta(
                 CAP_SALIENTES_VENTANA_SEG,
                 cap_salientes_excedido,
             )
-            from database_chatbot_proteccion import contar_salientes_bot_conversacion
+            from database_chatbot_proteccion import (
+                contar_salientes_bot_conversacion,
+                evaluar_y_abrir_circuit_si_aplica,
+            )
 
             n_sal = contar_salientes_bot_conversacion(
                 int(cid_cap), ventana_seg=CAP_SALIENTES_VENTANA_SEG
@@ -256,9 +259,47 @@ async def enviar_whatsapp_texto_meta(
                     "error": "cap_salientes",
                     "requiere_reintento": False,
                 }
+
+            agencia_envio = None
+            try:
+                from DataBase import get_connection_chatbot_context
+                from psycopg2.extras import RealDictCursor
+
+                with get_connection_chatbot_context() as conn:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute(
+                            """
+                            SELECT agencia_id
+                            FROM chatbot.conversaciones
+                            WHERE id = %s
+                            LIMIT 1
+                            """,
+                            (int(cid_cap),),
+                        )
+                        row = cur.fetchone()
+                        if row:
+                            agencia_envio = row.get("agencia_id")
+            except Exception:  # noqa: BLE001
+                agencia_envio = None
+            if agencia_envio:
+                circuit = evaluar_y_abrir_circuit_si_aplica(int(agencia_envio))
+                if circuit.get("abierto"):
+                    logger.warning(
+                        "[CHATBOT_PROTECCION] circuit_breaker hit en envío "
+                        "agencia_id=%s conversacion_id=%s action=STOP_SEND",
+                        agencia_envio,
+                        cid_cap,
+                    )
+                    return {
+                        "enviado": False,
+                        "mensaje_externo_id": None,
+                        "status_code": None,
+                        "error": "circuit_breaker",
+                        "requiere_reintento": False,
+                    }
         except Exception:  # noqa: BLE001
             logger.exception(
-                "[CHATBOT_PROTECCION] cap_salientes check falló conversacion_id=%s",
+                "[CHATBOT_PROTECCION] cap/circuit check falló conversacion_id=%s",
                 cid_cap,
             )
 

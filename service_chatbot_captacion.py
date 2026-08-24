@@ -1493,6 +1493,29 @@ async def procesar_chatbot_captacion(
             "[CHATBOT_PROTECCION] denylist check falló agencia_id=%s", agencia_id
         )
 
+    # Circuit breaker: flood de salientes → pausa toda la agencia.
+    try:
+        from database_chatbot_proteccion import evaluar_y_abrir_circuit_si_aplica
+
+        circuit = evaluar_y_abrir_circuit_si_aplica(int(agencia_id))
+        if circuit.get("abierto"):
+            logger.info(
+                "[CHATBOT_PROTECCION] circuit_breaker hit agencia_id=%s "
+                "salientes=%s recien_abierto=%s action=STOP",
+                agencia_id,
+                circuit.get("count"),
+                circuit.get("recien_abierto"),
+            )
+            print(
+                f"[CHATBOT_PROTECCION] circuit_breaker hit "
+                f"agencia_id={agencia_id} action=STOP"
+            )
+            return True
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "[CHATBOT_PROTECCION] circuit check falló agencia_id=%s", agencia_id
+        )
+
     etapa_anterior = None
     etapa_nueva = None
 
@@ -1601,6 +1624,39 @@ async def procesar_chatbot_captacion(
         except Exception:  # noqa: BLE001
             logger.exception(
                 "[CHATBOT_PROTECCION] anti_bucle check falló agencia_id=%s", agencia_id
+            )
+
+        # Rate limit inbound por teléfono (cualquier texto).
+        try:
+            from database_chatbot_proteccion import registrar_inbound_rate
+
+            rate = registrar_inbound_rate(int(agencia_id), telefono)
+            if rate.get("disparar"):
+                logger.info(
+                    "[CHATBOT_PROTECCION] inbound_rate hit agencia_id=%s "
+                    "aspirante_id=%s count=%s/%s ventana_s=%s action=STOP",
+                    agencia_id,
+                    aspirante.get("id"),
+                    rate.get("count"),
+                    rate.get("n"),
+                    rate.get("m_seg"),
+                )
+                print(
+                    f"[CHATBOT_PROTECCION] inbound_rate hit "
+                    f"agencia_id={agencia_id} aspirante_id={aspirante.get('id')} "
+                    f"count={rate.get('count')}/{rate.get('n')} action=STOP"
+                )
+                try:
+                    _actualizar_trazabilidad_sin_respuesta(aspirante, message_id_meta)
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "[CHATBOT_PROTECCION] trazabilidad inbound_rate aspirante_id=%s",
+                        aspirante.get("id"),
+                    )
+                return True
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "[CHATBOT_PROTECCION] inbound_rate check falló agencia_id=%s", agencia_id
             )
 
         etapa = aspirante.get("etapa_chatbot") or ETAPA_INICIO

@@ -19,7 +19,14 @@ from chatbot_proteccion import (
     ANTI_BUCLE_N,
     CAP_SALIENTES_N,
     CAP_SALIENTES_VENTANA_SEG,
+    CIRCUIT_PAUSA_SEG,
+    CIRCUIT_SALIENTES_N,
+    CIRCUIT_SALIENTES_VENTANA_SEG,
+    INBOUND_RATE_M_SEG,
+    INBOUND_RATE_N,
+    circuit_debe_abrir,
     decidir_anti_bucle,
+    decidir_rate_inbound,
     normalizar_texto_anti_bucle,
 )
 from DataBase import get_connection_chatbot_context
@@ -300,10 +307,268 @@ def contar_salientes_bot_conversacion(
         return 0
 
 
+def contar_salientes_bot_agencia(
+    agencia_id: int,
+    *,
+    ventana_seg: int = CIRCUIT_SALIENTES_VENTANA_SEG,
+) -> int:
+    if not agencia_id:
+        return 0
+    try:
+        with get_connection_chatbot_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COUNT(*)::int
+                    FROM chatbot.mensajes_conversacion m
+                    INNER JOIN chatbot.conversaciones c ON c.id = m.conversacion_id
+                    WHERE c.agencia_id = %s
+                      AND m.direccion = 'saliente'
+                      AND m.remitente_tipo IN ('chatbot', 'asistente', 'sistema', 'ia')
+                      AND m.created_at >= (CURRENT_TIMESTAMP - (%s || ' seconds')::interval)
+                    """,
+                    (int(agencia_id), str(int(ventana_seg))),
+                )
+                row = cur.fetchone()
+                return int(row[0] if row else 0)
+    except Exception as exc:  # noqa: BLE001
+        if _tabla_ausente(exc):
+            return 0
+        logger.exception(
+            "[CHATBOT_PROTECCION] error contando salientes agencia_id=%s", agencia_id
+        )
+        return 0
+
+
+def circuit_breaker_abierto(agencia_id: int) -> bool:
+    if not agencia_id:
+        return False
+    try:
+        with get_connection_chatbot_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM chatbot.circuit_breaker_agencia
+                    WHERE agencia_id = %s
+                      AND abierto_hasta > CURRENT_TIMESTAMP
+                    LIMIT 1
+                    """,
+                    (int(agencia_id),),
+                )
+                return cur.fetchone() is not None
+    except Exception as exc:  # noqa: BLE001
+        if _tabla_ausente(exc):
+            logger.warning(
+                "[CHATBOT_PROTECCION] tabla circuit_breaker_agencia ausente; circuit omitido"
+            )
+            return False
+        logger.exception(
+            "[CHATBOT_PROTECCION] error consultando circuit agencia_id=%s", agencia_id
+        )
+        return False
+
+
+def abrir_circuit_breaker(
+    agencia_id: int,
+    *,
+    motivo: str,
+    salientes: Optional[int] = None,
+    pausa_seg: int = CIRCUIT_PAUSA_SEG,
+) -> Optional[Dict[str, Any]]:
+    if not agencia_id:
+        return None
+    try:
+        with get_connection_chatbot_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    INSERT INTO chatbot.circuit_breaker_agencia (
+                        agencia_id, abierto_hasta, motivo, salientes_al_abrir, updated_at
+                    ) VALUES (
+                        %s,
+                        CURRENT_TIMESTAMP + (%s || ' seconds')::interval,
+                        %s,
+                        %s,
+                        CURRENT_TIMESTAMP
+                    )
+                    ON CONFLICT (agencia_id) DO UPDATE
+                    SET abierto_hasta = GREATEST(
+                            chatbot.circuit_breaker_agencia.abierto_hasta,
+                            EXCLUDED.abierto_hasta
+                        ),
+                        motivo = EXCLUDED.motivo,
+                        salientes_al_abrir = COALESCE(
+                            EXCLUDED.salientes_al_abrir,
+                            chatbot.circuit_breaker_agencia.salientes_al_abrir
+                        ),
+                        updated_at = CURRENT_TIMESTAMP
+                    RETURNING agencia_id, abierto_hasta, motivo, salientes_al_abrir, updated_at
+                    """,
+                    (
+                        int(agencia_id),
+                        str(int(pausa_seg)),
+                        (motivo or "")[:300] or None,
+                        int(salientes) if salientes is not None else None,
+                    ),
+                )
+                row = cur.fetchone()
+                conn.commit()
+                return dict(row) if row else None
+    except Exception as exc:  # noqa: BLE001
+        if _tabla_ausente(exc):
+            logger.warning(
+                "[CHATBOT_PROTECCION] no se pudo abrir circuit (tabla ausente)"
+            )
+            return None
+        logger.exception(
+            "[CHATBOT_PROTECCION] error abriendo circuit agencia_id=%s", agencia_id
+        )
+        return None
+
+
+def evaluar_y_abrir_circuit_si_aplica(agencia_id: int) -> Dict[str, Any]:
+    """
+    Si hay demasiados salientes del bot en la ventana, abre el circuit.
+    Retorna {abierto, count, recien_abierto}.
+    """
+    if circuit_breaker_abierto(agencia_id):
+        return {"abierto": True, "count": None, "recien_abierto": False}
+    count = contar_salientes_bot_agencia(agencia_id)
+    if not circuit_debe_abrir(count, CIRCUIT_SALIENTES_N):
+        return {"abierto": False, "count": count, "recien_abierto": False}
+    abrir_circuit_breaker(
+        agencia_id,
+        motivo=f"salientes_bot>={CIRCUIT_SALIENTES_N}/{CIRCUIT_SALIENTES_VENTANA_SEG}s",
+        salientes=count,
+    )
+    logger.warning(
+        "[CHATBOT_PROTECCION] circuit OPEN agencia_id=%s salientes=%s "
+        "limite=%s ventana_s=%s pausa_s=%s",
+        agencia_id,
+        count,
+        CIRCUIT_SALIENTES_N,
+        CIRCUIT_SALIENTES_VENTANA_SEG,
+        CIRCUIT_PAUSA_SEG,
+    )
+    return {"abierto": True, "count": count, "recien_abierto": True}
+
+
+def registrar_inbound_rate(
+    agencia_id: int,
+    telefono: str,
+    *,
+    n: int = INBOUND_RATE_N,
+    m_seg: int = INBOUND_RATE_M_SEG,
+) -> Dict[str, Any]:
+    """Incrementa contador de inbound (cualquier texto) y evalúa rate limit."""
+    tel = normalizar_telefono_chatbot(telefono)
+    vacio = {"disparar": False, "count": 0, "omitido": False, "n": n, "m_seg": m_seg}
+    if not tel or not agencia_id:
+        return vacio
+    try:
+        with get_connection_chatbot_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT inbound_count, inbound_ventana_inicio
+                    FROM chatbot.proteccion_inbound_estado
+                    WHERE agencia_id = %s AND telefono = %s
+                    FOR UPDATE
+                    """,
+                    (int(agencia_id), tel),
+                )
+                prev = cur.fetchone()
+                ahora = datetime.now(timezone.utc)
+                if prev and prev.get("inbound_ventana_inicio"):
+                    vinicio = prev["inbound_ventana_inicio"]
+                    if vinicio.tzinfo is None:
+                        vinicio = vinicio.replace(tzinfo=timezone.utc)
+                    edad = (ahora - vinicio).total_seconds()
+                    count_prev = int(prev.get("inbound_count") or 0)
+                else:
+                    edad = float(m_seg) + 1.0
+                    count_prev = 0
+
+                disparar, nuevas, reiniciar = decidir_rate_inbound(
+                    count_prev=count_prev,
+                    edad_ventana_seg=edad,
+                    n=n,
+                    m_seg=m_seg,
+                )
+
+                if prev is None:
+                    cur.execute(
+                        """
+                        INSERT INTO chatbot.proteccion_inbound_estado (
+                            agencia_id, telefono, texto_norm, repeticiones,
+                            ventana_inicio, inbound_count, inbound_ventana_inicio,
+                            updated_at
+                        ) VALUES (
+                            %s, %s, '', 0, CURRENT_TIMESTAMP, %s, CURRENT_TIMESTAMP,
+                            CURRENT_TIMESTAMP
+                        )
+                        ON CONFLICT (agencia_id, telefono) DO UPDATE
+                        SET inbound_count = EXCLUDED.inbound_count,
+                            inbound_ventana_inicio = CURRENT_TIMESTAMP,
+                            updated_at = CURRENT_TIMESTAMP
+                        """,
+                        (int(agencia_id), tel, nuevas),
+                    )
+                elif reiniciar or nuevas <= 1:
+                    cur.execute(
+                        """
+                        UPDATE chatbot.proteccion_inbound_estado
+                        SET inbound_count = %s,
+                            inbound_ventana_inicio = CURRENT_TIMESTAMP,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE agencia_id = %s AND telefono = %s
+                        """,
+                        (nuevas, int(agencia_id), tel),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE chatbot.proteccion_inbound_estado
+                        SET inbound_count = %s,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE agencia_id = %s AND telefono = %s
+                        """,
+                        (nuevas, int(agencia_id), tel),
+                    )
+                conn.commit()
+                return {
+                    "disparar": bool(disparar),
+                    "count": nuevas,
+                    "omitido": False,
+                    "n": n,
+                    "m_seg": m_seg,
+                }
+    except Exception as exc:  # noqa: BLE001
+        if _tabla_ausente(exc):
+            return {**vacio, "omitido": True}
+        # Columnas nuevas ausentes → fail-open
+        if "inbound_count" in str(exc).lower() or "inbound_ventana" in str(exc).lower():
+            logger.warning(
+                "[CHATBOT_PROTECCION] columnas inbound_rate ausentes; "
+                "ejecuta chatbot_circuit_breaker_rate_limit.sql"
+            )
+            return {**vacio, "omitido": True}
+        logger.exception(
+            "[CHATBOT_PROTECCION] error rate inbound agencia_id=%s", agencia_id
+        )
+        return {**vacio, "omitido": True}
+
+
 def defaults_proteccion() -> Dict[str, int]:
     return {
         "anti_bucle_n": ANTI_BUCLE_N,
         "anti_bucle_m_seg": ANTI_BUCLE_M_SEG,
         "cap_salientes_n": CAP_SALIENTES_N,
         "cap_salientes_ventana_seg": CAP_SALIENTES_VENTANA_SEG,
+        "inbound_rate_n": INBOUND_RATE_N,
+        "inbound_rate_m_seg": INBOUND_RATE_M_SEG,
+        "circuit_salientes_n": CIRCUIT_SALIENTES_N,
+        "circuit_salientes_ventana_seg": CIRCUIT_SALIENTES_VENTANA_SEG,
+        "circuit_pausa_seg": CIRCUIT_PAUSA_SEG,
     }
