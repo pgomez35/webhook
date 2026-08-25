@@ -34,6 +34,7 @@ from DataBase import buscar_usuario_por_telefono, marcar_encuesta_no_finalizada,
 # IMPORTS - Locales
 # ============================
 # from DataBase import *
+from chatbot_demo_landing import intentar_respuesta_demo_landing
 from enviar_msg_wp import (
     enviar_boton_iniciar_Completa,
     enviar_botones_Completa,
@@ -4488,6 +4489,22 @@ async def _procesar_mensaje_unico(
                 f"🤖 [CHATBOT CALL] "
                 f"es_async={inspect.iscoroutinefunction(procesar_chatbot_captacion)}"
             )
+
+            # Temporal: demo landing agencia 1 (+57 318 053 8911 compartido con comercial)
+            if intentar_respuesta_demo_landing(
+                agencia_id=chatbot_agencia_id,
+                texto=texto,
+                tipo=tipo,
+                token=token,
+                phone_number_id=phone_number_id,
+                wa_id=wa_id,
+                enviar_texto=enviar_mensaje_texto_simple,
+            ):
+                print(
+                    f"🎯 [DEMO LANDING] Respuesta automática demo Talentum Manager "
+                    f"agencia_id={chatbot_agencia_id} wa_id={wa_id}"
+                )
+                return
 
             # Click-to-WhatsApp de Ads: Meta adjunta `referral` al primer mensaje.
             referral_meta = mensaje.get("referral")
