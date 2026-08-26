@@ -264,12 +264,16 @@ REQUIRED_COLUMNS = [
     "Días válidos de emisiones LIVE",
     "Nuevos seguidores",
     "Emisiones LIVE",
+    "Estado de graduación",
+]
+
+# Presentes en export mensual de Backstage; el semanal suele omitirlas.
+OPTIONAL_COLUMNS_MES = [
     "Diamantes en el último mes",
     "Duración de emisiones LIVE (en horas) durante el último mes",
     "Días válidos de emisiones LIVE del mes pasado",
     "Nuevos seguidores en el último mes",
     "Emisiones LIVE en el último mes",
-    "Estado de graduación",
 ]
 
 ESTADO_RANGO_COLUMNS = [
@@ -393,7 +397,9 @@ def _buscar_solape_mismo_tipo(
     }
 
 
-def _validar_columnas_excel(df: pd.DataFrame) -> None:
+def _validar_columnas_excel(df: pd.DataFrame, *, tipo_periodo: str = "semanal") -> None:
+    """Valida columnas mínimas. Las de ‘último mes’ son opcionales (export semanal)."""
+    del tipo_periodo  # reservado por si más adelante se endurece mensual
     missing = [col for col in REQUIRED_COLUMNS if col not in df.columns]
     if missing:
         raise HTTPException(
@@ -402,6 +408,7 @@ def _validar_columnas_excel(df: pd.DataFrame) -> None:
                 "mensaje": "El Excel no tiene todas las columnas requeridas.",
                 "columnas_faltantes": missing,
                 "columnas_recibidas": list(df.columns),
+                "columnas_opcionales_mes": list(OPTIONAL_COLUMNS_MES),
             },
         )
 
@@ -1059,7 +1066,7 @@ def validar_reporte_creadores_excel(
 
         df = pd.read_excel(io.BytesIO(content))
 
-        _validar_columnas_excel(df)
+        _validar_columnas_excel(df, tipo_periodo=tipo)
 
         periodos = []
 
@@ -1150,7 +1157,7 @@ def cargar_reporte_creadores_excel(
 
         content = file.file.read()
         df = pd.read_excel(io.BytesIO(content))
-        _validar_columnas_excel(df)
+        _validar_columnas_excel(df, tipo_periodo=tipo)
 
         insertados_o_actualizados = 0
         con_creador_en_saas = 0
