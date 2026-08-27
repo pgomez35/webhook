@@ -37,6 +37,11 @@ from starlette.responses import StreamingResponse
 import cloudinary
 
 from utils_aspirantes import obtener_status_24hrs, crear_link_agendamiento_token, registrar_cambio_estado
+from plantillas_whatsapp_mensajes import (
+    PlantillaMensajesDesconocida,
+    enviar_plantilla_catalogo,
+    listar_plantillas_mensajes,
+)
 
 cloudinary.config(
     cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
@@ -54,6 +59,12 @@ class PrepararEncuestaFormularioManualInput(BaseModel):
 
 class PrepararPortalCreadorManualInput(BaseModel):
     telefono: str
+
+
+class EnviarPlantillaMensajesInput(BaseModel):
+    telefono: str
+    codigo: str
+    nombre: Optional[str] = None
 
 
 @router.post("/api/mensajes-whatsapp/preparar-encuesta-formulario")
@@ -194,6 +205,79 @@ def obtener_ventana_24h_mensajes(
         raise HTTPException(status_code=400, detail="Teléfono requerido")
     abierta = bool(obtener_status_24hrs(telefono))
     return {"telefono_ok": True, "ventana_abierta": abierta}
+
+
+@router.get("/api/mensajes-whatsapp/plantillas")
+def listar_plantillas_whatsapp_mensajes(usuario=Depends(obtener_usuario_actual)):
+    """Lista plantillas Meta permitidas. `codigo` = nombre exacto en Facebook."""
+    return {"plantillas": listar_plantillas_mensajes()}
+
+
+@router.post("/api/mensajes-whatsapp/plantillas/enviar")
+def enviar_plantilla_whatsapp_mensajes(
+    data: EnviarPlantillaMensajesInput,
+    usuario=Depends(obtener_usuario_actual),
+):
+    telefono = (data.telefono or "").strip()
+    codigo = (data.codigo or "").strip()
+    if not telefono or not codigo:
+        raise HTTPException(status_code=400, detail="Faltan telefono o codigo de plantilla")
+
+    try:
+        token = current_token.get()
+        phone_id = current_phone_id.get()
+        agencia = current_business_name.get() or ""
+    except LookupError:
+        raise HTTPException(status_code=400, detail="Tenant no disponible en el contexto")
+
+    if not token or not phone_id:
+        raise HTTPException(
+            status_code=500,
+            detail="Credenciales de WhatsApp no configuradas para este tenant",
+        )
+
+    try:
+        status_code, resp, plantilla, parametros = enviar_plantilla_catalogo(
+            codigo=codigo,
+            telefono=telefono,
+            nombre=data.nombre or "",
+            agencia=agencia,
+            token=token,
+            phone_number_id=phone_id,
+        )
+    except PlantillaMensajesDesconocida:
+        raise HTTPException(status_code=404, detail=f"Plantilla no permitida: {codigo}")
+
+    if status_code not in (200, 201):
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "meta_template_failed", "meta": resp},
+        )
+
+    message_id_meta = None
+    if isinstance(resp, dict) and resp.get("messages"):
+        try:
+            message_id_meta = resp["messages"][0].get("id")
+        except Exception:
+            pass
+
+    guardar_mensaje_nuevo(
+        telefono=telefono,
+        contenido=f"[Plantilla enviada: {plantilla.nombre_meta} - {parametros}]",
+        direccion="enviado",
+        tipo="text",
+        message_id_meta=message_id_meta,
+        estado="sent",
+    )
+
+    return {
+        "status": "ok",
+        "codigo": plantilla.codigo,
+        "nombre_meta": plantilla.nombre_meta,
+        "mensaje": f"Se envió la plantilla {plantilla.nombre_meta} a {telefono}",
+        "codigo_api": status_code,
+        "respuesta_api": resp,
+    }
 
 
 @router.get("/contactos")
