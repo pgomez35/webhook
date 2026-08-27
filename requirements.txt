@@ -21,6 +21,7 @@ cloudinary
 rapidfuzz
 pandas
 openpyxl
+reportlab
 pydantic[email]
 email-validator
 redis
