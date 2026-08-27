@@ -466,13 +466,30 @@ def actualizar_contacto_info_db(telefono: str, datos: ActualizacionContactoInfo)
         return {"status": "error", "mensaje": str(e)}
 
 
-def _asegurar_nombre_whatsapp_chat_estado(cur) -> None:
+def _chat_estado_tiene_nombre_whatsapp(cur) -> bool:
     cur.execute(
         """
-        ALTER TABLE mensajes_whatsapp_chat_estado
-        ADD COLUMN IF NOT EXISTS nombre_whatsapp varchar(200)
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = 'mensajes_whatsapp_chat_estado'
+          AND column_name = 'nombre_whatsapp'
+          AND table_schema = current_schema()
+        LIMIT 1
         """
     )
+    return cur.fetchone() is not None
+
+
+def _asegurar_nombre_whatsapp_chat_estado(cur) -> None:
+    try:
+        cur.execute(
+            """
+            ALTER TABLE mensajes_whatsapp_chat_estado
+            ADD COLUMN IF NOT EXISTS nombre_whatsapp varchar(200)
+            """
+        )
+    except Exception as e:
+        print(f"⚠️ No se pudo agregar mensajes_whatsapp_chat_estado.nombre_whatsapp: {e}")
 
 
 def _guardar_nombre_whatsapp(cur, telefono: str, nombre: Optional[str]) -> None:
@@ -481,39 +498,86 @@ def _guardar_nombre_whatsapp(cur, telefono: str, nombre: Optional[str]) -> None:
     if not tel or not nom:
         return
     _asegurar_nombre_whatsapp_chat_estado(cur)
-    cur.execute(
-        """
-        INSERT INTO mensajes_whatsapp_chat_estado (telefono, nombre_whatsapp, creado_en, actualizado_en)
-        VALUES (%s, %s, NOW(), NOW())
-        ON CONFLICT (telefono)
-        DO UPDATE SET
-            nombre_whatsapp = COALESCE(EXCLUDED.nombre_whatsapp, mensajes_whatsapp_chat_estado.nombre_whatsapp),
-            actualizado_en = NOW()
-        """,
-        (tel, nom),
-    )
+    try:
+        cur.execute(
+            """
+            INSERT INTO mensajes_whatsapp_chat_estado (telefono, nombre_whatsapp, creado_en, actualizado_en)
+            VALUES (%s, %s, NOW(), NOW())
+            ON CONFLICT (telefono)
+            DO UPDATE SET
+                nombre_whatsapp = COALESCE(EXCLUDED.nombre_whatsapp, mensajes_whatsapp_chat_estado.nombre_whatsapp),
+                actualizado_en = NOW()
+            """,
+            (tel, nom),
+        )
+    except Exception as e:
+        print(f"⚠️ No se pudo guardar nombre_whatsapp de {tel}: {e}")
 
 
 def obtener_contactos_db_nueva(tipo=None, search=None, estado=None, leidos=None):
     """
-    Bandeja de conversaciones: fuente = teléfonos reales en mensajes_whatsapp.
-    Luego se clasifica cada número como aspirante / creador / admin / sin_vincular.
+    Bandeja WhatsApp: unión de conversaciones reales y contactos con teléfono.
+
+    - Conversaciones: DISTINCT teléfono en mensajes_whatsapp (incluye sin vincular).
+    - Contactos Talentum: aspirante/creador/admin con teléfono, aunque aún no hayan escrito.
+    Un teléfono se clasifica una sola vez: aspirante > creador > admin > sin_vincular.
     """
     try:
         tipo_filtro = normalizar_tipo_filtro(tipo)
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                _asegurar_nombre_whatsapp_chat_estado(cur)
+                nombre_wa_sql = (
+                    "NULLIF(BTRIM(ce.nombre_whatsapp), '')"
+                    if _chat_estado_tiene_nombre_whatsapp(cur)
+                    else "NULL"
+                )
 
-                query = """
-                WITH conversaciones AS (
-                    SELECT
-                        BTRIM(mw.telefono) AS telefono,
-                        MAX(mw.fecha) AS ultima_actividad
+                query = f"""
+                WITH telefonos AS (
+                    SELECT BTRIM(mw.telefono) AS telefono
                     FROM mensajes_whatsapp mw
                     WHERE mw.telefono IS NOT NULL
                       AND BTRIM(mw.telefono) <> ''
-                    GROUP BY BTRIM(mw.telefono)
+
+                    UNION
+
+                    SELECT COALESCE(NULLIF(BTRIM(a.whatsapp), ''), NULLIF(BTRIM(a.telefono), ''))
+                    FROM aspirantes a
+                    WHERE COALESCE(a.activo, true) = true
+                      AND COALESCE(NULLIF(BTRIM(a.whatsapp), ''), NULLIF(BTRIM(a.telefono), '')) IS NOT NULL
+
+                    UNION
+
+                    SELECT COALESCE(
+                        NULLIF(BTRIM(c.telefono), ''),
+                        NULLIF(BTRIM(asp.whatsapp), ''),
+                        NULLIF(BTRIM(asp.telefono), '')
+                    )
+                    FROM creadores c
+                    INNER JOIN creadores_estados ce ON ce.id = c.estado_id
+                    LEFT JOIN aspirantes asp ON asp.id = c.aspirante_id
+                    WHERE ce.nombre = %s
+                      AND COALESCE(ce.activo, true) = true
+                      AND COALESCE(
+                            NULLIF(BTRIM(c.telefono), ''),
+                            NULLIF(BTRIM(asp.whatsapp), ''),
+                            NULLIF(BTRIM(asp.telefono), '')
+                          ) IS NOT NULL
+
+                    UNION
+
+                    SELECT NULLIF(BTRIM(ad.telefono), '')
+                    FROM administradores ad
+                    WHERE NULLIF(BTRIM(ad.telefono), '') IS NOT NULL
+                ),
+                conversaciones AS (
+                    SELECT
+                        t.telefono,
+                        MAX(mw.fecha) AS ultima_actividad
+                    FROM telefonos t
+                    LEFT JOIN mensajes_whatsapp mw
+                        ON BTRIM(mw.telefono) = t.telefono
+                    GROUP BY t.telefono
                 ),
                 no_leidos AS (
                     SELECT
@@ -522,7 +586,7 @@ def obtener_contactos_db_nueva(tipo=None, search=None, estado=None, leidos=None)
                     FROM mensajes_whatsapp mw
                     LEFT JOIN mensajes_whatsapp_chat_estado ce
                         ON ce.telefono = mw.telefono
-                    WHERE mw.direccion = 'recibido'
+                    WHERE mw.direccion IN ('recibido', 'inbound')
                       AND (
                             ce.last_read_at IS NULL
                             OR mw.fecha > ce.last_read_at
@@ -543,7 +607,7 @@ def obtener_contactos_db_nueva(tipo=None, search=None, estado=None, leidos=None)
                         NULLIF(BTRIM(asp.nombre_real), ''),
                         NULLIF(BTRIM(cre.nombre), ''),
                         NULLIF(BTRIM(adm.nombre_completo), ''),
-                        NULLIF(BTRIM(ce.nombre_whatsapp), ''),
+                        {nombre_wa_sql},
                         conv.telefono
                     ) AS nombre,
                     conv.telefono,
@@ -588,10 +652,11 @@ def obtener_contactos_db_nueva(tipo=None, search=None, estado=None, leidos=None)
                 ) adm ON TRUE
                 LEFT JOIN administradores_roles ar ON ar.id = adm.administradores_roles_id
                 LEFT JOIN no_leidos nl ON nl.telefono = conv.telefono
-                LEFT JOIN mensajes_whatsapp_chat_estado ce ON ce.telefono = conv.telefono
+                LEFT JOIN mensajes_whatsapp_chat_estado ce
+                    ON BTRIM(ce.telefono) = conv.telefono
                 WHERE 1=1
                 """
-                params = [CREADOR_ESTADO_NOMBRE_ACTIVO]
+                params = [CREADOR_ESTADO_NOMBRE_ACTIVO, CREADOR_ESTADO_NOMBRE_ACTIVO]
 
                 if tipo_filtro:
                     query += """
@@ -610,13 +675,13 @@ def obtener_contactos_db_nueva(tipo=None, search=None, estado=None, leidos=None)
 
                 if search:
                     search_like = f"%{search}%"
-                    query += """
+                    query += f"""
                     AND (
                         COALESCE(
                             NULLIF(BTRIM(asp.nombre_real), ''),
                             NULLIF(BTRIM(cre.nombre), ''),
                             NULLIF(BTRIM(adm.nombre_completo), ''),
-                            NULLIF(BTRIM(ce.nombre_whatsapp), ''),
+                            {nombre_wa_sql},
                             conv.telefono,
                             ''
                         ) ILIKE %s
