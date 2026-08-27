@@ -68,6 +68,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 f"tenant/WABA por host path={path}"
             )
             current_tenant.set(None)
+            current_subdominio.set(None)
             current_token.set(None)
             current_phone_id.set(None)
             current_business_name.set(None)
@@ -87,8 +88,9 @@ class TenantMiddleware(BaseHTTPMiddleware):
         print(f"🔍 [MIDDLEWARE] Host: {request.headers.get('host', 'N/A')}")
         print(f"🔍 [MIDDLEWARE] X-Tenant-Name header: {request.headers.get('x-tenant-name', 'N/A')}")
 
-        # 1️⃣ Setear tenant actual (schema BD)
+        # 1️⃣ Setear tenant actual (schema BD) y subdominio web original
         current_tenant.set(tenant_schema)
+        current_subdominio.set(tenant_name)
         request.state.agencia = tenant_schema
         request.state.tenant_name = tenant_name
         request.state.tenant_schema = tenant_schema
@@ -208,27 +210,10 @@ class TenantMiddleware(BaseHTTPMiddleware):
         Returns:
             Nombre del schema (ej: "agency15_5", "test", "prestige")
         """
-        # Único punto donde se convierte subdominio web → schema BD
-        # (guiones → guiones bajos)
-        normalized = tenant_name.replace("-", "_").lower().strip()
-        
-        # Si viene con prefijo 'agencia_', eliminarlo (para compatibilidad)
-        if normalized.startswith("agencia_"):
-            normalized = normalized[len("agencia_"):]
-        
-        if not normalized:
-            raise HTTPException(
-                status_code=400,
-                detail="Nombre de tenant inválido. Debe contener caracteres alfanuméricos.",
-            )
-
-        if not re.fullmatch(r"[a-z0-9_]+", normalized):
-            raise HTTPException(
-                status_code=400,
-                detail="Nombre de tenant inválido. Usa solo letras, números y guiones bajos.",
-            )
-
-        return normalized
+        try:
+            return build_schema_name(tenant_name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     @staticmethod
     def _validate_tenant_value(value: str) -> None:

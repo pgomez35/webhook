@@ -46,12 +46,14 @@ from enviar_msg_wp import (
 from main_diagnostico import obtener_estado_aspirante
 from main_configuracion import get_config
 from main_mensajeria_whatsapp import reenviar_ultimo_mensaje, enviar_mensaje_whatsapp_texto
-from portal_access_tokens import generar_url_portal, generar_url_portal_usuario
+from portal_access_tokens import generar_url_portal, generar_url_portal_usuario, subdominio_web_desde_schema
 from tenant import (
     current_business_name,
     current_phone_id,
+    current_subdominio,
     current_tenant,
-    current_token
+    current_token,
+    build_schema_name,
 )
 from utils_aspirantes_1 import *
 from utils_whatsapp_flujos import (
@@ -1462,7 +1464,7 @@ def _procesar_saludo(numero, rol_actual):
 
 
 def manejar_menu(numero, texto_normalizado, rol):
-    tenant_name = current_tenant.get()  # ✅ Obtenemos el tenant actual
+    tenant_name = _subdominio_web_actual()
     # Menús por rol
 
     if rol == "aspirante":
@@ -1711,11 +1713,40 @@ def _handle_account_update_event(entry: dict, change: dict, value: dict, event: 
     return {"status": "ok"}
 
 
+def _schema_desde_subdominio(subdominio: Optional[str]) -> Optional[str]:
+    """Convierte subdominio web (agency15-5) al schema de BD (agency15_5)."""
+    raw = (subdominio or "").strip()
+    if not raw:
+        return None
+    return build_schema_name(raw)
+
+
+def _aplicar_contexto_bd(*, subdominio: Optional[str], tenant_schema: str) -> None:
+    """current_tenant = schema BD; current_subdominio = valor web original."""
+    current_subdominio.set((subdominio or "").strip() or None)
+    current_tenant.set(tenant_schema)
+
+
+def _subdominio_web_actual() -> Optional[str]:
+    """Subdominio web original (no el schema). Fallback: invertir schema."""
+    try:
+        sub = current_subdominio.get()
+    except LookupError:
+        sub = None
+    if sub:
+        return sub
+    schema = current_tenant.get()
+    if not schema:
+        return None
+    return subdominio_web_desde_schema(schema)
+
+
 def _setup_tenant_context(phone_number_id: str) -> Optional[dict]:
     """
     Configura el contexto del tenant según product_type de la cuenta WABA.
 
-    - talentum_manager (o NULL legacy): subdominio → esquema de agencia (comportamiento actual)
+    - talentum_manager (o NULL legacy): subdominio WABA → schema de agencia
+      (current_tenant = schema BD, p.ej. agency15_5; subdominio web = agency15-5)
     - chatbot: tenant fijo "chatbot" + agencia_id desde chatbot.agencia_whatsapp_accounts
     """
     cuenta = obtener_cuenta_por_phone_id(phone_number_id)
@@ -1733,7 +1764,8 @@ def _setup_tenant_context(phone_number_id: str) -> Optional[dict]:
     chatbot_agencia_id = None
 
     if product_type == "chatbot":
-        tenant_name = "chatbot"
+        subdominio = (cuenta.get("subdominio") or "").strip() or None
+        tenant_schema = build_schema_name("chatbot")
         try:
             from database_chatbot_captacion import obtener_relacion_agencia_canal
 
@@ -1773,12 +1805,13 @@ def _setup_tenant_context(phone_number_id: str) -> Optional[dict]:
 
         current_token.set(token_cliente)
         current_phone_id.set(phone_id_cliente)
-        current_tenant.set(tenant_name)
+        _aplicar_contexto_bd(subdominio=subdominio, tenant_schema=tenant_schema)
         current_business_name.set(business_name)
 
         print(
             f"🌐 product_type=chatbot phone_number_id={phone_number_id} "
-            f"whatsapp_account_id={account_id} tenant_name={tenant_name} "
+            f"whatsapp_account_id={account_id} subdominio={subdominio} "
+            f"tenant_schema={tenant_schema} "
             f"chatbot_agencia_id={chatbot_agencia_id}"
         )
         token_seguro = "presente" if token_cliente else "ausente"
@@ -1792,7 +1825,9 @@ def _setup_tenant_context(phone_number_id: str) -> Optional[dict]:
             "chatbot_agencia_id": chatbot_agencia_id,
             "access_token": token_cliente,
             "phone_number_id": phone_id_cliente,
-            "tenant_name": tenant_name,
+            "tenant_name": tenant_schema,
+            "tenant_schema": tenant_schema,
+            "subdominio": subdominio,
             "business_name": business_name,
             "onboarding_type": onboarding_type,
             "coexistence_enabled": coexistence_enabled,
@@ -1806,22 +1841,34 @@ def _setup_tenant_context(phone_number_id: str) -> Optional[dict]:
         )
         return None
 
-    # --- talentum_manager (comportamiento actual) ---
-    tenant_name = cuenta.get("subdominio")
-    if not tenant_name:
+    # --- talentum_manager ---
+    # Identificación WABA sin cambios: phone_number_id → cuenta.subdominio (web).
+    # current_tenant debe ser el schema BD, no el subdominio con guiones.
+    subdominio = (cuenta.get("subdominio") or "").strip()
+    if not subdominio:
         print(
             f"⚠️ Talentum Manager sin subdominio "
             f"(whatsapp_account_id={account_id}, phone_number_id={phone_number_id})"
         )
 
+    try:
+        tenant_schema = _schema_desde_subdominio(subdominio)
+    except ValueError as e:
+        print(
+            f"❌ Subdominio WABA inválido para schema "
+            f"subdominio={subdominio!r} phone_number_id={phone_number_id}: {e}"
+        )
+        return None
+
     current_token.set(token_cliente)
     current_phone_id.set(phone_id_cliente)
-    current_tenant.set(tenant_name)
+    _aplicar_contexto_bd(subdominio=subdominio, tenant_schema=tenant_schema)
     current_business_name.set(business_name)
 
     print(
         f"🌐 product_type=talentum_manager phone_number_id={phone_number_id} "
-        f"whatsapp_account_id={account_id} tenant_name={tenant_name}"
+        f"whatsapp_account_id={account_id} subdominio={subdominio} "
+        f"tenant_schema={tenant_schema}"
     )
     token_seguro = "presente" if token_cliente else "ausente"
     print(f"🔑 Token Meta: {token_seguro}")
@@ -1834,7 +1881,9 @@ def _setup_tenant_context(phone_number_id: str) -> Optional[dict]:
         "chatbot_agencia_id": None,
         "access_token": token_cliente,
         "phone_number_id": phone_id_cliente,
-        "tenant_name": tenant_name,
+        "tenant_name": subdominio,
+        "tenant_schema": tenant_schema,
+        "subdominio": subdominio,
         "business_name": business_name,
         "onboarding_type": onboarding_type,
         "coexistence_enabled": coexistence_enabled,
@@ -3291,7 +3340,7 @@ def enviar_citas_agendadas(numero: str) -> None:
 
     # 6️⃣ Obtener tenant actual (si existe)
     try:
-        tenant_name: Optional[str] = current_tenant.get()
+        tenant_name: Optional[str] = _subdominio_web_actual()
     except LookupError:
         tenant_name = None
 

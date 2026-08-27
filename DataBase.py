@@ -38,7 +38,7 @@ INTERNAL_DATABASE_URL = os.getenv("INTERNAL_DATABASE_URL")
 
 EXTERNAL_DATABASE_URL = os.getenv("EXTERNAL_DATABASE_URL")
 
-from tenant import current_tenant
+from tenant import current_tenant, build_schema_name
 
 _SCHEMA_RE = re.compile(r"^[a-z0-9_]+$")  # validación para schema
 
@@ -48,25 +48,27 @@ class TenantSchemaError(Exception):
 
 def _sanitize_schema(schema: str) -> str:
     """
-    Valida el nombre del schema del tenant.
-    Acepta nombres simples como 'test', 'public', 'agencia_xxx', etc.
+    Valida y normaliza el schema del tenant (subdominio web → schema BD).
+    Usa build_schema_name: agency15-5 → agency15_5.
     """
     if not schema:
         raise TenantSchemaError("⚠️ current_tenant vacío o no configurado")
 
-    # 1. Talentum Manager SIEMPRE va a public
+    # Talentum Manager (host raíz) SIEMPRE va a public
     if schema == "talentum-manager":
         return "public"
 
-    # 2) Schemas especiales que sabemos que existen
+    try:
+        schema = build_schema_name(schema)
+    except ValueError as e:
+        raise TenantSchemaError(f"⚠️ Schema de tenant inválido: {schema!r}") from e
+
     if schema in ("public", "test"):
         return schema
 
-    # 3) Cualquier nombre simple tipo mytenant_123
     if _SCHEMA_RE.fullmatch(schema):
         return schema
 
-    # 4) Si no cumple nada, error
     raise TenantSchemaError(f"⚠️ Schema de tenant inválido: {schema!r}")
 
 
