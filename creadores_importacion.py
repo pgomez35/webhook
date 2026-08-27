@@ -19,7 +19,8 @@ from fastapi.responses import Response
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.worksheet.datavalidation import DataValidation
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import Json, RealDictCursor
+from psycopg2 import errors as pg_errors
 from pydantic import BaseModel, EmailStr, TypeAdapter, ValidationError
 
 from DataBase import get_connection_context
@@ -74,6 +75,32 @@ FILA_VALIDA = "valida"
 FILA_ADVERTENCIA = "advertencia"
 FILA_DUPLICADO = "duplicado"
 FILA_ERROR = "error"
+
+SQL_CREAR_TABLA_HISTORIAL = """
+CREATE TABLE IF NOT EXISTS creadores_importaciones (
+    id SERIAL PRIMARY KEY,
+    archivo_nombre VARCHAR(255),
+    separador VARCHAR(8),
+    total_filas INTEGER,
+    validas INTEGER,
+    advertencias INTEGER,
+    duplicados INTEGER,
+    errores INTEGER,
+    importables INTEGER,
+    creadores_creados INTEGER,
+    omitidos INTEGER,
+    errores_importacion INTEGER,
+    estado VARCHAR(30) DEFAULT 'procesado',
+    cargado_por INTEGER,
+    fecha_carga TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+    metadata_json JSONB DEFAULT '{}'::jsonb
+)
+"""
+
+SQL_INDICE_HISTORIAL = """
+CREATE INDEX IF NOT EXISTS idx_creadores_importaciones_fecha
+    ON creadores_importaciones (fecha_carga DESC)
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -622,11 +649,155 @@ def _insertar_creador_importado(
     return creador_id
 
 
+def _iso_ts(val: Any) -> Optional[str]:
+    if val is None:
+        return None
+    if hasattr(val, "isoformat"):
+        return val.isoformat()
+    return str(val)
+
+
+def _historial_item_desde_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    meta = row.get("metadata_json") or {}
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except (json.JSONDecodeError, TypeError):
+            meta = {}
+    return {
+        "id": row.get("id"),
+        "archivo_nombre": row.get("archivo_nombre"),
+        "total_filas": row.get("total_filas") or 0,
+        "validas": row.get("validas") or 0,
+        "advertencias": row.get("advertencias") or 0,
+        "duplicados": row.get("duplicados") or 0,
+        "errores": row.get("errores") or 0,
+        "importables": row.get("importables") or 0,
+        "creadores_creados": row.get("creadores_creados") or 0,
+        "omitidos": row.get("omitidos") or 0,
+        "errores_importacion": row.get("errores_importacion") or 0,
+        "estado": row.get("estado") or "procesado",
+        "fecha_carga": _iso_ts(row.get("fecha_carga")),
+        "cargado_por": row.get("cargado_por"),
+        "cargado_por_nombre": row.get("cargado_por_nombre") or None,
+        "errores_detalle": (meta or {}).get("errores_detalle") or [],
+    }
+
+
+def _asegurar_tabla_historial(cur) -> None:
+    cur.execute(SQL_CREAR_TABLA_HISTORIAL)
+    cur.execute(SQL_INDICE_HISTORIAL)
+
+
+def _guardar_historial_importacion(
+    resultado: Dict[str, Any],
+    archivo_nombre: Optional[str],
+    separador: Optional[str],
+    cargado_por: Optional[int],
+) -> None:
+    preview = resultado.get("resumen") or {}
+    errores_detalle = (resultado.get("errores_importacion") or [])[:50]
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                _asegurar_tabla_historial(cur)
+                cur.execute(
+                    """
+                    INSERT INTO creadores_importaciones (
+                        archivo_nombre,
+                        separador,
+                        total_filas,
+                        validas,
+                        advertencias,
+                        duplicados,
+                        errores,
+                        importables,
+                        creadores_creados,
+                        omitidos,
+                        errores_importacion,
+                        estado,
+                        cargado_por,
+                        metadata_json
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'procesado', %s, %s)
+                    """,
+                    (
+                        (archivo_nombre or "")[:255] or None,
+                        (separador or "")[:8] or None,
+                        preview.get("total_filas") or resultado.get("total_procesadas") or 0,
+                        preview.get("validas") or 0,
+                        preview.get("advertencias") or 0,
+                        preview.get("duplicados") or 0,
+                        preview.get("errores") or 0,
+                        preview.get("importables") or 0,
+                        resultado.get("creadores_creados") or 0,
+                        resultado.get("omitidos") or 0,
+                        len(resultado.get("errores_importacion") or []),
+                        cargado_por,
+                        Json({"errores_detalle": errores_detalle}),
+                    ),
+                )
+            conn.commit()
+    except Exception as exc:
+        print(f"⚠️ No se pudo guardar historial de importación de creadores: {exc}")
+        traceback.print_exc()
+
+
+def _listar_historial_importacion(limit: int = 100) -> List[Dict[str, Any]]:
+    try:
+        limit = max(1, min(int(limit or 100), 200))
+    except (TypeError, ValueError):
+        limit = 100
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                try:
+                    _asegurar_tabla_historial(cur)
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                cur.execute(
+                    """
+                    SELECT
+                        i.id,
+                        i.archivo_nombre,
+                        i.total_filas,
+                        i.validas,
+                        i.advertencias,
+                        i.duplicados,
+                        i.errores,
+                        i.importables,
+                        i.creadores_creados,
+                        i.omitidos,
+                        i.errores_importacion,
+                        i.estado,
+                        i.fecha_carga,
+                        i.cargado_por,
+                        i.metadata_json,
+                        a.nombre_completo AS cargado_por_nombre
+                    FROM creadores_importaciones i
+                    LEFT JOIN administradores a ON a.id = i.cargado_por
+                    ORDER BY i.fecha_carga DESC, i.id DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                return [_historial_item_desde_row(dict(row)) for row in cur.fetchall()]
+    except pg_errors.UndefinedTable:
+        return []
+    except Exception as exc:
+        print(f"❌ Error listando historial de importación de creadores: {exc}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Error al consultar el historial de cargues")
+
+
 def _confirmar_filas(
     content: bytes,
     ext: str,
     separador: Optional[str],
     numeros_fila: List[int],
+    archivo_nombre: Optional[str] = None,
+    cargado_por: Optional[int] = None,
 ) -> Dict[str, Any]:
     preview = _procesar_archivo(content, ext, separador)
     numeros_set = set(numeros_fila)
@@ -700,7 +871,7 @@ def _confirmar_filas(
             print(f"❌ Error importando fila {fila['numero_fila']}: {exc}")
             traceback.print_exc()
 
-    return {
+    resultado = {
         "ok": True,
         "mensaje": "Importación terminada",
         "total_procesadas": len(filas_objetivo),
@@ -709,6 +880,8 @@ def _confirmar_filas(
         "errores_importacion": errores_import,
         "resumen": preview,
     }
+    _guardar_historial_importacion(resultado, archivo_nombre, separador, cargado_por)
+    return resultado
 
 
 # ---------------------------------------------------------------------------
@@ -831,10 +1004,26 @@ async def confirmar_importacion_creadores(
     ext = _validar_archivo(file, content)
 
     try:
-        return _confirmar_filas(content, ext, separador or None, numeros)
+        return _confirmar_filas(
+            content,
+            ext,
+            separador or None,
+            numeros,
+            archivo_nombre=file.filename,
+            cargado_por=usuario.get("id") if usuario else None,
+        )
     except HTTPException:
         raise
     except Exception as exc:
         print("❌ Error confirmando importación de creadores:", exc)
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Error al importar creadores")
+
+
+@router.get("/api/creadores/importacion/historial")
+def listar_historial_importacion_creadores(
+    limit: int = Query(100, ge=1, le=200),
+    usuario: dict = Depends(obtener_usuario_actual),
+):
+    _require_permiso_importacion(usuario)
+    return {"ok": True, "items": _listar_historial_importacion(limit)}

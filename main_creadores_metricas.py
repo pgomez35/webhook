@@ -1,15 +1,17 @@
 import io
+import json
 import re
 import traceback
 from datetime import datetime, date
 from typing import Optional, Any, List, Dict, Tuple, Set
 
 import pandas as pd
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Depends
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel
 
 from DataBase import get_connection_context, _administradores_roles_id_por_nombre
+from main_auth import obtener_usuario_actual
 from creadores_catalogo import CREADOR_ESTADO_NOMBRE_ACTIVO
 from creadores_manager import (
     claves_admin_existentes,
@@ -577,12 +579,22 @@ def _actualizar_creador_base(cur, creador_id: int, data: Dict[str, Any]) -> None
     )
 
 
+def _iso_ts(val: Any) -> Optional[str]:
+    if val is None:
+        return None
+    if hasattr(val, "isoformat"):
+        return val.isoformat()
+    return str(val)
+
+
 def _registrar_importaciones_desde_df(
     cur,
     df: pd.DataFrame,
     archivo_nombre: Optional[str],
     archivo_origen: str,
     tipo_periodo: str,
+    cargado_por: Optional[int] = None,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[Tuple[date, date], int]:
     periodos_stats: Dict[Tuple[date, date], Dict[str, Any]] = {}
 
@@ -613,9 +625,10 @@ def _registrar_importaciones_desde_df(
                 total_filas,
                 total_creadores,
                 estado,
+                cargado_por,
                 metadata_json
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, 'procesado', %s::jsonb)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 'procesado', %s, %s::jsonb)
             RETURNING id_importacion
             """,
             (
@@ -626,7 +639,8 @@ def _registrar_importaciones_desde_df(
                 tipo_periodo,
                 stats["filas"],
                 len(stats["creadores"]),
-                "{}",
+                cargado_por,
+                json.dumps(metadata or {}),
             ),
         )
 
@@ -1321,6 +1335,85 @@ def validar_reporte_creadores_excel(
         )
 
 
+@router.get("/api/creadores/performance/importaciones")
+def listar_importaciones_reporte(
+    limit: int = Query(100, ge=1, le=200),
+    tipo_periodo: Optional[str] = Query(None),
+    usuario: dict = Depends(obtener_usuario_actual),
+):
+    _ = usuario
+    tipo = _normalizar_tipo_periodo(tipo_periodo) if tipo_periodo else None
+
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                if tipo:
+                    cur.execute(
+                        """
+                        SELECT
+                            i.id_importacion,
+                            i.archivo_nombre,
+                            i.tipo_periodo,
+                            i.periodo_inicio,
+                            i.periodo_fin,
+                            i.total_filas,
+                            i.total_creadores,
+                            i.estado,
+                            i.fecha_carga,
+                            i.cargado_por,
+                            a.nombre_completo AS cargado_por_nombre
+                        FROM creadores_reporte_importaciones i
+                        LEFT JOIN administradores a ON a.id = i.cargado_por
+                        WHERE i.tipo_periodo = %s
+                        ORDER BY i.fecha_carga DESC, i.id_importacion DESC
+                        LIMIT %s
+                        """,
+                        (tipo, limit),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT
+                            i.id_importacion,
+                            i.archivo_nombre,
+                            i.tipo_periodo,
+                            i.periodo_inicio,
+                            i.periodo_fin,
+                            i.total_filas,
+                            i.total_creadores,
+                            i.estado,
+                            i.fecha_carga,
+                            i.cargado_por,
+                            a.nombre_completo AS cargado_por_nombre
+                        FROM creadores_reporte_importaciones i
+                        LEFT JOIN administradores a ON a.id = i.cargado_por
+                        ORDER BY i.fecha_carga DESC, i.id_importacion DESC
+                        LIMIT %s
+                        """,
+                        (limit,),
+                    )
+                items = []
+                for row in cur.fetchall():
+                    items.append({
+                        "id_importacion": row.get("id_importacion"),
+                        "archivo_nombre": row.get("archivo_nombre"),
+                        "tipo_periodo": row.get("tipo_periodo"),
+                        "periodo_inicio": _iso_ts(row.get("periodo_inicio")),
+                        "periodo_fin": _iso_ts(row.get("periodo_fin")),
+                        "total_filas": row.get("total_filas") or 0,
+                        "total_creadores": row.get("total_creadores") or 0,
+                        "estado": row.get("estado") or "procesado",
+                        "fecha_carga": _iso_ts(row.get("fecha_carga")),
+                        "cargado_por": row.get("cargado_por"),
+                        "cargado_por_nombre": row.get("cargado_por_nombre"),
+                    })
+                return {"ok": True, "items": items}
+    except Exception as e:
+        print("❌ Error listando importaciones de reporte:", e)
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Error al consultar el historial de cargues")
+
+
 # =========================================================
 # ENDPOINT: CARGAR EXCEL + INSERTAR REPORTE
 # =========================================================
@@ -1334,6 +1427,7 @@ def cargar_reporte_creadores_excel(
     generar_insights: Optional[bool] = Query(None),
     crear_creadores_faltantes: bool = Query(False),
     crear_managers_faltantes: bool = Query(False),
+    usuario: dict = Depends(obtener_usuario_actual),
 ):
     try:
         tipo = _normalizar_tipo_periodo(tipo_periodo)
@@ -1381,6 +1475,14 @@ def cargar_reporte_creadores_excel(
                     archivo_nombre=file.filename,
                     archivo_origen=archivo_origen,
                     tipo_periodo=tipo,
+                    cargado_por=usuario.get("id") if usuario else None,
+                    metadata={
+                        "actualizar_creadores_activos": actualizar_creadores_activos,
+                        "generar_metas": generar_metas,
+                        "generar_insights": generar_insights,
+                        "crear_creadores_faltantes": crear_creadores_faltantes,
+                        "crear_managers_faltantes": crear_managers_faltantes,
+                    },
                 )
 
                 for idx, row in df.iterrows():

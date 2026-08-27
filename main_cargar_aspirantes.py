@@ -11,11 +11,13 @@ from datetime import datetime
 from openpyxl import load_workbook
 from google.oauth2.service_account import Credentials
 
-from fastapi import APIRouter, UploadFile, File, Form, Body, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, Body, HTTPException, Depends, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
+from psycopg2.extras import RealDictCursor
 
 from DataBase import get_connection_context, limpiar_telefono, safe_int
+from main_auth import obtener_usuario_actual
 from utils_aspirantes import registrar_cambio_estado  # <-- AJUSTAR IMPORT REAL
 
 logger = logging.getLogger("uvicorn.error")
@@ -417,6 +419,9 @@ def guardar_aspirantes(
     - Nuevos aspirantes: se insertan con estado_id = 1
     - Aspirantes existentes: se actualizan (incl. tiene_solicitud = TRUE) y luego se normaliza estado con registrar_cambio_estado()
     """
+    if not lote_carga:
+        lote_carga = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
+
     conn = get_connection_context()
     cur = conn.cursor()
 
@@ -875,12 +880,88 @@ def listar_hojas(str_key: str):
         return {"status": "error", "mensaje": f"Error al listar hojas: {str(e)}"}
 
 
+def _iso_ts(val):
+    if val is None:
+        return None
+    if hasattr(val, "isoformat"):
+        return val.isoformat()
+    return str(val)
+
+
+@router.get("/api/aspirantes/cargue/historial")
+def listar_historial_cargue_aspirantes(
+    limit: int = Query(100, ge=1, le=200),
+    usuario: dict = Depends(obtener_usuario_actual),
+):
+    _ = usuario
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    WITH lotes AS (
+                        SELECT
+                            CASE
+                                WHEN lote_carga IS NOT NULL AND BTRIM(lote_carga) <> '' THEN lote_carga
+                                ELSE concat_ws(
+                                    '|',
+                                    COALESCE(nombre_archivo, ''),
+                                    COALESCE(hoja_excel, ''),
+                                    COALESCE(fecha_carga::text, '')
+                                )
+                            END AS grupo,
+                            MAX(nombre_archivo) AS nombre_archivo,
+                            MAX(hoja_excel) AS hoja_excel,
+                            MIN(creado_en) AS creado_en,
+                            MIN(fecha_carga) AS fecha_carga,
+                            COUNT(*)::int AS total_filas,
+                            COUNT(*) FILTER (WHERE apto IS TRUE)::int AS aptos,
+                            MAX(procesado_por) AS procesado_por
+                        FROM aspirantes_cargue
+                        GROUP BY 1
+                    )
+                    SELECT
+                        l.grupo,
+                        l.nombre_archivo,
+                        l.hoja_excel,
+                        l.creado_en,
+                        l.fecha_carga,
+                        l.total_filas,
+                        l.aptos,
+                        l.procesado_por,
+                        a.nombre_completo AS cargado_por_nombre
+                    FROM lotes l
+                    LEFT JOIN administradores a ON a.id = l.procesado_por
+                    ORDER BY COALESCE(l.creado_en, l.fecha_carga::timestamp) DESC NULLS LAST
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                items = []
+                for row in cur.fetchall():
+                    items.append({
+                        "id": row.get("grupo"),
+                        "archivo_nombre": row.get("nombre_archivo"),
+                        "hoja_excel": row.get("hoja_excel"),
+                        "fecha_carga": _iso_ts(row.get("creado_en") or row.get("fecha_carga")),
+                        "total_filas": row.get("total_filas") or 0,
+                        "aptos": row.get("aptos") or 0,
+                        "cargado_por": row.get("procesado_por"),
+                        "cargado_por_nombre": row.get("cargado_por_nombre"),
+                    })
+                return {"ok": True, "items": items}
+    except Exception as e:
+        logger.error("❌ Error listando historial de cargue de aspirantes: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Error al consultar el historial de cargues")
+
+
 @router.post("/cargar_aspirantes")
 async def cargar_aspirantes_desde_workspace(
     nombre_hoja: str = Form(...),
     str_key: str = Form(...),
     txt_file: UploadFile = File(None),
     ruta_txt: str = Form(None),
+    usuario: dict = Depends(obtener_usuario_actual),
 ):
     try:
         logger.info(f"📥 Iniciando carga: hoja={nombre_hoja}, str_key={str_key}")
@@ -925,8 +1006,9 @@ async def cargar_aspirantes_desde_workspace(
 
         guardar_aspirantes(
             aspirantes,
-            nombre_archivo=None,
-            hoja_excel=nombre_hoja
+            nombre_archivo=(txt_file.filename if txt_file and txt_file.filename else None) or "Google Sheets",
+            hoja_excel=nombre_hoja,
+            procesado_por=usuario.get("id") if usuario else None,
         )
 
         logger.info(f"✅ {len(aspirantes)} aspirantes cargados y guardados correctamente")
@@ -948,6 +1030,7 @@ async def cargar_aspirantes_desde_archivo(
     file: UploadFile = File(...),
     txt_file: UploadFile = File(...),
     nombre_hoja: str | None = Form(None),
+    usuario: dict = Depends(obtener_usuario_actual),
 ):
     """
     Carga aspirantes desde un Excel local y un TXT con métricas/nickname.
@@ -1087,8 +1170,9 @@ async def cargar_aspirantes_desde_archivo(
 
         guardar_aspirantes(
             aspirantes,
-            nombre_archivo=xlsx_path.name,
-            hoja_excel=ws.title
+            nombre_archivo=file.filename or xlsx_path.name,
+            hoja_excel=ws.title,
+            procesado_por=usuario.get("id") if usuario else None,
         )
 
         logger.info(f"✅ {len(aspirantes)} aspirantes (local) cargados y guardados correctamente")
