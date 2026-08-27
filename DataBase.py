@@ -508,7 +508,7 @@ def obtener_contactos_db_nueva(tipo=None, search=None, estado=None, leidos=None)
                         a.usuario,
                         a.nickname,
                         a.nombre_real AS nombre,
-                        a.whatsapp AS telefono,
+                        COALESCE(NULLIF(BTRIM(a.whatsapp), ''), NULLIF(BTRIM(a.telefono), '')) AS telefono,
                         ae.nombre AS estado,
                         ua.ultima_actividad,
                         COALESCE(nl.cantidad, 0) AS no_leidos
@@ -516,11 +516,10 @@ def obtener_contactos_db_nueva(tipo=None, search=None, estado=None, leidos=None)
                     LEFT JOIN aspirantes_estados ae 
                         ON a.estado_id = ae.id
                     LEFT JOIN ultima_actividad ua 
-                        ON ua.telefono = a.whatsapp
+                        ON ua.telefono = COALESCE(NULLIF(BTRIM(a.whatsapp), ''), NULLIF(BTRIM(a.telefono), ''))
                     LEFT JOIN no_leidos nl 
-                        ON nl.telefono = a.whatsapp
-                    WHERE a.whatsapp IS NOT NULL
-                      AND a.whatsapp <> ''
+                        ON nl.telefono = COALESCE(NULLIF(BTRIM(a.whatsapp), ''), NULLIF(BTRIM(a.telefono), ''))
+                    WHERE COALESCE(NULLIF(BTRIM(a.whatsapp), ''), NULLIF(BTRIM(a.telefono), '')) IS NOT NULL
                       AND COALESCE(a.activo, true) = true
                     """
                     if estado:
@@ -540,19 +539,36 @@ def obtener_contactos_db_nueva(tipo=None, search=None, estado=None, leidos=None)
                         c.usuario_tiktok AS usuario,
                         NULL AS nickname,
                         c.nombre AS nombre,
-                        c.telefono AS telefono,
+                        COALESCE(
+                            NULLIF(BTRIM(c.telefono), ''),
+                            NULLIF(BTRIM(asp.whatsapp), ''),
+                            NULLIF(BTRIM(asp.telefono), '')
+                        ) AS telefono,
                         ce.nombre AS estado,
                         ua.ultima_actividad,
                         COALESCE(nl.cantidad, 0) AS no_leidos
                     FROM creadores c
                     INNER JOIN creadores_estados ce
                         ON ce.id = c.estado_id
+                    LEFT JOIN aspirantes asp
+                        ON asp.id = c.aspirante_id
                     LEFT JOIN ultima_actividad ua 
-                        ON ua.telefono = c.telefono
+                        ON ua.telefono = COALESCE(
+                            NULLIF(BTRIM(c.telefono), ''),
+                            NULLIF(BTRIM(asp.whatsapp), ''),
+                            NULLIF(BTRIM(asp.telefono), '')
+                        )
                     LEFT JOIN no_leidos nl 
-                        ON nl.telefono = c.telefono
-                    WHERE c.telefono IS NOT NULL
-                      AND c.telefono <> ''
+                        ON nl.telefono = COALESCE(
+                            NULLIF(BTRIM(c.telefono), ''),
+                            NULLIF(BTRIM(asp.whatsapp), ''),
+                            NULLIF(BTRIM(asp.telefono), '')
+                        )
+                    WHERE COALESCE(
+                            NULLIF(BTRIM(c.telefono), ''),
+                            NULLIF(BTRIM(asp.whatsapp), ''),
+                            NULLIF(BTRIM(asp.telefono), '')
+                          ) IS NOT NULL
                       AND ce.nombre = %s
                       AND COALESCE(ce.activo, true) = true
                     """
