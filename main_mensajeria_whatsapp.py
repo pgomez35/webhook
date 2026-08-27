@@ -189,9 +189,15 @@ def obtener_modo_chatbot_mensajes(usuario=Depends(obtener_usuario_actual)):
         obtener_canal_encuesta_aspirante,
     )
 
+    try:
+        agencia = (current_business_name.get() or "").strip()
+    except LookupError:
+        agencia = ""
+
     return {
         "modo_inicio_chatbot": obtener_modo_inicio_chatbot(),
         "canal_encuesta_aspirante": obtener_canal_encuesta_aspirante(),
+        "business_name": agencia,
     }
 
 
