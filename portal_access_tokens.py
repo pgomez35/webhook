@@ -44,6 +44,11 @@ def obtener_tenant_actual() -> str:
     return (tenant or "public").strip().lower()
 
 
+def subdominio_web_desde_schema(tenant: str) -> str:
+    """El schema de BD usa '_' (agency15_5); el host público usa '-' (agency15-5)."""
+    return (tenant or "public").strip().lower().replace("_", "-")
+
+
 def construir_base_portal_url() -> str:
     if PORTAL_BASE_URL:
         return PORTAL_BASE_URL.rstrip("/")
@@ -53,7 +58,8 @@ def construir_base_portal_url() -> str:
     if tenant == "public":
         return f"https://{PORTAL_ROOT_DOMAIN}/portal"
 
-    return f"https://{tenant}.{PORTAL_ROOT_DOMAIN}/portal"
+    host = subdominio_web_desde_schema(tenant)
+    return f"https://{host}.{PORTAL_ROOT_DOMAIN}/portal"
 
 
 def construir_base_agendamiento_url() -> str:
@@ -68,7 +74,8 @@ def construir_base_agendamiento_url() -> str:
     if tenant == "public":
         return f"https://{PORTAL_ROOT_DOMAIN}/agendar"
 
-    return f"https://{tenant}.{PORTAL_ROOT_DOMAIN}/agendar"
+    host = subdominio_web_desde_schema(tenant)
+    return f"https://{host}.{PORTAL_ROOT_DOMAIN}/agendar"
 
 
 def construir_url_portal(token: str) -> str:
