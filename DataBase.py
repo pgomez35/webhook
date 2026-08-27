@@ -1600,31 +1600,46 @@ def obtener_contactos():
         return []
 
 
-def obtener_mensajes(telefono):
+def obtener_mensajes(telefono, limit=150):
     try:
+        try:
+            limit = max(1, min(int(limit or 150), 500))
+        except (TypeError, ValueError):
+            limit = 150
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT contenido,
-                           direccion,
-                           tipo,
-                           fecha
-                    FROM mensajes_whatsapp
-                    WHERE telefono = %s
+                cur.execute(
+                    """
+                    SELECT contenido, direccion, tipo, fecha, media_url
+                    FROM (
+                        SELECT contenido, direccion, tipo, fecha, media_url
+                        FROM mensajes_whatsapp
+                        WHERE telefono = %s
+                        ORDER BY fecha DESC
+                        LIMIT %s
+                    ) t
                     ORDER BY fecha ASC
-                """, (telefono,))
+                    """,
+                    (telefono, limit),
+                )
 
                 mensajes = cur.fetchall()
 
-                return [
-                    {
+                out = []
+                for contenido, direccion, tipo, fecha, media_url in mensajes:
+                    dir_norm = (direccion or "").strip().lower()
+                    if dir_norm in ("enviado", "outbound", "out", "sent"):
+                        tipo_ui = "enviado"
+                    else:
+                        tipo_ui = "recibido"
+                    out.append({
                         "contenido": contenido,
-                        "tipo": direccion,  # enviado / recibido
-                        "fecha": fecha.isoformat(),
-                        "es_audio": True if tipo == "audio" else False
-                    }
-                    for contenido, direccion, tipo, fecha in mensajes
-                ]
+                        "tipo": tipo_ui,
+                        "fecha": fecha.isoformat() if fecha else None,
+                        "es_audio": True if tipo == "audio" else False,
+                        "media_url": media_url,
+                    })
+                return out
 
     except Exception as e:
         print(f"❌ Error obteniendo mensajes: {e}")

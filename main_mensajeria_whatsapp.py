@@ -339,8 +339,8 @@ def marcar_leido(data: dict):
 
 
 @router.get("/mensajes/{telefono}")
-def listar_mensajes(telefono: str):
-    return obtener_mensajes(telefono)
+def listar_mensajes(telefono: str, limit: int = 150):
+    return obtener_mensajes(telefono, limit=limit)
 
 @router.post("/mensajes")
 async def api_enviar_mensaje(request: Request, data: dict):
