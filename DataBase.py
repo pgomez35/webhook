@@ -466,7 +466,14 @@ def actualizar_contacto_info_db(telefono: str, datos: ActualizacionContactoInfo)
         return {"status": "error", "mensaje": str(e)}
 
 
+_NOMBRE_WA_COL_CACHE: dict = {}
+
+
 def _chat_estado_tiene_nombre_whatsapp(cur) -> bool:
+    cur.execute("SELECT current_schema()")
+    schema = (cur.fetchone() or (None,))[0]
+    if schema and _NOMBRE_WA_COL_CACHE.get(schema) is True:
+        return True
     cur.execute(
         """
         SELECT 1
@@ -477,18 +484,27 @@ def _chat_estado_tiene_nombre_whatsapp(cur) -> bool:
         LIMIT 1
         """
     )
-    return cur.fetchone() is not None
+    found = cur.fetchone() is not None
+    if found and schema:
+        _NOMBRE_WA_COL_CACHE[schema] = True
+    return found
 
 
 def _asegurar_nombre_whatsapp_chat_estado(cur) -> None:
     try:
+        cur.execute("SAVEPOINT sp_nombre_whatsapp")
         cur.execute(
             """
             ALTER TABLE mensajes_whatsapp_chat_estado
             ADD COLUMN IF NOT EXISTS nombre_whatsapp varchar(200)
             """
         )
+        cur.execute("RELEASE SAVEPOINT sp_nombre_whatsapp")
     except Exception as e:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_nombre_whatsapp")
+        except Exception:
+            pass
         print(f"⚠️ No se pudo agregar mensajes_whatsapp_chat_estado.nombre_whatsapp: {e}")
 
 
@@ -497,7 +513,12 @@ def _guardar_nombre_whatsapp(cur, telefono: str, nombre: Optional[str]) -> None:
     nom = (nombre or "").strip()
     if not tel or not nom:
         return
-    _asegurar_nombre_whatsapp_chat_estado(cur)
+    if not _chat_estado_tiene_nombre_whatsapp(cur):
+        print(
+            "mensajes_whatsapp_chat_estado.nombre_whatsapp no existe; "
+            "se omite el nombre de perfil (el mensaje ya debe estar guardado)."
+        )
+        return
     try:
         cur.execute(
             """
@@ -514,13 +535,97 @@ def _guardar_nombre_whatsapp(cur, telefono: str, nombre: Optional[str]) -> None:
         print(f"⚠️ No se pudo guardar nombre_whatsapp de {tel}: {e}")
 
 
+def guardar_nombre_whatsapp_perfil(telefono: str, nombre: Optional[str]) -> None:
+    """Guarda el nombre de perfil de Meta en una conexión propia (best effort)."""
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                _guardar_nombre_whatsapp(cur, telefono, nombre)
+    except Exception as e:
+        print(f"⚠️ No se pudo guardar nombre_whatsapp de {telefono}: {e}")
+
+
+def guardar_mensaje_inbound(
+    telefono: str,
+    message_id_meta: Optional[str] = None,
+    tipo: str = "text",
+    contenido: Optional[str] = None,
+    media_url: Optional[str] = None,
+    direccion: str = "inbound",
+    estado: str = "received",
+) -> bool:
+    """Inserta un inbound en mensajes_whatsapp aunque no exista aspirante.
+
+    usuario_id queda NULL si el teléfono no está en aspirantes.telefono ni .whatsapp.
+    Devuelve True si se insertó una fila nueva.
+    """
+    tel = (telefono or "").strip()
+    if not tel:
+        return False
+    wamid = (message_id_meta or "").strip() or None
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id
+                    FROM aspirantes
+                    WHERE NULLIF(BTRIM(telefono), '') = %s
+                       OR NULLIF(BTRIM(whatsapp), '') = %s
+                    LIMIT 1
+                    """,
+                    (tel, tel),
+                )
+                row = cur.fetchone()
+                aspirante_id = row[0] if row else None
+                if aspirante_id:
+                    print(f"Mensaje asociado a aspirante_id={aspirante_id}")
+                else:
+                    print(f"Mensaje sin vincular (usuario_id=NULL) telefono={tel}")
+
+                cur.execute(
+                    """
+                    INSERT INTO mensajes_whatsapp
+                    (
+                        usuario_id,
+                        telefono,
+                        direccion,
+                        tipo,
+                        contenido,
+                        media_url,
+                        message_id_meta,
+                        estado
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (message_id_meta) DO NOTHING
+                    """,
+                    (
+                        aspirante_id,
+                        tel,
+                        direccion,
+                        tipo,
+                        contenido,
+                        media_url,
+                        wamid,
+                        estado,
+                    ),
+                )
+                insertado = (cur.rowcount or 0) > 0
+            conn.commit()
+        return insertado
+    except Exception as e:
+        print(f"Error al registrar mensaje inbound {wamid}: {e}")
+        traceback.print_exc()
+        return False
+
+
 def obtener_contactos_db_nueva(tipo=None, search=None, estado=None, leidos=None):
     """
-    Bandeja WhatsApp: unión de conversaciones reales y contactos con teléfono.
+    Bandeja WhatsApp: conversaciones reales + contactos con teléfono
+    (aunque aún no hayan escrito, para poder iniciar un mensaje).
 
-    - Conversaciones: DISTINCT teléfono en mensajes_whatsapp (incluye sin vincular).
-    - Contactos Talentum: aspirante/creador/admin con teléfono, aunque aún no hayan escrito.
-    Un teléfono se clasifica una sola vez: aspirante > creador > admin > sin_vincular.
+    Clasificación por teléfono: aspirante > creador > admin > sin_vincular.
+    Los joins son por tablas de lookup, no LATERAL por fila.
     """
     try:
         tipo_filtro = normalizar_tipo_filtro(tipo)
@@ -533,55 +638,18 @@ def obtener_contactos_db_nueva(tipo=None, search=None, estado=None, leidos=None)
                 )
 
                 query = f"""
-                WITH telefonos AS (
-                    SELECT BTRIM(mw.telefono) AS telefono
+                WITH actividad AS (
+                    SELECT
+                        mw.telefono,
+                        MAX(mw.fecha) AS ultima_actividad
                     FROM mensajes_whatsapp mw
                     WHERE mw.telefono IS NOT NULL
-                      AND BTRIM(mw.telefono) <> ''
-
-                    UNION
-
-                    SELECT COALESCE(NULLIF(BTRIM(a.whatsapp), ''), NULLIF(BTRIM(a.telefono), ''))
-                    FROM aspirantes a
-                    WHERE COALESCE(a.activo, true) = true
-                      AND COALESCE(NULLIF(BTRIM(a.whatsapp), ''), NULLIF(BTRIM(a.telefono), '')) IS NOT NULL
-
-                    UNION
-
-                    SELECT COALESCE(
-                        NULLIF(BTRIM(c.telefono), ''),
-                        NULLIF(BTRIM(asp.whatsapp), ''),
-                        NULLIF(BTRIM(asp.telefono), '')
-                    )
-                    FROM creadores c
-                    INNER JOIN creadores_estados ce ON ce.id = c.estado_id
-                    LEFT JOIN aspirantes asp ON asp.id = c.aspirante_id
-                    WHERE ce.nombre = %s
-                      AND COALESCE(ce.activo, true) = true
-                      AND COALESCE(
-                            NULLIF(BTRIM(c.telefono), ''),
-                            NULLIF(BTRIM(asp.whatsapp), ''),
-                            NULLIF(BTRIM(asp.telefono), '')
-                          ) IS NOT NULL
-
-                    UNION
-
-                    SELECT NULLIF(BTRIM(ad.telefono), '')
-                    FROM administradores ad
-                    WHERE NULLIF(BTRIM(ad.telefono), '') IS NOT NULL
-                ),
-                conversaciones AS (
-                    SELECT
-                        t.telefono,
-                        MAX(mw.fecha) AS ultima_actividad
-                    FROM telefonos t
-                    LEFT JOIN mensajes_whatsapp mw
-                        ON BTRIM(mw.telefono) = t.telefono
-                    GROUP BY t.telefono
+                      AND mw.telefono <> ''
+                    GROUP BY mw.telefono
                 ),
                 no_leidos AS (
                     SELECT
-                        BTRIM(mw.telefono) AS telefono,
+                        mw.telefono,
                         COUNT(*)::int AS cantidad
                     FROM mensajes_whatsapp mw
                     LEFT JOIN mensajes_whatsapp_chat_estado ce
@@ -591,7 +659,105 @@ def obtener_contactos_db_nueva(tipo=None, search=None, estado=None, leidos=None)
                             ce.last_read_at IS NULL
                             OR mw.fecha > ce.last_read_at
                           )
-                    GROUP BY BTRIM(mw.telefono)
+                    GROUP BY mw.telefono
+                ),
+                asp_tel AS (
+                    SELECT DISTINCT ON (tel)
+                        tel,
+                        id,
+                        usuario,
+                        nickname,
+                        nombre_real,
+                        estado_id
+                    FROM (
+                        SELECT NULLIF(BTRIM(whatsapp), '') AS tel,
+                               id, usuario, nickname, nombre_real, estado_id
+                        FROM aspirantes
+                        WHERE COALESCE(activo, true) = true
+                        UNION ALL
+                        SELECT NULLIF(BTRIM(telefono), '') AS tel,
+                               id, usuario, nickname, nombre_real, estado_id
+                        FROM aspirantes
+                        WHERE COALESCE(activo, true) = true
+                    ) a
+                    WHERE tel IS NOT NULL
+                    ORDER BY tel, id
+                ),
+                cre_tel AS (
+                    SELECT DISTINCT ON (tel)
+                        tel,
+                        id,
+                        usuario_tiktok,
+                        nombre,
+                        estado_id
+                    FROM (
+                        SELECT phones.tel,
+                               c.id,
+                               c.usuario_tiktok,
+                               c.nombre,
+                               c.estado_id
+                        FROM creadores c
+                        INNER JOIN creadores_estados ces ON ces.id = c.estado_id
+                        LEFT JOIN aspirantes aspx ON aspx.id = c.aspirante_id
+                        CROSS JOIN LATERAL (
+                            SELECT unnest(ARRAY[
+                                NULLIF(BTRIM(c.telefono), ''),
+                                NULLIF(BTRIM(aspx.whatsapp), ''),
+                                NULLIF(BTRIM(aspx.telefono), '')
+                            ]) AS tel
+                        ) phones
+                        WHERE ces.nombre = %s
+                          AND COALESCE(ces.activo, true) = true
+                          AND phones.tel IS NOT NULL
+                    ) c
+                    ORDER BY tel, id
+                ),
+                adm_tel AS (
+                    SELECT DISTINCT ON (tel)
+                        tel,
+                        id,
+                        username,
+                        nombre_completo,
+                        administradores_roles_id
+                    FROM (
+                        SELECT NULLIF(BTRIM(telefono), '') AS tel,
+                               id, username, nombre_completo, administradores_roles_id
+                        FROM administradores
+                    ) ad
+                    WHERE tel IS NOT NULL
+                    ORDER BY tel, id
+                ),
+                telefonos AS (
+                    SELECT telefono FROM actividad
+                    UNION
+                    SELECT COALESCE(
+                        NULLIF(BTRIM(a.whatsapp), ''),
+                        NULLIF(BTRIM(a.telefono), '')
+                    )
+                    FROM aspirantes a
+                    WHERE COALESCE(a.activo, true) = true
+                      AND COALESCE(
+                            NULLIF(BTRIM(a.whatsapp), ''),
+                            NULLIF(BTRIM(a.telefono), '')
+                          ) IS NOT NULL
+                    UNION
+                    SELECT COALESCE(
+                        NULLIF(BTRIM(c.telefono), ''),
+                        NULLIF(BTRIM(aspx.whatsapp), ''),
+                        NULLIF(BTRIM(aspx.telefono), '')
+                    )
+                    FROM creadores c
+                    INNER JOIN creadores_estados ces ON ces.id = c.estado_id
+                    LEFT JOIN aspirantes aspx ON aspx.id = c.aspirante_id
+                    WHERE ces.nombre = %s
+                      AND COALESCE(ces.activo, true) = true
+                      AND COALESCE(
+                            NULLIF(BTRIM(c.telefono), ''),
+                            NULLIF(BTRIM(aspx.whatsapp), ''),
+                            NULLIF(BTRIM(aspx.telefono), '')
+                          ) IS NOT NULL
+                    UNION
+                    SELECT tel FROM adm_tel
                 )
                 SELECT
                     COALESCE(asp.id, cre.id, adm.id) AS id,
@@ -605,55 +771,27 @@ def obtener_contactos_db_nueva(tipo=None, search=None, estado=None, leidos=None)
                     asp.nickname AS nickname,
                     COALESCE(
                         NULLIF(BTRIM(asp.nombre_real), ''),
+                        NULLIF(BTRIM(asp.usuario), ''),
                         NULLIF(BTRIM(cre.nombre), ''),
                         NULLIF(BTRIM(adm.nombre_completo), ''),
                         {nombre_wa_sql},
-                        conv.telefono
+                        t.telefono
                     ) AS nombre,
-                    conv.telefono,
+                    t.telefono,
                     COALESCE(ae.nombre, cest.nombre, ar.nombre) AS estado,
                     conv.ultima_actividad,
                     COALESCE(nl.cantidad, 0) AS no_leidos
-                FROM conversaciones conv
-                LEFT JOIN LATERAL (
-                    SELECT a.id, a.usuario, a.nickname, a.nombre_real, a.estado_id
-                    FROM aspirantes a
-                    WHERE COALESCE(a.activo, true) = true
-                      AND (
-                            NULLIF(BTRIM(a.whatsapp), '') = conv.telefono
-                            OR NULLIF(BTRIM(a.telefono), '') = conv.telefono
-                          )
-                    ORDER BY a.id
-                    LIMIT 1
-                ) asp ON TRUE
+                FROM telefonos t
+                LEFT JOIN actividad conv ON conv.telefono = t.telefono
+                LEFT JOIN asp_tel asp ON asp.tel = t.telefono
                 LEFT JOIN aspirantes_estados ae ON ae.id = asp.estado_id
-                LEFT JOIN LATERAL (
-                    SELECT c.id, c.usuario_tiktok, c.nombre, c.estado_id
-                    FROM creadores c
-                    INNER JOIN creadores_estados ces ON ces.id = c.estado_id
-                    LEFT JOIN aspirantes aspx ON aspx.id = c.aspirante_id
-                    WHERE ces.nombre = %s
-                      AND COALESCE(ces.activo, true) = true
-                      AND (
-                            NULLIF(BTRIM(c.telefono), '') = conv.telefono
-                            OR NULLIF(BTRIM(aspx.whatsapp), '') = conv.telefono
-                            OR NULLIF(BTRIM(aspx.telefono), '') = conv.telefono
-                          )
-                    ORDER BY c.id
-                    LIMIT 1
-                ) cre ON TRUE
+                LEFT JOIN cre_tel cre ON cre.tel = t.telefono
                 LEFT JOIN creadores_estados cest ON cest.id = cre.estado_id
-                LEFT JOIN LATERAL (
-                    SELECT ad.id, ad.username, ad.nombre_completo, ad.administradores_roles_id
-                    FROM administradores ad
-                    WHERE NULLIF(BTRIM(ad.telefono), '') = conv.telefono
-                    ORDER BY ad.id
-                    LIMIT 1
-                ) adm ON TRUE
+                LEFT JOIN adm_tel adm ON adm.tel = t.telefono
                 LEFT JOIN administradores_roles ar ON ar.id = adm.administradores_roles_id
-                LEFT JOIN no_leidos nl ON nl.telefono = conv.telefono
+                LEFT JOIN no_leidos nl ON nl.telefono = t.telefono
                 LEFT JOIN mensajes_whatsapp_chat_estado ce
-                    ON BTRIM(ce.telefono) = conv.telefono
+                    ON ce.telefono = t.telefono
                 WHERE 1=1
                 """
                 params = [CREADOR_ESTADO_NOMBRE_ACTIVO, CREADOR_ESTADO_NOMBRE_ACTIVO]
@@ -679,14 +817,15 @@ def obtener_contactos_db_nueva(tipo=None, search=None, estado=None, leidos=None)
                     AND (
                         COALESCE(
                             NULLIF(BTRIM(asp.nombre_real), ''),
+                            NULLIF(BTRIM(asp.usuario), ''),
                             NULLIF(BTRIM(cre.nombre), ''),
                             NULLIF(BTRIM(adm.nombre_completo), ''),
                             {nombre_wa_sql},
-                            conv.telefono,
+                            t.telefono,
                             ''
                         ) ILIKE %s
                         OR COALESCE(asp.usuario, cre.usuario_tiktok, adm.username, '') ILIKE %s
-                        OR COALESCE(conv.telefono, '') LIKE %s
+                        OR COALESCE(t.telefono, '') LIKE %s
                     )
                     """
                     params.extend([search_like, search_like, search_like])

@@ -3020,85 +3020,38 @@ def registrar_mensaje_recibido(
     media_url: Optional[str] = None,
     nombre_whatsapp: Optional[str] = None,
 ) -> None:
+    """Persiste inbound en mensajes_whatsapp aunque no exista aspirante/creador/admin.
 
-    try:
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
+    usuario_id queda NULL si el teléfono no está en aspirantes. El nombre de perfil
+    de WhatsApp se guarda después, en otra conexión, para no revertir el INSERT.
+    """
+    from DataBase import guardar_mensaje_inbound, guardar_nombre_whatsapp_perfil
 
-                # ----------------------------------------
-                # 1️⃣ Buscar creador (NO crear si no existe)
-                # ----------------------------------------
-                cur.execute(
-                    """
-                    SELECT id
-                    FROM aspirantes
-                    WHERE telefono = %s
-                    LIMIT 1
-                    """,
-                    (telefono,),
-                )
-                row = cur.fetchone()
+    direccion_db = _normalizar_direccion_mensaje_db("inbound")
+    tipo_db = _normalizar_tipo_mensaje_db(tipo)
+    wamid = (message_id_meta or "").strip() or None
+    print(
+        f"[MSG-WA-INSERT] direccion={direccion_db!r} "
+        f"len(direccion)={len(direccion_db)} "
+        f"tipo={tipo_db!r} len(tipo)={len(tipo_db)} "
+        f"(raw_tipo={tipo!r}) wamid={wamid!r}"
+    )
+    insertado = guardar_mensaje_inbound(
+        telefono=telefono,
+        message_id_meta=wamid,
+        tipo=tipo_db,
+        contenido=contenido,
+        media_url=media_url,
+        direccion=direccion_db,
+        estado="received",
+    )
+    if insertado:
+        print(f"Mensaje inbound registrado: {wamid}")
+    else:
+        print(f"Mensaje inbound no insertado (vacio, error o wamid duplicado): {wamid}")
 
-                aspirante_id = row[0] if row else None
-
-                if aspirante_id:
-                    print(f"🧾 Mensaje asociado a aspirante_id={aspirante_id}")
-                else:
-                    print(f"🆕 Mensaje sin creador (aspirante_id=NULL)")
-
-                direccion_db = _normalizar_direccion_mensaje_db("inbound")
-                tipo_db = _normalizar_tipo_mensaje_db(tipo)
-
-                # Log temporal diagnóstico varchar(10) — sin teléfono/contenido
-                print(
-                    f"[MSG-WA-INSERT] direccion={direccion_db!r} "
-                    f"len(direccion)={len(direccion_db)} "
-                    f"tipo={tipo_db!r} len(tipo)={len(tipo_db)} "
-                    f"(raw_tipo={tipo!r})"
-                )
-
-                # ----------------------------------------
-                # 2️⃣ Insert mensaje
-                # ----------------------------------------
-                cur.execute(
-                    """
-                    INSERT INTO mensajes_whatsapp
-                    (
-                        usuario_id,
-                        telefono,
-                        direccion,
-                        tipo,
-                        contenido,
-                        media_url,
-                        message_id_meta,
-                        estado
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (message_id_meta) DO NOTHING;
-                    """,
-                    (
-                        aspirante_id,        # Puede ser NULL
-                        telefono,
-                        direccion_db,
-                        tipo_db,
-                        contenido,
-                        media_url,
-                        message_id_meta,
-                        "received",
-                    )
-                )
-                if nombre_whatsapp:
-                    from DataBase import _guardar_nombre_whatsapp
-
-                    _guardar_nombre_whatsapp(cur, telefono, nombre_whatsapp)
-
-            conn.commit()
-
-        print(f"📥 Mensaje inbound registrado correctamente: {message_id_meta}")
-
-    except Exception as e:
-        print(f"❌ Error al registrar mensaje inbound {message_id_meta}: {e}")
-        traceback.print_exc()
+    if nombre_whatsapp:
+        guardar_nombre_whatsapp_perfil(telefono, nombre_whatsapp)
 
 
 def obtener_entrevista_id(aspirante_id: int, usuario_evalua: int) -> Optional[dict]:
