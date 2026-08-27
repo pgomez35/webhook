@@ -288,7 +288,7 @@ def enviar_plantilla_whatsapp_mensajes(
 
 @router.get("/contactos")
 def listar_contactos(
-    tipo: Optional[str] = None,   # aspirante | creador | admin
+    tipo: Optional[str] = None,   # aspirante | creador | admin | sin_vincular
     search: Optional[str] = None,
     estado: Optional[int] = None,
 ):

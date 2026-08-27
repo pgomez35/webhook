@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from schemas import ActualizacionContactoInfo
 from creadores_catalogo import CREADOR_ESTADO_NOMBRE_ACTIVO
 from psycopg2.extras import RealDictCursor
+from whatsapp_bandeja import TIPO_SIN_VINCULAR, normalizar_tipo_filtro
 
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional, List, Dict
@@ -465,22 +466,58 @@ def actualizar_contacto_info_db(telefono: str, datos: ActualizacionContactoInfo)
         return {"status": "error", "mensaje": str(e)}
 
 
+def _asegurar_nombre_whatsapp_chat_estado(cur) -> None:
+    cur.execute(
+        """
+        ALTER TABLE mensajes_whatsapp_chat_estado
+        ADD COLUMN IF NOT EXISTS nombre_whatsapp varchar(200)
+        """
+    )
+
+
+def _guardar_nombre_whatsapp(cur, telefono: str, nombre: Optional[str]) -> None:
+    tel = (telefono or "").strip()
+    nom = (nombre or "").strip()
+    if not tel or not nom:
+        return
+    _asegurar_nombre_whatsapp_chat_estado(cur)
+    cur.execute(
+        """
+        INSERT INTO mensajes_whatsapp_chat_estado (telefono, nombre_whatsapp, creado_en, actualizado_en)
+        VALUES (%s, %s, NOW(), NOW())
+        ON CONFLICT (telefono)
+        DO UPDATE SET
+            nombre_whatsapp = COALESCE(EXCLUDED.nombre_whatsapp, mensajes_whatsapp_chat_estado.nombre_whatsapp),
+            actualizado_en = NOW()
+        """,
+        (tel, nom),
+    )
+
+
 def obtener_contactos_db_nueva(tipo=None, search=None, estado=None, leidos=None):
+    """
+    Bandeja de conversaciones: fuente = teléfonos reales en mensajes_whatsapp.
+    Luego se clasifica cada número como aspirante / creador / admin / sin_vincular.
+    """
     try:
+        tipo_filtro = normalizar_tipo_filtro(tipo)
         with get_connection_context() as conn:
             with conn.cursor() as cur:
+                _asegurar_nombre_whatsapp_chat_estado(cur)
 
                 query = """
-                WITH ultima_actividad AS (
-                    SELECT 
-                        mw.telefono, 
+                WITH conversaciones AS (
+                    SELECT
+                        BTRIM(mw.telefono) AS telefono,
                         MAX(mw.fecha) AS ultima_actividad
                     FROM mensajes_whatsapp mw
-                    GROUP BY mw.telefono
+                    WHERE mw.telefono IS NOT NULL
+                      AND BTRIM(mw.telefono) <> ''
+                    GROUP BY BTRIM(mw.telefono)
                 ),
                 no_leidos AS (
-                    SELECT 
-                        mw.telefono,
+                    SELECT
+                        BTRIM(mw.telefono) AS telefono,
                         COUNT(*)::int AS cantidad
                     FROM mensajes_whatsapp mw
                     LEFT JOIN mensajes_whatsapp_chat_estado ce
@@ -490,172 +527,137 @@ def obtener_contactos_db_nueva(tipo=None, search=None, estado=None, leidos=None)
                             ce.last_read_at IS NULL
                             OR mw.fecha > ce.last_read_at
                           )
-                    GROUP BY mw.telefono
+                    GROUP BY BTRIM(mw.telefono)
                 )
-                """
-
-                bloques = []
-                params = []
-
-                # =====================
-                # ASPIRANTES
-                # =====================
-                if not tipo or tipo == "aspirante":
-                    q = """
-                    SELECT 
-                        a.id,
-                        'aspirante' AS tipo,
-                        a.usuario,
-                        a.nickname,
-                        a.nombre_real AS nombre,
-                        COALESCE(NULLIF(BTRIM(a.whatsapp), ''), NULLIF(BTRIM(a.telefono), '')) AS telefono,
-                        ae.nombre AS estado,
-                        ua.ultima_actividad,
-                        COALESCE(nl.cantidad, 0) AS no_leidos
+                SELECT
+                    COALESCE(asp.id, cre.id, adm.id) AS id,
+                    CASE
+                        WHEN asp.id IS NOT NULL THEN 'aspirante'
+                        WHEN cre.id IS NOT NULL THEN 'creador'
+                        WHEN adm.id IS NOT NULL THEN 'admin'
+                        ELSE 'sin_vincular'
+                    END AS tipo,
+                    COALESCE(asp.usuario, cre.usuario_tiktok, adm.username) AS usuario,
+                    asp.nickname AS nickname,
+                    COALESCE(
+                        NULLIF(BTRIM(asp.nombre_real), ''),
+                        NULLIF(BTRIM(cre.nombre), ''),
+                        NULLIF(BTRIM(adm.nombre_completo), ''),
+                        NULLIF(BTRIM(ce.nombre_whatsapp), ''),
+                        conv.telefono
+                    ) AS nombre,
+                    conv.telefono,
+                    COALESCE(ae.nombre, cest.nombre, ar.nombre) AS estado,
+                    conv.ultima_actividad,
+                    COALESCE(nl.cantidad, 0) AS no_leidos
+                FROM conversaciones conv
+                LEFT JOIN LATERAL (
+                    SELECT a.id, a.usuario, a.nickname, a.nombre_real, a.estado_id
                     FROM aspirantes a
-                    LEFT JOIN aspirantes_estados ae 
-                        ON a.estado_id = ae.id
-                    LEFT JOIN ultima_actividad ua 
-                        ON ua.telefono = COALESCE(NULLIF(BTRIM(a.whatsapp), ''), NULLIF(BTRIM(a.telefono), ''))
-                    LEFT JOIN no_leidos nl 
-                        ON nl.telefono = COALESCE(NULLIF(BTRIM(a.whatsapp), ''), NULLIF(BTRIM(a.telefono), ''))
-                    WHERE COALESCE(NULLIF(BTRIM(a.whatsapp), ''), NULLIF(BTRIM(a.telefono), '')) IS NOT NULL
-                      AND COALESCE(a.activo, true) = true
-                    """
-                    if estado:
-                        q += " AND ae.nombre = %s"
-                        params.append(estado)
-
-                    bloques.append(q)
-
-                # =====================
-                # CREADORES
-                # =====================
-                if not tipo or tipo == "creador":
-                    q = """
-                    SELECT 
-                        c.id,
-                        'creador' AS tipo,
-                        c.usuario_tiktok AS usuario,
-                        NULL AS nickname,
-                        c.nombre AS nombre,
-                        COALESCE(
-                            NULLIF(BTRIM(c.telefono), ''),
-                            NULLIF(BTRIM(asp.whatsapp), ''),
-                            NULLIF(BTRIM(asp.telefono), '')
-                        ) AS telefono,
-                        ce.nombre AS estado,
-                        ua.ultima_actividad,
-                        COALESCE(nl.cantidad, 0) AS no_leidos
+                    WHERE COALESCE(a.activo, true) = true
+                      AND (
+                            NULLIF(BTRIM(a.whatsapp), '') = conv.telefono
+                            OR NULLIF(BTRIM(a.telefono), '') = conv.telefono
+                          )
+                    ORDER BY a.id
+                    LIMIT 1
+                ) asp ON TRUE
+                LEFT JOIN aspirantes_estados ae ON ae.id = asp.estado_id
+                LEFT JOIN LATERAL (
+                    SELECT c.id, c.usuario_tiktok, c.nombre, c.estado_id
                     FROM creadores c
-                    INNER JOIN creadores_estados ce
-                        ON ce.id = c.estado_id
-                    LEFT JOIN aspirantes asp
-                        ON asp.id = c.aspirante_id
-                    LEFT JOIN ultima_actividad ua 
-                        ON ua.telefono = COALESCE(
-                            NULLIF(BTRIM(c.telefono), ''),
-                            NULLIF(BTRIM(asp.whatsapp), ''),
-                            NULLIF(BTRIM(asp.telefono), '')
-                        )
-                    LEFT JOIN no_leidos nl 
-                        ON nl.telefono = COALESCE(
-                            NULLIF(BTRIM(c.telefono), ''),
-                            NULLIF(BTRIM(asp.whatsapp), ''),
-                            NULLIF(BTRIM(asp.telefono), '')
-                        )
-                    WHERE COALESCE(
-                            NULLIF(BTRIM(c.telefono), ''),
-                            NULLIF(BTRIM(asp.whatsapp), ''),
-                            NULLIF(BTRIM(asp.telefono), '')
-                          ) IS NOT NULL
-                      AND ce.nombre = %s
-                      AND COALESCE(ce.activo, true) = true
-                    """
-                    params.append(CREADOR_ESTADO_NOMBRE_ACTIVO)
-                    bloques.append(q)
-
-                # =====================
-                # ADMINISTRADORES
-                # =====================
-                if not tipo or tipo == "admin":
-                    q = """
-                    SELECT 
-                        ad.id,
-                        'admin' AS tipo,
-                        ad.username AS usuario,
-                        NULL AS nickname,
-                        ad.nombre_completo AS nombre,
-                        ad.telefono,
-                        ar.nombre AS estado,
-                        ua.ultima_actividad,
-                        COALESCE(nl.cantidad, 0) AS no_leidos
+                    INNER JOIN creadores_estados ces ON ces.id = c.estado_id
+                    LEFT JOIN aspirantes aspx ON aspx.id = c.aspirante_id
+                    WHERE ces.nombre = %s
+                      AND COALESCE(ces.activo, true) = true
+                      AND (
+                            NULLIF(BTRIM(c.telefono), '') = conv.telefono
+                            OR NULLIF(BTRIM(aspx.whatsapp), '') = conv.telefono
+                            OR NULLIF(BTRIM(aspx.telefono), '') = conv.telefono
+                          )
+                    ORDER BY c.id
+                    LIMIT 1
+                ) cre ON TRUE
+                LEFT JOIN creadores_estados cest ON cest.id = cre.estado_id
+                LEFT JOIN LATERAL (
+                    SELECT ad.id, ad.username, ad.nombre_completo, ad.administradores_roles_id
                     FROM administradores ad
-                    LEFT JOIN administradores_roles ar 
-                        ON ad.administradores_roles_id = ar.id
-                    LEFT JOIN ultima_actividad ua 
-                        ON ua.telefono = ad.telefono
-                    LEFT JOIN no_leidos nl 
-                        ON nl.telefono = ad.telefono
-                    WHERE ad.telefono IS NOT NULL
-                      AND ad.telefono <> ''
+                    WHERE NULLIF(BTRIM(ad.telefono), '') = conv.telefono
+                    ORDER BY ad.id
+                    LIMIT 1
+                ) adm ON TRUE
+                LEFT JOIN administradores_roles ar ON ar.id = adm.administradores_roles_id
+                LEFT JOIN no_leidos nl ON nl.telefono = conv.telefono
+                LEFT JOIN mensajes_whatsapp_chat_estado ce ON ce.telefono = conv.telefono
+                WHERE 1=1
+                """
+                params = [CREADOR_ESTADO_NOMBRE_ACTIVO]
+
+                if tipo_filtro:
+                    query += """
+                    AND CASE
+                        WHEN asp.id IS NOT NULL THEN 'aspirante'
+                        WHEN cre.id IS NOT NULL THEN 'creador'
+                        WHEN adm.id IS NOT NULL THEN 'admin'
+                        ELSE 'sin_vincular'
+                    END = %s
                     """
-                    bloques.append(q)
+                    params.append(tipo_filtro)
 
-                if not bloques:
-                    return []
+                if estado:
+                    query += " AND ae.nombre = %s"
+                    params.append(estado)
 
-                query += "\nSELECT * FROM (\n" + "\nUNION ALL\n".join(bloques) + "\n) contactos\nWHERE 1=1\n"
-
-                # =====================
-                # BUSCADOR
-                # =====================
                 if search:
                     search_like = f"%{search}%"
                     query += """
                     AND (
-                        COALESCE(nombre, '') ILIKE %s
-                        OR COALESCE(usuario, '') ILIKE %s
-                        OR COALESCE(telefono, '') LIKE %s
+                        COALESCE(
+                            NULLIF(BTRIM(asp.nombre_real), ''),
+                            NULLIF(BTRIM(cre.nombre), ''),
+                            NULLIF(BTRIM(adm.nombre_completo), ''),
+                            NULLIF(BTRIM(ce.nombre_whatsapp), ''),
+                            conv.telefono,
+                            ''
+                        ) ILIKE %s
+                        OR COALESCE(asp.usuario, cre.usuario_tiktok, adm.username, '') ILIKE %s
+                        OR COALESCE(conv.telefono, '') LIKE %s
                     )
                     """
                     params.extend([search_like, search_like, search_like])
 
-                # =====================
-                # LEIDOS / NO LEIDOS
-                # =====================
                 if leidos is True:
-                    query += " AND no_leidos = 0\n"
+                    query += " AND COALESCE(nl.cantidad, 0) = 0\n"
                 elif leidos is False:
-                    query += " AND no_leidos > 0\n"
+                    query += " AND COALESCE(nl.cantidad, 0) > 0\n"
 
-                # =====================
-                # ORDEN
-                # =====================
                 query += """
                 ORDER BY
-                    no_leidos DESC,
-                    ultima_actividad DESC NULLS LAST,
+                    COALESCE(nl.cantidad, 0) DESC,
+                    conv.ultima_actividad DESC NULLS LAST,
                     nombre ASC
                 """
 
                 cur.execute(query, params)
                 rows = cur.fetchall()
 
-                return [
-                    {
-                        "id": row[0],
-                        "tipo": row[1],
+                contactos = []
+                for row in rows:
+                    tipo_row = row[1]
+                    entity_id = row[0]
+                    telefono = row[5]
+                    contactos.append({
+                        "id": entity_id if entity_id is not None else telefono,
+                        "tipo": tipo_row or TIPO_SIN_VINCULAR,
                         "usuario": row[2],
                         "nickname": row[3],
                         "nombre": row[4],
-                        "telefono": row[5],
-                        "estado": row[6],
+                        "telefono": telefono,
+                        "estado": row[6] if tipo_row != TIPO_SIN_VINCULAR else None,
                         "ultima_actividad": row[7],
                         "no_leidos": row[8],
-                    }
-                    for row in rows
-                ]
+                    })
+                return contactos
 
     except Exception as e:
         print(f"❌ Error obteniendo contactos: {e}")

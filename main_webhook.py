@@ -35,6 +35,7 @@ from DataBase import buscar_usuario_por_telefono, marcar_encuesta_no_finalizada,
 # ============================
 # from DataBase import *
 from chatbot_demo_landing import intentar_respuesta_demo_landing
+from whatsapp_bandeja import nombres_whatsapp_desde_value
 from enviar_msg_wp import (
     enviar_boton_iniciar_Completa,
     enviar_botones_Completa,
@@ -3017,6 +3018,7 @@ def registrar_mensaje_recibido(
     tipo: str,
     contenido: Optional[str] = None,
     media_url: Optional[str] = None,
+    nombre_whatsapp: Optional[str] = None,
 ) -> None:
 
     try:
@@ -3085,6 +3087,10 @@ def registrar_mensaje_recibido(
                         "received",
                     )
                 )
+                if nombre_whatsapp:
+                    from DataBase import _guardar_nombre_whatsapp
+
+                    _guardar_nombre_whatsapp(cur, telefono, nombre_whatsapp)
 
             conn.commit()
 
@@ -4377,6 +4383,7 @@ async def whatsapp_webhook(request: Request):
             f"phone_number_id={phone_number_id} product_type={product_type} "
             f"chatbot_agencia_id={chatbot_agencia_id} request_id={request_id}"
         )
+        nombres_wa = nombres_whatsapp_desde_value(value)
         for mensaje in mensajes:
             incoming_wamid = mensaje.get("id")
             print(
@@ -4431,6 +4438,7 @@ async def whatsapp_webhook(request: Request):
                 chatbot_agencia_id,
                 whatsapp_account_id,
                 product_type,
+                nombre_whatsapp=nombres_wa.get(str(mensaje.get("from") or "").strip()),
             )
 
     except Exception as e:
@@ -4448,6 +4456,7 @@ async def _procesar_mensaje_unico(
     chatbot_agencia_id=None,
     whatsapp_account_id=None,
     product_type="talentum_manager",
+    nombre_whatsapp=None,
 ):
     """
     Orquestador principal:
@@ -4568,7 +4577,8 @@ async def _procesar_mensaje_unico(
                 message_id_meta=mensaje.get("id"),
                 tipo="audio",
                 contenido=contenido_guardar,
-                media_url=media_url_guardar
+                media_url=media_url_guardar,
+                nombre_whatsapp=nombre_whatsapp,
             )
 
         # 🔵 OTROS TIPOS (texto, botones, etc.)
@@ -4584,7 +4594,8 @@ async def _procesar_mensaje_unico(
                 telefono=wa_id,
                 message_id_meta=mensaje.get("id"),
                 tipo=tipo_registro,
-                contenido=f"{texto or ''} {payload_id or ''}".strip()
+                contenido=f"{texto or ''} {payload_id or ''}".strip(),
+                nombre_whatsapp=nombre_whatsapp,
             )
 
     except Exception as e:
