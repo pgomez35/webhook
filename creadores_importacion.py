@@ -24,6 +24,7 @@ from pydantic import BaseModel, EmailStr, TypeAdapter, ValidationError
 
 from DataBase import get_connection_context
 from main_auth import es_manager, obtener_usuario_actual
+from creadores_manager import construir_indices_manager, resolver_manager_id_por_indices
 
 router = APIRouter()
 
@@ -330,6 +331,7 @@ def _cargar_managers_index(cur) -> Dict[str, Any]:
         SELECT
             a.id,
             a.email,
+            a.agente,
             a.nombre_completo,
             a.username
         FROM administradores a
@@ -338,53 +340,16 @@ def _cargar_managers_index(cur) -> Dict[str, Any]:
           AND COALESCE(a.activo, true) = true
         """
     )
-    rows = cur.fetchall()
-
-    by_email: Dict[str, List[int]] = {}
-    by_nombre: Dict[str, List[int]] = {}
-
-    for row in rows:
-        mid = int(row["id"])
-        email = (row.get("email") or "").strip().lower()
-        nombre = (row.get("nombre_completo") or "").strip().lower()
-        username = (row.get("username") or "").strip().lower()
-
-        if email:
-            by_email.setdefault(email, []).append(mid)
-        if nombre:
-            by_nombre.setdefault(nombre, []).append(mid)
-        if username:
-            by_nombre.setdefault(username, []).append(mid)
-
-    return {
-        "by_email": by_email,
-        "by_nombre": by_nombre,
-    }
+    return construir_indices_manager(cur.fetchall())
 
 
 def _resolver_manager(valor: Any, index: Dict[str, Any]) -> Tuple[Optional[int], List[str], str]:
     """Retorna (manager_id, mensajes, severidad_extra). severidad_extra: ok|warn|error"""
-    if valor is None or _celda_texto(valor) == "":
-        return None, [], "ok"
-
-    raw = _celda_texto(valor)
-    clave = raw.lower()
-
-    # 1. Por email (identificador del administrador)
-    ids = index["by_email"].get(clave, [])
-    if len(ids) == 1:
-        return ids[0], [], "ok"
-    if len(ids) > 1:
-        return None, [f'Manager "{raw}" es ambiguo (email)'], "error"
-
-    # 2. Por nombre / username
-    ids = index["by_nombre"].get(clave, [])
-    if len(ids) == 1:
-        return ids[0], [], "ok"
-    if len(ids) > 1:
-        return None, [f'Manager "{raw}" es ambiguo (nombre)'], "error"
-
-    return None, [f'Manager "{raw}" no encontrado'], "warn"
+    return resolver_manager_id_por_indices(
+        valor,
+        index.get("by_agente") or {},
+        index.get("by_email") or {},
+    )
 
 
 def _resolver_estado_id(estado_nombre: str, estados_map: Dict[str, int]) -> Optional[int]:
@@ -604,7 +569,7 @@ def _insertar_creador_importado(
         )
         VALUES (
             NULL, %s, %s, %s, %s,
-            NULL, NULL, %s, NULL, NULL, %s,
+            NULL, %s, %s, NULL, NULL, %s,
             NOW(), NOW()
         )
         RETURNING id
@@ -614,6 +579,7 @@ def _insertar_creador_importado(
             datos["usuario_tiktok"],
             datos.get("email"),
             datos.get("telefono"),
+            datos.get("creador_tiktok_id"),
             datos["estado_id"],
             zona_horaria,
         ),
@@ -761,8 +727,8 @@ def _generar_plantilla_xlsx() -> bytes:
         cell.font = Font(bold=True)
 
     ejemplos = [
-        ["María López", "maria_live", "+573001234567", "maria@email.com", "Alejandra", "2026-05-10", "Activo"],
-        ["Carlos Pérez", "carlosperez", "", "", "Daniela", "2025-11-15", "Inactivo"],
+        ["María López", "maria_live", "+573001234567", "maria@email.com", "alejandra@agencia.com", "2026-05-10", "Activo"],
+        ["Carlos Pérez", "carlosperez", "", "", "daniela@agencia.com", "2025-11-15", "Inactivo"],
     ]
     for row in ejemplos:
         ws.append(row)
@@ -786,8 +752,8 @@ def _generar_plantilla_csv() -> bytes:
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow(COLUMNAS_OFICIALES)
-    writer.writerow(["María López", "maria_live", "+573001234567", "maria@email.com", "Alejandra", "2026-05-10", "Activo"])
-    writer.writerow(["Carlos Pérez", "carlosperez", "", "", "Daniela", "2025-11-15", "Inactivo"])
+    writer.writerow(["María López", "maria_live", "+573001234567", "maria@email.com", "alejandra@agencia.com", "2026-05-10", "Activo"])
+    writer.writerow(["Carlos Pérez", "carlosperez", "", "", "daniela@agencia.com", "2025-11-15", "Inactivo"])
     return buffer.getvalue().encode("utf-8-sig")
 
 

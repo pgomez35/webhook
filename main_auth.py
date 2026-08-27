@@ -164,7 +164,7 @@ def credenciales_manager_para_filtro(usuario: dict):
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT id, email
+            SELECT id, email, agente
             FROM administradores
             WHERE id = %s
             LIMIT 1
@@ -177,7 +177,8 @@ def credenciales_manager_para_filtro(usuario: dict):
         return {"id": admin_id, "email": None}
 
     email = str(row[1]).strip() if row[1] and str(row[1]).strip() else None
-    return {"id": int(row[0]), "email": email}
+    agente = str(row[2]).strip() if len(row) > 2 and row[2] and str(row[2]).strip() else None
+    return {"id": int(row[0]), "email": email or agente}
 
 
 # ================= ENDPOINTS =================

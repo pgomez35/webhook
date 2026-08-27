@@ -2,14 +2,23 @@ import io
 import re
 import traceback
 from datetime import datetime, date
-from typing import Optional, Any, List, Dict, Tuple
+from typing import Optional, Any, List, Dict, Tuple, Set
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel
 
-from DataBase import get_connection_context
+from DataBase import get_connection_context, _administradores_roles_id_por_nombre
+from creadores_catalogo import CREADOR_ESTADO_NOMBRE_ACTIVO
+from creadores_manager import (
+    claves_admin_existentes,
+    es_email_agente,
+    normalizar_clave_manager,
+    username_base_desde_email,
+    username_unico_disponible,
+)
+from password_utils import generate_random_password, hash_password
 
 router = APIRouter()
 
@@ -522,11 +531,13 @@ def _buscar_creador_por_tiktok(cur, creador_tiktok_id: Optional[str], usuario_ti
 
 def _resolver_manager_por_agente(cur, agente: Optional[str]) -> Optional[Dict[str, Any]]:
     """
-    Relaciona el Agente del Backstage (texto en el Excel/reporte) con administradores.
-    Matching únicamente por administradores.email (case-insensitive + TRIM).
+    Relaciona el Agente del Backstage (email) con administradores.
+    1. administradores.agente (case-insensitive + TRIM)
+    2. fallback administradores.email
     Solo activos.
     """
-    if not agente or not str(agente).strip():
+    clave = normalizar_clave_manager(agente)
+    if not clave:
         return None
 
     cur.execute(
@@ -534,14 +545,20 @@ def _resolver_manager_por_agente(cur, agente: Optional[str]) -> Optional[Dict[st
         SELECT
             id,
             nombre_completo,
-            email
+            email,
+            agente
         FROM administradores
         WHERE COALESCE(activo, true) = true
-          AND LOWER(TRIM(email)) = LOWER(TRIM(%s))
-        ORDER BY id ASC
+          AND (
+                LOWER(TRIM(agente)) = %s
+                OR LOWER(TRIM(email)) = %s
+              )
+        ORDER BY
+            CASE WHEN LOWER(TRIM(agente)) = %s THEN 0 ELSE 1 END,
+            id ASC
         LIMIT 1
         """,
-        (agente,),
+        (clave, clave, clave),
     )
     return cur.fetchone()
 
@@ -781,6 +798,7 @@ def _actualizar_creador_activo(cur, creador_id: int, data: Dict[str, Any]) -> No
         UPDATE creadores_detalle
         SET
             fecha_incorporacion = COALESCE(fecha_incorporacion, %s),
+            manager_id = COALESCE(%s, manager_id),
 
             diamantes = COALESCE(diamantes, 0) + COALESCE(%s, 0),
             horas_live = COALESCE(horas_live, 0) + COALESCE(%s, 0),
@@ -792,6 +810,7 @@ def _actualizar_creador_activo(cur, creador_id: int, data: Dict[str, Any]) -> No
         """,
         (
             data.get("hora_incorporacion").date() if data.get("hora_incorporacion") else None,
+            data.get("manager_id"),
             data.get("diamantes_totales"),
             _minutes_to_hours_int(data.get("duracion_live_minutos")),
             data.get("partidas"),
@@ -1052,6 +1071,162 @@ def _upsert_insight(cur, reporte: Dict[str, Any], textos: Dict[str, str]) -> Non
 
 
 # =========================================================
+# CRUCE CREADORES / MANAGERS DEL REPORTE
+# =========================================================
+
+def _clave_creador_reporte(data: Dict[str, Any]) -> Optional[str]:
+    tiktok_id = (data.get("creador_tiktok_id") or "").strip() if data.get("creador_tiktok_id") else None
+    usuario = (data.get("usuario_tiktok") or "").strip().lower() if data.get("usuario_tiktok") else None
+    if tiktok_id:
+        return f"id:{tiktok_id}"
+    if usuario:
+        return f"user:{usuario}"
+    return None
+
+
+def _cargar_claves_admins(cur) -> Set[str]:
+    cur.execute(
+        """
+        SELECT email, agente
+        FROM administradores
+        """
+    )
+    return claves_admin_existentes(cur.fetchall())
+
+
+def _cargar_usernames_admins(cur) -> Set[str]:
+    cur.execute("SELECT username FROM administradores")
+    usados: Set[str] = set()
+    for row in cur.fetchall():
+        nombre = (row.get("username") or "").strip().lower()
+        if nombre:
+            usados.add(nombre)
+    return usados
+
+
+def _analizar_cruce_reporte(cur, df: pd.DataFrame) -> Dict[str, Any]:
+    creadores_existentes: Set[str] = set()
+    creadores_nuevos: Set[str] = set()
+    emails_existentes: Set[str] = set()
+    emails_nuevos: Set[str] = set()
+    claves_admin = _cargar_claves_admins(cur)
+
+    for _, row in df.iterrows():
+        try:
+            data = _row_to_reporte(row)
+        except Exception:
+            continue
+
+        if data.get("es_abandono"):
+            continue
+
+        clave_creador = _clave_creador_reporte(data)
+        if clave_creador:
+            creador_id = _buscar_creador_por_tiktok(
+                cur,
+                data.get("creador_tiktok_id"),
+                data.get("usuario_tiktok"),
+            )
+            if creador_id:
+                creadores_existentes.add(clave_creador)
+            else:
+                creadores_nuevos.add(clave_creador)
+
+        agente = data.get("agente")
+        if es_email_agente(agente):
+            email = normalizar_clave_manager(agente)
+            if email in claves_admin:
+                emails_existentes.add(email)
+            else:
+                emails_nuevos.add(email)
+
+    return {
+        "creadores_existentes": len(creadores_existentes),
+        "creadores_nuevos": len(creadores_nuevos),
+        "managers_existentes": len(emails_existentes),
+        "managers_nuevos": len(emails_nuevos),
+        "emails_managers_nuevos": sorted(emails_nuevos),
+    }
+
+
+def _crear_manager_desde_email(cur, email: str, usernames_usados: Set[str], rol_id: int) -> int:
+    username = username_unico_disponible(username_base_desde_email(email), usernames_usados)
+    usernames_usados.add(username)
+    email_norm = normalizar_clave_manager(email) or email.strip().lower()
+    password_hash = hash_password(generate_random_password(16))
+    cur.execute(
+        """
+        INSERT INTO administradores (
+            username, nombre_completo, email, telefono, grupo, activo,
+            password_hash, administradores_roles_id, agente, creado_en, actualizado_en
+        )
+        VALUES (%s, NULL, %s, NULL, NULL, true, %s, %s, %s, NOW(), NOW())
+        RETURNING id
+        """,
+        (username, email_norm, password_hash, rol_id, email_norm),
+    )
+    row = cur.fetchone()
+    return int(row["id"])
+
+
+def _crear_creador_desde_reporte(cur, data: Dict[str, Any], estado_id: int, zona_horaria: Optional[str]) -> int:
+    from creadores_importacion import _insertar_creador_importado
+
+    usuario = (data.get("usuario_tiktok") or "").strip()
+    return _insertar_creador_importado(
+        cur,
+        {
+            "nombre": usuario or None,
+            "usuario_tiktok": usuario or None,
+            "email": None,
+            "telefono": None,
+            "creador_tiktok_id": data.get("creador_tiktok_id"),
+            "estado_id": estado_id,
+            "manager_id": data.get("manager_id"),
+            "fecha_incorporacion": (
+                data.get("hora_incorporacion").date()
+                if data.get("hora_incorporacion")
+                else None
+            ),
+        },
+        zona_horaria,
+    )
+
+
+def _crear_managers_faltantes_del_df(cur, df: pd.DataFrame) -> List[Dict[str, Any]]:
+    creados: List[Dict[str, Any]] = []
+    claves_admin = _cargar_claves_admins(cur)
+    usernames_usados = _cargar_usernames_admins(cur)
+    rol_id = _administradores_roles_id_por_nombre(cur, "Manager")
+    if rol_id is None:
+        rol_id = _administradores_roles_id_por_nombre(cur, "manager")
+    if rol_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No existe el rol Manager en administradores_roles.",
+        )
+
+    vistos: Set[str] = set()
+    for _, row in df.iterrows():
+        try:
+            data = _row_to_reporte(row)
+        except Exception:
+            continue
+        if data.get("es_abandono"):
+            continue
+        if not es_email_agente(data.get("agente")):
+            continue
+        email = normalizar_clave_manager(data.get("agente"))
+        if not email or email in vistos or email in claves_admin:
+            continue
+        vistos.add(email)
+        manager_id = _crear_manager_desde_email(cur, email, usernames_usados, rol_id)
+        claves_admin.add(email)
+        creados.append({"email": email, "manager_id": manager_id})
+    return creados
+
+
+# =========================================================
 # ENDPOINT: VALIDAR EXCEL SIN IMPORTAR
 # =========================================================
 
@@ -1086,6 +1261,12 @@ def validar_reporte_creadores_excel(
                 pass
 
         # Validar solapamientos solo contra el mismo tipo_periodo
+        cruce = {
+            "creadores_existentes": 0,
+            "creadores_nuevos": 0,
+            "managers_existentes": 0,
+            "managers_nuevos": 0,
+        }
         with get_connection_context() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
 
@@ -1110,6 +1291,8 @@ def validar_reporte_creadores_excel(
                             ),
                         )
 
+                cruce = _analizar_cruce_reporte(cur, df)
+
         return {
             "ok": True,
             "filename": file.filename,
@@ -1117,6 +1300,10 @@ def validar_reporte_creadores_excel(
             "columnas": list(df.columns),
             "tipo_periodo": tipo,
             "periodos_detectados": periodos,
+            "creadores_existentes": cruce["creadores_existentes"],
+            "creadores_nuevos": cruce["creadores_nuevos"],
+            "managers_existentes": cruce["managers_existentes"],
+            "managers_nuevos": cruce["managers_nuevos"],
             "mensaje": _mensaje_ok_validacion(tipo),
         }
 
@@ -1145,6 +1332,8 @@ def cargar_reporte_creadores_excel(
     actualizar_creadores_activos: Optional[bool] = Query(None),
     generar_metas: Optional[bool] = Query(None),
     generar_insights: Optional[bool] = Query(None),
+    crear_creadores_faltantes: bool = Query(False),
+    crear_managers_faltantes: bool = Query(False),
 ):
     try:
         tipo = _normalizar_tipo_periodo(tipo_periodo)
@@ -1167,11 +1356,25 @@ def cargar_reporte_creadores_excel(
         managers_no_resueltos = []
         registros_abandonados = []
         reportes_procesados = []
+        creadores_creados = []
+        managers_creados = []
         archivo_origen = "backstage_excel"
         importaciones_por_periodo: Dict[Tuple[date, date], int] = {}
 
         with get_connection_context() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                if crear_managers_faltantes:
+                    managers_creados = _crear_managers_faltantes_del_df(cur, df)
+
+                estado_activo_id = None
+                zona_horaria = None
+                if crear_creadores_faltantes:
+                    from creadores_importacion import _cargar_estados_map, _obtener_zona_horaria_agencia
+
+                    estados_map = _cargar_estados_map(cur)
+                    estado_activo_id = estados_map.get(CREADOR_ESTADO_NOMBRE_ACTIVO.strip().lower())
+                    zona_horaria = _obtener_zona_horaria_agencia(cur)
+
                 importaciones_por_periodo = _registrar_importaciones_desde_df(
                     cur,
                     df,
@@ -1243,6 +1446,28 @@ def cargar_reporte_creadores_excel(
                             con_creador_en_saas += 1
                             if not es_abandono:
                                 _actualizar_creador_base(cur, creador_id, data)
+                        elif crear_creadores_faltantes and not es_abandono and data.get("usuario_tiktok"):
+                            if not estado_activo_id:
+                                no_encontrados.append({
+                                    "fila": int(idx) + 2,
+                                    "creador_tiktok_id": data["creador_tiktok_id"],
+                                    "usuario_tiktok": data["usuario_tiktok"],
+                                })
+                                errores.append({
+                                    "fila": int(idx) + 2,
+                                    "error": "No existe el estado Activo para crear el creador",
+                                })
+                            else:
+                                creador_id = _crear_creador_desde_reporte(
+                                    cur, data, estado_activo_id, zona_horaria
+                                )
+                                con_creador_en_saas += 1
+                                creadores_creados.append({
+                                    "fila": int(idx) + 2,
+                                    "creador_id": creador_id,
+                                    "creador_tiktok_id": data.get("creador_tiktok_id"),
+                                    "usuario_tiktok": data.get("usuario_tiktok"),
+                                })
                         else:
                             no_encontrados.append({
                                 "fila": int(idx) + 2,
@@ -1348,6 +1573,12 @@ def cargar_reporte_creadores_excel(
             "creadores_no_encontrados": no_encontrados,
             "managers_resueltos": managers_resueltos,
             "managers_no_resueltos": managers_no_resueltos,
+            "creadores_creados": creadores_creados,
+            "managers_creados": managers_creados,
+            "total_creadores_creados": len(creadores_creados),
+            "total_managers_creados": len(managers_creados),
+            "crear_creadores_faltantes": crear_creadores_faltantes,
+            "crear_managers_faltantes": crear_managers_faltantes,
             "registros_abandonados": registros_abandonados,
             "total_abandonados": len(registros_abandonados),
             "errores": errores,
