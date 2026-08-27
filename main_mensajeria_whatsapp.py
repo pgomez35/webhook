@@ -291,8 +291,9 @@ def listar_contactos(
     tipo: Optional[str] = None,   # aspirante | creador | admin | sin_vincular
     search: Optional[str] = None,
     estado: Optional[int] = None,
+    alcance: Optional[str] = None,  # conversaciones | sin_actividad | todos
 ):
-    return obtener_contactos_db_nueva(tipo, search, estado)
+    return obtener_contactos_db_nueva(tipo, search, estado, alcance=alcance)
 
 
 @router.post("/mensajes/marcar-leido")
