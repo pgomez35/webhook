@@ -770,25 +770,12 @@ async def exchange_code_business_app(request: Request):
             error="invalid_onboarding_type",
         )
 
-    # subdominio web (X-Tenant-Name / host), no el schema PostgreSQL.
-    # En onboarding el FE suele estar en www.talentum-manager.com → header "public";
-    # el tenant real viene en body (subdominio|tenant) desde ?tenant= del enlace.
+    # subdominio web (X-Tenant-Name / host), no el schema PostgreSQL
     subdominio = (getattr(request.state, "tenant_name", None) or "").strip().lower()
     if not subdominio:
         try:
             subdominio = (current_tenant.get() or "").strip().lower()
         except Exception:
-            subdominio = ""
-    if _is_invalid_agency_tenant(subdominio):
-        body_tenant = (
-            payload.get("subdominio")
-            or payload.get("tenant")
-            or payload.get("tenant_name")
-            or ""
-        )
-        if isinstance(body_tenant, str):
-            subdominio = body_tenant.strip().lower()
-        else:
             subdominio = ""
     if _is_invalid_agency_tenant(subdominio):
         return _meta_json_error(
@@ -826,13 +813,14 @@ async def exchange_code_business_app(request: Request):
     if r.status_code >= 400 or (isinstance(data, dict) and data.get("error")) or not access_token:
         err = data.get("error") if isinstance(data, dict) and isinstance(data.get("error"), dict) else {}
         logging.warning(
-            "Meta OAuth Business App fallo status=%s type=%s code=%s subcode=%s message=%s fbtrace_id=%s",
+            "Meta OAuth Business App fallo status=%s type=%s code=%s subcode=%s message=%s fbtrace_id=%s redirect_uri=%s",
             r.status_code,
             err.get("type"),
             err.get("code"),
             err.get("error_subcode"),
             err.get("message"),
             err.get("fbtrace_id"),
+            redirect_uri,
         )
         return _meta_json_error(
             "No fue posible completar la conexion con Meta.",
