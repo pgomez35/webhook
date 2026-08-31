@@ -21,6 +21,12 @@ from creadores_manager import (
     username_unico_disponible,
 )
 from password_utils import generate_random_password, hash_password
+from creadores_reporte_periodos import (
+    listar_periodos_unicos,
+    mensaje_solape,
+    payload_periodo_detectado,
+    validar_periodos_cargue,
+)
 
 router = APIRouter()
 
@@ -385,16 +391,18 @@ def _buscar_solape_mismo_tipo(
     periodo_inicio: date,
     periodo_fin: date,
 ) -> Optional[Dict[str, Any]]:
+    """Solape con otro rango del mismo tipo. El periodo exacto (UPSERT) no cuenta."""
     cur.execute(
         """
         SELECT periodo_inicio, periodo_fin, tipo_periodo
         FROM creadores_reporte_integral
         WHERE tipo_periodo = %s
+          AND NOT (periodo_inicio = %s AND periodo_fin = %s)
           AND %s <= periodo_fin
           AND %s >= periodo_inicio
         LIMIT 1
         """,
-        (tipo_periodo, periodo_inicio, periodo_fin),
+        (tipo_periodo, periodo_inicio, periodo_fin, periodo_inicio, periodo_fin),
     )
     row = cur.fetchone()
     if not row:
@@ -406,6 +414,50 @@ def _buscar_solape_mismo_tipo(
         "periodo_fin": row[1],
         "tipo_periodo": row[2],
     }
+
+
+def _http_periodo_invalido(exc: ValueError) -> HTTPException:
+    return HTTPException(status_code=400, detail=str(exc))
+
+
+def _periodos_unicos_excel(df: pd.DataFrame) -> List[Tuple[date, date]]:
+    valores = df["Periodo de datos"].dropna().unique().tolist()
+    try:
+        return listar_periodos_unicos(valores, _parse_periodo)
+    except ValueError as exc:
+        raise _http_periodo_invalido(exc) from exc
+
+
+def _validar_forma_y_solapes_periodos(
+    cur,
+    tipo: str,
+    periodos: List[Tuple[date, date]],
+) -> None:
+    try:
+        validar_periodos_cargue(tipo, periodos)
+    except ValueError as exc:
+        raise _http_periodo_invalido(exc) from exc
+
+    for inicio, fin in periodos:
+        conflicto = _buscar_solape_mismo_tipo(cur, tipo, inicio, fin)
+        if conflicto:
+            raise HTTPException(
+                status_code=400,
+                detail=mensaje_solape(
+                    _etiqueta_tipo_periodo(tipo),
+                    inicio,
+                    fin,
+                    conflicto.get("periodo_inicio"),
+                    conflicto.get("periodo_fin"),
+                ),
+            )
+
+
+def _payloads_periodos_detectados(periodos: List[Tuple[date, date]]) -> List[Dict[str, Any]]:
+    return [
+        payload_periodo_detectado(inicio, fin, _inferir_tipo_periodo(inicio, fin))
+        for inicio, fin in periodos
+    ]
 
 
 def _validar_columnas_excel(df: pd.DataFrame, *, tipo_periodo: str = "semanal") -> None:
@@ -1257,24 +1309,15 @@ def validar_reporte_creadores_excel(
 
         _validar_columnas_excel(df, tipo_periodo=tipo)
 
-        periodos = []
+        periodos = _periodos_unicos_excel(df)
+        try:
+            validar_periodos_cargue(tipo, periodos)
+        except ValueError as exc:
+            raise _http_periodo_invalido(exc) from exc
 
-        for value in df["Periodo de datos"].dropna().unique().tolist():
+        periodos_detectados = _payloads_periodos_detectados(periodos)
 
-            try:
-                inicio, fin = _parse_periodo(value)
-
-                periodos.append({
-                    "periodo_inicio": inicio,
-                    "periodo_fin": fin,
-                    "dias": (fin - inicio).days,
-                    "tipo_inferido": _inferir_tipo_periodo(inicio, fin),
-                })
-
-            except Exception:
-                pass
-
-        # Validar solapamientos solo contra el mismo tipo_periodo
+        # Solapes solo contra el mismo tipo_periodo; el periodo exacto se permite (UPSERT).
         cruce = {
             "creadores_existentes": 0,
             "creadores_nuevos": 0,
@@ -1283,28 +1326,7 @@ def validar_reporte_creadores_excel(
         }
         with get_connection_context() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-
-                for periodo in periodos:
-
-                    conflicto = _buscar_solape_mismo_tipo(
-                        cur,
-                        tipo,
-                        periodo["periodo_inicio"],
-                        periodo["periodo_fin"],
-                    )
-
-                    if conflicto:
-
-                        raise HTTPException(
-                            status_code=400,
-                            detail=(
-                                f"Ya existe un reporte {_etiqueta_tipo_periodo(tipo)} "
-                                f"cargado que se solapa con el periodo "
-                                f"{periodo['periodo_inicio']} "
-                                f"a {periodo['periodo_fin']}."
-                            ),
-                        )
-
+                _validar_forma_y_solapes_periodos(cur, tipo, periodos)
                 cruce = _analizar_cruce_reporte(cur, df)
 
         return {
@@ -1313,7 +1335,7 @@ def validar_reporte_creadores_excel(
             "filas": len(df),
             "columnas": list(df.columns),
             "tipo_periodo": tipo,
-            "periodos_detectados": periodos,
+            "periodos_detectados": periodos_detectados,
             "creadores_existentes": cruce["creadores_existentes"],
             "creadores_nuevos": cruce["creadores_nuevos"],
             "managers_existentes": cruce["managers_existentes"],
@@ -1441,6 +1463,7 @@ def cargar_reporte_creadores_excel(
         content = file.file.read()
         df = pd.read_excel(io.BytesIO(content))
         _validar_columnas_excel(df, tipo_periodo=tipo)
+        periodos = _periodos_unicos_excel(df)
 
         insertados_o_actualizados = 0
         con_creador_en_saas = 0
@@ -1457,6 +1480,8 @@ def cargar_reporte_creadores_excel(
 
         with get_connection_context() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                _validar_forma_y_solapes_periodos(cur, tipo, periodos)
+
                 if crear_managers_faltantes:
                     managers_creados = _crear_managers_faltantes_del_df(cur, df)
 
