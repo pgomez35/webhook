@@ -712,8 +712,28 @@ def _registrar_importaciones_desde_df(
     return importaciones
 
 
+UQ_REPORTE_INTEGRAL = (
+    "creador_tiktok_id",
+    "periodo_inicio",
+    "periodo_fin",
+    "tipo_periodo",
+)
+_ERROR_UQ_REPORTE_INTEGRAL = (
+    "No existe el UNIQUE (creador_tiktok_id, periodo_inicio, periodo_fin, tipo_periodo) "
+    "en creadores_reporte_integral. Sin esa clave el UPSERT no puede distinguir "
+    "reportes semanales y mensuales. Aplique scripts/reporte_integral_tipo_periodo_unique.sql "
+    "en todos los schemas tenant."
+)
+
+
+def _es_error_on_conflict_sin_unique(exc: BaseException) -> bool:
+    texto = str(exc).lower()
+    return "on conflict" in texto and "unique or exclusion constraint" in texto
+
+
 def _upsert_reporte_integral(cur, data: Dict[str, Any], creador_id: Optional[int]) -> int:
-    cur.execute(
+    try:
+        cur.execute(
         """
         INSERT INTO creadores_reporte_integral (
             creador_tiktok_id,
@@ -850,7 +870,14 @@ def _upsert_reporte_integral(cur, data: Dict[str, Any], creador_id: Optional[int
         RETURNING id_reporte
         """,
         {**data, "creador_id": creador_id},
-    )
+        )
+    except Exception as exc:
+        if _es_error_on_conflict_sin_unique(exc):
+            raise HTTPException(
+                status_code=500,
+                detail=_ERROR_UQ_REPORTE_INTEGRAL,
+            ) from exc
+        raise
     row = cur.fetchone()
     valor = _valor_fila(row, "id_reporte", 0)
     if valor is None:
