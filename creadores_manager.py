@@ -18,7 +18,7 @@ def normalizar_clave_manager(valor: Any) -> Optional[str]:
     if valor is None:
         return None
     text = str(valor).strip().lower()
-    if not text or text in {"nan", "none", "null", "-", "—", "–"}:
+    if not text or text in {"nan", "none", "null", "-", "—", "–", "<na>", "nat"}:
         return None
     return text
 

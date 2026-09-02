@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Depends
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel
 
-from DataBase import get_connection_context, _administradores_roles_id_por_nombre
+from DataBase import get_connection_context, _administradores_roles_id_por_nombre, _valor_fila
 from main_auth import obtener_usuario_actual
 from creadores_catalogo import CREADOR_ESTADO_NOMBRE_ACTIVO
 from creadores_manager import (
@@ -131,7 +131,7 @@ def _buscar_creador_tiktok_id_previo(cur, usuario_tiktok: Optional[str]) -> Opti
     )
     row = cur.fetchone()
     if row:
-        return row["creador_tiktok_id"] if isinstance(row, dict) else row[0]
+        return _valor_fila(row, "creador_tiktok_id", 0)
 
     # Fallback: cualquier ID previo del mismo usuario (incl. ABANDONADO:xxx).
     cur.execute(
@@ -149,7 +149,7 @@ def _buscar_creador_tiktok_id_previo(cur, usuario_tiktok: Optional[str]) -> Opti
     row = cur.fetchone()
     if not row:
         return None
-    return row["creador_tiktok_id"] if isinstance(row, dict) else row[0]
+    return _valor_fila(row, "creador_tiktok_id", 0)
 
 
 def _resolver_creador_tiktok_id_abandono(cur, usuario_tiktok: Optional[str]) -> str:
@@ -385,6 +385,10 @@ def _resolver_flags_importacion(
     return activos, metas, insights
 
 
+def _debe_recalcular_tablero_tras_carga(tipo: str, actualizar_seguimiento_semanal: bool) -> bool:
+    return tipo == "semanal" and bool(actualizar_seguimiento_semanal)
+
+
 def _buscar_solape_mismo_tipo(
     cur,
     tipo_periodo: str,
@@ -580,7 +584,8 @@ def _buscar_creador_por_tiktok(cur, creador_tiktok_id: Optional[str], usuario_ti
         return None
 
     row = cur.fetchone()
-    return row["id"] if row else None
+    valor = _valor_fila(row, "id", 0) if row else None
+    return int(valor) if valor is not None else None
 
 
 def _resolver_manager_por_agente(cur, agente: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -696,7 +701,13 @@ def _registrar_importaciones_desde_df(
             ),
         )
 
-        importaciones[(periodo_inicio, periodo_fin)] = cur.fetchone()["id_importacion"]
+        id_imp = _valor_fila(cur.fetchone(), "id_importacion", 0)
+        if id_imp is None:
+            raise HTTPException(
+                status_code=500,
+                detail="No se obtuvo id_importacion al registrar la carga.",
+            )
+        importaciones[(periodo_inicio, periodo_fin)] = int(id_imp)
 
     return importaciones
 
@@ -840,7 +851,14 @@ def _upsert_reporte_integral(cur, data: Dict[str, Any], creador_id: Optional[int
         """,
         {**data, "creador_id": creador_id},
     )
-    return cur.fetchone()["id_reporte"]
+    row = cur.fetchone()
+    valor = _valor_fila(row, "id_reporte", 0)
+    if valor is None:
+        raise HTTPException(
+            status_code=500,
+            detail="No se obtuvo id_reporte al persistir creadores_reporte_integral.",
+        )
+    return int(valor)
 
 def _actualizar_creador_activo(cur, creador_id: int, data: Dict[str, Any]) -> None:
     # 1. Actualizar datos base en creadores (solo lo que corresponde)
@@ -1164,7 +1182,7 @@ def _cargar_usernames_admins(cur) -> Set[str]:
     cur.execute("SELECT username FROM administradores")
     usados: Set[str] = set()
     for row in cur.fetchall():
-        nombre = (row.get("username") or "").strip().lower()
+        nombre = (_valor_fila(row, "username", 0) or "").strip().lower()
         if nombre:
             usados.add(nombre)
     return usados
@@ -1215,6 +1233,28 @@ def _analizar_cruce_reporte(cur, df: pd.DataFrame) -> Dict[str, Any]:
     }
 
 
+def _emails_agente_unicos_del_df(df: pd.DataFrame) -> List[str]:
+    """Emails válidos y únicos de la columna Agente. Ignora vacíos, NaN y no-emails."""
+    vistos: Set[str] = set()
+    emails: List[str] = []
+    for _, row in df.iterrows():
+        try:
+            data = _row_to_reporte(row)
+        except Exception:
+            continue
+        if data.get("es_abandono"):
+            continue
+        agente = data.get("agente")
+        if not es_email_agente(agente):
+            continue
+        email = normalizar_clave_manager(agente)
+        if not email or email in vistos:
+            continue
+        vistos.add(email)
+        emails.append(email)
+    return emails
+
+
 def _crear_manager_desde_email(cur, email: str, usernames_usados: Set[str], rol_id: int) -> int:
     username = username_unico_disponible(username_base_desde_email(email), usernames_usados)
     usernames_usados.add(username)
@@ -1232,7 +1272,10 @@ def _crear_manager_desde_email(cur, email: str, usernames_usados: Set[str], rol_
         (username, email_norm, password_hash, rol_id, email_norm),
     )
     row = cur.fetchone()
-    return int(row["id"])
+    valor = _valor_fila(row, "id", 0) if row else None
+    if valor is None:
+        raise HTTPException(status_code=500, detail="No se pudo crear el manager.")
+    return int(valor)
 
 
 def _crear_creador_desde_reporte(cur, data: Dict[str, Any], estado_id: int, zona_horaria: Optional[str]) -> int:
@@ -1265,27 +1308,14 @@ def _crear_managers_faltantes_del_df(cur, df: pd.DataFrame) -> List[Dict[str, An
     usernames_usados = _cargar_usernames_admins(cur)
     rol_id = _administradores_roles_id_por_nombre(cur, "Manager")
     if rol_id is None:
-        rol_id = _administradores_roles_id_por_nombre(cur, "manager")
-    if rol_id is None:
         raise HTTPException(
             status_code=400,
-            detail="No existe el rol Manager en administradores_roles.",
+            detail="No se encontró el rol 'Manager' en administradores_roles.",
         )
 
-    vistos: Set[str] = set()
-    for _, row in df.iterrows():
-        try:
-            data = _row_to_reporte(row)
-        except Exception:
+    for email in _emails_agente_unicos_del_df(df):
+        if email in claves_admin:
             continue
-        if data.get("es_abandono"):
-            continue
-        if not es_email_agente(data.get("agente")):
-            continue
-        email = normalizar_clave_manager(data.get("agente"))
-        if not email or email in vistos or email in claves_admin:
-            continue
-        vistos.add(email)
         manager_id = _crear_manager_desde_email(cur, email, usernames_usados, rol_id)
         claves_admin.add(email)
         creados.append({"email": email, "manager_id": manager_id})
@@ -1449,8 +1479,10 @@ def cargar_reporte_creadores_excel(
     generar_insights: Optional[bool] = Query(None),
     crear_creadores_faltantes: bool = Query(False),
     crear_managers_faltantes: bool = Query(False),
+    actualizar_seguimiento_semanal: bool = Query(False),
     usuario: dict = Depends(obtener_usuario_actual),
 ):
+    fase = "inicio"
     try:
         tipo = _normalizar_tipo_periodo(tipo_periodo)
         actualizar_creadores_activos, generar_metas, generar_insights = _resolver_flags_importacion(
@@ -1459,7 +1491,16 @@ def cargar_reporte_creadores_excel(
             generar_metas,
             generar_insights,
         )
+        if actualizar_seguimiento_semanal and tipo != "semanal":
+            raise HTTPException(
+                status_code=400,
+                detail="El seguimiento semanal solo se actualiza con reportes semanales.",
+            )
+        actualizar_seguimiento_semanal = _debe_recalcular_tablero_tras_carga(
+            tipo, actualizar_seguimiento_semanal
+        )
 
+        fase = "leer_excel"
         content = file.file.read()
         df = pd.read_excel(io.BytesIO(content))
         _validar_columnas_excel(df, tipo_periodo=tipo)
@@ -1477,23 +1518,28 @@ def cargar_reporte_creadores_excel(
         managers_creados = []
         archivo_origen = "backstage_excel"
         importaciones_por_periodo: Dict[Tuple[date, date], int] = {}
+        tablero = None
 
         with get_connection_context() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                fase = "validar_periodos"
                 _validar_forma_y_solapes_periodos(cur, tipo, periodos)
 
                 if crear_managers_faltantes:
+                    fase = "crear_managers_faltantes"
                     managers_creados = _crear_managers_faltantes_del_df(cur, df)
 
                 estado_activo_id = None
                 zona_horaria = None
                 if crear_creadores_faltantes:
+                    fase = "preparar_creadores_faltantes"
                     from creadores_importacion import _cargar_estados_map, _obtener_zona_horaria_agencia
 
                     estados_map = _cargar_estados_map(cur)
                     estado_activo_id = estados_map.get(CREADOR_ESTADO_NOMBRE_ACTIVO.strip().lower())
                     zona_horaria = _obtener_zona_horaria_agencia(cur)
 
+                fase = "registrar_importacion"
                 importaciones_por_periodo = _registrar_importaciones_desde_df(
                     cur,
                     df,
@@ -1507,9 +1553,11 @@ def cargar_reporte_creadores_excel(
                         "generar_insights": generar_insights,
                         "crear_creadores_faltantes": crear_creadores_faltantes,
                         "crear_managers_faltantes": crear_managers_faltantes,
+                        "actualizar_seguimiento_semanal": actualizar_seguimiento_semanal,
                     },
                 )
 
+                fase = "importar_filas"
                 for idx, row in df.iterrows():
                     try:
                         data = _row_to_reporte(row)
@@ -1625,12 +1673,25 @@ def cargar_reporte_creadores_excel(
                         })
 
                     except Exception as row_error:
+                        if isinstance(row_error, HTTPException):
+                            raise
+                        from psycopg2 import DatabaseError
+
+                        if isinstance(row_error, DatabaseError):
+                            raise HTTPException(
+                                status_code=500,
+                                detail=(
+                                    "Error persistiendo creadores_reporte_integral "
+                                    f"(fila {int(idx) + 2}): {row_error}"
+                                ),
+                            ) from row_error
                         errores.append({
                             "fila": int(idx) + 2,
                             "error": str(row_error),
                         })
 
                 if generar_metas:
+                    fase = "generar_metas"
                     config = GenerarMetasPeriodoIn(
                         periodo_inicio=reportes_procesados[0]["periodo_inicio"] if reportes_procesados else date.today(),
                         periodo_fin=reportes_procesados[0]["periodo_fin"] if reportes_procesados else date.today(),
@@ -1654,6 +1715,7 @@ def cargar_reporte_creadores_excel(
                         )
 
                 if generar_insights:
+                    fase = "generar_insights"
                     for r in reportes_procesados:
                         if not r["creador_id"]:
                             continue
@@ -1677,6 +1739,56 @@ def cargar_reporte_creadores_excel(
                         meta = cur.fetchone()
                         textos = _generar_textos_insight(reporte, meta)
                         _upsert_insight(cur, reporte, textos)
+
+                if len(df) > 0 and insertados_o_actualizados == 0:
+                    primer = errores[0]["error"] if errores else "ninguna fila se persistió"
+                    raise HTTPException(
+                        status_code=500,
+                        detail=(
+                            "La carga no persistió ninguna fila en "
+                            f"creadores_reporte_integral. Causa: {primer}"
+                        ),
+                    )
+
+                if actualizar_seguimiento_semanal and insertados_o_actualizados > 0:
+                    fase = "verificar_periodo_tablero"
+                    from creadores_performance_tablero import (
+                        _diagnostico_periodo_concreto,
+                        _formato_diag_tipo_periodo,
+                        _periodos_desde_rangos,
+                        _periodos_semanales_por_rangos,
+                        recalcular_tablero_desde_cursor,
+                    )
+
+                    rangos = _periodos_desde_rangos(periodos)
+                    visibles = _periodos_semanales_por_rangos(cur, rangos)
+                    if not visibles:
+                        ini = rangos[0]["periodo_inicio"] if rangos else None
+                        fin = rangos[0]["periodo_fin"] if rangos else None
+                        dist = (
+                            _formato_diag_tipo_periodo(
+                                _diagnostico_periodo_concreto(cur, ini, fin)
+                            )
+                            if ini is not None
+                            else "sin rangos en el Excel"
+                        )
+                        raise HTTPException(
+                            status_code=500,
+                            detail=(
+                                f"Se persistieron {insertados_o_actualizados} filas del periodo "
+                                f"{ini}–{fin} pero el tablero semanal no las ve. "
+                                f"tipo_periodo en BD: {dist}"
+                            ),
+                        )
+
+                    fase = "recalcular_tablero"
+                    tablero = recalcular_tablero_desde_cursor(
+                        cur,
+                        periodos=visibles,
+                        semanas_mostradas=8,
+                        reemplazar_corte_activo=True,
+                        exigir_reportes=True,
+                    )
 
         importaciones_respuesta = [
             {
@@ -1712,14 +1824,22 @@ def cargar_reporte_creadores_excel(
             "actualizo_creadores_activos": actualizar_creadores_activos,
             "genero_metas": generar_metas,
             "genero_insights": generar_insights,
+            "actualizo_seguimiento_semanal": actualizar_seguimiento_semanal,
+            "tablero": tablero,
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        print("❌ Error cargando reporte de creadores:", e)
+        print(
+            f"[REPORTE_CREADORES_ERROR] fase={fase} "
+            f"tipo={type(e).__name__} error={e}"
+        )
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Error cargando el reporte de creadores")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error cargando el reporte de creadores ({fase}): {type(e).__name__}",
+        )
 
 
 # =========================================================

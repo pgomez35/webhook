@@ -1699,16 +1699,36 @@ def verify_password(password: str, hashed_password: str) -> bool:
 # FUNCIONES PARA administradores
 # ===============================
 
+def _valor_fila(row, columna: str, indice: int = 0):
+    """Lee una columna tanto de RealDictCursor/dict como de cursor de tuplas."""
+    if row is None:
+        return None
+    if isinstance(row, dict):
+        return row.get(columna)
+    try:
+        return row[indice]
+    except (IndexError, KeyError, TypeError):
+        return None
+
+
 def _administradores_roles_id_por_nombre(cur, nombre_rol: str):
     """Resuelve el id en administradores_roles a partir del nombre (ej. 'Manager', 'admin')."""
     if not nombre_rol or not str(nombre_rol).strip():
         return None
     cur.execute(
-        "SELECT id FROM administradores_roles WHERE nombre = %s",
+        """
+        SELECT id AS id
+        FROM administradores_roles
+        WHERE LOWER(TRIM(nombre)) = LOWER(TRIM(%s))
+        LIMIT 1
+        """,
         (str(nombre_rol).strip(),),
     )
     row = cur.fetchone()
-    return row[0] if row else None
+    if not row:
+        return None
+    valor = _valor_fila(row, "id", 0)
+    return int(valor) if valor is not None else None
 
 
 def obtener_todos_usuarioss():

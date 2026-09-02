@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Depends
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, Field, field_validator
 
-from DataBase import get_connection_context
+from DataBase import get_connection_context, _valor_fila
 from main_auth import (
     obtener_usuario_actual,
     es_manager,
@@ -60,7 +60,9 @@ class ObservacionSemanaIn(BaseModel):
 # HELPERS
 # =========================================================
 
-_WHERE_PERIODOS_SEMANALES = "COALESCE(tipo_periodo, 'semanal') = 'semanal'"
+_WHERE_PERIODOS_SEMANALES = (
+    "LOWER(TRIM(COALESCE(tipo_periodo, 'semanal'))) = 'semanal'"
+)
 
 
 def _nombre_manager_visible(reporte: Dict[str, Any]) -> str:
@@ -396,16 +398,82 @@ def _calcular_estado_general(
     return estado_horas or "Sin estado"
 
 
-def _tiene_texto_observacion(obs: Optional[Dict[str, Any]]) -> bool:
+def _tiene_texto_observacion(obs: Optional[Any]) -> bool:
     if not obs:
         return False
 
-    for campo in ("observacion", "recomendacion"):
-        texto = obs.get(campo)
+    for campo, indice in (("observacion", 1), ("recomendacion", 2)):
+        texto = _valor_fila(obs, campo, indice)
         if texto and str(texto).strip():
             return True
 
     return False
+
+
+def _normalizar_fila_periodo(row) -> Dict[str, Any]:
+    """Compatible con RealDictCursor y tuplas (periodo_inicio, periodo_fin)."""
+    if isinstance(row, dict):
+        return {
+            "periodo_inicio": row.get("periodo_inicio"),
+            "periodo_fin": row.get("periodo_fin"),
+        }
+    return {
+        "periodo_inicio": row[0],
+        "periodo_fin": row[1],
+    }
+
+
+def _periodos_desde_rangos(periodos) -> List[Dict[str, Any]]:
+    filas = []
+    for p in periodos or []:
+        if isinstance(p, dict):
+            filas.append(_normalizar_fila_periodo(p))
+        elif isinstance(p, (tuple, list)) and len(p) >= 2:
+            filas.append({"periodo_inicio": p[0], "periodo_fin": p[1]})
+    return [f for f in filas if f.get("periodo_inicio") is not None and f.get("periodo_fin") is not None]
+
+
+def _log_diagnostico_periodos_semanales(cur) -> None:
+    try:
+        cur.execute("SELECT COUNT(*) AS n FROM creadores_reporte_integral")
+        total = _valor_fila(cur.fetchone(), "n", 0)
+        cur.execute(
+            """
+            SELECT COALESCE(tipo_periodo, '<null>') AS tipo, COUNT(*) AS n
+            FROM creadores_reporte_integral
+            GROUP BY 1
+            ORDER BY 2 DESC
+            """
+        )
+        dist = cur.fetchall()
+        print(
+            f"[TABLERO] consulta periodos semanales vacía. "
+            f"filas_reporte_integral={total} dist_tipo_periodo={dist}"
+        )
+    except Exception as e:
+        print(f"[TABLERO] no se pudo diagnosticar tipo_periodo: {type(e).__name__}: {e}")
+
+
+def _diagnostico_periodo_concreto(cur, periodo_inicio, periodo_fin) -> List[Any]:
+    cur.execute(
+        """
+        SELECT COALESCE(tipo_periodo, '<null>') AS tipo, COUNT(*) AS n
+        FROM creadores_reporte_integral
+        WHERE periodo_inicio = %s AND periodo_fin = %s
+        GROUP BY 1
+        """,
+        (periodo_inicio, periodo_fin),
+    )
+    return list(cur.fetchall() or [])
+
+
+def _formato_diag_tipo_periodo(rows) -> str:
+    partes = []
+    for row in rows or []:
+        tipo = _valor_fila(row, "tipo", 0)
+        n = _valor_fila(row, "n", 1)
+        partes.append(f"{tipo}={n}")
+    return ", ".join(partes) if partes else "sin filas en creadores_reporte_integral para esas fechas"
 
 
 def _obtener_periodos_ventana(cur, semanas_mostradas: int, periodo_corte_fin: Optional[date]):
@@ -444,18 +512,46 @@ def _obtener_periodos_ventana(cur, semanas_mostradas: int, periodo_corte_fin: Op
         )
 
     periodos_desc = cur.fetchall()
-
     if not periodos_desc:
-        raise HTTPException(
-            status_code=404,
-            detail="No hay periodos semanales cargados en creadores_reporte_integral."
-        )
+        _log_diagnostico_periodos_semanales(cur)
+        return []
 
     # Los dejamos de antiguo a reciente.
-    return list(reversed(periodos_desc))
+    return [_normalizar_fila_periodo(row) for row in reversed(list(periodos_desc))]
+
+
+def _periodos_semanales_por_rangos(cur, rangos: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Misma tabla y filtro que el tablero, acotado a los rangos del Excel."""
+    rangos = _periodos_desde_rangos(rangos)
+    if not rangos:
+        return []
+
+    conditions = []
+    params: List[Any] = []
+    for p in rangos:
+        conditions.append("(periodo_inicio = %s AND periodo_fin = %s)")
+        params.extend([p["periodo_inicio"], p["periodo_fin"]])
+
+    cur.execute(
+        f"""
+        SELECT DISTINCT
+            periodo_inicio,
+            periodo_fin
+        FROM creadores_reporte_integral
+        WHERE ({" OR ".join(conditions)})
+          AND {_WHERE_PERIODOS_SEMANALES}
+        ORDER BY periodo_fin ASC
+        """,
+        params,
+    )
+    return [_normalizar_fila_periodo(row) for row in (cur.fetchall() or [])]
 
 
 def _obtener_reportes_de_periodos(cur, periodos: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    periodos = _periodos_desde_rangos(periodos)
+    if not periodos:
+        return []
+
     conditions = []
     params = []
 
@@ -514,8 +610,11 @@ def _obtener_reportes_de_periodos(cur, periodos: List[Dict[str, Any]]) -> List[D
     agrupados = {}
 
     for row in rows:
-        key = row["creador_tiktok_id"]
-        agrupados.setdefault(key, []).append(dict(row))
+        row_dict = dict(row)
+        key = _valor_fila(row_dict, "creador_tiktok_id", 0)
+        if not key:
+            continue
+        agrupados.setdefault(key, []).append(row_dict)
 
     resultado = []
 
@@ -554,263 +653,319 @@ def _agrupar_por_creador(reportes: List[Dict[str, Any]]) -> Dict[str, List[Dict[
 # ENDPOINT: RECALCULAR TABLERO
 # =========================================================
 
+def recalcular_tablero_desde_cursor(
+    cur,
+    *,
+    semanas_mostradas: int = 8,
+    periodo_corte_fin: Optional[date] = None,
+    reemplazar_corte_activo: bool = True,
+    periodos: Optional[List[Any]] = None,
+    exigir_reportes: bool = False,
+) -> Dict[str, Any]:
+    """Recalcula el tablero con el cursor ya abierto (mismo tenant/transacción)."""
+    if periodos is None:
+        periodos = _obtener_periodos_ventana(cur, semanas_mostradas, periodo_corte_fin)
+    else:
+        periodos = _periodos_desde_rangos(periodos)
+
+    if not periodos:
+        if exigir_reportes:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "La carga semanal no dejó periodos visibles en "
+                    "creadores_reporte_integral para el tablero."
+                ),
+            )
+        return {
+            "ok": True,
+            "sin_periodos": True,
+            "mensaje": "No hay periodos semanales cargados para recalcular el tablero.",
+            "id_corte": None,
+            "periodo_corte_inicio": None,
+            "periodo_corte_fin": None,
+            "semanas_mostradas": semanas_mostradas,
+            "total_creadores": 0,
+            "total_semanas": 0,
+        }
+
+    periodo_corte_inicio = periodos[0]["periodo_inicio"]
+    periodo_corte_fin_calc = periodos[-1]["periodo_fin"]
+
+    reportes = _obtener_reportes_de_periodos(cur, periodos)
+    if exigir_reportes and not reportes:
+        dist = _formato_diag_tipo_periodo(
+            _diagnostico_periodo_concreto(cur, periodo_corte_inicio, periodo_corte_fin_calc)
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "El periodo "
+                f"{periodo_corte_inicio}–{periodo_corte_fin_calc} existe en fechas "
+                "pero el filtro semanal del tablero no devolvió reportes. "
+                f"tipo_periodo en BD: {dist}"
+            ),
+        )
+
+    reportes_por_creador = _agrupar_por_creador(reportes)
+
+    reglas_horas = _cargar_reglas_horas(cur)
+    reglas_nuevo = _cargar_reglas_dias_incorporacion(cur)
+
+    if reemplazar_corte_activo:
+        cur.execute(
+            """
+            UPDATE creadores_performance_tablero_cortes
+            SET estado = 'historico'
+            WHERE estado = 'activo'
+              AND semanas_mostradas = %s
+            """,
+            (semanas_mostradas,),
+        )
+
+    cur.execute(
+        """
+        INSERT INTO creadores_performance_tablero_cortes (
+            periodo_corte_inicio,
+            periodo_corte_fin,
+            semanas_mostradas,
+            estado,
+            fecha_calculo
+        )
+        VALUES (%s, %s, %s, 'activo', NOW())
+        RETURNING id_corte
+        """,
+        (
+            periodo_corte_inicio,
+            periodo_corte_fin_calc,
+            semanas_mostradas,
+        ),
+    )
+
+    id_corte = _valor_fila(cur.fetchone(), "id_corte", 0)
+    if id_corte is None:
+        raise HTTPException(status_code=500, detail="No se pudo crear el corte del tablero.")
+
+    total_creadores = 0
+    total_semanas = 0
+
+    periodos_por_key = {
+        (p["periodo_inicio"], p["periodo_fin"]): idx + 1
+        for idx, p in enumerate(periodos)
+    }
+
+    for creador_tiktok_id, lista_reportes in reportes_por_creador.items():
+        latest = lista_reportes[-1]
+
+        horas_ultimo_mes = _minutos_a_horas(latest.get("duracion_live_mes_minutos"))
+
+        rango = _resolver_rango_diamantes(
+            cur,
+            latest.get("diamantes_mes")
+        )
+
+        objetivo = _resolver_objetivo(cur, latest, rango)
+
+        horas_ultima_semana = _minutos_a_horas(latest.get("duracion_live_minutos"))
+        estado_horas = _resolver_estado_horas(reglas_horas, horas_ultima_semana)
+        estado_general = _calcular_estado_general(latest, estado_horas, reglas_nuevo)
+        nivel_riesgo = _calcular_nivel_riesgo(lista_reportes)
+        rango_codigo, rango_nombre = _resolver_rango_display(rango, latest)
+
+        cur.execute(
+            """
+            INSERT INTO creadores_performance_tablero_creadores (
+                id_corte,
+                creador_tiktok_id,
+                creador_id,
+                usuario_tiktok,
+                grupo,
+                manager_actual,
+                manager_id,
+                estado_agencia,
+                dias_desde_incorporacion,
+                rango_codigo,
+                rango_nombre,
+                diamantes_ultimo_mes,
+                horas_ultimo_mes,
+                dias_ultimo_mes,
+                objetivo_mensual,
+                objetivo_semanal,
+                objetivo_horas_mes,
+                objetivo_horas_semana,
+                objetivo_dias_mes,
+                objetivo_dias_semana,
+                variacion_ultima_semana_pct,
+                estado_general,
+                nivel_riesgo,
+                fecha_actualizacion
+            )
+            VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, %s,
+                %s, %s,
+                %s, %s,
+                %s, %s,
+                %s, %s, %s,
+                NOW()
+            )
+            RETURNING id_tablero_creador
+            """,
+            (
+                id_corte,
+                latest.get("creador_tiktok_id"),
+                latest.get("creador_id"),
+                latest.get("usuario_tiktok"),
+                latest.get("grupo"),
+                _nombre_manager_visible(latest),
+                latest.get("manager_id"),
+                _estado_agencia_reporte(latest),
+                latest.get("dias_desde_incorporacion"),
+                rango_codigo,
+                rango_nombre,
+                latest.get("diamantes_mes") or 0,
+                horas_ultimo_mes,
+                latest.get("dias_validos_live_mes") or 0,
+                objetivo.get("objetivo_mensual"),
+                objetivo.get("objetivo_semanal"),
+                objetivo.get("objetivo_horas_mes"),
+                objetivo.get("objetivo_horas_semana"),
+                objetivo.get("objetivo_dias_mes"),
+                objetivo.get("objetivo_dias_semana"),
+                latest.get("variacion_diamantes_pct"),
+                estado_general,
+                nivel_riesgo,
+            ),
+        )
+
+        id_tablero_creador = _valor_fila(cur.fetchone(), "id_tablero_creador", 0)
+        if id_tablero_creador is None:
+            raise HTTPException(status_code=500, detail="No se pudo crear la fila del tablero.")
+        total_creadores += 1
+
+        reportes_por_periodo = {
+            (r["periodo_inicio"], r["periodo_fin"]): r
+            for r in lista_reportes
+        }
+
+        for p in periodos:
+            periodo_key = (p["periodo_inicio"], p["periodo_fin"])
+            semana_orden = periodos_por_key[periodo_key]
+            r = reportes_por_periodo.get(periodo_key)
+
+            if r:
+                horas = _minutos_a_horas(r.get("duracion_live_minutos"))
+                estado_auto = _resolver_estado_horas(reglas_horas, horas)
+                diamantes = r.get("diamantes_totales") or 0
+                dias = r.get("dias_validos_emisiones_live") or 0
+                manager_semana = _nombre_manager_visible(r)
+                manager_id_semana = r.get("manager_id")
+                estado_agencia_semana = _estado_agencia_reporte(r)
+                variacion = r.get("variacion_diamantes_pct")
+            else:
+                horas = 0
+                estado_auto = "Sin dato"
+                diamantes = 0
+                dias = 0
+                manager_semana = _nombre_manager_visible(latest)
+                manager_id_semana = latest.get("manager_id")
+                estado_agencia_semana = _estado_agencia_reporte(latest)
+                variacion = None
+
+            cur.execute(
+                """
+                SELECT
+                    estado_manual,
+                    observacion,
+                    recomendacion
+                FROM creadores_performance_observaciones
+                WHERE creador_tiktok_id = %s
+                  AND periodo_inicio = %s
+                  AND periodo_fin = %s
+                  AND activo = true
+                LIMIT 1
+                """,
+                (
+                    creador_tiktok_id,
+                    p["periodo_inicio"],
+                    p["periodo_fin"],
+                ),
+            )
+            obs = cur.fetchone()
+
+            cur.execute(
+                """
+                INSERT INTO creadores_performance_tablero_semanas (
+                    id_tablero_creador,
+                    semana_orden,
+                    periodo_inicio,
+                    periodo_fin,
+                    diamantes,
+                    horas,
+                    dias,
+                    manager_semana,
+                    manager_id,
+                    estado_agencia,
+                    estado_auto,
+                    estado_manual,
+                    variacion_diamantes_pct,
+                    tiene_observacion,
+                    fecha_actualizacion
+                )
+                VALUES (
+                    %s, %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s,
+                    %s, %s,
+                    NOW()
+                )
+                """,
+                (
+                    id_tablero_creador,
+                    semana_orden,
+                    p["periodo_inicio"],
+                    p["periodo_fin"],
+                    diamantes,
+                    horas,
+                    dias,
+                    manager_semana,
+                    manager_id_semana,
+                    estado_agencia_semana,
+                    estado_auto,
+                    _valor_fila(obs, "estado_manual", 0) if obs else None,
+                    variacion,
+                    _tiene_texto_observacion(obs),
+                ),
+            )
+
+            total_semanas += 1
+
+    return {
+        "ok": True,
+        "sin_periodos": False,
+        "mensaje": "Tablero recalculado correctamente.",
+        "id_corte": id_corte,
+        "periodo_corte_inicio": periodo_corte_inicio,
+        "periodo_corte_fin": periodo_corte_fin_calc,
+        "semanas_mostradas": semanas_mostradas,
+        "total_creadores": total_creadores,
+        "total_semanas": total_semanas,
+    }
+
+
 @router.post("/api/creadores/performance/tablero/recalcular")
 def recalcular_tablero_performance(payload: RecalcularTableroIn):
     try:
         with get_connection_context() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-
-                periodos = _obtener_periodos_ventana(
+                return recalcular_tablero_desde_cursor(
                     cur,
-                    payload.semanas_mostradas,
-                    payload.periodo_corte_fin
+                    semanas_mostradas=payload.semanas_mostradas,
+                    periodo_corte_fin=payload.periodo_corte_fin,
+                    reemplazar_corte_activo=payload.reemplazar_corte_activo,
                 )
-
-                periodo_corte_inicio = periodos[0]["periodo_inicio"]
-                periodo_corte_fin = periodos[-1]["periodo_fin"]
-
-                reportes = _obtener_reportes_de_periodos(cur, periodos)
-                reportes_por_creador = _agrupar_por_creador(reportes)
-
-                reglas_horas = _cargar_reglas_horas(cur)
-                reglas_nuevo = _cargar_reglas_dias_incorporacion(cur)
-
-                if payload.reemplazar_corte_activo:
-                    cur.execute(
-                        """
-                        UPDATE creadores_performance_tablero_cortes
-                        SET estado = 'historico'
-                        WHERE estado = 'activo'
-                          AND semanas_mostradas = %s
-                        """,
-                        (payload.semanas_mostradas,),
-                    )
-
-                cur.execute(
-                    """
-                    INSERT INTO creadores_performance_tablero_cortes (
-                        periodo_corte_inicio,
-                        periodo_corte_fin,
-                        semanas_mostradas,
-                        estado,
-                        fecha_calculo
-                    )
-                    VALUES (%s, %s, %s, 'activo', NOW())
-                    RETURNING id_corte
-                    """,
-                    (
-                        periodo_corte_inicio,
-                        periodo_corte_fin,
-                        payload.semanas_mostradas,
-                    ),
-                )
-
-                id_corte = cur.fetchone()["id_corte"]
-
-                total_creadores = 0
-                total_semanas = 0
-
-                periodos_por_key = {
-                    (p["periodo_inicio"], p["periodo_fin"]): idx + 1
-                    for idx, p in enumerate(periodos)
-                }
-
-                for creador_tiktok_id, lista_reportes in reportes_por_creador.items():
-                    latest = lista_reportes[-1]
-
-                    horas_ultimo_mes = _minutos_a_horas(latest.get("duracion_live_mes_minutos"))
-
-                    rango = _resolver_rango_diamantes(
-                        cur,
-                        latest.get("diamantes_mes")
-                    )
-
-                    objetivo = _resolver_objetivo(cur, latest, rango)
-
-                    horas_ultima_semana = _minutos_a_horas(latest.get("duracion_live_minutos"))
-                    estado_horas = _resolver_estado_horas(reglas_horas, horas_ultima_semana)
-                    estado_general = _calcular_estado_general(latest, estado_horas, reglas_nuevo)
-                    nivel_riesgo = _calcular_nivel_riesgo(lista_reportes)
-                    rango_codigo, rango_nombre = _resolver_rango_display(rango, latest)
-
-                    cur.execute(
-                        """
-                        INSERT INTO creadores_performance_tablero_creadores (
-                            id_corte,
-                            creador_tiktok_id,
-                            creador_id,
-                            usuario_tiktok,
-                            grupo,
-                            manager_actual,
-                            manager_id,
-                            estado_agencia,
-                            dias_desde_incorporacion,
-                            rango_codigo,
-                            rango_nombre,
-                            diamantes_ultimo_mes,
-                            horas_ultimo_mes,
-                            dias_ultimo_mes,
-                            objetivo_mensual,
-                            objetivo_semanal,
-                            objetivo_horas_mes,
-                            objetivo_horas_semana,
-                            objetivo_dias_mes,
-                            objetivo_dias_semana,
-                            variacion_ultima_semana_pct,
-                            estado_general,
-                            nivel_riesgo,
-                            fecha_actualizacion
-                        )
-                        VALUES (
-                            %s, %s, %s, %s, %s, %s, %s, %s,
-                            %s, %s, %s,
-                            %s, %s, %s,
-                            %s, %s,
-                            %s, %s,
-                            %s, %s,
-                            %s, %s, %s,
-                            NOW()
-                        )
-                        RETURNING id_tablero_creador
-                        """,
-                        (
-                            id_corte,
-                            latest.get("creador_tiktok_id"),
-                            latest.get("creador_id"),
-                            latest.get("usuario_tiktok"),
-                            latest.get("grupo"),
-                            _nombre_manager_visible(latest),
-                            latest.get("manager_id"),
-                            _estado_agencia_reporte(latest),
-                            latest.get("dias_desde_incorporacion"),
-                            rango_codigo,
-                            rango_nombre,
-                            latest.get("diamantes_mes") or 0,
-                            horas_ultimo_mes,
-                            latest.get("dias_validos_live_mes") or 0,
-                            objetivo.get("objetivo_mensual"),
-                            objetivo.get("objetivo_semanal"),
-                            objetivo.get("objetivo_horas_mes"),
-                            objetivo.get("objetivo_horas_semana"),
-                            objetivo.get("objetivo_dias_mes"),
-                            objetivo.get("objetivo_dias_semana"),
-                            latest.get("variacion_diamantes_pct"),
-                            estado_general,
-                            nivel_riesgo,
-                        ),
-                    )
-
-                    id_tablero_creador = cur.fetchone()["id_tablero_creador"]
-                    total_creadores += 1
-
-                    reportes_por_periodo = {
-                        (r["periodo_inicio"], r["periodo_fin"]): r
-                        for r in lista_reportes
-                    }
-
-                    for p in periodos:
-                        periodo_key = (p["periodo_inicio"], p["periodo_fin"])
-                        semana_orden = periodos_por_key[periodo_key]
-                        r = reportes_por_periodo.get(periodo_key)
-
-                        if r:
-                            horas = _minutos_a_horas(r.get("duracion_live_minutos"))
-                            estado_auto = _resolver_estado_horas(reglas_horas, horas)
-                            diamantes = r.get("diamantes_totales") or 0
-                            dias = r.get("dias_validos_emisiones_live") or 0
-                            manager_semana = _nombre_manager_visible(r)
-                            manager_id_semana = r.get("manager_id")
-                            estado_agencia_semana = _estado_agencia_reporte(r)
-                            variacion = r.get("variacion_diamantes_pct")
-                        else:
-                            horas = 0
-                            estado_auto = "Sin dato"
-                            diamantes = 0
-                            dias = 0
-                            manager_semana = _nombre_manager_visible(latest)
-                            manager_id_semana = latest.get("manager_id")
-                            estado_agencia_semana = _estado_agencia_reporte(latest)
-                            variacion = None
-
-                        cur.execute(
-                            """
-                            SELECT
-                                estado_manual,
-                                observacion,
-                                recomendacion
-                            FROM creadores_performance_observaciones
-                            WHERE creador_tiktok_id = %s
-                              AND periodo_inicio = %s
-                              AND periodo_fin = %s
-                              AND activo = true
-                            LIMIT 1
-                            """,
-                            (
-                                creador_tiktok_id,
-                                p["periodo_inicio"],
-                                p["periodo_fin"],
-                            ),
-                        )
-                        obs = cur.fetchone()
-
-                        cur.execute(
-                            """
-                            INSERT INTO creadores_performance_tablero_semanas (
-                                id_tablero_creador,
-                                semana_orden,
-                                periodo_inicio,
-                                periodo_fin,
-                                diamantes,
-                                horas,
-                                dias,
-                                manager_semana,
-                                manager_id,
-                                estado_agencia,
-                                estado_auto,
-                                estado_manual,
-                                variacion_diamantes_pct,
-                                tiene_observacion,
-                                fecha_actualizacion
-                            )
-                            VALUES (
-                                %s, %s, %s, %s,
-                                %s, %s, %s,
-                                %s, %s, %s,
-                                %s, %s,
-                                %s, %s,
-                                NOW()
-                            )
-                            """,
-                            (
-                                id_tablero_creador,
-                                semana_orden,
-                                p["periodo_inicio"],
-                                p["periodo_fin"],
-                                diamantes,
-                                horas,
-                                dias,
-                                manager_semana,
-                                manager_id_semana,
-                                estado_agencia_semana,
-                                estado_auto,
-                                obs.get("estado_manual") if obs else None,
-                                variacion,
-                                _tiene_texto_observacion(obs),
-                            ),
-                        )
-
-                        total_semanas += 1
-
-        return {
-            "ok": True,
-            "mensaje": "Tablero recalculado correctamente.",
-            "id_corte": id_corte,
-            "periodo_corte_inicio": periodo_corte_inicio,
-            "periodo_corte_fin": periodo_corte_fin,
-            "semanas_mostradas": payload.semanas_mostradas,
-            "total_creadores": total_creadores,
-            "total_semanas": total_semanas,
-        }
 
     except HTTPException:
         raise
@@ -983,7 +1138,7 @@ def obtener_tablero_actual(
                     """,
                     params,
                 )
-                total = cur.fetchone()["total"]
+                total = _valor_fila(cur.fetchone(), "total", 0) or 0
 
                 cur.execute(
                     f"""
@@ -1152,7 +1307,7 @@ def guardar_observacion_semana(payload: ObservacionSemanaIn):
                     ),
                 )
 
-                id_observacion = cur.fetchone()["id_observacion"]
+                id_observacion = _valor_fila(cur.fetchone(), "id_observacion", 0)
 
                 tiene_observacion = bool(
                     (payload.observacion and str(payload.observacion).strip())
