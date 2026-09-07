@@ -173,6 +173,7 @@ app.add_middleware(
         "https://chat.talentum-manager.com",
         "https://chatbot.talentum-manager.com",
         "https://agency15-5.talentum-manager.com",
+        "https://osadia.talentum-manager.com",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ],
