@@ -20,6 +20,23 @@ from DataBase import get_connection_chatbot_context, get_connection_public_conte
 
 logger = logging.getLogger("uvicorn.error")
 
+
+def _log_tipo_chatbot_change(
+    *,
+    anterior: Any,
+    nuevo: Any,
+    config_id: Any,
+    origen_request: str,
+) -> None:
+    """Traza temporal: no incluir tokens ni PII."""
+    logger.info(
+        "[TIPO_CHATBOT_CHANGE] anterior=%s nuevo=%s config_id=%s origen_request=%s",
+        anterior,
+        nuevo,
+        config_id,
+        origen_request,
+    )
+
 # Re-export para compatibilidad
 __all_helpers__ = (
     enmascarar_telefono,
@@ -862,6 +879,12 @@ def crear_configuracion(agencia_id: int, data: Dict[str, Any]) -> Dict[str, Any]
                 bool(data.get("activo", False)),
                 tipo_chatbot,
             )
+            _log_tipo_chatbot_change(
+                anterior=None,
+                nuevo=tipo_chatbot,
+                config_id=cfg_id,
+                origen_request="POST /configuraciones",
+            )
     return obtener_configuracion_por_id(agencia_id, cfg_id) or dict(row)
 
 
@@ -870,6 +893,7 @@ def actualizar_configuracion(
     data: Dict[str, Any],
     *,
     configuracion_id: Optional[int] = None,
+    origen_request: str = "PUT /configuraciones/{id}",
 ) -> Dict[str, Any]:
     """
     Actualiza una configuración por id (preferido) o, en compatibilidad,
@@ -886,6 +910,9 @@ def actualizar_configuracion(
         if not existente:
             raise ValueError("Configuración no encontrada")
         configuracion_id = int(existente["id"])
+
+    previa = obtener_configuracion_por_id(agencia_id, configuracion_id)
+    tipo_anterior = (previa or {}).get("tipo_chatbot")
 
     plataforma_codigo = data.get("plataforma_codigo")
     if plataforma_codigo is not None:
@@ -929,6 +956,12 @@ def actualizar_configuracion(
     tipo_chatbot = normalizar_tipo_chatbot(data.get("tipo_chatbot")) or "informativo"
     if tipo_chatbot not in TIPOS_CHATBOT:
         tipo_chatbot = "informativo"
+    _log_tipo_chatbot_change(
+        anterior=tipo_anterior,
+        nuevo=tipo_chatbot,
+        config_id=configuracion_id,
+        origen_request=origen_request,
+    )
     params: List[Any] = [
         data["activo"],
         tipo_chatbot,
@@ -1224,6 +1257,8 @@ def set_tipo_chatbot(
     agencia_id: int,
     configuracion_id: int,
     tipo_chatbot: str,
+    *,
+    origen_request: str = "PATCH /tipo-chatbot",
 ) -> Dict[str, Any]:
     """
     Persiste tipo_chatbot y sincroniza flags internos en una transacción.
@@ -1244,6 +1279,14 @@ def set_tipo_chatbot(
         raise ValueError(
             "tipo_chatbot debe ser 'tradicional', 'informativo' o 'inteligente'"
         )
+    previa = obtener_configuracion_por_id(agencia_id, configuracion_id)
+    tipo_anterior = (previa or {}).get("tipo_chatbot")
+    _log_tipo_chatbot_change(
+        anterior=tipo_anterior,
+        nuevo=tipo,
+        config_id=configuracion_id,
+        origen_request=origen_request,
+    )
     sync = sync_completo_desde_tipo(tipo)
     modos = modos_asistente_desde_tipo(tipo)
     asistente_activo = tipo != TIPO_TRADICIONAL

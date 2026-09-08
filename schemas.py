@@ -512,6 +512,7 @@ class DatosPersonalesInput(BaseModel):
     actividad_actual: Optional[Union[str, int]] = None
     telefono: Optional[Union[str, int]] = None
     tiene_solicitud: Optional[bool] = None
+    region_id: Optional[int] = None
 
     @field_validator("edad", mode="before")
     @classmethod
@@ -521,6 +522,16 @@ class DatosPersonalesInput(BaseModel):
         if isinstance(v, str) and v.strip().isdigit():
             return int(v.strip())
         return v
+
+    @field_validator("region_id", mode="before")
+    @classmethod
+    def coerce_region_id(cls, v):
+        if v is None or v == "":
+            return None
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
 
     @field_validator(
         "genero", "pais", "actividad_actual", "telefono",
@@ -746,6 +757,19 @@ class CreadorActivoBase(BaseModel):
     horas_live: Optional[int] = None
     numero_partidas: Optional[int] = None
     dias_emision: Optional[int] = None
+    region_id: Optional[int] = None
+    region: Optional[str] = None
+    region_codigo: Optional[str] = None
+
+    @field_validator("region_id", mode="before")
+    @classmethod
+    def coerce_creador_region_id(cls, v):
+        if v is None or v == "":
+            return None
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
 
 class CreadorActivoCreate(CreadorActivoBase):
     pass

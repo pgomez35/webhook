@@ -2284,6 +2284,9 @@ def crear_o_actualizar_creador_desde_aspirante(
     # -------------------------------
     # 3. INSERT / UPDATE en creadores (CORE)
     # -------------------------------
+    from regiones import obtener_region_id_aspirante
+    region_id = obtener_region_id_aspirante(cur, aspirante_id)
+
     cur.execute(f"""
         INSERT INTO creadores (
             aspirante_id,
@@ -2293,12 +2296,14 @@ def crear_o_actualizar_creador_desde_aspirante(
             telefono,
             foto,
             categoria_id,
-            estado_id
+            estado_id,
+            region_id
         )
         VALUES (
             %s, %s, %s, %s, %s, %s,
             NULL,
-            {SQL_CREADOR_ESTADO_ID_ACTIVO}
+            {SQL_CREADOR_ESTADO_ID_ACTIVO},
+            %s
         )
         ON CONFLICT (aspirante_id)
         DO UPDATE SET
@@ -2307,7 +2312,8 @@ def crear_o_actualizar_creador_desde_aspirante(
             email = EXCLUDED.email,
             telefono = EXCLUDED.telefono,
             foto = EXCLUDED.foto,
-            estado_id = EXCLUDED.estado_id
+            estado_id = EXCLUDED.estado_id,
+            region_id = COALESCE(EXCLUDED.region_id, creadores.region_id)
         RETURNING id
     """, (
         aspirante_id,
@@ -2315,7 +2321,8 @@ def crear_o_actualizar_creador_desde_aspirante(
         usuario_tiktok,
         aspirante[4],
         telefono,
-        aspirante[7]
+        aspirante[7],
+        region_id,
     ))
 
     creador_id = cur.fetchone()[0]
@@ -2385,7 +2392,7 @@ def crear_o_actualizar_creador_desde_aspirante(
 
     return creador_id
 
-def obtener_creadores_activos_db(manager_id=None):
+def obtener_creadores_activos_db(manager_id=None, region=None):
     """
     Lista creadores activos para la vista de listado (panel izquierdo).
     Incluye nombre de arquetipo vía creadores_arquetipo.
@@ -2398,6 +2405,7 @@ def obtener_creadores_activos_db(manager_id=None):
         SQL_JOIN_CREADOR_ARQUETIPO,
         SQL_SELECT_CREADOR_ARQUETIPO,
     )
+    from regiones import SQL_JOIN_CREADOR_REGION, SQL_SELECT_CREADOR_REGION
 
     filtro_manager_join = ""
     filtro_manager_where = ""
@@ -2406,6 +2414,11 @@ def obtener_creadores_activos_db(manager_id=None):
         filtro_manager_join = "INNER JOIN creadores_detalle cd ON cd.creador_id = c.id"
         filtro_manager_where = "AND cd.manager_id = %s"
         params.append(manager_id)
+    region_codigo = (region or "").strip().lower() if region else ""
+    filtro_region = ""
+    if region_codigo:
+        filtro_region = "AND rgn.codigo = %s"
+        params.append(region_codigo)
 
     try:
         with get_connection_context() as conn:
@@ -2418,15 +2431,18 @@ def obtener_creadores_activos_db(manager_id=None):
                         c.categoria_id,
                         COALESCE(cat.nombre, 'Sin categoría') AS categoria,
                         {SQL_SELECT_CREADOR_ARQUETIPO}
+                        {SQL_SELECT_CREADOR_REGION}
                         ce.nombre AS estado
                     FROM creadores c
                     LEFT JOIN creadores_categoria cat ON cat.id = c.categoria_id
                     {SQL_JOIN_CREADOR_ARQUETIPO}
+                    {SQL_JOIN_CREADOR_REGION}
                     INNER JOIN creadores_estados ce ON ce.id = c.estado_id
                     {filtro_manager_join}
                     WHERE ce.nombre = %s
                       AND COALESCE(ce.activo, true) = true
                       {filtro_manager_where}
+                      {filtro_region}
                     ORDER BY c.id DESC;
                 """, tuple(params))
 

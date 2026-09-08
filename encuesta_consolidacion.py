@@ -19,6 +19,11 @@ from DataBase import (
     marcar_encuesta_completada,
 )
 from portal_access_tokens import generar_url_portal
+from regiones import (
+    ISO_PAIS_LABELS,
+    aplicar_region_aspirante_desde_pais,
+    buscar_id_pais_por_iso,
+)
 from utils_aspirantes import registrar_cambio_estado
 
 VARIABLE_PAIS_ID = 20
@@ -44,6 +49,8 @@ PAISES_SISTEMA = {
     "DO": {"id": 88, "nombre": "República Dominicana"},
     "UY": {"id": 89, "nombre": "Uruguay"},
     "VE": {"id": 90, "nombre": "Venezuela"},
+    "US": {"id": None, "nombre": "Estados Unidos"},
+    "CA": {"id": None, "nombre": "Canadá"},
 }
 
 
@@ -71,7 +78,7 @@ def obtener_datos_pais(telefono_webhook: str) -> dict:
             pais = PAISES_SISTEMA[codigo_iso]
             return {
                 "id_pais": pais["id"],
-                "nombre_pais": pais["nombre"],
+                "nombre_pais": pais["nombre"] or ISO_PAIS_LABELS.get(codigo_iso),
                 "indicativo": indicativo,
                 "iso": codigo_iso,
                 "es_otro": False,
@@ -137,6 +144,11 @@ def _aplicar_pais(
         datos_pais = obtener_datos_pais(numero)
         if not datos_pais.get("error"):
             pais_id = datos_pais.get("id_pais")
+            iso = datos_pais.get("iso")
+            if pais_id is None and iso:
+                with get_connection_context() as conn:
+                    with conn.cursor() as cur:
+                        pais_id = buscar_id_pais_por_iso(cur, iso)
             if datos_pais.get("es_otro"):
                 pais_texto = (
                     datos_pais.get("pais_real_detectado") or datos_pais.get("nombre_pais")
@@ -313,6 +325,8 @@ def consolidar_encuesta_inicial(
                         """,
                         (pais_texto, aspirante_id),
                     )
+
+                aplicar_region_aspirante_desde_pais(cur, aspirante_id)
 
                 if zona_horaria:
                     cur.execute(

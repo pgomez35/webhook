@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from DataBase import get_connection_context, obtener_todos_manager
 from main_auth import obtener_usuario_actual
+from regiones import listar_regiones
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -297,6 +298,9 @@ def catalogos_creadores_activos(
     """
     try:
         response.headers["Cache-Control"] = "private, max-age=300"
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                regiones = listar_regiones(cur)
         return {
             "ok": True,
             "generado_en": datetime.now(timezone.utc).isoformat(),
@@ -304,6 +308,7 @@ def catalogos_creadores_activos(
             "estados": obtener_creadores_estados_catalogo(solo_activos),
             "arquetipos": obtener_arquetipos_creador_catalogo(solo_activos),
             "managers": obtener_managers_catalogo(),
+            "regiones": regiones,
         }
     except Exception as e:
         logger.exception("catalogos creadores activos: %s", e)

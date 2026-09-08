@@ -334,6 +334,7 @@ def put_configuracion_by_id(
             int(agencia["id"]),
             data,
             configuracion_id=configuracion_id,
+            origen_request=f"PUT /configuraciones/{configuracion_id}",
         )
     except ValueError as e:
         raise _http_from_value_error(e) from e
@@ -472,6 +473,7 @@ def patch_tipo_chatbot(
             int(agencia["id"]),
             configuracion_id,
             payload.tipo_chatbot,
+            origen_request=f"PATCH /configuraciones/{configuracion_id}/tipo-chatbot",
         )
     except ValueError as e:
         raise _http_from_value_error(e) from e
@@ -504,7 +506,10 @@ def put_configuracion(
     data = payload.model_dump(mode="json")
     try:
         cfg = db.actualizar_configuracion(
-            agencia["id"], data, configuracion_id=configuracion_id
+            agencia["id"],
+            data,
+            configuracion_id=configuracion_id,
+            origen_request="PUT /configuracion",
         )
     except ValueError as e:
         raise _http_from_value_error(e) from e

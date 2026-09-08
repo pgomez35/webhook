@@ -13,6 +13,10 @@ from DataBase import (
     obtener_aspirantes_perfil,
     get_connection_context,
 )
+from regiones import (
+    listar_regiones,
+    resolver_region_id_para_guardar,
+)
 from evaluaciones import (
     evaluar_cualitativa,
     evaluar_datos_generales,
@@ -58,10 +62,13 @@ class BiografiaIaInput(BaseModel):
 
 
 @router.get("/api/aspirantes", tags=["Creadores"])
-def listar_creadores(estado_id: Optional[int] = Query(None, description="Filtrar por estado_id")):
+def listar_creadores(
+    estado_id: Optional[int] = Query(None, description="Filtrar por estado_id"),
+    region: Optional[str] = Query(None, description="Filtrar por codigo de región (latam, us_plus)"),
+):
     try:
         try:
-            return obtener_aspirantes_db(estado_id=estado_id)
+            return obtener_aspirantes_db(estado_id=estado_id, region=region)
         except TypeError:
             return obtener_aspirantes_db()
     except Exception as e:
@@ -267,6 +274,11 @@ def actualizar_datos_personales(aspirante_id: int, datos: DatosPersonalesInput):
         )
         data_dict["puntaje_general"] = score.get("puntaje_general")
         data_dict["puntaje_general_categoria"] = score.get("puntaje_general_categoria")
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                data_dict["region_id"] = resolver_region_id_para_guardar(
+                    cur, data_dict.get("pais"), data_dict.get("region_id")
+                )
         actualizar_datos_aspirantes_perfil(aspirante_id, data_dict)
         return DatosPersonalesOutput(
             status="ok",
@@ -274,6 +286,8 @@ def actualizar_datos_personales(aspirante_id: int, datos: DatosPersonalesInput):
             puntaje_general=score.get("puntaje_general"),
             puntaje_general_categoria=score.get("puntaje_general_categoria"),
             tiene_solicitud=data_dict.get("tiene_solicitud"),
+            region_id=data_dict.get("region_id"),
+            pais=data_dict.get("pais"),
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -521,6 +535,17 @@ CAMPOS_CATALOGO_PERFIL = (
 )
 
 
+@router.get("/api/regiones")
+def obtener_regiones():
+    try:
+        with get_connection_context() as conn:
+            with conn.cursor() as cur:
+                return {"ok": True, "regiones": listar_regiones(cur)}
+    except Exception as e:
+        logger.exception("Error al listar regiones: %s", e)
+        return {"ok": True, "regiones": []}
+
+
 @router.get("/api/aspirantes_perfil/catalogos/lista")
 def obtener_catalogos_aspirante_perfil():
     return cargar_catalogos_aspirante_perfil()
@@ -530,26 +555,63 @@ def cargar_catalogos_aspirante_perfil():
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT
-                        a.campo_db,
-                        b.id AS valor_id,
-                        b.label,
-                        b.orden,
-                        b.score,
-                        b.nivel
-                    FROM diagnostico_variable a
-                    INNER JOIN diagnostico_variable_valor b
-                        ON a.id = b.variable_id
-                    WHERE a.campo_db IN %s
-                      AND COALESCE(a.activa, true) = true
-                    ORDER BY a.campo_db, COALESCE(b.orden, 9999), b.id
-                """, (CAMPOS_CATALOGO_PERFIL,))
+                cur.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND table_name = 'diagnostico_variable_valor'
+                    """
+                )
+                cols_valor = {row[0] for row in cur.fetchall()}
+                incluye_region = "region_id" in cols_valor
+
+                if incluye_region:
+                    cur.execute("""
+                        SELECT
+                            a.campo_db,
+                            b.id AS valor_id,
+                            b.label,
+                            b.orden,
+                            b.score,
+                            b.nivel,
+                            b.region_id,
+                            r.codigo AS region_codigo,
+                            r.nombre AS region
+                        FROM diagnostico_variable a
+                        INNER JOIN diagnostico_variable_valor b
+                            ON a.id = b.variable_id
+                        LEFT JOIN regiones r ON r.id = b.region_id
+                        WHERE a.campo_db IN %s
+                          AND COALESCE(a.activa, true) = true
+                        ORDER BY a.campo_db, COALESCE(b.orden, 9999), b.id
+                    """, (CAMPOS_CATALOGO_PERFIL,))
+                else:
+                    cur.execute("""
+                        SELECT
+                            a.campo_db,
+                            b.id AS valor_id,
+                            b.label,
+                            b.orden,
+                            b.score,
+                            b.nivel
+                        FROM diagnostico_variable a
+                        INNER JOIN diagnostico_variable_valor b
+                            ON a.id = b.variable_id
+                        WHERE a.campo_db IN %s
+                          AND COALESCE(a.activa, true) = true
+                        ORDER BY a.campo_db, COALESCE(b.orden, 9999), b.id
+                    """, (CAMPOS_CATALOGO_PERFIL,))
 
                 rows = cur.fetchall()
                 catalogos = {campo: [] for campo in CAMPOS_CATALOGO_PERFIL}
 
-                for campo_db, valor_id, label, orden, score, nivel in rows:
+                for row in rows:
+                    if incluye_region:
+                        campo_db, valor_id, label, orden, score, nivel, region_id, region_codigo, region = row
+                    else:
+                        campo_db, valor_id, label, orden, score, nivel = row
+                        region_id = region_codigo = region = None
                     if campo_db not in catalogos:
                         continue
 
@@ -566,8 +628,14 @@ def cargar_catalogos_aspirante_perfil():
                     if nivel:
                         item["nivel"] = nivel
 
+                    if campo_db == "pais":
+                        item["region_id"] = region_id
+                        item["region_codigo"] = region_codigo
+                        item["region"] = region
+
                     catalogos[campo_db].append(item)
 
+                catalogos["regiones"] = listar_regiones(cur)
                 return catalogos
 
     except Exception as e:

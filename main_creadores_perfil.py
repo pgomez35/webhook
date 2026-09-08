@@ -20,6 +20,13 @@ from schemas import (
     CreadorActivoAutoCreate,
 )
 from utils_aspirantes import obtener_creadores_activos_db
+from regiones import (
+    SQL_JOIN_CREADOR_REGION,
+    SQL_SELECT_CREADOR_REGION,
+    obtener_region_id_aspirante,
+    resolver_region_id_para_guardar,
+    sincronizar_region_creador_desde_respuestas,
+)
 from creadores_catalogo import (
     CREADOR_ESTADO_NOMBRE_ACTIVO,
     SQL_JOIN_CREADOR_ARQUETIPO,
@@ -345,6 +352,8 @@ def guardar_respuestas_perfil_creador(data: GuardarPerfilCreadorIn):
                         respuesta.valor_texto,
                         Json(respuesta.valor_json) if respuesta.valor_json is not None else None
                     ))
+
+                sincronizar_region_creador_desde_respuestas(cur, data.creador_id)
 
             conn.commit()
 
@@ -952,10 +961,13 @@ def listar_arquetipos_creador(
 
 
 @router.get("/api/creadores/activos", tags=["Creadores"])
-def listar_creadores_activos(usuario: dict = Depends(obtener_usuario_actual)):
+def listar_creadores_activos(
+    usuario: dict = Depends(obtener_usuario_actual),
+    region: Optional[str] = Query(None, description="Filtrar por codigo de región (latam, us_plus)"),
+):
     try:
         manager_id = manager_id_para_filtro(usuario)
-        items = obtener_creadores_activos_db(manager_id=manager_id)
+        items = obtener_creadores_activos_db(manager_id=manager_id, region=region)
         print(
             f"📋 [creadores/activos] total={len(items)} manager_id={manager_id}",
             flush=True,
@@ -983,6 +995,7 @@ def obtener_creador_activo(id: int):
                         c.categoria_id,
                         COALESCE(cat.nombre, 'Sin categoría') AS categoria,
                         {SQL_SELECT_CREADOR_ARQUETIPO}
+                        {SQL_SELECT_CREADOR_REGION}
                         c.estado_id,
                         ce.nombre AS estado,
 
@@ -1004,6 +1017,7 @@ def obtener_creador_activo(id: int):
                     FROM creadores c
                     LEFT JOIN creadores_categoria cat ON cat.id = c.categoria_id
                     {SQL_JOIN_CREADOR_ARQUETIPO}
+                    {SQL_JOIN_CREADOR_REGION}
                     LEFT JOIN creadores_detalle d
                         ON d.creador_id = c.id
                     LEFT JOIN administradores au
@@ -1049,6 +1063,11 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
                 arquetipo_id = _resolver_arquetipo_id_creador(
                     cur, data.get("arquetipo_id"), data.get("arquetipo")
                 )
+                region_id = resolver_region_id_para_guardar(
+                    cur, None, data.get("region_id")
+                )
+                if region_id is None:
+                    region_id = obtener_region_id_aspirante(cur, data.get("aspirante_id"))
 
                 # 1. Insertar datos base en creadores
                 cur.execute("""
@@ -1061,7 +1080,8 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
                         foto,
                         categoria_id,
                         arquetipo_id,
-                        estado_id
+                        estado_id,
+                        region_id
                     )
                     VALUES (
                         %(aspirante_id)s,
@@ -1072,7 +1092,8 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
                         %(foto)s,
                         %(categoria_id)s,
                         %(arquetipo_id)s,
-                        %(estado_id)s
+                        %(estado_id)s,
+                        %(region_id)s
                     )
                     RETURNING id;
                 """, {
@@ -1080,6 +1101,7 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
                     "estado_id": estado_id,
                     "categoria_id": categoria_id,
                     "arquetipo_id": arquetipo_id,
+                    "region_id": region_id,
                 })
 
                 creador_id = cur.fetchone()[0]
@@ -1137,6 +1159,7 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
                         c.categoria_id,
                         COALESCE(cat.nombre, 'Sin categoría') AS categoria,
                         {SQL_SELECT_CREADOR_ARQUETIPO}
+                        {SQL_SELECT_CREADOR_REGION}
                         ce.nombre AS estado,
 
                         d.manager_id,
@@ -1155,6 +1178,7 @@ def agregar_creador_activo(creador: CreadorActivoCreate):
                     FROM creadores c
                     LEFT JOIN creadores_categoria cat ON cat.id = c.categoria_id
                     {SQL_JOIN_CREADOR_ARQUETIPO}
+                    {SQL_JOIN_CREADOR_REGION}
                     LEFT JOIN creadores_detalle d
                         ON d.creador_id = c.id
                     LEFT JOIN creadores_estados ce ON ce.id = c.estado_id
@@ -1214,6 +1238,7 @@ def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
                         categoria_id = %(categoria_id)s,
                         arquetipo_id = %(arquetipo_id)s,
                         estado_id = %(estado_id)s,
+                        region_id = %(region_id)s,
                         updated_at = now()
                     WHERE id = %(id)s
                 """, {
@@ -1222,6 +1247,9 @@ def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
                     "estado_id": estado_id,
                     "categoria_id": categoria_id,
                     "arquetipo_id": arquetipo_id,
+                    "region_id": resolver_region_id_para_guardar(
+                        cur, None, data.get("region_id")
+                    ),
                 })
 
                 # 3. Insertar o actualizar detalle
@@ -1290,6 +1318,7 @@ def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
                         c.categoria_id,
                         COALESCE(cat.nombre, 'Sin categoría') AS categoria,
                         {SQL_SELECT_CREADOR_ARQUETIPO}
+                        {SQL_SELECT_CREADOR_REGION}
                         ce.nombre AS estado,
 
                         d.manager_id,
@@ -1308,6 +1337,7 @@ def editar_creador_activo(id: int, creador: CreadorActivoUpdate):
                     FROM creadores c
                     LEFT JOIN creadores_categoria cat ON cat.id = c.categoria_id
                     {SQL_JOIN_CREADOR_ARQUETIPO}
+                    {SQL_JOIN_CREADOR_REGION}
                     LEFT JOIN creadores_detalle d
                         ON d.creador_id = c.id
                     LEFT JOIN creadores_estados ce ON ce.id = c.estado_id
@@ -1347,6 +1377,7 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
 
                 aspirante_id, usuario_tiktok, foto, nombre = row
                 estado_id = _resolver_estado_id_creador(cur, None, None)
+                region_id = obtener_region_id_aspirante(cur, aspirante_id)
 
                 cur.execute(
                     """
@@ -1358,10 +1389,11 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
                         telefono,
                         foto,
                         categoria_id,
-                        estado_id
+                        estado_id,
+                        region_id
                     )
                     VALUES (
-                        %s, %s, %s, NULL, NULL, %s, NULL, %s
+                        %s, %s, %s, NULL, NULL, %s, NULL, %s, %s
                     )
                     ON CONFLICT (aspirante_id)
                     DO UPDATE SET
@@ -1369,10 +1401,11 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
                         usuario_tiktok = EXCLUDED.usuario_tiktok,
                         foto = EXCLUDED.foto,
                         estado_id = EXCLUDED.estado_id,
+                        region_id = COALESCE(EXCLUDED.region_id, creadores.region_id),
                         updated_at = now()
                     RETURNING id
                     """,
-                    (aspirante_id, nombre, usuario_tiktok, foto, estado_id),
+                    (aspirante_id, nombre, usuario_tiktok, foto, estado_id, region_id),
                 )
                 creador_id = cur.fetchone()[0]
 
@@ -1466,6 +1499,7 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
                         c.categoria_id,
                         COALESCE(cat.nombre, 'Sin categoría') AS categoria,
                         {SQL_SELECT_CREADOR_ARQUETIPO}
+                        {SQL_SELECT_CREADOR_REGION}
                         ce.nombre AS estado,
                         d.manager_id,
                         d.horario_lives,
@@ -1482,6 +1516,7 @@ def crear_creador_activo_automatico(data: CreadorActivoAutoCreate):
                     FROM creadores c
                     LEFT JOIN creadores_categoria cat ON cat.id = c.categoria_id
                     {SQL_JOIN_CREADOR_ARQUETIPO}
+                    {SQL_JOIN_CREADOR_REGION}
                     LEFT JOIN creadores_detalle d ON d.creador_id = c.id
                     LEFT JOIN creadores_estados ce ON ce.id = c.estado_id
                     WHERE c.id = %s

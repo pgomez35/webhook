@@ -2355,28 +2355,57 @@ def eliminar_aspirantes_perfil(perfil_id: int):
 # -----------------------------------
 # -----------------------------------
 
-def obtener_aspirantes_db():
+def obtener_aspirantes_db(estado_id=None, region=None):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                sql = """
-                    SELECT 
-                        c.id, 
-                        c.usuario, 
-                        c.nickname, 
-                        c.nombre_real, 
+                columnas_perfil = _obtener_columnas_aspirantes_perfil(cur)
+                tiene_region = "region_id" in columnas_perfil
+                filtros = ["c.activo = TRUE"]
+                params = []
+                if estado_id is not None:
+                    filtros.append("c.estado_id = %s")
+                    params.append(estado_id)
+                region_codigo = (region or "").strip().lower()
+                if region_codigo and tiene_region:
+                    filtros.append("rgn.codigo = %s")
+                    params.append(region_codigo)
+
+                select_region = ""
+                join_region = ""
+                if tiene_region:
+                    select_region = """
+                        ap.region_id,
+                        rgn.codigo AS region_codigo,
+                        rgn.nombre AS region,"""
+                    join_region = "LEFT JOIN regiones rgn ON rgn.id = ap.region_id"
+
+                sql = f"""
+                    SELECT
+                        c.id,
+                        c.usuario,
+                        c.nickname,
+                        c.nombre_real,
                         c.telefono,
                         COALESCE(c.tiene_solicitud, FALSE) AS tiene_solicitud,
                         ec.nombre AS estado_nombre,
                         c.creado_en,
-                        c.fecha_solicitud
+                        c.fecha_solicitud,
+                        ap.pais AS pais_id,
+                        COALESCE(pv.label, ap.pais_texto) AS pais,
+                        {select_region}
+                        ap.pais_texto
                     FROM aspirantes c
                     INNER JOIN aspirantes_estados ec ON c.estado_id = ec.id
-                    WHERE c.activo = TRUE
+                    LEFT JOIN aspirantes_perfil ap ON ap.aspirante_id = c.id
+                    {join_region}
+                    LEFT JOIN diagnostico_variable_valor pv
+                        ON pv.id::text = ap.pais::text
+                    WHERE {' AND '.join(filtros)}
                     ORDER BY COALESCE(c.fecha_solicitud, c.creado_en) ASC;
                 """
 
-                cur.execute(sql)
+                cur.execute(sql, tuple(params))
                 datos = cur.fetchall()
                 columnas = [desc[0] for desc in cur.description]
                 resultados = [dict(zip(columnas, fila)) for fila in datos]
@@ -2484,7 +2513,16 @@ def obtener_aspirantes_perfil(aspirante_id):
     try:
         with get_connection_context() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
+                columnas_tabla = _obtener_columnas_aspirantes_perfil(cur)
+                select_region = ""
+                join_region = ""
+                if "region_id" in columnas_tabla:
+                    select_region = """
+                            pc.region_id,
+                            rgn.codigo AS region_codigo,
+                            rgn.nombre AS region,"""
+                    join_region = "LEFT JOIN regiones rgn ON rgn.id = pc.region_id"
+                cur.execute(f"""
                         SELECT
                             pc.id,
                             pc.aspirante_id,
@@ -2518,6 +2556,7 @@ def obtener_aspirantes_perfil(aspirante_id):
                             pc.pais,
                             pc.ciudad,
                             pc.zona_horaria,
+                            {select_region}
                             pc.nombre,
                             pc.usuario_evalua,
                             pc.experiencia_otras_plataformas_otro_nombre,
@@ -2535,6 +2574,7 @@ def obtener_aspirantes_perfil(aspirante_id):
                         FROM aspirantes_perfil pc
                         INNER JOIN aspirantes c
                             ON pc.aspirante_id = c.id
+                        {join_region}
                         WHERE pc.aspirante_id = %s;
                 """, (aspirante_id,))
                 fila = cur.fetchone()
@@ -2759,6 +2799,7 @@ def actualizar_datos_aspirantes_perfil(aspirante_id, datos_dict):
             "nombre", "edad", "genero", "pais", "ciudad", "zona_horaria",
             "idioma", "campo_estudios", "estudios", "actividad_actual",
             "puntaje_general", "puntaje_general_categoria", "telefono",
+            "region_id",
             # Evaluación manual/cualitativa
             "biografia", "apariencia", "engagement", "calidad_contenido",
             "potencial_estimado", "usuario_evalua", "biografia_sugerida",
