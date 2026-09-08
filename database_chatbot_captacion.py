@@ -898,10 +898,15 @@ def actualizar_configuracion(
     """
     Actualiza una configuración por id (preferido) o, en compatibilidad,
     la primera de la agencia si no se indica configuracion_id.
+
+    No escribe ``tipo_chatbot``: ese campo solo cambia por
+    ``set_tipo_chatbot`` (PATCH /tipo-chatbot).
     """
     from chatbot_tipo import preparar_payload_tipo
 
-    data = preparar_payload_tipo(dict(data or {}))
+    data = dict(data or {})
+    tipo_recibido = data.pop("tipo_chatbot", None)
+    data = preparar_payload_tipo(data)
     faqs_plain = _faqs_plain(data)
     recursos_plain = _recursos_plain(data)
 
@@ -923,17 +928,25 @@ def actualizar_configuracion(
 
     logger.info(
         "[CHATBOT-CONFIG] actualizar agencia_id=%s configuracion_id=%s "
-        "faqs=%s recursos=%s tipo_chatbot=%s",
+        "faqs=%s recursos=%s tipo_chatbot=%s (sin modificar)",
         agencia_id,
         configuracion_id,
         len(faqs_plain),
         len(recursos_plain),
-        data.get("tipo_chatbot"),
+        tipo_anterior,
     )
+    if tipo_recibido is not None:
+        logger.info(
+            "[CHATBOT-CONFIG] PUT ignora tipo_chatbot recibido=%s persistido=%s "
+            "config_id=%s origen_request=%s",
+            tipo_recibido,
+            tipo_anterior,
+            configuracion_id,
+            origen_request,
+        )
 
     sets = [
         "activo = %s",
-        "tipo_chatbot = %s",
         "usar_asistente_conversacional = %s",
         "usar_rutas_adaptativas = %s",
         "mensaje_bienvenida = %s",
@@ -951,20 +964,8 @@ def actualizar_configuracion(
         "mensaje_error = %s",
         "updated_at = CURRENT_TIMESTAMP",
     ]
-    from chatbot_tipo import TIPOS_CHATBOT, normalizar_tipo_chatbot
-
-    tipo_chatbot = normalizar_tipo_chatbot(data.get("tipo_chatbot")) or "informativo"
-    if tipo_chatbot not in TIPOS_CHATBOT:
-        tipo_chatbot = "informativo"
-    _log_tipo_chatbot_change(
-        anterior=tipo_anterior,
-        nuevo=tipo_chatbot,
-        config_id=configuracion_id,
-        origen_request=origen_request,
-    )
     params: List[Any] = [
         data["activo"],
-        tipo_chatbot,
         bool(data.get("usar_asistente_conversacional", False)),
         bool(data.get("usar_rutas_adaptativas", False)),
         data["mensaje_bienvenida"],
@@ -1034,6 +1035,9 @@ def actualizar_configuracion(
                         es_predeterminada,
                         orden,
                         activo,
+                        tipo_chatbot,
+                        usar_asistente_conversacional,
+                        usar_rutas_adaptativas,
                         mensaje_bienvenida,
                         pregunta_usuario,
                         pregunta_mayor_edad,
