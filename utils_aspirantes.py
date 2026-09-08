@@ -989,6 +989,44 @@ async def _handle_statuses(
             traceback.print_exc()
 
 
+# Entrega WhatsApp: sent < delivered < read. failed queda fuera de esta escala.
+ESTADOS_ENTREGA_WA = ("sent", "delivered", "read")
+STATUS_RANK_WA = {"sent": 1, "delivered": 2, "read": 3}
+
+
+def _norm_estado_wa(valor) -> str:
+    return str(valor or "").strip().lower()
+
+
+def clasificar_avance_estado_whatsapp(anterior, recibido: str) -> str:
+    """
+    Clasifica un callback de status respecto al estado persistido.
+
+    sent/delivered/read son monotónicos. Cualquier otro valor (p. ej. failed)
+    conserva la escritura incondicional histórica.
+    """
+    rec = _norm_estado_wa(recibido)
+    ant = _norm_estado_wa(anterior)
+    if rec not in STATUS_RANK_WA:
+        return "duplicado" if rec and rec == ant else "actualizado"
+    if ant not in STATUS_RANK_WA:
+        return "actualizado"
+    if STATUS_RANK_WA[rec] > STATUS_RANK_WA[ant]:
+        return "actualizado"
+    if STATUS_RANK_WA[rec] == STATUS_RANK_WA[ant]:
+        return "duplicado"
+    return "ignorado_regresion"
+
+
+def aplicar_estado_whatsapp(actual, recibido: str):
+    """Aplica la regla monotónica en memoria (misma semántica que el UPDATE)."""
+    resultado = clasificar_avance_estado_whatsapp(actual, recibido)
+    if resultado == "ignorado_regresion":
+        return _norm_estado_wa(actual) or actual, resultado
+    rec = _norm_estado_wa(recibido)
+    return rec, resultado
+
+
 def actualizar_mensaje_desde_status(
     tenant: str,
     phone_number_id: str,
@@ -999,34 +1037,105 @@ def actualizar_mensaje_desde_status(
     """
     Actualiza el estado de un mensaje en mensajes_whatsapp
     usando message_id_meta.
+
+    sent/delivered/read no retroceden. El UPDATE es atómico (un solo
+    statement con bloqueo de fila).
     """
     try:
         message_id = status_obj.get("id")
-        status = status_obj.get("status")
+        status = _norm_estado_wa(status_obj.get("status"))
         timestamp = status_obj.get("timestamp")
 
         if not message_id:
             print("⚠️ Status sin message_id_meta, se ignora.")
             return
+        if not status:
+            print(
+                f"[WHATSAPP_STATUS] wamid={message_id} "
+                "resultado=ignorado_sin_status"
+            )
+            return
+
+        ts_int = None
+        try:
+            ts_int = int(timestamp) if timestamp not in (None, "") else None
+        except (TypeError, ValueError):
+            ts_int = None
 
         with get_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    UPDATE mensajes_whatsapp
+                    UPDATE mensajes_whatsapp AS m
                     SET
                         estado = %s,
-                        fecha = TO_TIMESTAMP(%s)
-                    WHERE message_id_meta = %s;
+                        fecha = COALESCE(TO_TIMESTAMP(%s), m.fecha)
+                    FROM (
+                        SELECT id, estado AS anterior
+                        FROM mensajes_whatsapp
+                        WHERE message_id_meta = %s
+                        FOR UPDATE
+                    ) old
+                    WHERE m.id = old.id
+                      AND (
+                            %s NOT IN ('sent', 'delivered', 'read')
+                         OR old.anterior IS NULL
+                         OR old.anterior NOT IN ('sent', 'delivered', 'read')
+                         OR (old.anterior = 'sent'
+                             AND %s IN ('sent', 'delivered', 'read'))
+                         OR (old.anterior = 'delivered'
+                             AND %s IN ('delivered', 'read'))
+                         OR (old.anterior = 'read' AND %s = 'read')
+                      )
+                    RETURNING old.anterior, m.estado
                     """,
                     (
                         status,
-                        int(timestamp) if timestamp else None,
+                        ts_int,
                         message_id,
+                        status,
+                        status,
+                        status,
+                        status,
                     ),
                 )
+                fila = cur.fetchone()
+                if fila:
+                    anterior, final = fila[0], fila[1]
+                    resultado = clasificar_avance_estado_whatsapp(anterior, status)
+                    print(
+                        f"[WHATSAPP_STATUS] wamid={message_id} "
+                        f"anterior={anterior} recibido={status} "
+                        f"final={final} resultado={resultado}"
+                    )
+                    return
 
-        print(f"📊 Status actualizado para mensaje {message_id}: {status}")
+                cur.execute(
+                    """
+                    SELECT estado
+                    FROM mensajes_whatsapp
+                    WHERE message_id_meta = %s
+                    """,
+                    (message_id,),
+                )
+                existente = cur.fetchone()
+
+        if not existente:
+            print(
+                f"[WHATSAPP_STATUS] wamid={message_id} "
+                f"anterior=None recibido={status} final=None "
+                "resultado=no_encontrado"
+            )
+            return
+
+        anterior = existente[0]
+        final = anterior
+        resultado = clasificar_avance_estado_whatsapp(anterior, status)
+        print(
+            f"[WHATSAPP_STATUS] wamid={message_id} "
+            f"anterior={anterior} recibido={status} "
+            f"final={final} resultado={resultado}"
+        )
 
     except Exception as e:
         print(f"❌ Error actualizando status {status_obj.get('id', 'unknown')}: {e}")
