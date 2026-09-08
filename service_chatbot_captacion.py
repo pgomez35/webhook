@@ -1338,93 +1338,120 @@ async def _procesar_conversacional_si_aplica(
         )
         return None
 
-    async def _enviar_wa(texto_out: str):
-        from chatbot_envio_whatsapp import (
-            conversacion_id_envio_actual,
-            enviar_whatsapp_texto_meta,
-        )
+    from chatbot_envio_whatsapp import (
+        enviar_whatsapp_texto_meta,
+        fijar_conversacion_id_envio,
+        reset_conversacion_id_envio,
+    )
+    from service_chatbot_dispatcher import (
+        _asegurar_conversacion,
+        procesar_mensaje_segun_tipo_chatbot,
+    )
 
+    # Una sola resolución por inbound: misma identidad que buscar_o_crear
+    # (agencia, canal, cuenta_externa_id=phone_number_id, usuario_externo_id).
+    conversacion_id = await _asegurar_conversacion(
+        agencia_id=agencia_id,
+        chatbot_configuracion_id=int(chatbot_configuracion_id),
+        canal="whatsapp",
+        usuario_externo_id=str(wa_id),
+        telefono=str(wa_id),
+        aspirante_id=aspirante.get("id"),
+        dry_run=False,
+        cuenta_externa_id=str(phone_number_id) if phone_number_id else None,
+    )
+    print(
+        f"[CHATBOT_CONV] conversacion_id={conversacion_id} "
+        f"cuenta_externa_id={phone_number_id} usuario_externo_id={wa_id}"
+    )
+
+    async def _enviar_wa(texto_out: str):
         return await enviar_whatsapp_texto_meta(
             token=token,
             phone_number_id=phone_number_id,
             destino=str(wa_id),
             texto=texto_out,
-            conversacion_id=conversacion_id_envio_actual(),
+            conversacion_id=conversacion_id,
         )
 
+    token_envio = fijar_conversacion_id_envio(conversacion_id)
     try:
-        from service_chatbot_dispatcher import procesar_mensaje_segun_tipo_chatbot
-
-        resultado = await procesar_mensaje_segun_tipo_chatbot(
-            agencia_id=agencia_id,
-            chatbot_configuracion_id=int(chatbot_configuracion_id),
-            texto=texto or payload_id or "",
-            canal="whatsapp",
-            aspirante_id=aspirante.get("id"),
-            usuario_externo_id=str(wa_id),
-            telefono=str(wa_id),
-            nombre_contacto=aspirante.get("nombre"),
-            mensaje_externo_id=message_id_meta,
-            tipo_mensaje=_TIPOS_MENSAJE_CONVERSACIONAL.get(
-                str(tipo or "").lower(), "texto"
-            ),
-            cuenta_externa_id=phone_number_id,
-            campania_id=_campania_desde_referral(agencia_id, referral_meta),
-            token=token,
-            phone_number_id=phone_number_id,
-            wa_id=str(wa_id),
-            enviar_callback=_enviar_wa,
-            dry_run=False,
-            decision=decision,
-        )
-    except Exception as e:
-        logger.exception(
-            "[CHATBOT_TIPO] fallo dispatcher agencia_id=%s aspirante_id=%s "
-            "chatbot_configuracion_id=%s",
-            agencia_id,
-            aspirante.get("id"),
-            chatbot_configuracion_id,
-        )
-        print(
-            f"[CHATBOT_TIPO] excepción dispatcher "
-            f"agencia_id={agencia_id} cfg={chatbot_configuracion_id}: {e}"
-        )
         try:
-            from chatbot_envio_whatsapp import enviar_whatsapp_texto_meta
-
-            await enviar_whatsapp_texto_meta(
+            resultado = await procesar_mensaje_segun_tipo_chatbot(
+                agencia_id=agencia_id,
+                chatbot_configuracion_id=int(chatbot_configuracion_id),
+                texto=texto or payload_id or "",
+                canal="whatsapp",
+                conversacion_id=conversacion_id,
+                aspirante_id=aspirante.get("id"),
+                usuario_externo_id=str(wa_id),
+                telefono=str(wa_id),
+                nombre_contacto=aspirante.get("nombre"),
+                mensaje_externo_id=message_id_meta,
+                tipo_mensaje=_TIPOS_MENSAJE_CONVERSACIONAL.get(
+                    str(tipo or "").lower(), "texto"
+                ),
+                cuenta_externa_id=phone_number_id,
+                campania_id=_campania_desde_referral(agencia_id, referral_meta),
                 token=token,
                 phone_number_id=phone_number_id,
-                destino=str(wa_id),
-                texto=(
-                    "Recibí tu mensaje. Tuve un problema técnico temporal; "
-                    "puedo seguir ayudándote en un momento."
-                ),
+                wa_id=str(wa_id),
+                enviar_callback=_enviar_wa,
+                dry_run=False,
+                decision=decision,
             )
-        except Exception:
-            pass
-        # Atendido para Meta (HTTP 200), pero sin afirmar envío exitoso.
-        return True
+        except Exception as e:
+            logger.exception(
+                "[CHATBOT_TIPO] fallo dispatcher agencia_id=%s aspirante_id=%s "
+                "chatbot_configuracion_id=%s conversacion_id=%s",
+                agencia_id,
+                aspirante.get("id"),
+                chatbot_configuracion_id,
+                conversacion_id,
+            )
+            print(
+                f"[CHATBOT_TIPO] excepción dispatcher "
+                f"agencia_id={agencia_id} cfg={chatbot_configuracion_id} "
+                f"conversacion_id={conversacion_id}: {e}"
+            )
+            try:
+                await enviar_whatsapp_texto_meta(
+                    token=token,
+                    phone_number_id=phone_number_id,
+                    destino=str(wa_id),
+                    texto=(
+                        "Recibí tu mensaje. Tuve un problema técnico temporal; "
+                        "puedo seguir ayudándote en un momento."
+                    ),
+                    conversacion_id=conversacion_id,
+                )
+            except Exception:
+                pass
+            # Atendido para Meta (HTTP 200), pero sin afirmar envío exitoso.
+            return True
 
-    if isinstance(resultado, dict) and resultado.get("motivo") == "mensaje_duplicado":
-        print(
-            "[CHATBOT-CONV] mensaje consumido sin respuesta IA motivo=mensaje_duplicado"
+        if isinstance(resultado, dict) and resultado.get("motivo") == "mensaje_duplicado":
+            print(
+                "[CHATBOT-CONV] mensaje consumido sin respuesta IA motivo=mensaje_duplicado"
+            )
+            return True
+
+        enviado = bool(
+            isinstance(resultado, dict) and resultado.get("respuesta_enviada") is True
         )
+        print(
+            f"[CHATBOT_TIPO] atendido aspirante_id={aspirante.get('id')} "
+            f"cfg={chatbot_configuracion_id} tipo={decision.get('tipo_chatbot')} "
+            f"conversacion_id={conversacion_id} "
+            f"respuesta_generada={bool((resultado or {}).get('respuesta') or (resultado or {}).get('usado'))} "
+            f"respuesta_enviada={str(enviado).lower()} "
+            f"requiere_reintento={str(bool((resultado or {}).get('requiere_reintento')) or (not enviado)).lower()}"
+        )
+        # True = el producto chatbot consumió el mensaje (Meta no debe reintentar
+        # el webhook). No implica que WhatsApp haya entregado la respuesta.
         return True
-
-    enviado = bool(
-        isinstance(resultado, dict) and resultado.get("respuesta_enviada") is True
-    )
-    print(
-        f"[CHATBOT_TIPO] atendido aspirante_id={aspirante.get('id')} "
-        f"cfg={chatbot_configuracion_id} tipo={decision.get('tipo_chatbot')} "
-        f"respuesta_generada={bool((resultado or {}).get('respuesta') or (resultado or {}).get('usado'))} "
-        f"respuesta_enviada={str(enviado).lower()} "
-        f"requiere_reintento={str(bool((resultado or {}).get('requiere_reintento')) or (not enviado)).lower()}"
-    )
-    # True = el producto chatbot consumió el mensaje (Meta no debe reintentar
-    # el webhook). No implica que WhatsApp haya entregado la respuesta.
-    return True
+    finally:
+        reset_conversacion_id_envio(token_envio)
 
 
 async def procesar_chatbot_captacion(

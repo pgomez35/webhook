@@ -102,6 +102,10 @@ async def procesar_mensaje_segun_tipo_chatbot(
 
     # --- informativo: menú + info + consultas libres ---
     if tipo == TIPO_INFORMATIVO:
+        from chatbot_envio_whatsapp import (
+            fijar_conversacion_id_envio,
+            reset_conversacion_id_envio,
+        )
         from service_chatbot_informativo import procesar_mensaje_informativo
 
         conv_id = conversacion_id
@@ -114,38 +118,43 @@ async def procesar_mensaje_segun_tipo_chatbot(
                 telefono=telefono or wa_id,
                 aspirante_id=aspirante_id,
                 dry_run=dry_run,
+                cuenta_externa_id=cuenta_externa_id or phone_number_id,
             )
 
-        resultado = await procesar_mensaje_informativo(
-            agencia_id=agencia_id,
-            chatbot_configuracion_id=chatbot_configuracion_id,
-            conversacion_id=conv_id,
-            texto=texto or "",
-            canal=canal,
-            dry_run=dry_run,
-            enviar_callback=enviar_callback,
-            token=token,
-            phone_number_id=phone_number_id,
-            destino=wa_id or usuario_externo_id,
-            aspirante_id=aspirante_id,
-            mensaje_externo_id=mensaje_externo_id,
-        )
-        resultado = dict(resultado or {})
-        resultado.setdefault("tipo_chatbot", TIPO_INFORMATIVO)
-        resultado.setdefault("usado", True)
-        resultado["motor"] = "informativo"
-        return await _garantizar_si_falta(
-            resultado,
-            agencia_id=agencia_id,
-            conversacion_id=conv_id or conversacion_id,
-            canal=canal,
-            enviar_callback=enviar_callback,
-            token=token,
-            phone_number_id=phone_number_id,
-            destino=wa_id or usuario_externo_id,
-            dry_run=dry_run,
-            mensaje_externo_id=mensaje_externo_id,
-        )
+        token_envio = fijar_conversacion_id_envio(conv_id)
+        try:
+            resultado = await procesar_mensaje_informativo(
+                agencia_id=agencia_id,
+                chatbot_configuracion_id=chatbot_configuracion_id,
+                conversacion_id=conv_id,
+                texto=texto or "",
+                canal=canal,
+                dry_run=dry_run,
+                enviar_callback=enviar_callback,
+                token=token,
+                phone_number_id=phone_number_id,
+                destino=wa_id or usuario_externo_id,
+                aspirante_id=aspirante_id,
+                mensaje_externo_id=mensaje_externo_id,
+            )
+            resultado = dict(resultado or {})
+            resultado.setdefault("tipo_chatbot", TIPO_INFORMATIVO)
+            resultado.setdefault("usado", True)
+            resultado["motor"] = "informativo"
+            return await _garantizar_si_falta(
+                resultado,
+                agencia_id=agencia_id,
+                conversacion_id=conv_id or conversacion_id,
+                canal=canal,
+                enviar_callback=enviar_callback,
+                token=token,
+                phone_number_id=phone_number_id,
+                destino=wa_id or usuario_externo_id,
+                dry_run=dry_run,
+                mensaje_externo_id=mensaje_externo_id,
+            )
+        finally:
+            reset_conversacion_id_envio(token_envio)
 
     # --- inteligente ---
     from chatbot_conversion_flags import motor_inteligente
@@ -280,6 +289,7 @@ async def _asegurar_conversacion(
     telefono: Optional[str],
     aspirante_id: Optional[int],
     dry_run: bool,
+    cuenta_externa_id: Optional[str] = None,
 ) -> Optional[int]:
     if dry_run:
         return None
@@ -290,6 +300,7 @@ async def _asegurar_conversacion(
             agencia_id,
             canal=canal,
             usuario_externo_id=str(usuario_externo_id),
+            cuenta_externa_id=str(cuenta_externa_id) if cuenta_externa_id else None,
             chatbot_configuracion_id=int(chatbot_configuracion_id),
             telefono=telefono,
             aspirante_id=aspirante_id,

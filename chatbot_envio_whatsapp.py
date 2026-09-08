@@ -34,6 +34,7 @@ def reset_conversacion_id_envio(token) -> None:
 def conversacion_id_envio_actual(
     explicito: Optional[int] = None,
 ) -> Optional[int]:
+    """Precedencia: argumento explícito > ContextVar > None."""
     if explicito is not None:
         try:
             return int(explicito)
