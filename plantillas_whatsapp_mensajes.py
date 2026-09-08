@@ -1,17 +1,27 @@
-"""Catálogo de plantillas Meta permitidas en la pantalla Mensajes WhatsApp.
+"""Catálogo legacy + adaptador de plantillas Meta para Mensajes WhatsApp.
 
 El identificador estable (`codigo`) es el nombre exacto de la plantilla en Meta.
-El frontend muestra `etiqueta` y siempre envía `codigo`.
+
+Las plantillas por WABA viven en ``chatbot.whatsapp_plantillas_agencia``.
+El catálogo Python solo conserva plantillas legacy usadas por otros flujos.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Literal, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
+
+from chatbot_captacion_logic import normalizar_telefono_chatbot
 
 ParametroPlantilla = Literal["nombre", "agencia"]
+FinalidadInterna = Literal["saludo", "reconexion", "recordatorio", "otro"]
+CategoriaMeta = Literal["marketing", "utility", "authentication"]
+AlcancePlantilla = Literal["global", "waba", "legacy"]
 
 FALLBACK_NOMBRE = "Candidato"
 FALLBACK_AGENCIA = "Nuestro equipo"
+
+logger = logging.getLogger("uvicorn.error")
 
 
 class PlantillaMensajesDesconocida(ValueError):
@@ -23,11 +33,16 @@ class PlantillaMensajes:
     codigo: str
     nombre_meta: str
     idioma: str
-    parametros: Tuple[ParametroPlantilla, ...]
+    parametros: Tuple[str, ...]
     body_vars_count: int
     etiqueta: str
     descripcion: str = ""
     visible_en_mensajes: bool = True
+    finalidad_interna: Optional[FinalidadInterna] = None
+    categoria_meta: Optional[CategoriaMeta] = None
+    alcance: AlcancePlantilla = "global"
+    # None / vacío = no listar en GET (plantilla waba aún no mapeada).
+    phone_number_ids: Optional[Tuple[str, ...]] = None
 
 
 CATALOGO_PLANTILLAS_MENSAJES: Dict[str, PlantillaMensajes] = {
@@ -84,11 +99,97 @@ def construir_parametros_plantilla(
     nombre: str = "",
     agencia: str = "",
 ) -> List[str]:
+    """Arma el BODY según ``plantilla.parametros``. ``agencia`` solo si la plantilla lo pide."""
     valores = {
         "nombre": (nombre or "").strip() or FALLBACK_NOMBRE,
         "agencia": (agencia or "").strip() or FALLBACK_AGENCIA,
     }
-    return [valores[campo] for campo in plantilla.parametros]
+    return [valores.get(campo, "") for campo in plantilla.parametros]
+
+
+def plantilla_desde_config_waba(row: Dict[str, Any]) -> PlantillaMensajes:
+    """Adapta un registro persistido al contrato del sender existente."""
+    nombre = str(row.get("nombre_meta") or "").strip()
+    params = tuple(str(p).strip().lower() for p in (row.get("parametros") or []) if str(p).strip())
+    finalidad = str(row.get("finalidad_interna") or "").strip().lower() or None
+    if finalidad not in ("saludo", "reconexion", "recordatorio", "otro"):
+        finalidad = None
+    return PlantillaMensajes(
+        codigo=nombre,
+        nombre_meta=nombre,
+        idioma=str(row.get("idioma") or "es_CO").strip() or "es_CO",
+        parametros=params,
+        body_vars_count=len(params),
+        etiqueta=nombre,
+        descripcion="",
+        visible_en_mensajes=bool(row.get("activo", True)),
+        finalidad_interna=finalidad,  # type: ignore[arg-type]
+        alcance="waba",
+    )
+
+
+def serializar_plantilla_config_waba(row: Dict[str, Any]) -> dict:
+    nombre = str(row.get("nombre_meta") or "").strip()
+    params = list(row.get("parametros") or [])
+    return {
+        "id": row.get("id"),
+        "codigo": nombre,
+        "nombre_meta": nombre,
+        "idioma": row.get("idioma") or "es_CO",
+        "etiqueta": nombre,
+        "descripcion": "",
+        "parametros": params,
+        "finalidad_interna": row.get("finalidad_interna"),
+        "activo": bool(row.get("activo", True)),
+        "alcance": "waba",
+        "fuente": "waba",
+        "agencia_id": row.get("agencia_id"),
+        "phone_number_id": row.get("phone_number_id"),
+        "created_at": row.get("created_at").isoformat()
+        if hasattr(row.get("created_at"), "isoformat")
+        else row.get("created_at"),
+        "updated_at": row.get("updated_at").isoformat()
+        if hasattr(row.get("updated_at"), "isoformat")
+        else row.get("updated_at"),
+    }
+
+
+def listar_plantillas_para_envio(
+    phone_number_id: Optional[str] = None,
+    *,
+    agencia_id: Optional[int] = None,
+    listar_waba_fn=None,
+) -> List[dict]:
+    """Plantillas activas de la WABA actual + catálogo Python legacy (sin cruzar WABAs)."""
+    visibles: List[dict] = []
+    vistos = set()
+    pid = str(phone_number_id or "").strip()
+    if pid and agencia_id is not None:
+        if listar_waba_fn is None:
+            from database_whatsapp_plantillas import listar_plantillas_waba
+
+            listar_waba_fn = listar_plantillas_waba
+        try:
+            filas = listar_waba_fn(int(agencia_id), pid, solo_activas=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[PLANTILLA_SAS] no se pudieron listar plantillas WABA: %s", exc)
+            filas = []
+        for fila in filas or []:
+            item = serializar_plantilla_config_waba(fila)
+            clave = str(item.get("codigo") or "").strip().lower()
+            if not clave or clave in vistos:
+                continue
+            vistos.add(clave)
+            visibles.append(item)
+    for legacy in listar_plantillas_mensajes(phone_number_id=pid):
+        clave = str(legacy.get("codigo") or "").strip().lower()
+        if not clave or clave in vistos:
+            continue
+        vistos.add(clave)
+        item = dict(legacy)
+        item.setdefault("fuente", "legacy")
+        visibles.append(item)
+    return visibles
 
 
 def serializar_plantilla_mensajes(plantilla: PlantillaMensajes) -> dict:
@@ -99,16 +200,58 @@ def serializar_plantilla_mensajes(plantilla: PlantillaMensajes) -> dict:
         "etiqueta": plantilla.etiqueta,
         "descripcion": plantilla.descripcion,
         "parametros": list(plantilla.parametros),
+        "finalidad_interna": plantilla.finalidad_interna,
+        "categoria_meta": plantilla.categoria_meta,
+        "alcance": plantilla.alcance,
+        "fuente": "legacy" if plantilla.alcance == "global" else plantilla.alcance,
     }
 
 
-def listar_plantillas_mensajes() -> List[dict]:
+def _plantilla_listable_en_waba(
+    plantilla: PlantillaMensajes,
+    phone_number_id: Optional[str],
+) -> bool:
+    if plantilla.alcance == "global":
+        return True
+    permitidas = plantilla.phone_number_ids or ()
+    if not permitidas:
+        return False
+    pid = str(phone_number_id or "").strip()
+    return bool(pid) and pid in permitidas
+
+
+def listar_plantillas_mensajes(
+    phone_number_id: Optional[str] = None,
+) -> List[dict]:
+    """Legacy globales + plantillas waba cuyo phone_number_id está mapeado."""
     visibles: List[dict] = []
     for codigo in ORDEN_PLANTILLAS_MENSAJES:
         plantilla = CATALOGO_PLANTILLAS_MENSAJES.get(codigo)
-        if plantilla and plantilla.visible_en_mensajes:
-            visibles.append(serializar_plantilla_mensajes(plantilla))
+        if not plantilla or not plantilla.visible_en_mensajes:
+            continue
+        if not _plantilla_listable_en_waba(plantilla, phone_number_id):
+            continue
+        visibles.append(serializar_plantilla_mensajes(plantilla))
     return visibles
+
+
+def metadata_envio_plantilla_panel(plantilla: PlantillaMensajes) -> Dict[str, Any]:
+    meta: Dict[str, Any] = {
+        "origen": "panel_sas",
+        "tipo_interno": "plantilla",
+        "codigo": plantilla.codigo,
+    }
+    if plantilla.finalidad_interna:
+        meta["finalidad_interna"] = plantilla.finalidad_interna
+    if plantilla.categoria_meta:
+        meta["categoria_meta"] = plantilla.categoria_meta
+    return meta
+
+
+def extraer_outgoing_wamid(respuesta_api: Any) -> Optional[str]:
+    from chatbot_envio_whatsapp import extraer_mensaje_externo_id
+
+    return extraer_mensaje_externo_id(respuesta_api)
 
 
 def enviar_plantilla_catalogo(
@@ -116,15 +259,17 @@ def enviar_plantilla_catalogo(
     codigo: str,
     telefono: str,
     nombre: str,
-    agencia: str,
+    agencia: str = "",
     token: str,
     phone_number_id: str,
     enviar_fn: Optional[Callable[..., Tuple[int, dict]]] = None,
+    plantilla: Optional[PlantillaMensajes] = None,
 ) -> Tuple[int, dict, PlantillaMensajes, List[str]]:
-    """Resuelve la plantilla por codigo (nombre Meta) y la envía con sus variables."""
+    """Envía por el sender Meta existente. ``plantilla`` evita el catálogo Python."""
     from enviar_msg_wp import enviar_plantilla_generica_parametros
 
-    plantilla = resolver_plantilla_mensajes(codigo)
+    if plantilla is None:
+        plantilla = resolver_plantilla_mensajes(codigo)
     parametros = construir_parametros_plantilla(
         plantilla,
         nombre=nombre,
@@ -141,3 +286,211 @@ def enviar_plantilla_catalogo(
         body_vars_count=plantilla.body_vars_count,
     )
     return status_code, respuesta, plantilla, parametros
+
+
+def resolver_plantilla_para_envio(
+    codigo: str,
+    *,
+    phone_number_id: str,
+    agencia_id: Optional[int] = None,
+    obtener_waba_fn=None,
+) -> PlantillaMensajes:
+    """WABA configurada primero; si no, catálogo Python legacy."""
+    nombre = (codigo or "").strip()
+    pid = str(phone_number_id or "").strip()
+    if agencia_id is not None and pid and nombre:
+        if obtener_waba_fn is None:
+            from database_whatsapp_plantillas import obtener_plantilla_waba_por_nombre
+
+            obtener_waba_fn = obtener_plantilla_waba_por_nombre
+        try:
+            fila = obtener_waba_fn(
+                int(agencia_id), pid, nombre, solo_activa=True
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[PLANTILLA_SAS] lookup WABA falló: %s", exc)
+            fila = None
+        if fila:
+            return plantilla_desde_config_waba(fila)
+    return resolver_plantilla_mensajes(nombre)
+
+
+def resolver_agencia_id_para_waba(phone_number_id: str) -> Optional[int]:
+    """agencia_id de chatbot.agencias a partir del phone_number_id del tenant.
+
+    No crea agencia ni aspirante. Si no hay mapeo, el dual-write chatbot se omite.
+    """
+    pid = str(phone_number_id or "").strip()
+    if not pid:
+        return None
+    try:
+        from database_chatbot_captacion import (
+            obtener_agencia_por_codigo,
+            obtener_cuenta_conectada_por_phone_id,
+            obtener_relacion_agencia_canal,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[PLANTILLA_SAS] no se pudo importar captacion: %s", exc)
+        return None
+
+    cuenta = obtener_cuenta_conectada_por_phone_id(pid)
+    if not cuenta:
+        try:
+            from DataBase import obtener_cuenta_por_phone_id
+
+            cuenta = obtener_cuenta_por_phone_id(pid)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[PLANTILLA_SAS] cuenta WABA no resuelta: %s", exc)
+            cuenta = None
+
+    if cuenta and cuenta.get("id") is not None:
+        try:
+            rel = obtener_relacion_agencia_canal(int(cuenta["id"]))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[PLANTILLA_SAS] relación agencia-canal falló: %s", exc)
+            rel = None
+        if rel and rel.get("agencia_id") is not None:
+            return int(rel["agencia_id"])
+        sub = str(cuenta.get("subdominio") or "").strip()
+        if sub:
+            ag = obtener_agencia_por_codigo(sub)
+            if ag and ag.get("id") is not None:
+                return int(ag["id"])
+
+    try:
+        from tenant import current_subdominio
+
+        sub_ctx = str(current_subdominio.get() or "").strip()
+    except LookupError:
+        sub_ctx = ""
+    if sub_ctx:
+        ag = obtener_agencia_por_codigo(sub_ctx)
+        if ag and ag.get("id") is not None:
+            return int(ag["id"])
+    return None
+
+
+def persistir_plantilla_en_sas(
+    *,
+    plantilla: PlantillaMensajes,
+    telefono_normalizado: str,
+    message_id_meta: Optional[str],
+    guardar_sas_fn: Optional[Callable[..., Any]] = None,
+) -> None:
+    """Marcador técnico en la bandeja SAS. No inventa el BODY de marketing."""
+    tel = normalizar_telefono_chatbot(telefono_normalizado)
+    if guardar_sas_fn is None:
+        from DataBase import guardar_mensaje_nuevo
+
+        guardar_sas_fn = guardar_mensaje_nuevo
+    guardar_sas_fn(
+        telefono=tel,
+        contenido=f"[Plantilla enviada: {plantilla.nombre_meta}]",
+        direccion="enviado",
+        tipo="text",
+        message_id_meta=str(message_id_meta or "").strip() or None,
+        estado="sent",
+    )
+
+
+def persistir_plantilla_en_conversacion_canonica(
+    *,
+    plantilla: PlantillaMensajes,
+    telefono_normalizado: str,
+    phone_number_id: str,
+    agencia_id: int,
+    message_id_meta: Optional[str],
+    nombre_contacto: Optional[str] = None,
+    buscar_o_crear_fn: Optional[Callable[..., Any]] = None,
+    insertar_mensaje_fn: Optional[Callable[..., Any]] = None,
+) -> Dict[str, Any]:
+    """Resuelve conversación canónica e inserta el saliente. No crea aspirante."""
+    tel = normalizar_telefono_chatbot(telefono_normalizado)
+    pid = str(phone_number_id or "").strip()
+    wamid = str(message_id_meta or "").strip() or None
+    if not tel or not pid:
+        raise ValueError("telefono y phone_number_id son obligatorios para dual-write")
+
+    if buscar_o_crear_fn is None:
+        from database_chatbot_conversacional import buscar_o_crear_conversacion
+
+        buscar_o_crear_fn = buscar_o_crear_conversacion
+    if insertar_mensaje_fn is None:
+        from database_chatbot_conversacional import insertar_mensaje
+
+        insertar_mensaje_fn = insertar_mensaje
+
+    conv_result = buscar_o_crear_fn(
+        int(agencia_id),
+        canal="whatsapp",
+        usuario_externo_id=tel,
+        cuenta_externa_id=pid,
+        telefono=tel,
+        nombre_contacto=(nombre_contacto or "").strip() or None,
+    )
+    if isinstance(conv_result, tuple):
+        conversacion, creada = conv_result[0], bool(conv_result[1])
+    else:
+        conversacion, creada = conv_result, False
+    conversacion_id = int((conversacion or {}).get("id"))
+
+    metadata = metadata_envio_plantilla_panel(plantilla)
+    insert_result = insertar_mensaje_fn(
+        int(agencia_id),
+        conversacion_id,
+        canal="whatsapp",
+        direccion="saliente",
+        remitente_tipo="humano",
+        tipo_mensaje="texto",
+        texto=None,
+        estado_envio="enviado",
+        mensaje_externo_id=wamid,
+        metadata=metadata,
+    )
+    if isinstance(insert_result, tuple):
+        mensaje_chatbot, mensaje_creado = insert_result[0], bool(insert_result[1])
+    else:
+        mensaje_chatbot, mensaje_creado = insert_result, True
+
+    return {
+        "telefono": tel,
+        "phone_number_id": pid,
+        "agencia_id": int(agencia_id),
+        "conversacion_id": conversacion_id,
+        "conversacion_creada": creada,
+        "mensaje_chatbot_creado": mensaje_creado,
+        "mensaje_externo_id": wamid,
+        "metadata": metadata,
+        "mensaje_chatbot": mensaje_chatbot,
+    }
+
+
+def persistir_plantilla_dual_write(
+    *,
+    plantilla: PlantillaMensajes,
+    telefono_normalizado: str,
+    phone_number_id: str,
+    agencia_id: int,
+    message_id_meta: Optional[str],
+    nombre_contacto: Optional[str] = None,
+    guardar_sas_fn: Optional[Callable[..., Any]] = None,
+    buscar_o_crear_fn: Optional[Callable[..., Any]] = None,
+    insertar_mensaje_fn: Optional[Callable[..., Any]] = None,
+) -> Dict[str, Any]:
+    """SAS + conversación canónica. No crea chatbot_aspirantes."""
+    persistir_plantilla_en_sas(
+        plantilla=plantilla,
+        telefono_normalizado=telefono_normalizado,
+        message_id_meta=message_id_meta,
+        guardar_sas_fn=guardar_sas_fn,
+    )
+    return persistir_plantilla_en_conversacion_canonica(
+        plantilla=plantilla,
+        telefono_normalizado=telefono_normalizado,
+        phone_number_id=phone_number_id,
+        agencia_id=agencia_id,
+        message_id_meta=message_id_meta,
+        nombre_contacto=nombre_contacto,
+        buscar_o_crear_fn=buscar_o_crear_fn,
+        insertar_mensaje_fn=insertar_mensaje_fn,
+    )

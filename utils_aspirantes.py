@@ -1636,47 +1636,175 @@ def obtener_configuracion_texto(clave, valor_por_defecto="Información no dispon
         print(f"❌ Error leyendo configuración ({clave}): {e}")
         return valor_por_defecto
 
-def obtener_status_24hrs(telefono):
-    """
-    Verifica si el número tiene una sesión de 24h activa (Ventana de Atención).
-    Retorna True si la ventana está ABIERTA.
-    Retorna False si la ventana está CERRADA.
-    """
-    try:
-        with get_connection_context() as conn:
-            with conn.cursor() as cur:
-                # 1. Buscamos el último mensaje ENTRANTE (inbound) de ese teléfono
-                # Usamos la tabla 'mensajes_whatsapp'
-                query = """
-                    SELECT fecha
-                    FROM mensajes_whatsapp
-                    WHERE telefono = %s
-                      AND direccion IN ('recibido', 'inbound')
-                    ORDER BY fecha DESC
-                    LIMIT 1
+ESTADO_VENTANA_ABIERTA = "abierta"
+ESTADO_VENTANA_CERRADA = "cerrada"
+ESTADO_VENTANA_NUNCA_ABIERTA = "nunca_abierta"
+DURACION_VENTANA_WHATSAPP = timedelta(hours=24)
+
+MENSAJE_VENTANA_CERRADA = (
+    "La ventana de 24 horas está cerrada. "
+    "Envía una plantilla de reconexión y espera la respuesta del contacto."
+)
+MENSAJE_VENTANA_NUNCA_ABIERTA = (
+    "Esta conversación aún no tiene mensajes del usuario. "
+    "Solo se puede enviar una plantilla de WhatsApp."
+)
+
+
+class EnvioLibreWhatsappBloqueado(Exception):
+    """Texto/audio/adjuntos no se pueden enviar: ventana cerrada o nunca abierta."""
+
+    def __init__(self, payload: Dict[str, Any], status_code: int = 409):
+        super().__init__(payload.get("mensaje") or "ventana_24h_bloqueada")
+        self.payload = payload
+        self.status_code = status_code
+
+
+def _aware_utc(valor: Optional[datetime]) -> Optional[datetime]:
+    if valor is None:
+        return None
+    if valor.tzinfo is None:
+        return valor.replace(tzinfo=timezone.utc)
+    return valor.astimezone(timezone.utc)
+
+
+def calcular_estado_ventana_24h(
+    ultima_entrada_usuario_at: Optional[datetime],
+    *,
+    ahora: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Fuente de verdad: solo el último inbound. Un template saliente no abre la ventana."""
+    ahora_utc = _aware_utc(ahora) or datetime.now(timezone.utc)
+    ultima = _aware_utc(ultima_entrada_usuario_at)
+    if ultima is None:
+        return {
+            "estado": ESTADO_VENTANA_NUNCA_ABIERTA,
+            "ventana_abierta": False,
+            "texto_libre_permitido": False,
+            "ultima_entrada_usuario_at": None,
+            "ventana_24h_hasta": None,
+        }
+    hasta = ultima + DURACION_VENTANA_WHATSAPP
+    abierta = ahora_utc < hasta
+    return {
+        "estado": ESTADO_VENTANA_ABIERTA if abierta else ESTADO_VENTANA_CERRADA,
+        "ventana_abierta": abierta,
+        "texto_libre_permitido": abierta,
+        "ultima_entrada_usuario_at": ultima,
+        "ventana_24h_hasta": hasta,
+    }
+
+
+def serializar_estado_ventana_24h(estado: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(estado)
+    for clave in ("ultima_entrada_usuario_at", "ventana_24h_hasta"):
+        valor = out.get(clave)
+        if hasattr(valor, "isoformat"):
+            out[clave] = valor.isoformat()
+    return out
+
+
+def consultar_ultima_entrada_usuario_at(
+    telefono: str,
+    *,
+    connection_factory=None,
+) -> Optional[datetime]:
+    """Último mensaje ENTRANTE en {tenant}.mensajes_whatsapp. Ignora salientes y plantillas."""
+    tel = (telefono or "").strip()
+    if not tel:
+        return None
+    factory = connection_factory or get_connection_context
+    with factory() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
                 """
-                cur.execute(query, (telefono,))
-                row = cur.fetchone()
+                SELECT fecha
+                FROM mensajes_whatsapp
+                WHERE telefono = %s
+                  AND direccion IN ('recibido', 'inbound')
+                ORDER BY fecha DESC
+                LIMIT 1
+                """,
+                (tel,),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    return row[0]
 
-                # CASO A: El usuario nunca ha escrito
-                if not row:
-                    return False
 
-                # CASO B: Calcular diferencia de tiempo
-                ultima_interaccion = row[0]  # TIMESTAMPTZ
-
-                # Obtenemos la hora actual en UTC
-                ahora = datetime.now(timezone.utc)
-
-                diferencia = ahora - ultima_interaccion
-
-                # Verificamos si pasaron menos de 24 horas
-                return diferencia < timedelta(hours=24)
-
+def obtener_estado_ventana_24h(
+    telefono: str,
+    *,
+    ahora: Optional[datetime] = None,
+    consultar_fn=None,
+    connection_factory=None,
+) -> Dict[str, Any]:
+    """Estado canónico de 24h para la bandeja SAS: abierta | cerrada | nunca_abierta."""
+    fn = consultar_fn
+    try:
+        if fn is None:
+            ultima = consultar_ultima_entrada_usuario_at(
+                telefono, connection_factory=connection_factory
+            )
+        else:
+            ultima = fn(telefono)
+        return serializar_estado_ventana_24h(
+            calcular_estado_ventana_24h(ultima, ahora=ahora)
+        )
     except Exception as e:
         print(f"❌ Error consultando status 24hrs: {e}")
-        # Por seguridad, si falla la BD, asumimos ventana CERRADA para evitar bloqueos de Meta
-        return False
+        return serializar_estado_ventana_24h(
+            calcular_estado_ventana_24h(None, ahora=ahora)
+        ) | {
+            "estado": ESTADO_VENTANA_CERRADA,
+            "ventana_abierta": False,
+            "texto_libre_permitido": False,
+        }
+
+
+def payload_bloqueo_envio_libre(estado: Dict[str, Any]) -> Dict[str, Any]:
+    codigo_estado = estado.get("estado") or ESTADO_VENTANA_CERRADA
+    if codigo_estado == ESTADO_VENTANA_NUNCA_ABIERTA:
+        error = "ventana_24h_nunca_abierta"
+        mensaje = MENSAJE_VENTANA_NUNCA_ABIERTA
+    else:
+        error = "ventana_24h_cerrada"
+        mensaje = MENSAJE_VENTANA_CERRADA
+    return {
+        "status": "error",
+        "error": error,
+        "mensaje": mensaje,
+        "estado": codigo_estado,
+        "ventana_abierta": False,
+        "texto_libre_permitido": False,
+        "ultima_entrada_usuario_at": estado.get("ultima_entrada_usuario_at"),
+        "ventana_24h_hasta": estado.get("ventana_24h_hasta"),
+    }
+
+
+def validar_envio_libre_whatsapp(
+    telefono: str,
+    *,
+    estado_fn=None,
+    ahora: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Permite texto/audio/adjuntos solo si estado == abierta. Plantillas no usan esto."""
+    if estado_fn is not None:
+        estado = estado_fn(telefono)
+    else:
+        estado = obtener_estado_ventana_24h(telefono, ahora=ahora)
+    if estado.get("estado") == ESTADO_VENTANA_ABIERTA:
+        return estado
+    raise EnvioLibreWhatsappBloqueado(payload_bloqueo_envio_libre(estado))
+
+
+def obtener_status_24hrs(telefono):
+    """Compatibilidad legacy: True solo si estado == abierta.
+
+    False cubre cerrada y nunca_abierta. Un template saliente no abre la ventana.
+    """
+    return bool(obtener_estado_ventana_24h(telefono).get("ventana_abierta"))
 
 import re
 import logging

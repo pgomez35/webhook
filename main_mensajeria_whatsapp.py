@@ -1,8 +1,10 @@
 from datetime import datetime
+import functools
+import inspect
 import os
 import subprocess
 import traceback
-from typing import Optional, Literal
+from typing import List, Optional, Literal, Tuple
 
 import httpx
 import tempfile
@@ -36,11 +38,32 @@ from starlette.responses import StreamingResponse
 
 import cloudinary
 
-from utils_aspirantes import obtener_status_24hrs, crear_link_agendamiento_token, registrar_cambio_estado
+from utils_aspirantes import (
+    EnvioLibreWhatsappBloqueado,
+    crear_link_agendamiento_token,
+    obtener_estado_ventana_24h,
+    registrar_cambio_estado,
+    validar_envio_libre_whatsapp,
+)
+from chatbot_captacion_logic import normalizar_telefono_chatbot
 from plantillas_whatsapp_mensajes import (
     PlantillaMensajesDesconocida,
     enviar_plantilla_catalogo,
-    listar_plantillas_mensajes,
+    extraer_outgoing_wamid,
+    listar_plantillas_para_envio,
+    persistir_plantilla_en_conversacion_canonica,
+    persistir_plantilla_en_sas,
+    resolver_agencia_id_para_waba,
+    resolver_plantilla_para_envio,
+    serializar_plantilla_config_waba,
+)
+from database_whatsapp_plantillas import (
+    PlantillaWabaError,
+    actualizar_plantilla_waba,
+    crear_plantilla_waba,
+    eliminar_plantilla_waba,
+    listar_plantillas_waba,
+    normalizar_parametros,
 )
 
 cloudinary.config(
@@ -51,6 +74,32 @@ cloudinary.config(
 )
 
 router = APIRouter()
+
+
+def _json_si_envio_libre_bloqueado(telefono: str):
+    """409 si la ventana no está abierta. None si el envío libre está permitido."""
+    try:
+        validar_envio_libre_whatsapp(telefono)
+    except EnvioLibreWhatsappBloqueado as exc:
+        return JSONResponse(content=exc.payload, status_code=exc.status_code)
+    return None
+
+
+def exigir_ventana_libre(endpoint):
+    """Guarda común de 24h para texto/audio/adjuntos. No usar en plantillas."""
+
+    @functools.wraps(endpoint)
+    async def wrapped(*args, **kwargs):
+        bound = inspect.signature(endpoint).bind_partial(*args, **kwargs)
+        telefono = bound.arguments.get("telefono") or kwargs.get("telefono")
+        if telefono:
+            bloqueado = _json_si_envio_libre_bloqueado(str(telefono))
+            if bloqueado is not None:
+                return bloqueado
+        return await endpoint(*args, **kwargs)
+
+    wrapped.__signature__ = inspect.signature(endpoint)
+    return wrapped
 
 
 class PrepararEncuestaFormularioManualInput(BaseModel):
@@ -65,6 +114,59 @@ class EnviarPlantillaMensajesInput(BaseModel):
     telefono: str
     codigo: str
     nombre: Optional[str] = None
+
+
+class PlantillaWabaConfigIn(BaseModel):
+    nombre_meta: str
+    finalidad_interna: Literal["saludo", "reconexion", "recordatorio", "otro"]
+    idioma: Optional[str] = "es_CO"
+    parametros: Optional[List[str]] = None
+    incluir_nombre: Optional[bool] = None
+    activo: Optional[bool] = True
+
+
+class PlantillaWabaConfigPatchIn(BaseModel):
+    nombre_meta: Optional[str] = None
+    finalidad_interna: Optional[Literal["saludo", "reconexion", "recordatorio", "otro"]] = None
+    idioma: Optional[str] = None
+    parametros: Optional[List[str]] = None
+    incluir_nombre: Optional[bool] = None
+    activo: Optional[bool] = None
+
+
+def _parametros_desde_input(
+    parametros: Optional[List[str]],
+    incluir_nombre: Optional[bool],
+    *,
+    default: Optional[List[str]] = None,
+) -> List[str]:
+    if parametros is not None:
+        return normalizar_parametros(parametros)
+    if incluir_nombre is True:
+        return ["nombre"]
+    if incluir_nombre is False:
+        return []
+    return list(default or [])
+
+
+def _contexto_waba_mensajes(*, exigir_agencia: bool = True) -> Tuple[str, Optional[int]]:
+    try:
+        phone_id = current_phone_id.get()
+    except LookupError:
+        phone_id = None
+    phone_id = str(phone_id or "").strip()
+    if not phone_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Credenciales de WhatsApp no configuradas para este tenant",
+        )
+    agencia_id = resolver_agencia_id_para_waba(phone_id)
+    if exigir_agencia and agencia_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="No hay agencia chatbot asociada a esta WABA; no se pueden configurar plantillas.",
+        )
+    return phone_id, agencia_id
 
 
 @router.post("/api/mensajes-whatsapp/preparar-encuesta-formulario")
@@ -209,14 +311,98 @@ def obtener_ventana_24h_mensajes(
     telefono = (telefono or "").strip()
     if not telefono:
         raise HTTPException(status_code=400, detail="Teléfono requerido")
-    abierta = bool(obtener_status_24hrs(telefono))
-    return {"telefono_ok": True, "ventana_abierta": abierta}
+    estado = obtener_estado_ventana_24h(telefono)
+    return {"telefono_ok": True, **estado}
 
 
 @router.get("/api/mensajes-whatsapp/plantillas")
 def listar_plantillas_whatsapp_mensajes(usuario=Depends(obtener_usuario_actual)):
-    """Lista plantillas Meta permitidas. `codigo` = nombre exacto en Facebook."""
-    return {"plantillas": listar_plantillas_mensajes()}
+    """Plantillas de la WABA del tenant + catálogo Python legacy."""
+    try:
+        phone_id = current_phone_id.get()
+    except LookupError:
+        phone_id = None
+    phone_id = str(phone_id or "").strip() or None
+    agencia_id = resolver_agencia_id_para_waba(phone_id) if phone_id else None
+    return {
+        "plantillas": listar_plantillas_para_envio(
+            phone_number_id=phone_id,
+            agencia_id=agencia_id,
+        )
+    }
+
+
+@router.get("/api/mensajes-whatsapp/plantillas-config")
+def listar_plantillas_config_waba(usuario=Depends(obtener_usuario_actual)):
+    """CRUD: todas las plantillas registradas para la WABA actual (incluye inactivas)."""
+    phone_id, agencia_id = _contexto_waba_mensajes(exigir_agencia=True)
+    filas = listar_plantillas_waba(int(agencia_id), phone_id, solo_activas=False)
+    return {
+        "phone_number_id": phone_id,
+        "agencia_id": agencia_id,
+        "plantillas": [serializar_plantilla_config_waba(f) for f in filas],
+    }
+
+
+@router.post("/api/mensajes-whatsapp/plantillas-config")
+def crear_plantilla_config_waba(
+    data: PlantillaWabaConfigIn,
+    usuario=Depends(obtener_usuario_actual),
+):
+    phone_id, agencia_id = _contexto_waba_mensajes(exigir_agencia=True)
+    parametros = _parametros_desde_input(data.parametros, data.incluir_nombre, default=["nombre"])
+    try:
+        fila = crear_plantilla_waba(
+            agencia_id=int(agencia_id),
+            phone_number_id=phone_id,
+            nombre_meta=data.nombre_meta,
+            finalidad_interna=data.finalidad_interna,
+            idioma=data.idioma or "es_CO",
+            parametros=parametros,
+            activo=True if data.activo is None else bool(data.activo),
+        )
+    except PlantillaWabaError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return serializar_plantilla_config_waba(fila)
+
+
+@router.put("/api/mensajes-whatsapp/plantillas-config/{plantilla_id}")
+def actualizar_plantilla_config_waba(
+    plantilla_id: int,
+    data: PlantillaWabaConfigPatchIn,
+    usuario=Depends(obtener_usuario_actual),
+):
+    phone_id, agencia_id = _contexto_waba_mensajes(exigir_agencia=True)
+    parametros = None
+    if data.parametros is not None or data.incluir_nombre is not None:
+        parametros = _parametros_desde_input(data.parametros, data.incluir_nombre)
+    try:
+        fila = actualizar_plantilla_waba(
+            agencia_id=int(agencia_id),
+            phone_number_id=phone_id,
+            plantilla_id=plantilla_id,
+            nombre_meta=data.nombre_meta,
+            finalidad_interna=data.finalidad_interna,
+            idioma=data.idioma,
+            parametros=parametros,
+            activo=data.activo,
+        )
+    except PlantillaWabaError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not fila:
+        raise HTTPException(status_code=404, detail="Plantilla no encontrada en esta WABA")
+    return serializar_plantilla_config_waba(fila)
+
+
+@router.delete("/api/mensajes-whatsapp/plantillas-config/{plantilla_id}")
+def eliminar_plantilla_config_waba(
+    plantilla_id: int,
+    usuario=Depends(obtener_usuario_actual),
+):
+    phone_id, agencia_id = _contexto_waba_mensajes(exigir_agencia=True)
+    if not eliminar_plantilla_waba(int(agencia_id), phone_id, plantilla_id):
+        raise HTTPException(status_code=404, detail="Plantilla no encontrada en esta WABA")
+    return {"ok": True}
 
 
 @router.post("/api/mensajes-whatsapp/plantillas/enviar")
@@ -224,7 +410,7 @@ def enviar_plantilla_whatsapp_mensajes(
     data: EnviarPlantillaMensajesInput,
     usuario=Depends(obtener_usuario_actual),
 ):
-    telefono = (data.telefono or "").strip()
+    telefono = normalizar_telefono_chatbot(data.telefono)
     codigo = (data.codigo or "").strip()
     if not telefono or not codigo:
         raise HTTPException(status_code=400, detail="Faltan telefono o codigo de plantilla")
@@ -236,11 +422,22 @@ def enviar_plantilla_whatsapp_mensajes(
     except LookupError:
         raise HTTPException(status_code=400, detail="Tenant no disponible en el contexto")
 
+    phone_id = str(phone_id or "").strip()
     if not token or not phone_id:
         raise HTTPException(
             status_code=500,
             detail="Credenciales de WhatsApp no configuradas para este tenant",
         )
+
+    agencia_id = resolver_agencia_id_para_waba(phone_id)
+    try:
+        plantilla = resolver_plantilla_para_envio(
+            codigo,
+            phone_number_id=phone_id,
+            agencia_id=agencia_id,
+        )
+    except PlantillaMensajesDesconocida:
+        raise HTTPException(status_code=404, detail=f"Plantilla no permitida: {codigo}")
 
     try:
         status_code, resp, plantilla, parametros = enviar_plantilla_catalogo(
@@ -250,6 +447,7 @@ def enviar_plantilla_whatsapp_mensajes(
             agencia=agencia,
             token=token,
             phone_number_id=phone_id,
+            plantilla=plantilla,
         )
     except PlantillaMensajesDesconocida:
         raise HTTPException(status_code=404, detail=f"Plantilla no permitida: {codigo}")
@@ -260,21 +458,38 @@ def enviar_plantilla_whatsapp_mensajes(
             detail={"error": "meta_template_failed", "meta": resp},
         )
 
-    message_id_meta = None
-    if isinstance(resp, dict) and resp.get("messages"):
-        try:
-            message_id_meta = resp["messages"][0].get("id")
-        except Exception:
-            pass
+    message_id_meta = extraer_outgoing_wamid(resp)
 
-    guardar_mensaje_nuevo(
-        telefono=telefono,
-        contenido=f"[Plantilla enviada: {plantilla.nombre_meta} - {parametros}]",
-        direccion="enviado",
-        tipo="text",
-        message_id_meta=message_id_meta,
-        estado="sent",
-    )
+    try:
+        persistir_plantilla_en_sas(
+            plantilla=plantilla,
+            telefono_normalizado=telefono,
+            message_id_meta=message_id_meta,
+        )
+    except Exception as e:
+        print(f"[PLANTILLA_SAS] persistencia SAS falló tras Meta OK: {e}")
+        traceback.print_exc()
+
+    dual = None
+    agencia_id = resolver_agencia_id_para_waba(phone_id)
+    if agencia_id is None:
+        print(
+            f"[PLANTILLA_SAS] dual-write chatbot omitido: sin agencia_id "
+            f"phone_number_id={phone_id} telefono={telefono}"
+        )
+    else:
+        try:
+            dual = persistir_plantilla_en_conversacion_canonica(
+                plantilla=plantilla,
+                telefono_normalizado=telefono,
+                phone_number_id=phone_id,
+                agencia_id=agencia_id,
+                message_id_meta=message_id_meta,
+                nombre_contacto=data.nombre or "",
+            )
+        except Exception as e:
+            print(f"[PLANTILLA_SAS] dual-write chatbot falló tras Meta OK: {e}")
+            traceback.print_exc()
 
     return {
         "status": "ok",
@@ -283,6 +498,10 @@ def enviar_plantilla_whatsapp_mensajes(
         "mensaje": f"Se envió la plantilla {plantilla.nombre_meta} a {telefono}",
         "codigo_api": status_code,
         "respuesta_api": resp,
+        "message_id_meta": message_id_meta,
+        "telefono": telefono,
+        "conversacion_id": (dual or {}).get("conversacion_id"),
+        "parametros": parametros,
     }
 
 
@@ -363,20 +582,10 @@ async def api_enviar_mensaje(request: Request, data: dict):
             status_code=500
         )
 
-    # Ventana 24h: mensaje libre solo si está abierta
-    if not obtener_status_24hrs(telefono):
-        return JSONResponse(
-            {
-                "status": "error",
-                "error": "ventana_24h_cerrada",
-                "mensaje": (
-                    "La ventana de 24 horas está cerrada. "
-                    "Usa primero una plantilla de reconexión (reconexion_general_corta) "
-                    "y espera la respuesta del aspirante."
-                ),
-            },
-            status_code=409,
-        )
+    # Ventana 24h: texto libre solo si estado == abierta (no si cerrada / nunca_abierta).
+    bloqueado = _json_si_envio_libre_bloqueado(telefono)
+    if bloqueado is not None:
+        return bloqueado
 
     # ======================================================
     # 1️⃣ Enviar SIEMPRE mensaje normal
@@ -426,6 +635,7 @@ async def api_enviar_mensaje(request: Request, data: dict):
     }
 
 @router.post("/mensajes/audio")
+@exigir_ventana_libre
 async def api_enviar_audio(
     telefono: str = Form(...),
     nombre: str = Form(""),
@@ -559,6 +769,7 @@ async def api_enviar_audio(
     }
 
 @router.post("/mensajes/audio0")
+@exigir_ventana_libre
 async def api_enviar_audio0(
     telefono: str = Form(...),
     nombre: str = Form(""),
@@ -675,6 +886,7 @@ async def api_enviar_audio0(
     }
 
 @router.post("/mensajes/audio-adjunto")
+@exigir_ventana_libre
 async def api_enviar_audio_adjunto(
     telefono: str = Form(...),
     nombre: str = Form(""),
@@ -792,6 +1004,7 @@ async def api_enviar_audio_adjunto(
 
 
 @router.post("/mensajes/imagen")
+@exigir_ventana_libre
 async def api_enviar_imagen(
     telefono: str = Form(...),
     nombre: str = Form(""),
@@ -932,6 +1145,7 @@ def enviar_audio_link(token, numero_id, telefono_destino, url_audio):
     return response.status_code, response.json()
 
 @router.post("/mensajes/imagen0")
+@exigir_ventana_libre
 async def api_enviar_imagen0(
     telefono: str = Form(...),
     nombre: str = Form(""),   # ✅ NUEVO PARAMETRO
@@ -1070,6 +1284,7 @@ def enviar_imagen_link(
 
 
 @router.post("/mensajes/documento")
+@exigir_ventana_libre
 async def api_enviar_documento(
     telefono: str = Form(...),
     nombre: str = Form(""),
@@ -1225,6 +1440,7 @@ async def api_enviar_documento(
     }
 
 @router.post("/mensajes/documento0")
+@exigir_ventana_libre
 async def api_enviar_documento0(
     telefono: str = Form(...),
     nombre: str = Form(""),   # ✅ NUEVO PARAMETRO
@@ -1417,6 +1633,7 @@ def enviar_documento_link(
 
 
 @router.post("/mensajes/documentoV17022026")
+@exigir_ventana_libre
 async def api_enviar_documentoV17022026(
     telefono: str = Form(...),
     documento: UploadFile = Form(...),
@@ -1531,6 +1748,7 @@ async def api_enviar_documentoV17022026(
     }
 
 @router.post("/mensajes/audioV16022026")
+@exigir_ventana_libre
 async def api_enviar_audioV6022026(
     telefono: str = Form(...),
     audio: UploadFile = Form(...)
@@ -1630,6 +1848,7 @@ async def api_enviar_audioV6022026(
     }
 
 @router.post("/mensajes/video")
+@exigir_ventana_libre
 async def api_enviar_video(
     telefono: str = Form(...),
     nombre: str = Form(""),
@@ -1764,6 +1983,7 @@ async def api_enviar_video(
 
 
 @router.post("/mensajes/video0")
+@exigir_ventana_libre
 async def api_enviar_video0(
     telefono: str = Form(...),
     nombre: str = Form(""),   # ✅ NUEVO PARAMETRO
