@@ -375,10 +375,13 @@ def persistir_plantilla_en_sas(
     plantilla: PlantillaMensajes,
     telefono_normalizado: str,
     message_id_meta: Optional[str],
+    nombre_contacto: Optional[str] = None,
     guardar_sas_fn: Optional[Callable[..., Any]] = None,
+    guardar_nombre_fn: Optional[Callable[..., Any]] = None,
 ) -> None:
     """Marcador técnico en la bandeja SAS. No inventa el BODY de marketing."""
     tel = normalizar_telefono_chatbot(telefono_normalizado)
+    usando_sas_real = guardar_sas_fn is None
     if guardar_sas_fn is None:
         from DataBase import guardar_mensaje_nuevo
 
@@ -391,6 +394,15 @@ def persistir_plantilla_en_sas(
         message_id_meta=str(message_id_meta or "").strip() or None,
         estado="sent",
     )
+    nom = (nombre_contacto or "").strip()
+    if not nom:
+        return
+    if guardar_nombre_fn is None and usando_sas_real:
+        from DataBase import guardar_nombre_whatsapp_perfil
+
+        guardar_nombre_fn = guardar_nombre_whatsapp_perfil
+    if guardar_nombre_fn:
+        guardar_nombre_fn(tel, nom)
 
 
 def persistir_plantilla_en_conversacion_canonica(
@@ -482,6 +494,7 @@ def persistir_plantilla_dual_write(
         plantilla=plantilla,
         telefono_normalizado=telefono_normalizado,
         message_id_meta=message_id_meta,
+        nombre_contacto=nombre_contacto,
         guardar_sas_fn=guardar_sas_fn,
     )
     return persistir_plantilla_en_conversacion_canonica(

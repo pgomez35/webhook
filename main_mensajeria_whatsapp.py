@@ -465,6 +465,7 @@ def enviar_plantilla_whatsapp_mensajes(
             plantilla=plantilla,
             telefono_normalizado=telefono,
             message_id_meta=message_id_meta,
+            nombre_contacto=data.nombre or "",
         )
     except Exception as e:
         print(f"[PLANTILLA_SAS] persistencia SAS falló tras Meta OK: {e}")
