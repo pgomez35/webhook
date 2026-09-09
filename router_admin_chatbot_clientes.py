@@ -14,6 +14,12 @@ from pydantic import BaseModel, Field, field_validator
 from DataBase import es_admin
 from main_auth import obtener_usuario_actual
 import database_admin_chatbot_clientes as db
+from service_admin_chatbot_plantillas import (
+    ErrorAdminPlantillas,
+    actualizar_asociacion_admin,
+    listar_plantillas_admin_agencia,
+    sincronizar_plantillas_agencia,
+)
 from schemas_chatbot_captacion import (
     AgenciaChatbotResponse,
     ChatbotConfiguracionResponse,
@@ -140,6 +146,13 @@ class WabaDisponibleOut(BaseModel):
     vinculada_agencia_id: Optional[int] = None
     vinculada_agencia_nombre: Optional[str] = None
     vinculada_agencia_codigo: Optional[str] = None
+
+
+class PlantillaAgenciaPatchIn(BaseModel):
+    model_config = {"extra": "forbid"}
+    uso: Optional[str] = Field(None, max_length=40)
+    activo: Optional[bool] = None
+    nombre_visible: Optional[str] = Field(None, max_length=180)
 
 
 def _http_from_value_error(e: ValueError) -> HTTPException:
@@ -340,6 +353,72 @@ def actualizar_config(
 @router.get("/wabas-disponibles", response_model=List[WabaDisponibleOut])
 def wabas_disponibles(_admin: dict = Depends(require_admin)):
     return db.listar_wabas_chatbot_disponibles()
+
+
+def _http_plantillas(exc: ErrorAdminPlantillas) -> HTTPException:
+    return HTTPException(status_code=exc.http_status, detail=exc.detail)
+
+
+@router.get("/agencias/{agencia_id}/whatsapp-plantillas")
+def listar_whatsapp_plantillas_admin(
+    agencia_id: int,
+    _admin: dict = Depends(require_admin),
+):
+    if not db.obtener_agencia_admin(agencia_id):
+        raise HTTPException(status_code=404, detail="Agencia no encontrada")
+    try:
+        return listar_plantillas_admin_agencia(int(agencia_id))
+    except ErrorAdminPlantillas as exc:
+        raise _http_plantillas(exc) from exc
+
+
+@router.post("/agencias/{agencia_id}/whatsapp-plantillas/sincronizar")
+def sincronizar_whatsapp_plantillas_admin(
+    agencia_id: int,
+    admin: dict = Depends(require_admin),
+):
+    if not db.obtener_agencia_admin(agencia_id):
+        raise HTTPException(status_code=404, detail="Agencia no encontrada")
+    try:
+        out = sincronizar_plantillas_agencia(int(agencia_id))
+    except ErrorAdminPlantillas as exc:
+        raise _http_plantillas(exc) from exc
+    logger.info(
+        "[ADMIN-CHATBOT] sync plantillas agencia_id=%s admin_id=%s creadas=%s",
+        agencia_id,
+        admin.get("id"),
+        (out.get("sincronizacion") or {}).get("creadas"),
+    )
+    return out
+
+
+@router.patch("/agencias/{agencia_id}/whatsapp-plantillas/{plantilla_id}")
+def actualizar_whatsapp_plantilla_admin(
+    agencia_id: int,
+    plantilla_id: int,
+    payload: PlantillaAgenciaPatchIn,
+    admin: dict = Depends(require_admin),
+):
+    if not db.obtener_agencia_admin(agencia_id):
+        raise HTTPException(status_code=404, detail="Agencia no encontrada")
+    data = payload.model_dump(exclude_unset=True)
+    try:
+        row = actualizar_asociacion_admin(
+            int(agencia_id),
+            int(plantilla_id),
+            uso=data.get("uso"),
+            activo=data.get("activo"),
+            nombre_visible=data.get("nombre_visible"),
+        )
+    except ErrorAdminPlantillas as exc:
+        raise _http_plantillas(exc) from exc
+    logger.info(
+        "[ADMIN-CHATBOT] patch plantilla id=%s agencia_id=%s admin_id=%s",
+        plantilla_id,
+        agencia_id,
+        admin.get("id"),
+    )
+    return row
 
 
 def _config_response(row: dict, agencia: dict) -> ChatbotConfiguracionResponse:

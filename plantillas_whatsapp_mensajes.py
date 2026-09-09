@@ -8,6 +8,7 @@ El catálogo Python solo conserva plantillas legacy usadas por otros flujos.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
@@ -154,6 +155,119 @@ def serializar_plantilla_config_waba(row: Dict[str, Any]) -> dict:
     }
 
 
+_VARS_BODY_META = re.compile(r"\{\{(\d+)\}\}")
+ESTADOS_META_ENVIABLES = frozenset({"APPROVED", "approved"})
+
+
+def _parametros_desde_componentes_meta(components: Any) -> Tuple[List[str], str]:
+    body = {}
+    for comp in components or []:
+        if str((comp or {}).get("type") or "").upper() == "BODY":
+            body = comp or {}
+            break
+    texto = str(body.get("text") or "")
+    nums = [int(n) for n in _VARS_BODY_META.findall(texto)]
+    nvars = max(nums) if nums else 0
+    if nvars <= 0:
+        return [], texto
+    if nvars == 1:
+        return ["nombre"], texto
+    return ["nombre", "agencia"], texto
+
+
+def serializar_plantilla_meta(tpl: Dict[str, Any], *, phone_number_id: Optional[str] = None) -> dict:
+    nombre = str(tpl.get("name") or "").strip()
+    parametros, body = _parametros_desde_componentes_meta(tpl.get("components"))
+    categoria = str(tpl.get("category") or "").strip().lower() or None
+    return {
+        "codigo": nombre,
+        "nombre_meta": nombre,
+        "idioma": str(tpl.get("language") or "es_CO").strip() or "es_CO",
+        "etiqueta": nombre,
+        "descripcion": body,
+        "parametros": parametros,
+        "categoria_meta": categoria,
+        "status": tpl.get("status"),
+        "alcance": "waba",
+        "fuente": "waba",
+        "phone_number_id": phone_number_id,
+        "activo": True,
+    }
+
+
+def listar_plantillas_aprobadas_meta(
+    waba_id: str,
+    token: str,
+    *,
+    phone_number_id: Optional[str] = None,
+    request_fn: Optional[Callable[..., Any]] = None,
+) -> List[dict]:
+    """Plantillas APPROVED de la WABA en Graph API. No expone el token."""
+    wid = str(waba_id or "").strip()
+    tok = str(token or "").strip()
+    if not wid or not tok:
+        return []
+
+    from enviar_msg_wp import _graph_api_version
+
+    version = _graph_api_version()
+    url = f"https://graph.facebook.com/{version}/{wid}/message_templates"
+    params = {
+        "fields": "name,status,language,category,components",
+        "limit": 100,
+    }
+    headers = {"Authorization": f"Bearer {tok}"}
+    get = request_fn
+    if get is None:
+        import requests
+
+        def get(u, headers=None, params=None, timeout=30):
+            resp = requests.get(u, headers=headers, params=params, timeout=timeout)
+            try:
+                payload = resp.json()
+            except ValueError:
+                payload = {}
+            return resp.status_code, payload
+
+    visibles: List[dict] = []
+    vistos = set()
+    siguiente = url
+    siguientes_params = params
+    for _ in range(10):
+        if not siguiente:
+            break
+        try:
+            status_code, payload = get(
+                siguiente, headers=headers, params=siguientes_params, timeout=30
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[PLANTILLA_META] no se pudo listar WABA %s: %s", wid, exc)
+            break
+        if status_code != 200 or not isinstance(payload, dict):
+            err = payload.get("error") if isinstance(payload, dict) else None
+            logger.warning(
+                "[PLANTILLA_META] Graph status=%s waba_id=%s error=%s",
+                status_code,
+                wid,
+                (err or {}).get("message") if isinstance(err, dict) else err,
+            )
+            break
+        for tpl in payload.get("data") or []:
+            estado = str((tpl or {}).get("status") or "").strip()
+            if estado not in ESTADOS_META_ENVIABLES:
+                continue
+            item = serializar_plantilla_meta(tpl, phone_number_id=phone_number_id)
+            clave = str(item.get("codigo") or "").strip().lower()
+            if not clave or clave in vistos:
+                continue
+            vistos.add(clave)
+            visibles.append(item)
+        paging = payload.get("paging") or {}
+        siguiente = paging.get("next")
+        siguientes_params = None
+    return visibles
+
+
 def listar_plantillas_para_envio(
     phone_number_id: Optional[str] = None,
     *,
@@ -294,8 +408,11 @@ def resolver_plantilla_para_envio(
     phone_number_id: str,
     agencia_id: Optional[int] = None,
     obtener_waba_fn=None,
+    token: Optional[str] = None,
+    waba_id: Optional[str] = None,
+    listar_meta_fn=None,
 ) -> PlantillaMensajes:
-    """WABA configurada primero; si no, catálogo Python legacy."""
+    """WABA configurada, luego Meta APPROVED, luego catálogo Python legacy."""
     nombre = (codigo or "").strip()
     pid = str(phone_number_id or "").strip()
     if agencia_id is not None and pid and nombre:
@@ -312,6 +429,23 @@ def resolver_plantilla_para_envio(
             fila = None
         if fila:
             return plantilla_desde_config_waba(fila)
+    clave = nombre.lower()
+    if token and waba_id and clave:
+        fn = listar_meta_fn or listar_plantillas_aprobadas_meta
+        try:
+            meta = fn(str(waba_id), str(token), phone_number_id=pid)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[PLANTILLA_META] lookup falló waba_id=%s: %s", waba_id, exc)
+            meta = []
+        for item in meta or []:
+            if str(item.get("codigo") or "").strip().lower() == clave:
+                return plantilla_desde_config_waba({
+                    "nombre_meta": item.get("nombre_meta") or item.get("codigo"),
+                    "idioma": item.get("idioma") or "es_CO",
+                    "parametros": item.get("parametros") or [],
+                    "finalidad_interna": item.get("finalidad_interna") or "otro",
+                    "activo": True,
+                })
     return resolver_plantilla_mensajes(nombre)
 
 
@@ -537,6 +671,7 @@ def ejecutar_envio_plantilla(
     token: str,
     phone_number_id: str,
     agencia_id: Optional[int],
+    waba_id: Optional[str] = None,
     usuario_plataforma: Optional[str] = None,
     persistir_sas: bool = True,
     plantilla: Optional[PlantillaMensajes] = None,
@@ -571,6 +706,8 @@ def ejecutar_envio_plantilla(
                 codigo_norm,
                 phone_number_id=pid,
                 agencia_id=agencia_id,
+                token=token,
+                waba_id=waba_id,
             )
     except PlantillaMensajesDesconocida:
         return {

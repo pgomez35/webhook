@@ -13,9 +13,14 @@ from chatbot_captacion_logic import (
     normalizar_usuario_plataforma,
 )
 from database_chatbot_captacion import obtener_cuenta_whatsapp_principal
+from database_whatsapp_plantillas import (
+    listar_plantillas_waba,
+    obtener_plantilla_waba_por_nombre,
+    uso_desde_finalidad,
+)
 from plantillas_whatsapp_mensajes import (
     ejecutar_envio_plantilla,
-    listar_plantillas_para_envio,
+    listar_plantillas_aprobadas_meta,
 )
 
 logger = logging.getLogger("uvicorn.error")
@@ -47,18 +52,72 @@ def _cuenta_waba_agencia(agencia_id: int) -> Dict[str, Any]:
     return cuenta
 
 
+def _serializar_plantilla_chatbot(fila: dict, meta: Optional[dict] = None) -> dict:
+    nombre = str(fila.get("nombre_meta") or "").strip()
+    visible = str(fila.get("nombre_visible") or "").strip() or None
+    uso = uso_desde_finalidad(fila.get("finalidad_interna"))
+    item = {
+        "id": fila.get("id"),
+        "codigo": nombre,
+        "nombre_meta": nombre,
+        "nombre_visible": visible,
+        "etiqueta": visible or nombre,
+        "uso": uso,
+        "finalidad_interna": fila.get("finalidad_interna"),
+        "idioma": (meta or {}).get("idioma") or fila.get("idioma") or "es_CO",
+        "parametros": list((meta or {}).get("parametros") or fila.get("parametros") or []),
+        "descripcion": (meta or {}).get("descripcion") or "",
+        "categoria_meta": (meta or {}).get("categoria_meta"),
+        "status": (meta or {}).get("status"),
+        "fuente": "waba",
+        "alcance": "waba",
+        "activo": bool(fila.get("activo", True)),
+        "disponible_meta": bool(fila.get("disponible_meta", True)),
+    }
+    return item
+
+
 def listar_plantillas_agencia_chatbot(agencia_id: int) -> List[dict]:
-    """Plantillas de la WABA de la agencia autenticada. Sin access token."""
+    """Solo asociaciones habilitadas de la agencia JWT, cruzadas con Meta APPROVED."""
     cuenta = _cuenta_waba_agencia(int(agencia_id))
-    items = listar_plantillas_para_envio(
-        phone_number_id=str(cuenta["phone_number_id"]),
-        agencia_id=int(agencia_id),
+    phone_id = str(cuenta["phone_number_id"])
+    waba_id = str(cuenta.get("waba_id") or "").strip()
+    filas = listar_plantillas_waba(int(agencia_id), phone_id, solo_activas=True)
+    meta_by: Dict[str, dict] = {}
+    if waba_id:
+        try:
+            meta_items = listar_plantillas_aprobadas_meta(
+                waba_id,
+                str(cuenta.get("access_token") or ""),
+                phone_number_id=phone_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[CHATBOT-PLANTILLA] Meta cruzar falló agencia_id=%s: %s",
+                agencia_id,
+                exc,
+            )
+            meta_items = []
+        for item in meta_items or []:
+            clave = str(item.get("codigo") or item.get("nombre_meta") or "").strip().lower()
+            if clave:
+                meta_by[clave] = item
+
+    visibles: List[dict] = []
+    for fila in filas:
+        if fila.get("disponible_meta") is False:
+            continue
+        clave = str(fila.get("nombre_meta") or "").strip().lower()
+        meta = meta_by.get(clave)
+        if waba_id and not meta:
+            continue
+        visibles.append(_serializar_plantilla_chatbot(fila, meta))
+    logger.info(
+        "[CHATBOT-PLANTILLA] listar agencia_id=%s habilitadas=%s",
+        agencia_id,
+        len(visibles),
     )
-    return [
-        item
-        for item in items
-        if str(item.get("fuente") or "").strip().lower() != "legacy"
-    ]
+    return visibles
 
 
 def enviar_plantilla_nueva_conversacion(
@@ -86,6 +145,17 @@ def enviar_plantilla_nueva_conversacion(
 
     usuario_norm = normalizar_usuario_plataforma(usuario_plataforma)
     cuenta = _cuenta_waba_agencia(int(agencia_id))
+    phone_id = str(cuenta["phone_number_id"])
+    asociacion = obtener_plantilla_waba_por_nombre(
+        int(agencia_id), phone_id, codigo_norm, solo_activa=True
+    )
+    if not asociacion:
+        raise ErrorPlantillaChatbot(404, f"Plantilla no permitida: {codigo_norm}")
+    if asociacion.get("disponible_meta") is False:
+        raise ErrorPlantillaChatbot(
+            409,
+            "Esta plantilla ya no está disponible en Meta",
+        )
     resultado = ejecutar_envio_plantilla(
         telefono=tel,
         codigo=codigo_norm,
@@ -94,6 +164,7 @@ def enviar_plantilla_nueva_conversacion(
         token=str(cuenta["access_token"]),
         phone_number_id=str(cuenta["phone_number_id"]),
         agencia_id=int(agencia_id),
+        waba_id=str(cuenta.get("waba_id") or "").strip() or None,
         usuario_plataforma=usuario_norm,
         persistir_sas=False,
     )
