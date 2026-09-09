@@ -44,6 +44,13 @@ NOMBRE_VISIBLE_INICIAL = {
 }
 
 
+COLUMNAS_PLANTILLA = """
+    id, agencia_id, phone_number_id, nombre_meta, finalidad_interna,
+    idioma, parametros, activo, nombre_visible, disponible_meta,
+    descripcion, categoria_meta, created_at, updated_at
+"""
+
+
 class PlantillaWabaError(ValueError):
     """Datos inválidos o conflicto de unicidad."""
 
@@ -112,6 +119,9 @@ def _fila(row) -> Optional[Dict[str, Any]]:
     data["parametros"] = list(params or [])
     if "disponible_meta" not in data or data.get("disponible_meta") is None:
         data["disponible_meta"] = True
+    data["descripcion"] = str(data.get("descripcion") or "")
+    cat = str(data.get("categoria_meta") or "").strip().lower()
+    data["categoria_meta"] = cat or None
     return data
 
 
@@ -120,14 +130,13 @@ def listar_plantillas_waba(
     phone_number_id: str,
     *,
     solo_activas: bool = False,
+    solo_disponibles: bool = False,
 ) -> List[Dict[str, Any]]:
     pid = str(phone_number_id or "").strip()
     if not pid:
         return []
-    sql = """
-        SELECT id, agencia_id, phone_number_id, nombre_meta, finalidad_interna,
-               idioma, parametros, activo, nombre_visible, disponible_meta,
-               created_at, updated_at
+    sql = f"""
+        SELECT {COLUMNAS_PLANTILLA}
         FROM chatbot.whatsapp_plantillas_agencia
         WHERE agencia_id = %s
           AND phone_number_id = %s
@@ -135,6 +144,8 @@ def listar_plantillas_waba(
     params: List[Any] = [int(agencia_id), pid]
     if solo_activas:
         sql += " AND activo = TRUE"
+    if solo_disponibles:
+        sql += " AND COALESCE(disponible_meta, TRUE) = TRUE"
     sql += """
         ORDER BY
             CASE finalidad_interna
@@ -162,10 +173,8 @@ def obtener_plantilla_waba_por_nombre(
     nombre = normalizar_nombre_meta(nombre_meta)
     if not pid or not nombre:
         return None
-    sql = """
-        SELECT id, agencia_id, phone_number_id, nombre_meta, finalidad_interna,
-               idioma, parametros, activo, nombre_visible, disponible_meta,
-               created_at, updated_at
+    sql = f"""
+        SELECT {COLUMNAS_PLANTILLA}
         FROM chatbot.whatsapp_plantillas_agencia
         WHERE agencia_id = %s
           AND phone_number_id = %s
@@ -190,10 +199,8 @@ def obtener_plantilla_waba_por_id(
     with get_connection_chatbot_context() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                """
-                SELECT id, agencia_id, phone_number_id, nombre_meta, finalidad_interna,
-                       idioma, parametros, activo, nombre_visible, disponible_meta,
-                       created_at, updated_at
+                f"""
+                SELECT {COLUMNAS_PLANTILLA}
                 FROM chatbot.whatsapp_plantillas_agencia
                 WHERE id = %s
                   AND agencia_id = %s
@@ -216,6 +223,8 @@ def crear_plantilla_waba(
     activo: bool = True,
     nombre_visible: Optional[str] = None,
     disponible_meta: bool = True,
+    descripcion: Optional[str] = None,
+    categoria_meta: Optional[str] = None,
 ) -> Dict[str, Any]:
     pid = str(phone_number_id or "").strip()
     nombre = normalizar_nombre_meta(nombre_meta)
@@ -225,20 +234,20 @@ def crear_plantilla_waba(
     idioma_norm = str(idioma or "es_CO").strip() or "es_CO"
     params = normalizar_parametros(parametros)
     visible = (str(nombre_visible).strip() or None) if nombre_visible is not None else None
+    body = str(descripcion or "").strip()
+    categoria = str(categoria_meta or "").strip().lower() or None
     try:
         with get_connection_chatbot_context() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
-                    """
+                    f"""
                     INSERT INTO chatbot.whatsapp_plantillas_agencia (
                         agencia_id, phone_number_id, nombre_meta, finalidad_interna,
-                        idioma, parametros, activo, nombre_visible, disponible_meta
+                        idioma, parametros, activo, nombre_visible, disponible_meta,
+                        descripcion, categoria_meta
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING id, agencia_id, phone_number_id, nombre_meta,
-                              finalidad_interna, idioma, parametros, activo,
-                              nombre_visible, disponible_meta,
-                              created_at, updated_at
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING {COLUMNAS_PLANTILLA}
                     """,
                     (
                         int(agencia_id),
@@ -250,6 +259,8 @@ def crear_plantilla_waba(
                         bool(activo),
                         visible,
                         bool(disponible_meta),
+                        body,
+                        categoria,
                     ),
                 )
                 row = _fila(cur.fetchone())
@@ -275,6 +286,8 @@ def actualizar_plantilla_waba(
     activo: Optional[bool] = None,
     nombre_visible: Optional[str] = None,
     disponible_meta: Optional[bool] = None,
+    descripcion: Optional[str] = None,
+    categoria_meta: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     actual = obtener_plantilla_waba_por_id(agencia_id, phone_number_id, plantilla_id)
     if not actual:
@@ -311,12 +324,20 @@ def actualizar_plantilla_waba(
         if disponible_meta is not None
         else bool(actual.get("disponible_meta", True))
     )
+    if descripcion is not None:
+        body = str(descripcion).strip()
+    else:
+        body = str(actual.get("descripcion") or "")
+    if categoria_meta is not None:
+        categoria = str(categoria_meta).strip().lower() or None
+    else:
+        categoria = actual.get("categoria_meta")
     pid = str(phone_number_id or "").strip()
     try:
         with get_connection_chatbot_context() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
-                    """
+                    f"""
                     UPDATE chatbot.whatsapp_plantillas_agencia
                     SET nombre_meta = %s,
                         finalidad_interna = %s,
@@ -325,14 +346,13 @@ def actualizar_plantilla_waba(
                         activo = %s,
                         nombre_visible = %s,
                         disponible_meta = %s,
+                        descripcion = %s,
+                        categoria_meta = %s,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = %s
                       AND agencia_id = %s
                       AND phone_number_id = %s
-                    RETURNING id, agencia_id, phone_number_id, nombre_meta,
-                              finalidad_interna, idioma, parametros, activo,
-                              nombre_visible, disponible_meta,
-                              created_at, updated_at
+                    RETURNING {COLUMNAS_PLANTILLA}
                     """,
                     (
                         nombre,
@@ -342,6 +362,8 @@ def actualizar_plantilla_waba(
                         activo_val,
                         visible,
                         disp_meta,
+                        body,
+                        categoria,
                         int(plantilla_id),
                         int(agencia_id),
                         pid,

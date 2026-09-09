@@ -25,6 +25,7 @@ class EnviarPlantillaChatbotIn(BaseModel):
     codigo: str = Field(..., min_length=1, max_length=512)
     nombre: Optional[str] = Field(default=None, max_length=150)
     usuario_plataforma: Optional[str] = Field(default=None, max_length=100)
+    atencion_manual_inicial: bool = False
 
 
 def _http_desde_error(exc: ErrorPlantillaChatbot) -> HTTPException:
@@ -35,7 +36,7 @@ def _http_desde_error(exc: ErrorPlantillaChatbot) -> HTTPException:
 def listar_plantillas_whatsapp_chatbot(
     agencia: dict = Depends(obtener_agencia_chatbot_actual),
 ):
-    """Plantillas de la WABA de la agencia autenticada. Sin tokens."""
+    """Catálogo local de la agencia autenticada. Sin Graph ni tokens."""
     try:
         plantillas = listar_plantillas_agencia_chatbot(int(agencia["id"]))
     except ErrorPlantillaChatbot as exc:
@@ -61,6 +62,7 @@ def enviar_plantilla_whatsapp_chatbot(
             codigo=data.codigo,
             nombre=data.nombre,
             usuario_plataforma=data.usuario_plataforma,
+            atencion_manual_inicial=bool(data.atencion_manual_inicial),
         )
     except ErrorPlantillaChatbot as exc:
         raise _http_desde_error(exc) from exc

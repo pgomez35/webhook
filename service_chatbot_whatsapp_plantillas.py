@@ -18,10 +18,7 @@ from database_whatsapp_plantillas import (
     obtener_plantilla_waba_por_nombre,
     uso_desde_finalidad,
 )
-from plantillas_whatsapp_mensajes import (
-    ejecutar_envio_plantilla,
-    listar_plantillas_aprobadas_meta,
-)
+from plantillas_whatsapp_mensajes import ejecutar_envio_plantilla
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -52,11 +49,11 @@ def _cuenta_waba_agencia(agencia_id: int) -> Dict[str, Any]:
     return cuenta
 
 
-def _serializar_plantilla_chatbot(fila: dict, meta: Optional[dict] = None) -> dict:
+def _serializar_plantilla_chatbot(fila: dict) -> dict:
     nombre = str(fila.get("nombre_meta") or "").strip()
     visible = str(fila.get("nombre_visible") or "").strip() or None
     uso = uso_desde_finalidad(fila.get("finalidad_interna"))
-    item = {
+    return {
         "id": fila.get("id"),
         "codigo": nombre,
         "nombre_meta": nombre,
@@ -64,54 +61,32 @@ def _serializar_plantilla_chatbot(fila: dict, meta: Optional[dict] = None) -> di
         "etiqueta": visible or nombre,
         "uso": uso,
         "finalidad_interna": fila.get("finalidad_interna"),
-        "idioma": (meta or {}).get("idioma") or fila.get("idioma") or "es_CO",
-        "parametros": list((meta or {}).get("parametros") or fila.get("parametros") or []),
-        "descripcion": (meta or {}).get("descripcion") or "",
-        "categoria_meta": (meta or {}).get("categoria_meta"),
-        "status": (meta or {}).get("status"),
+        "idioma": fila.get("idioma") or "es_CO",
+        "parametros": list(fila.get("parametros") or []),
+        "descripcion": fila.get("descripcion") or "",
+        "categoria_meta": fila.get("categoria_meta"),
         "fuente": "waba",
         "alcance": "waba",
         "activo": bool(fila.get("activo", True)),
         "disponible_meta": bool(fila.get("disponible_meta", True)),
     }
-    return item
 
 
 def listar_plantillas_agencia_chatbot(agencia_id: int) -> List[dict]:
-    """Solo asociaciones habilitadas de la agencia JWT, cruzadas con Meta APPROVED."""
+    """Allowlist local de la agencia JWT. Sin Graph."""
     cuenta = _cuenta_waba_agencia(int(agencia_id))
     phone_id = str(cuenta["phone_number_id"])
-    waba_id = str(cuenta.get("waba_id") or "").strip()
-    filas = listar_plantillas_waba(int(agencia_id), phone_id, solo_activas=True)
-    meta_by: Dict[str, dict] = {}
-    if waba_id:
-        try:
-            meta_items = listar_plantillas_aprobadas_meta(
-                waba_id,
-                str(cuenta.get("access_token") or ""),
-                phone_number_id=phone_id,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "[CHATBOT-PLANTILLA] Meta cruzar falló agencia_id=%s: %s",
-                agencia_id,
-                exc,
-            )
-            meta_items = []
-        for item in meta_items or []:
-            clave = str(item.get("codigo") or item.get("nombre_meta") or "").strip().lower()
-            if clave:
-                meta_by[clave] = item
-
-    visibles: List[dict] = []
-    for fila in filas:
-        if fila.get("disponible_meta") is False:
-            continue
-        clave = str(fila.get("nombre_meta") or "").strip().lower()
-        meta = meta_by.get(clave)
-        if waba_id and not meta:
-            continue
-        visibles.append(_serializar_plantilla_chatbot(fila, meta))
+    filas = listar_plantillas_waba(
+        int(agencia_id),
+        phone_id,
+        solo_activas=True,
+        solo_disponibles=True,
+    )
+    visibles = [
+        _serializar_plantilla_chatbot(fila)
+        for fila in filas
+        if fila.get("activo", True) and fila.get("disponible_meta", True)
+    ]
     logger.info(
         "[CHATBOT-PLANTILLA] listar agencia_id=%s habilitadas=%s",
         agencia_id,
@@ -128,6 +103,7 @@ def enviar_plantilla_nueva_conversacion(
     codigo: str,
     nombre: Optional[str] = None,
     usuario_plataforma: Optional[str] = None,
+    atencion_manual_inicial: bool = False,
 ) -> Dict[str, Any]:
     """Envía plantilla, reutiliza o crea conversación canónica. No crea aspirante.
 
@@ -184,6 +160,20 @@ def enviar_plantilla_nueva_conversacion(
             500,
             "La plantilla se envió pero no se pudo registrar la conversación",
         )
+
+    if atencion_manual_inicial:
+        try:
+            from database_chatbot_conversacional import marcar_atencion_manual_inicial
+
+            marcar_atencion_manual_inicial(int(agencia_id), int(conversacion_id))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "[CHATBOT-PLANTILLA] no se pudo marcar atención manual "
+                "agencia_id=%s conversacion_id=%s: %s",
+                agencia_id,
+                conversacion_id,
+                exc,
+            )
 
     return {
         "success": True,

@@ -29,6 +29,10 @@ class PlantillaMensajesDesconocida(ValueError):
     """El codigo no está en el catálogo o no es enviable desde Mensajes."""
 
 
+class ErrorGraphPlantillas(Exception):
+    """Graph no respondió de forma válida al listar plantillas."""
+
+
 @dataclass(frozen=True)
 class PlantillaMensajes:
     codigo: str
@@ -201,11 +205,14 @@ def listar_plantillas_aprobadas_meta(
     *,
     phone_number_id: Optional[str] = None,
     request_fn: Optional[Callable[..., Any]] = None,
+    requerir_exito: bool = False,
 ) -> List[dict]:
     """Plantillas APPROVED de la WABA en Graph API. No expone el token."""
     wid = str(waba_id or "").strip()
     tok = str(token or "").strip()
     if not wid or not tok:
+        if requerir_exito:
+            raise ErrorGraphPlantillas("Faltan WABA o token para consultar Meta")
         return []
 
     from enviar_msg_wp import _graph_api_version
@@ -233,6 +240,8 @@ def listar_plantillas_aprobadas_meta(
     vistos = set()
     siguiente = url
     siguientes_params = params
+    paginas_ok = 0
+    hubo_error = False
     for _ in range(10):
         if not siguiente:
             break
@@ -241,9 +250,11 @@ def listar_plantillas_aprobadas_meta(
                 siguiente, headers=headers, params=siguientes_params, timeout=30
             )
         except Exception as exc:  # noqa: BLE001
+            hubo_error = True
             logger.warning("[PLANTILLA_META] no se pudo listar WABA %s: %s", wid, exc)
             break
         if status_code != 200 or not isinstance(payload, dict):
+            hubo_error = True
             err = payload.get("error") if isinstance(payload, dict) else None
             logger.warning(
                 "[PLANTILLA_META] Graph status=%s waba_id=%s error=%s",
@@ -252,6 +263,7 @@ def listar_plantillas_aprobadas_meta(
                 (err or {}).get("message") if isinstance(err, dict) else err,
             )
             break
+        paginas_ok += 1
         for tpl in payload.get("data") or []:
             estado = str((tpl or {}).get("status") or "").strip()
             if estado not in ESTADOS_META_ENVIABLES:
@@ -265,6 +277,8 @@ def listar_plantillas_aprobadas_meta(
         paging = payload.get("paging") or {}
         siguiente = paging.get("next")
         siguientes_params = None
+    if requerir_exito and (hubo_error or paginas_ok == 0):
+        raise ErrorGraphPlantillas("No se pudieron consultar las plantillas en Meta")
     return visibles
 
 

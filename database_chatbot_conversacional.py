@@ -3108,6 +3108,48 @@ def tomar_conversacion(
         return conversacion
 
 
+def marcar_atencion_manual_inicial(
+    agencia_id: int,
+    conversacion_id: int,
+    *,
+    cur=None,
+) -> Optional[Dict[str, Any]]:
+    """Silencia la IA tras un primer contacto por plantilla, sin aviso al contacto.
+
+    Reutiliza modo_humano (el mismo estado que Tomar). No inserta mensaje saliente.
+    """
+    with _cursor(cur) as c:
+        actual = _obtener_registro("conversaciones", agencia_id, conversacion_id, cur=c)
+        if not actual:
+            return None
+        if actual.get("modo_humano") and actual.get("ia_habilitada") is False:
+            return actual
+        conversacion = _actualizar_registro(
+            "conversaciones",
+            agencia_id,
+            conversacion_id,
+            {
+                "modo_humano": True,
+                "ia_habilitada": False,
+                "estado": "esperando_humano",
+            },
+            COLUMNAS_CONVERSACION,
+            cur=c,
+        )
+        registrar_evento(
+            agencia_id,
+            conversacion_id,
+            tipo_evento="escalamiento",
+            nombre_evento="atencion_manual_inicial_plantilla",
+            origen="humano",
+            estado_anterior=actual.get("estado"),
+            estado_nuevo="esperando_humano",
+            detalle={"modo_humano": True, "origen_activacion": "nueva_conversacion"},
+            cur=c,
+        )
+        return conversacion
+
+
 def devolver_a_ia(
     agencia_id: int,
     conversacion_id: int,

@@ -20,7 +20,10 @@ from database_whatsapp_plantillas import (
     sugerir_uso_inicial,
     uso_desde_finalidad,
 )
-from plantillas_whatsapp_mensajes import listar_plantillas_aprobadas_meta
+from plantillas_whatsapp_mensajes import (
+    ErrorGraphPlantillas,
+    listar_plantillas_aprobadas_meta,
+)
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -62,7 +65,8 @@ def serializar_asociacion_admin(fila: dict, meta: Optional[dict] = None) -> dict
     nombre = normalizar_nombre_meta(fila.get("nombre_meta") or "")
     uso = uso_desde_finalidad(fila.get("finalidad_interna"))
     visible = str(fila.get("nombre_visible") or "").strip() or None
-    item = {
+    fuente = meta or {}
+    return {
         "id": fila.get("id"),
         "agencia_id": fila.get("agencia_id"),
         "phone_number_id": fila.get("phone_number_id"),
@@ -74,21 +78,14 @@ def serializar_asociacion_admin(fila: dict, meta: Optional[dict] = None) -> dict
         "finalidad_interna": fila.get("finalidad_interna"),
         "activo": bool(fila.get("activo", True)),
         "disponible_meta": bool(fila.get("disponible_meta", True)),
-        "idioma": fila.get("idioma") or "es_CO",
-        "parametros": list(fila.get("parametros") or []),
-        "categoria_meta": None,
-        "status": None,
-        "descripcion": "",
+        "idioma": fuente.get("idioma") or fila.get("idioma") or "es_CO",
+        "parametros": list(fuente.get("parametros") or fila.get("parametros") or []),
+        "descripcion": fuente.get("descripcion") or fila.get("descripcion") or "",
+        "categoria_meta": fuente.get("categoria_meta") or fila.get("categoria_meta"),
+        "status": fuente.get("status"),
         "created_at": fila.get("created_at"),
         "updated_at": fila.get("updated_at"),
     }
-    if meta:
-        item["idioma"] = meta.get("idioma") or item["idioma"]
-        item["parametros"] = list(meta.get("parametros") or item["parametros"])
-        item["categoria_meta"] = meta.get("categoria_meta")
-        item["status"] = meta.get("status")
-        item["descripcion"] = meta.get("descripcion") or ""
-    return item
 
 
 def listar_plantillas_admin_agencia(
@@ -103,22 +100,7 @@ def listar_plantillas_admin_agencia(
     waba_id = str(cuenta["waba_id"])
     listar_local = listar_local_fn or listar_plantillas_waba
     filas = listar_local(int(agencia_id), phone_id, solo_activas=False)
-    meta_fn = listar_meta_fn or listar_plantillas_aprobadas_meta
-    try:
-        meta_items = meta_fn(
-            waba_id,
-            str(cuenta.get("access_token") or ""),
-            phone_number_id=phone_id,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("[ADMIN-PLANTILLA] Meta listar falló agencia_id=%s: %s", agencia_id, exc)
-        meta_items = []
-    meta_by = {
-        normalizar_nombre_meta(m.get("codigo") or m.get("nombre_meta") or "").lower(): m
-        for m in (meta_items or [])
-        if normalizar_nombre_meta(m.get("codigo") or m.get("nombre_meta") or "")
-    }
-    plantillas = [serializar_asociacion_admin(f, meta_by.get(normalizar_nombre_meta(f.get("nombre_meta") or "").lower())) for f in filas]
+    plantillas = [serializar_asociacion_admin(f) for f in filas]
     return {
         "whatsapp": {
             "phone_number": cuenta.get("phone_number"),
@@ -129,8 +111,20 @@ def listar_plantillas_admin_agencia(
         },
         "plantillas": plantillas,
         "total": len(plantillas),
-        "meta_aprobadas": len(meta_items or []),
+        "meta_aprobadas": sum(1 for p in plantillas if p.get("disponible_meta")),
     }
+
+
+def _consultar_meta_para_sync(meta_fn, waba_id: str, token: str, phone_id: str):
+    try:
+        return meta_fn(
+            waba_id,
+            token,
+            phone_number_id=phone_id,
+            requerir_exito=True,
+        )
+    except TypeError:
+        return meta_fn(waba_id, token, phone_number_id=phone_id)
 
 
 def sincronizar_plantillas_agencia(
@@ -145,17 +139,31 @@ def sincronizar_plantillas_agencia(
     """Importa asociaciones desde Meta APPROVED sin habilitarlas.
 
     Una plantilla recién descubierta nace con activo=False. El resync no
-    pisa activo, uso ni nombre_visible de filas ya asociadas.
+    pisa activo, uso ni nombre_visible de filas ya asociadas. Si Graph falla,
+    no se altera el snapshot local.
     """
     cuenta = _cuenta_o_400(int(agencia_id), cuenta_fn=cuenta_fn)
     phone_id = str(cuenta["phone_number_id"])
     waba_id = str(cuenta["waba_id"])
     meta_fn = listar_meta_fn or listar_plantillas_aprobadas_meta
-    meta_items = meta_fn(
-        waba_id,
-        str(cuenta.get("access_token") or ""),
-        phone_number_id=phone_id,
-    )
+    try:
+        meta_items = _consultar_meta_para_sync(
+            meta_fn,
+            waba_id,
+            str(cuenta.get("access_token") or ""),
+            phone_id,
+        )
+    except ErrorGraphPlantillas as exc:
+        raise ErrorAdminPlantillas(
+            502,
+            "No se pudieron consultar las plantillas en Meta",
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[ADMIN-PLANTILLA] Meta sync falló agencia_id=%s: %s", agencia_id, exc)
+        raise ErrorAdminPlantillas(
+            502,
+            "No se pudieron consultar las plantillas en Meta",
+        ) from exc
     listar_local = listar_local_fn or listar_plantillas_waba
     existentes = listar_local(int(agencia_id), phone_id, solo_activas=False)
     por_nombre = _indice_local(existentes)
@@ -173,6 +181,8 @@ def sincronizar_plantillas_agencia(
         vistos.add(clave)
         idioma = str(meta.get("idioma") or "es_CO").strip() or "es_CO"
         params = list(meta.get("parametros") or [])
+        body = str(meta.get("descripcion") or "").strip()
+        categoria = str(meta.get("categoria_meta") or "").strip().lower() or None
         actual = por_nombre.get(clave)
         if actual:
             actualizar(
@@ -181,6 +191,8 @@ def sincronizar_plantillas_agencia(
                 plantilla_id=int(actual["id"]),
                 idioma=idioma,
                 parametros=params,
+                descripcion=body,
+                categoria_meta=categoria,
                 disponible_meta=True,
             )
             actualizadas += 1
@@ -196,6 +208,8 @@ def sincronizar_plantillas_agencia(
                 activo=False,
                 nombre_visible=sugerir_nombre_visible(nombre),
                 disponible_meta=True,
+                descripcion=body,
+                categoria_meta=categoria,
             )
             creadas += 1
 
@@ -224,7 +238,6 @@ def sincronizar_plantillas_agencia(
     listado = listar_plantillas_admin_agencia(
         int(agencia_id),
         cuenta_fn=lambda *_a, **_k: cuenta,
-        listar_meta_fn=lambda *_a, **_k: meta_items,
         listar_local_fn=listar_local,
     )
     listado["sincronizacion"] = {
