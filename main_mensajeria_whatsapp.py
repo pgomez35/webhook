@@ -47,14 +47,9 @@ from utils_aspirantes import (
 )
 from chatbot_captacion_logic import normalizar_telefono_chatbot
 from plantillas_whatsapp_mensajes import (
-    PlantillaMensajesDesconocida,
-    enviar_plantilla_catalogo,
-    extraer_outgoing_wamid,
+    ejecutar_envio_plantilla,
     listar_plantillas_para_envio,
-    persistir_plantilla_en_conversacion_canonica,
-    persistir_plantilla_en_sas,
     resolver_agencia_id_para_waba,
-    resolver_plantilla_para_envio,
     serializar_plantilla_config_waba,
 )
 from database_whatsapp_plantillas import (
@@ -430,79 +425,33 @@ def enviar_plantilla_whatsapp_mensajes(
         )
 
     agencia_id = resolver_agencia_id_para_waba(phone_id)
-    try:
-        plantilla = resolver_plantilla_para_envio(
-            codigo,
-            phone_number_id=phone_id,
-            agencia_id=agencia_id,
-        )
-    except PlantillaMensajesDesconocida:
-        raise HTTPException(status_code=404, detail=f"Plantilla no permitida: {codigo}")
-
-    try:
-        status_code, resp, plantilla, parametros = enviar_plantilla_catalogo(
-            codigo=codigo,
-            telefono=telefono,
-            nombre=data.nombre or "",
-            agencia=agencia,
-            token=token,
-            phone_number_id=phone_id,
-            plantilla=plantilla,
-        )
-    except PlantillaMensajesDesconocida:
-        raise HTTPException(status_code=404, detail=f"Plantilla no permitida: {codigo}")
-
-    if status_code not in (200, 201):
+    resultado = ejecutar_envio_plantilla(
+        telefono=telefono,
+        codigo=codigo,
+        nombre=data.nombre or "",
+        agencia_nombre=agencia,
+        token=token,
+        phone_number_id=phone_id,
+        agencia_id=agencia_id,
+        persistir_sas=True,
+    )
+    if not resultado.get("ok"):
         raise HTTPException(
-            status_code=502,
-            detail={"error": "meta_template_failed", "meta": resp},
+            status_code=int(resultado.get("http_status") or 500),
+            detail=resultado.get("detail") or "No se pudo enviar la plantilla",
         )
-
-    message_id_meta = extraer_outgoing_wamid(resp)
-
-    try:
-        persistir_plantilla_en_sas(
-            plantilla=plantilla,
-            telefono_normalizado=telefono,
-            message_id_meta=message_id_meta,
-            nombre_contacto=data.nombre or "",
-        )
-    except Exception as e:
-        print(f"[PLANTILLA_SAS] persistencia SAS falló tras Meta OK: {e}")
-        traceback.print_exc()
-
-    dual = None
-    agencia_id = resolver_agencia_id_para_waba(phone_id)
-    if agencia_id is None:
-        print(
-            f"[PLANTILLA_SAS] dual-write chatbot omitido: sin agencia_id "
-            f"phone_number_id={phone_id} telefono={telefono}"
-        )
-    else:
-        try:
-            dual = persistir_plantilla_en_conversacion_canonica(
-                plantilla=plantilla,
-                telefono_normalizado=telefono,
-                phone_number_id=phone_id,
-                agencia_id=agencia_id,
-                message_id_meta=message_id_meta,
-                nombre_contacto=data.nombre or "",
-            )
-        except Exception as e:
-            print(f"[PLANTILLA_SAS] dual-write chatbot falló tras Meta OK: {e}")
-            traceback.print_exc()
 
     return {
         "status": "ok",
-        "codigo": plantilla.codigo,
-        "nombre_meta": plantilla.nombre_meta,
-        "mensaje": f"Se envió la plantilla {plantilla.nombre_meta} a {telefono}",
-        "codigo_api": status_code,
-        "respuesta_api": resp,
-        "message_id_meta": message_id_meta,
-        "telefono": telefono,
-        "conversacion_id": (dual or {}).get("conversacion_id"),
-        "parametros": parametros,
+        "codigo": resultado.get("codigo"),
+        "nombre_meta": resultado.get("nombre_meta"),
+        "mensaje": f"Se envió la plantilla {resultado.get('nombre_meta')} a {resultado.get('telefono')}",
+        "codigo_api": resultado.get("codigo_api"),
+        "respuesta_api": resultado.get("respuesta_api"),
+        "message_id_meta": resultado.get("message_id_meta"),
+        "telefono": resultado.get("telefono"),
+        "conversacion_id": resultado.get("conversacion_id"),
+        "parametros": resultado.get("parametros"),
     }
 
 

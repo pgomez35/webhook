@@ -413,6 +413,7 @@ def persistir_plantilla_en_conversacion_canonica(
     agencia_id: int,
     message_id_meta: Optional[str],
     nombre_contacto: Optional[str] = None,
+    usuario_plataforma: Optional[str] = None,
     buscar_o_crear_fn: Optional[Callable[..., Any]] = None,
     insertar_mensaje_fn: Optional[Callable[..., Any]] = None,
 ) -> Dict[str, Any]:
@@ -439,6 +440,7 @@ def persistir_plantilla_en_conversacion_canonica(
         cuenta_externa_id=pid,
         telefono=tel,
         nombre_contacto=(nombre_contacto or "").strip() or None,
+        usuario_plataforma=(usuario_plataforma or "").strip() or None,
     )
     if isinstance(conv_result, tuple):
         conversacion, creada = conv_result[0], bool(conv_result[1])
@@ -485,6 +487,7 @@ def persistir_plantilla_dual_write(
     agencia_id: int,
     message_id_meta: Optional[str],
     nombre_contacto: Optional[str] = None,
+    usuario_plataforma: Optional[str] = None,
     guardar_sas_fn: Optional[Callable[..., Any]] = None,
     buscar_o_crear_fn: Optional[Callable[..., Any]] = None,
     insertar_mensaje_fn: Optional[Callable[..., Any]] = None,
@@ -504,6 +507,155 @@ def persistir_plantilla_dual_write(
         agencia_id=agencia_id,
         message_id_meta=message_id_meta,
         nombre_contacto=nombre_contacto,
+        usuario_plataforma=usuario_plataforma,
         buscar_o_crear_fn=buscar_o_crear_fn,
         insertar_mensaje_fn=insertar_mensaje_fn,
     )
+
+
+def _mensaje_error_meta(respuesta_api: Any) -> str:
+    if isinstance(respuesta_api, dict):
+        err = respuesta_api.get("error")
+        if isinstance(err, dict):
+            msg = str(err.get("message") or err.get("error_user_msg") or "").strip()
+            code = err.get("code")
+            if msg and code is not None:
+                return f"{msg} (code {code})"
+            if msg:
+                return msg
+        if isinstance(err, str) and err.strip():
+            return err.strip()
+    return "Meta rechazó el envío de la plantilla"
+
+
+def ejecutar_envio_plantilla(
+    *,
+    telefono: str,
+    codigo: str,
+    nombre: str = "",
+    agencia_nombre: str = "",
+    token: str,
+    phone_number_id: str,
+    agencia_id: Optional[int],
+    usuario_plataforma: Optional[str] = None,
+    persistir_sas: bool = True,
+    plantilla: Optional[PlantillaMensajes] = None,
+    enviar_fn: Optional[Callable[..., Tuple[int, dict]]] = None,
+    persistir_sas_fn: Optional[Callable[..., Any]] = None,
+    persistir_canonica_fn: Optional[Callable[..., Any]] = None,
+) -> Dict[str, Any]:
+    """Envía una plantilla por la capa Meta existente y persiste el historial.
+
+    No crea aspirante. ``persistir_sas`` escribe en la bandeja Talentum
+    (mensajes_whatsapp); el chatbot independiente debe pasarlo en False.
+    """
+    tel = normalizar_telefono_chatbot(telefono)
+    codigo_norm = (codigo or "").strip()
+    pid = str(phone_number_id or "").strip()
+    if not tel or not codigo_norm:
+        return {
+            "ok": False,
+            "http_status": 400,
+            "detail": "Faltan telefono o codigo de plantilla",
+        }
+    if not token or not pid:
+        return {
+            "ok": False,
+            "http_status": 500,
+            "detail": "Credenciales de WhatsApp no configuradas para este tenant",
+        }
+
+    try:
+        if plantilla is None:
+            plantilla = resolver_plantilla_para_envio(
+                codigo_norm,
+                phone_number_id=pid,
+                agencia_id=agencia_id,
+            )
+    except PlantillaMensajesDesconocida:
+        return {
+            "ok": False,
+            "http_status": 404,
+            "detail": f"Plantilla no permitida: {codigo_norm}",
+        }
+
+    try:
+        status_code, resp, plantilla, parametros = enviar_plantilla_catalogo(
+            codigo=codigo_norm,
+            telefono=tel,
+            nombre=nombre or "",
+            agencia=agencia_nombre or "",
+            token=token,
+            phone_number_id=pid,
+            plantilla=plantilla,
+            enviar_fn=enviar_fn,
+        )
+    except PlantillaMensajesDesconocida:
+        return {
+            "ok": False,
+            "http_status": 404,
+            "detail": f"Plantilla no permitida: {codigo_norm}",
+        }
+
+    if status_code not in (200, 201):
+        logger.warning(
+            "[PLANTILLA] meta_failed status=%s phone_number_id=%s codigo=%s",
+            status_code,
+            pid,
+            plantilla.codigo,
+        )
+        return {
+            "ok": False,
+            "http_status": 502,
+            "detail": _mensaje_error_meta(resp),
+        }
+
+    message_id_meta = extraer_outgoing_wamid(resp)
+    if persistir_sas:
+        try:
+            fn_sas = persistir_sas_fn or persistir_plantilla_en_sas
+            fn_sas(
+                plantilla=plantilla,
+                telefono_normalizado=tel,
+                message_id_meta=message_id_meta,
+                nombre_contacto=nombre or "",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("[PLANTILLA] persistencia SAS falló tras Meta OK: %s", exc)
+
+    dual: Optional[Dict[str, Any]] = None
+    if agencia_id is None:
+        logger.info(
+            "[PLANTILLA] dual-write chatbot omitido: sin agencia_id "
+            "phone_number_id=%s",
+            pid,
+        )
+    else:
+        try:
+            fn_canonica = persistir_canonica_fn or persistir_plantilla_en_conversacion_canonica
+            dual = fn_canonica(
+                plantilla=plantilla,
+                telefono_normalizado=tel,
+                phone_number_id=pid,
+                agencia_id=int(agencia_id),
+                message_id_meta=message_id_meta,
+                nombre_contacto=nombre or "",
+                usuario_plataforma=usuario_plataforma,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("[PLANTILLA] dual-write chatbot falló tras Meta OK: %s", exc)
+
+    return {
+        "ok": True,
+        "status": "ok",
+        "codigo": plantilla.codigo,
+        "nombre_meta": plantilla.nombre_meta,
+        "codigo_api": status_code,
+        "respuesta_api": resp,
+        "message_id_meta": message_id_meta,
+        "telefono": tel,
+        "conversacion_id": (dual or {}).get("conversacion_id"),
+        "conversacion_creada": (dual or {}).get("conversacion_creada"),
+        "parametros": parametros,
+        "dual": dual,
+    }

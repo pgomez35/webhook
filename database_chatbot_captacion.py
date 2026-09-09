@@ -1500,6 +1500,47 @@ def asignar_configuracion_aspirante(
             return dict(row)
 
 
+def obtener_cuenta_whatsapp_principal(agencia_id: int) -> Optional[Dict[str, Any]]:
+    """WABA activa de la agencia chatbot (principal si existe). Incluye access_token.
+
+    Uso interno de envío. Nunca serializar el token en respuestas HTTP.
+    """
+    with get_connection_chatbot_context() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT
+                    aw.id AS mapping_id,
+                    aw.whatsapp_account_id,
+                    aw.principal,
+                    aw.activo,
+                    w.access_token,
+                    w.phone_number,
+                    w.phone_number_id,
+                    w.business_name,
+                    w.waba_id,
+                    w.status,
+                    w.subdominio,
+                    w.product_type
+                FROM chatbot.agencia_whatsapp_accounts aw
+                INNER JOIN public.whatsapp_business_accounts w
+                    ON w.id = aw.whatsapp_account_id
+                WHERE aw.agencia_id = %s
+                  AND aw.activo = TRUE
+                  AND w.status = 'connected'
+                ORDER BY aw.principal DESC, aw.id ASC
+                LIMIT 1
+                """,
+                (agencia_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            data = dict(row)
+            data["product_type"] = normalizar_product_type(data.get("product_type"))
+            return data
+
+
 def listar_canales_agencia(agencia_id: int) -> List[Dict[str, Any]]:
     with get_connection_chatbot_context() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:

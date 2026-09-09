@@ -109,6 +109,7 @@ from router_chatbot_auth import router as chatbot_auth_router
 from router_admin_chatbot_clientes import router as admin_chatbot_clientes_router
 from router_chatbot_diagnostico import router as chatbot_diagnostico_router
 from router_meta_social import router as meta_social_router
+from router_chatbot_whatsapp import router as chatbot_whatsapp_router
 
 # El asistente conversacional es opcional: si sus módulos aún no están
 # desplegados, el resto de la API (incluido el chatbot rígido) debe arrancar.
@@ -157,6 +158,7 @@ app.include_router(chatbot_captacion_router, tags=["Chatbot Captación"])
 app.include_router(chatbot_diagnostico_router, tags=["Chatbot Diagnóstico"])
 app.include_router(admin_chatbot_clientes_router, tags=["Admin Chatbot Clientes"])
 app.include_router(meta_social_router, tags=["Meta Social"])
+app.include_router(chatbot_whatsapp_router, tags=["Chatbot WhatsApp"])
 if chatbot_conversacional_router is not None:
     app.include_router(chatbot_conversacional_router, tags=["Chatbot Conversacional"])
 
@@ -174,6 +176,7 @@ app.add_middleware(
         "https://chatbot.talentum-manager.com",
         "https://agency15-5.talentum-manager.com",
         "https://osadia.talentum-manager.com",
+        "https://silver.talentum-manager.com",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ],
