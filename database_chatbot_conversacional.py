@@ -2644,7 +2644,17 @@ def obtener_conversacion_detalle(
                 a.telefono AS aspirante_telefono,
                 a.estado AS aspirante_estado,
                 cfg.nombre AS configuracion_nombre,
-                cfg.plataforma_codigo AS configuracion_plataforma
+                cfg.plataforma_codigo AS configuracion_plataforma,
+                (
+                    SELECT m.created_at
+                    FROM chatbot.mensajes_conversacion m
+                    WHERE m.agencia_id = c.agencia_id
+                      AND m.conversacion_id = c.id
+                      AND m.direccion = 'entrante'
+                      AND m.remitente_tipo IN ('aspirante', 'creador')
+                    ORDER BY m.created_at DESC, m.id DESC
+                    LIMIT 1
+                ) AS ultimo_inbound_at
             FROM chatbot.conversaciones c
             LEFT JOIN chatbot.campanias_captacion cam
                 ON cam.id = c.campania_id AND cam.agencia_id = c.agencia_id
@@ -3421,6 +3431,24 @@ def insertar_mensaje(
         return row, True
 
 
+# Columnas del hilo en bandeja: evita jsonb/tokens/prompt en cada burbuja.
+_COLUMNAS_MENSAJE_HILO = (
+    "id",
+    "agencia_id",
+    "conversacion_id",
+    "canal",
+    "direccion",
+    "remitente_tipo",
+    "tipo_mensaje",
+    "texto",
+    "media_url",
+    "media_nombre",
+    "media_mime_type",
+    "estado_envio",
+    "created_at",
+)
+
+
 def listar_mensajes(
     agencia_id: int,
     conversacion_id: int,
@@ -3429,6 +3457,7 @@ def listar_mensajes(
     antes_de_id: Optional[int] = None,
     desde_id: Optional[int] = None,
     orden: str = "asc",
+    slim: bool = False,
     cur=None,
 ) -> List[Dict[str, Any]]:
     """Historial de la conversación. ``antes_de_id`` permite paginar hacia atrás."""
@@ -3443,18 +3472,20 @@ def listar_mensajes(
 
     page_size = _limite(limit, defecto=50, maximo=200)
     params.append(page_size)
+    select_cols = ", ".join(_COLUMNAS_MENSAJE_HILO) if slim else "*"
+    orden_sql = "DESC" if str(orden).strip().lower() == "desc" else "ASC"
 
     with _cursor(cur) as c:
         c.execute(
             f"""
-            SELECT * FROM (
-                SELECT *
+            SELECT {select_cols} FROM (
+                SELECT {select_cols}
                 FROM chatbot.mensajes_conversacion
                 WHERE {' AND '.join(where)}
-                ORDER BY id DESC
+                ORDER BY created_at DESC, id DESC
                 LIMIT %s
             ) AS ultimos
-            ORDER BY id {'DESC' if str(orden).strip().lower() == 'desc' else 'ASC'}
+            ORDER BY created_at {orden_sql}, id {orden_sql}
             """,
             params,
         )

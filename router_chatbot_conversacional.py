@@ -1769,14 +1769,14 @@ def listar_mensajes(
     orden: str = Query("asc", description="asc | desc"),
     agencia: dict = Depends(obtener_agencia_chatbot_actual),
 ):
-    cid = _validar_conversacion(agencia, conversacion_id)
     return db.listar_mensajes(
         _agencia_id(agencia),
-        cid,
+        int(conversacion_id),
         limit=limit,
         antes_de_id=antes_de_id,
         desde_id=desde_id,
         orden=orden,
+        slim=True,
     )
 
 

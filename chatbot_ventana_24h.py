@@ -45,6 +45,23 @@ def consultar_ultimo_inbound_at(
     )
 
 
+def _campos_ventana_desde_inbound(
+    ultima: Optional[datetime],
+    *,
+    ahora: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    raw = serializar_estado_ventana_24h(
+        calcular_estado_ventana_24h(ultima, ahora=ahora)
+    )
+    return {
+        "ultimo_mensaje_usuario_at": raw.get("ultima_entrada_usuario_at"),
+        "ventana_24h_abierta": bool(raw.get("ventana_abierta")),
+        "ventana_24h_hasta": raw.get("ventana_24h_hasta"),
+        "ventana_24h_estado": raw.get("estado"),
+        "texto_libre_permitido": bool(raw.get("texto_libre_permitido")),
+    }
+
+
 def estado_ventana_conversacion(
     agencia_id: int,
     conversacion_id: int,
@@ -59,26 +76,21 @@ def estado_ventana_conversacion(
         cur=cur,
         consultar_fn=consultar_fn,
     )
-    raw = serializar_estado_ventana_24h(
-        calcular_estado_ventana_24h(ultima, ahora=ahora)
-    )
-    return {
-        "ultimo_mensaje_usuario_at": raw.get("ultima_entrada_usuario_at"),
-        "ventana_24h_abierta": bool(raw.get("ventana_abierta")),
-        "ventana_24h_hasta": raw.get("ventana_24h_hasta"),
-        "ventana_24h_estado": raw.get("estado"),
-        "texto_libre_permitido": bool(raw.get("texto_libre_permitido")),
-    }
+    return _campos_ventana_desde_inbound(ultima, ahora=ahora)
 
 
 def adjuntar_ventana_24h(conversacion: Optional[Dict[str, Any]], **kwargs) -> Optional[Dict[str, Any]]:
     if not conversacion:
         return conversacion
-    agencia_id = conversacion.get("agencia_id")
-    conversacion_id = conversacion.get("id")
-    if agencia_id is None or conversacion_id is None:
-        return conversacion
     out = dict(conversacion)
+    if "ultimo_inbound_at" in out:
+        ultima = out.pop("ultimo_inbound_at")
+        out.update(_campos_ventana_desde_inbound(ultima, ahora=kwargs.get("ahora")))
+        return out
+    agencia_id = out.get("agencia_id")
+    conversacion_id = out.get("id")
+    if agencia_id is None or conversacion_id is None:
+        return out
     out.update(
         estado_ventana_conversacion(int(agencia_id), int(conversacion_id), **kwargs)
     )
