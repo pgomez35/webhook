@@ -3043,12 +3043,12 @@ def tomar_conversacion(
     Un humano autenticado toma el control: la IA deja de responder.
 
     Solo este camino (o equivalente de panel) debe activar modo_humano=true.
+    No inserta ni envía acuse al contacto: el cambio a Manual no se anuncia.
     """
     with _cursor(cur) as c:
         actual = _obtener_registro("conversaciones", agencia_id, conversacion_id, cur=c)
         if not actual:
             return None
-        ya_humano = bool(actual.get("modo_humano"))
         campos: Dict[str, Any] = {
             "modo_humano": True,
             "ia_habilitada": False,
@@ -3077,34 +3077,6 @@ def tomar_conversacion(
             },
             cur=c,
         )
-        # Confirmación visible al pasar a modo humano (solo en la transición)
-        if not ya_humano:
-            texto_conf = (
-                "Un asesor continuará la conversación contigo. Tu mensaje fue recibido."
-            )
-            try:
-                insertar_mensaje(
-                    agencia_id,
-                    conversacion_id,
-                    canal=str(actual.get("canal") or "whatsapp"),
-                    direccion="saliente",
-                    remitente_tipo="sistema",
-                    tipo_mensaje="texto",
-                    texto=texto_conf,
-                    estado_envio="pendiente",
-                    metadata={
-                        "confirmacion_modo_humano": True,
-                        "manager_id": manager_id,
-                    },
-                    cur=c,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "[CHATBOT] no se pudo registrar confirmación modo_humano "
-                    "conversacion_id=%s: %s",
-                    conversacion_id,
-                    exc,
-                )
         return conversacion
 
 
