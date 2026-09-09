@@ -2579,6 +2579,52 @@ def obtener_conversacion(
     return _obtener_registro("conversaciones", agencia_id, conversacion_id, cur=cur)
 
 
+def obtener_conversacion_por_id(
+    conversacion_id: int, *, cur=None
+) -> Optional[Dict[str, Any]]:
+    """Lookup por id (envío IA). No sustituye el filtro por agencia en el panel."""
+    with _cursor(cur) as c:
+        c.execute(
+            """
+            SELECT id, agencia_id, canal, estado
+            FROM chatbot.conversaciones
+            WHERE id = %s
+            LIMIT 1
+            """,
+            (int(conversacion_id),),
+        )
+        return _fila(c.fetchone())
+
+
+def consultar_ultimo_inbound_conversacion(
+    agencia_id: int,
+    conversacion_id: int,
+    *,
+    cur=None,
+) -> Optional[datetime]:
+    """Último inbound del contacto. No usa ultimo_mensaje_at (mezcla salientes)."""
+    with _cursor(cur) as c:
+        c.execute(
+            """
+            SELECT created_at
+            FROM chatbot.mensajes_conversacion
+            WHERE agencia_id = %s
+              AND conversacion_id = %s
+              AND direccion = 'entrante'
+              AND remitente_tipo IN ('aspirante', 'creador')
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            (int(agencia_id), int(conversacion_id)),
+        )
+        row = c.fetchone()
+    if not row:
+        return None
+    if isinstance(row, dict):
+        return row.get("created_at")
+    return row[0]
+
+
 def obtener_conversacion_detalle(
     agencia_id: int, conversacion_id: int, *, cur=None
 ) -> Optional[Dict[str, Any]]:

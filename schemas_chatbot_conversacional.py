@@ -1948,6 +1948,11 @@ class ConversacionDetalle(ConversacionListItem):
     consentimiento_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    ultimo_mensaje_usuario_at: Optional[datetime] = None
+    ventana_24h_abierta: bool = False
+    ventana_24h_hasta: Optional[datetime] = None
+    ventana_24h_estado: Optional[str] = None
+    texto_libre_permitido: bool = False
     mensajes: List[MensajeOut] = Field(default_factory=list)
     tareas: List[TareaOut] = Field(default_factory=list)
     evidencias: List[EvidenciaOut] = Field(default_factory=list)

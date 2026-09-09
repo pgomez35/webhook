@@ -202,6 +202,22 @@ async def enviar_whatsapp_texto_meta(
     Llama al servicio real ``enviar_mensaje_texto_simple`` y normaliza el resultado.
     """
     conversacion_id = conversacion_id_envio_actual(conversacion_id)
+    if conversacion_id:
+        from chatbot_ventana_24h import texto_libre_permitido_por_conversacion_id
+
+        if not texto_libre_permitido_por_conversacion_id(int(conversacion_id)):
+            logger.info(
+                "[CHATBOT_ENVIO] canal=whatsapp conversacion_id=%s "
+                "respuesta_enviada=false error=ventana_24h_cerrada",
+                conversacion_id,
+            )
+            return {
+                "enviado": False,
+                "mensaje_externo_id": None,
+                "status_code": None,
+                "error": "ventana_24h_cerrada",
+                "requiere_reintento": False,
+            }
     cuerpo = str(texto or "").strip()
     if not cuerpo:
         return {

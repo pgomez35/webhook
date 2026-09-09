@@ -50,10 +50,15 @@ def _cuenta_waba_agencia(agencia_id: int) -> Dict[str, Any]:
 def listar_plantillas_agencia_chatbot(agencia_id: int) -> List[dict]:
     """Plantillas de la WABA de la agencia autenticada. Sin access token."""
     cuenta = _cuenta_waba_agencia(int(agencia_id))
-    return listar_plantillas_para_envio(
+    items = listar_plantillas_para_envio(
         phone_number_id=str(cuenta["phone_number_id"]),
         agencia_id=int(agencia_id),
     )
+    return [
+        item
+        for item in items
+        if str(item.get("fuente") or "").strip().lower() != "legacy"
+    ]
 
 
 def enviar_plantilla_nueva_conversacion(

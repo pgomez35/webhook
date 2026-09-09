@@ -1750,8 +1750,12 @@ def obtener_conversacion(
     conversacion_id: int,
     agencia: dict = Depends(obtener_agencia_chatbot_actual),
 ):
+    from chatbot_ventana_24h import adjuntar_ventana_24h
+
     return _o_404(
-        db.obtener_conversacion_detalle(_agencia_id(agencia), int(conversacion_id)),
+        adjuntar_ventana_24h(
+            db.obtener_conversacion_detalle(_agencia_id(agencia), int(conversacion_id))
+        ),
         "Conversación",
     )
 
@@ -1883,6 +1887,14 @@ async def enviar_mensaje(
     texto = (payload.texto or "").strip()
     if not texto:
         raise HTTPException(status_code=400, detail="El texto no puede estar vacío")
+
+    from chatbot_ventana_24h import exigir_texto_libre_whatsapp
+
+    exigir_texto_libre_whatsapp(
+        _agencia_id(agencia),
+        int(conversacion_id),
+        canal=str(conversacion.get("canal") or "whatsapp"),
+    )
 
     envio = await _enviar_por_canal(conversacion, texto)
     try:
