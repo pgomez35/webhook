@@ -6,6 +6,7 @@ from jose import jwt, JWTError, ExpiredSignatureError
 from pydantic import BaseModel
 from DataBase import get_connection_context, autenticar_usuarios
 from dotenv import load_dotenv
+from tenant import current_subdominio, current_tenant
 import logging
 import bcrypt
 
@@ -42,6 +43,38 @@ class TokenResponse(BaseModel):
     refresh_token: str | None = None
     token_type: str = "bearer"
     usuario: UsuarioOut
+
+
+MSG_USUARIO_SIN_ROL = "El usuario no tiene un rol configurado"
+
+
+def _contexto_tenant_login() -> tuple[str | None, str | None]:
+    return current_subdominio.get(), current_tenant.get()
+
+
+def construir_usuario_out(usuario: dict) -> UsuarioOut:
+    """Exige rol no vacío. Evita 500 de Pydantic cuando el JOIN de roles no matchea."""
+    usuario_id = usuario.get("id")
+    tenant_name, schema = _contexto_tenant_login()
+    rol = usuario.get("rol")
+    if not (isinstance(rol, str) and rol.strip()):
+        logger.error(
+            "Usuario sin rol configurado: usuario_id=%s tenant=%s schema=%s",
+            usuario_id,
+            tenant_name,
+            schema,
+        )
+        raise HTTPException(status_code=403, detail=MSG_USUARIO_SIN_ROL)
+
+    nombre = usuario.get("nombre")
+    if not (isinstance(nombre, str) and nombre.strip()):
+        nombre = str(usuario.get("username") or "").strip() or "Administrador"
+
+    return UsuarioOut(
+        id=usuario_id,
+        nombre=nombre.strip(),
+        rol=rol.strip(),
+    )
 
 
 # ================= TOKENS =================
@@ -192,20 +225,32 @@ async def login_usuario(credentials: dict = Body(...)):
         raise HTTPException(status_code=400, detail="Username y password son requeridos")
 
     resultado = autenticar_usuarios(username, password)
+    tenant_name, schema = _contexto_tenant_login()
     if resultado["status"] != "ok":
+        logger.warning(
+            "[LOGIN] tenant=%s schema=%s username=%s resultado=%s",
+            tenant_name,
+            schema,
+            username,
+            resultado["mensaje"],
+        )
         raise HTTPException(status_code=401, detail=resultado["mensaje"])
 
     usuario = resultado["usuario"]
+    logger.info(
+        "[LOGIN] tenant=%s schema=%s usuario_id=%s rol=%s",
+        tenant_name,
+        schema,
+        usuario.get("id"),
+        usuario.get("rol"),
+    )
+    usuario_out = construir_usuario_out(usuario)
 
     access_token = crear_access_token(usuario)
     refresh_token = crear_refresh_token(usuario)
 
     return TokenResponse(
-        usuario=UsuarioOut(
-            id=usuario["id"],
-            nombre=usuario["nombre"],
-            rol=usuario["rol"]
-        ),
+        usuario=usuario_out,
         access_token=access_token,
         refresh_token=refresh_token,
         token_type="bearer",
@@ -215,11 +260,7 @@ async def login_usuario(credentials: dict = Body(...)):
 
 @router.get("/me", response_model=UsuarioOut)
 def get_me(usuario_actual: dict = Depends(obtener_usuario_actual)):
-    return UsuarioOut(
-        id=usuario_actual["id"],
-        nombre=usuario_actual["nombre"],
-        rol=usuario_actual["rol"]
-    )
+    return construir_usuario_out(usuario_actual)
 
 # === REFRESH TOKEN ===
 @router.post("/refresh", response_model=TokenResponse)
@@ -267,7 +308,7 @@ async def refresh_token(data: dict = Body(...)):
             access_token=new_access_token,
             refresh_token=refresh_token,  # se reutiliza
             token_type="bearer",
-            usuario=UsuarioOut(**usuario),
+            usuario=construir_usuario_out(usuario),
             mensaje="Token renovado"
         )
 
