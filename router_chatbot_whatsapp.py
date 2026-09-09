@@ -1,6 +1,7 @@
 """Plantillas WhatsApp del portal chatbot (JWT chatbot, no Talentum)."""
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,6 +13,8 @@ from service_chatbot_whatsapp_plantillas import (
     enviar_plantilla_nueva_conversacion,
     listar_plantillas_agencia_chatbot,
 )
+
+logger = logging.getLogger("uvicorn.error")
 
 router = APIRouter(
     prefix="/api/chatbot/whatsapp",
@@ -41,6 +44,12 @@ def listar_plantillas_whatsapp_chatbot(
         plantillas = listar_plantillas_agencia_chatbot(int(agencia["id"]))
     except ErrorPlantillaChatbot as exc:
         raise _http_desde_error(exc) from exc
+    except Exception as exc:
+        logger.exception(
+            "[CHATBOT-PLANTILLA] GET local fallo agencia_id=%s",
+            agencia.get("id"),
+        )
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"plantillas": plantillas}
 
 

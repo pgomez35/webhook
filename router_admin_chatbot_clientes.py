@@ -370,6 +370,11 @@ def listar_whatsapp_plantillas_admin(
         return listar_plantillas_admin_agencia(int(agencia_id))
     except ErrorAdminPlantillas as exc:
         raise _http_plantillas(exc) from exc
+    except Exception as exc:
+        logger.exception(
+            "[ADMIN-CHATBOT] GET plantillas fallo agencia_id=%s", agencia_id
+        )
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.post("/agencias/{agencia_id}/whatsapp-plantillas/sincronizar")
