@@ -4355,7 +4355,8 @@ async def whatsapp_webhook(request: Request):
                 phone_number_id=phone_number_id,
                 token_access=token_access,
                 business_name=business_name,
-                raw_payload=value
+                raw_payload=value,
+                product_type=product_type,
             )
             return {"status": "ok"}
 
@@ -4370,7 +4371,8 @@ async def whatsapp_webhook(request: Request):
                 phone_number_id=phone_number_id,
                 token_access=token_access,
                 business_name=business_name,
-                raw_payload=value
+                raw_payload=value,
+                product_type=product_type,
             )
 
         if not mensajes:

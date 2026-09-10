@@ -3553,6 +3553,132 @@ def marcar_mensaje_procesado(
         return _fila(c.fetchone())
 
 
+META_A_ESTADO_ENVIO = {
+    "sent": "enviado",
+    "delivered": "entregado",
+    "read": "leido",
+    "failed": "error",
+}
+ESTADO_ENVIO_A_META = {
+    "enviado": "sent",
+    "entregado": "delivered",
+    "leido": "read",
+    "error": "failed",
+}
+
+
+def actualizar_estado_envio_por_wamid(
+    mensaje_externo_id: str,
+    status_meta: str,
+    *,
+    cur=None,
+) -> Dict[str, Any]:
+    """Actualiza ``estado_envio`` de un saliente chatbot por wamid de Meta.
+
+    Reutiliza la regla monotónica sent < delivered < read. ``failed`` → ``error``.
+    No escribe en ``mensajes_whatsapp``.
+    """
+    wamid = str(mensaje_externo_id or "").strip()
+    rec_meta = str(status_meta or "").strip().lower()
+    nuevo = META_A_ESTADO_ENVIO.get(rec_meta)
+    if not wamid:
+        return {
+            "encontrado": False,
+            "anterior": None,
+            "final": None,
+            "resultado": "ignorado_sin_wamid",
+        }
+    if not nuevo:
+        return {
+            "encontrado": False,
+            "anterior": None,
+            "final": None,
+            "resultado": "ignorado_sin_status",
+        }
+
+    from utils_aspirantes import clasificar_avance_estado_whatsapp
+
+    def _valor(row: Any, clave: str, idx: int) -> Any:
+        if row is None:
+            return None
+        if isinstance(row, dict):
+            return row.get(clave)
+        return row[idx]
+
+    with _cursor(cur) as c:
+        c.execute(
+            """
+            UPDATE chatbot.mensajes_conversacion AS m
+            SET estado_envio = %s
+            FROM (
+                SELECT id, estado_envio AS anterior
+                FROM chatbot.mensajes_conversacion
+                WHERE mensaje_externo_id = %s
+                  AND canal = 'whatsapp'
+                FOR UPDATE
+            ) old
+            WHERE m.id = old.id
+              AND (
+                    %s NOT IN ('enviado', 'entregado', 'leido')
+                 OR old.anterior IS NULL
+                 OR old.anterior NOT IN ('enviado', 'entregado', 'leido')
+                 OR (old.anterior = 'enviado'
+                     AND %s IN ('enviado', 'entregado', 'leido'))
+                 OR (old.anterior = 'entregado'
+                     AND %s IN ('entregado', 'leido'))
+                 OR (old.anterior = 'leido' AND %s = 'leido')
+              )
+            RETURNING old.anterior, m.estado_envio
+            """,
+            (nuevo, wamid, nuevo, nuevo, nuevo, nuevo),
+        )
+        fila = c.fetchone()
+        if fila:
+            anterior = _valor(fila, "anterior", 0)
+            final = _valor(fila, "estado_envio", 1)
+            anterior_meta = ESTADO_ENVIO_A_META.get(
+                str(anterior or "").strip().lower(), anterior
+            )
+            resultado = clasificar_avance_estado_whatsapp(anterior_meta, rec_meta)
+            return {
+                "encontrado": True,
+                "anterior": anterior,
+                "final": final,
+                "resultado": resultado,
+            }
+
+        c.execute(
+            """
+            SELECT estado_envio
+            FROM chatbot.mensajes_conversacion
+            WHERE mensaje_externo_id = %s
+              AND canal = 'whatsapp'
+            LIMIT 1
+            """,
+            (wamid,),
+        )
+        existente = c.fetchone()
+
+    if not existente:
+        return {
+            "encontrado": False,
+            "anterior": None,
+            "final": None,
+            "resultado": "no_encontrado",
+        }
+    anterior = _valor(existente, "estado_envio", 0)
+    anterior_meta = ESTADO_ENVIO_A_META.get(
+        str(anterior or "").strip().lower(), anterior
+    )
+    resultado = clasificar_avance_estado_whatsapp(anterior_meta, rec_meta)
+    return {
+        "encontrado": True,
+        "anterior": anterior,
+        "final": anterior,
+        "resultado": resultado,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Tareas del candidato
 # ---------------------------------------------------------------------------

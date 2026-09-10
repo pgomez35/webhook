@@ -957,15 +957,33 @@ async def _handle_statuses(
     phone_number_id,
     token_access,
     business_name,
-    raw_payload
+    raw_payload,
+    product_type=None,
 ):
     """
     Procesa la lista de estados (sent, delivered, read, failed).
     Detecta errores de ventana de 24h y dispara la recuperación con plantillas.
+    product_type=chatbot actualiza chatbot.mensajes_conversacion y no toca SAS/24h.
     """
+    es_chatbot = str(product_type or "").strip().lower() == "chatbot"
     for status_obj in statuses:
         try:
-            # 1. Actualizar BD siempre
+            if es_chatbot:
+                from database_chatbot_conversacional import (
+                    actualizar_estado_envio_por_wamid,
+                )
+
+                message_id = status_obj.get("id")
+                status = _norm_estado_wa(status_obj.get("status"))
+                out = actualizar_estado_envio_por_wamid(message_id, status)
+                print(
+                    f"[WHATSAPP_STATUS] wamid={message_id} "
+                    f"anterior={out.get('anterior')} recibido={status} "
+                    f"final={out.get('final')} resultado={out.get('resultado')}"
+                )
+                continue
+
+            # 1. Actualizar BD siempre (bandeja SAS)
             actualizar_mensaje_desde_status(
                 tenant=tenant_name,
                 phone_number_id=phone_number_id,
