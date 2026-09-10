@@ -1705,6 +1705,7 @@ def listar_conversaciones(
     chatbot_configuracion_id: Optional[int] = Query(None),
     campania_id: Optional[int] = Query(None),
     manager_id: Optional[int] = Query(None),
+    modo_humano: Optional[bool] = Query(None),
     fecha_desde: Optional[date] = Query(None),
     fecha_hasta: Optional[date] = Query(None),
     solo_evidencias_pendientes: bool = Query(False),
@@ -1722,6 +1723,7 @@ def listar_conversaciones(
         chatbot_configuracion_id=chatbot_configuracion_id,
         campania_id=campania_id,
         manager_id=manager_id,
+        modo_humano=modo_humano,
         con_evidencias_pendientes=solo_evidencias_pendientes or None,
         search=q,
         fecha_desde=fecha_desde,
@@ -1840,7 +1842,7 @@ def tomar_conversacion(
     payload: Optional[ConversacionTomarIn] = None,
     agencia: dict = Depends(obtener_agencia_chatbot_actual),
 ):
-    """El humano toma el control: la IA deja de responder."""
+    """Atención manual: modo_humano=true e ia_habilitada=false. No escala."""
     cid = _validar_conversacion(agencia, conversacion_id)
     datos = _campos(payload)
     try:

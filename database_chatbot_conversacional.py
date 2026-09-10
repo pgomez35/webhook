@@ -3039,40 +3039,40 @@ def tomar_conversacion(
     motivo: Optional[str] = None,
     cur=None,
 ) -> Optional[Dict[str, Any]]:
-    """
-    Un humano autenticado toma el control: la IA deja de responder.
+    """Pasa a atención manual: la IA deja de responder.
 
     Solo este camino (o equivalente de panel) debe activar modo_humano=true.
-    No inserta ni envía acuse al contacto: el cambio a Manual no se anuncia.
+    No escala ni cambia el estado de la conversación.
+    No inserta ni envía acuse al contacto.
     """
     with _cursor(cur) as c:
         actual = _obtener_registro("conversaciones", agencia_id, conversacion_id, cur=c)
         if not actual:
             return None
-        campos: Dict[str, Any] = {
-            "modo_humano": True,
-            "ia_habilitada": False,
-            "manager_id": manager_id,
-            "estado": "esperando_humano",
-            "escalada_at": _ahora(),
-        }
-        if motivo:
-            campos["motivo_escalamiento"] = motivo
         conversacion = _actualizar_registro(
-            "conversaciones", agencia_id, conversacion_id, campos, COLUMNAS_CONVERSACION, cur=c
+            "conversaciones",
+            agencia_id,
+            conversacion_id,
+            {
+                "modo_humano": True,
+                "ia_habilitada": False,
+            },
+            COLUMNAS_CONVERSACION,
+            cur=c,
         )
         registrar_evento(
             agencia_id,
             conversacion_id,
-            tipo_evento="escalamiento",
+            tipo_evento="cambio_estado",
             nombre_evento="conversacion_tomada_por_humano",
             origen="humano",
             estado_anterior=actual.get("estado"),
-            estado_nuevo="esperando_humano",
+            estado_nuevo=(conversacion or actual).get("estado"),
             detalle={
                 "manager_id": manager_id,
                 "motivo": motivo,
                 "modo_humano": True,
+                "ia_habilitada": False,
                 "origen_activacion": "panel_tomar",
             },
             cur=c,
@@ -3103,7 +3103,6 @@ def marcar_atencion_manual_inicial(
             {
                 "modo_humano": True,
                 "ia_habilitada": False,
-                "estado": "esperando_humano",
             },
             COLUMNAS_CONVERSACION,
             cur=c,
@@ -3111,12 +3110,16 @@ def marcar_atencion_manual_inicial(
         registrar_evento(
             agencia_id,
             conversacion_id,
-            tipo_evento="escalamiento",
+            tipo_evento="cambio_estado",
             nombre_evento="atencion_manual_inicial_plantilla",
             origen="humano",
             estado_anterior=actual.get("estado"),
-            estado_nuevo="esperando_humano",
-            detalle={"modo_humano": True, "origen_activacion": "nueva_conversacion"},
+            estado_nuevo=(conversacion or actual).get("estado"),
+            detalle={
+                "modo_humano": True,
+                "ia_habilitada": False,
+                "origen_activacion": "nueva_conversacion",
+            },
             cur=c,
         )
         return conversacion
